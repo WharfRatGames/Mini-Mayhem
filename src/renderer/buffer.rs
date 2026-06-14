@@ -123,20 +123,21 @@ impl WorldBuffer {
     pub fn copy_viewport_from_sky_aware(&mut self, src: &WorldBuffer, cam_x: u32, terrain: &Terrain) {
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
         let row_bytes = SCREEN_W as usize * 4;
-        for y in 0..WORLD_H {
+        // Water rows: full-row memcpy.
+        for y in WATER_Y..WORLD_H {
             let off = (y * WORLD_W + cam_x) as usize * 4;
-            if y >= WATER_Y {
-                self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
-            } else {
-                for x in 0..SCREEN_W {
-                    let wx = cam_x + x;
-                    // Above the original surface, this column is guaranteed sky
-                    // (explosions only remove material, never add it above spawn_y).
-                    if y < terrain.sky_limit[wx as usize] { continue; }
-                    if terrain.is_solid(wx as i32, y as i32) {
-                        let p = off + (x * 4) as usize;
-                        self.data[p..p + 4].copy_from_slice(&src.data[p..p + 4]);
-                    }
+            self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
+        }
+        // Sky band: per column, skip straight to the topmost solid pixel
+        // (guaranteed sky above it — explosions only remove material, never
+        // add it above sky_limit), then copy solid pixels down to the water.
+        for x in 0..SCREEN_W {
+            let wx = cam_x + x;
+            let y0 = terrain.sky_limit[wx as usize];
+            for y in y0..WATER_Y {
+                if terrain.is_solid(wx as i32, y as i32) {
+                    let off = ((y * WORLD_W + wx) * 4) as usize;
+                    self.data[off..off + 4].copy_from_slice(&src.data[off..off + 4]);
                 }
             }
         }
