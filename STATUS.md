@@ -1,17 +1,19 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.157
+## Version: 0.5.4.158
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.157)
+## Recent changes (0.5.4.135–0.5.4.158)
+- **Background cache parallax + full BG1 pool (0.5.4.158)** — the
+  0.5.4.157 background cache dropped this layer's camera parallax as a
+  tradeoff and only included 4 of BG1.png's 6 slices; parallax (0.10) is
+  now baked into the world-x -> image-x mapping used when building the
+  cache, and all 6 BG1 slices are included (pool is now 15, was 13).
 - **BG2 background cache (0.5.4.157)** — the BG2 sky image was re-rendered
   per-pixel from source every frame, painting down to the waterline
   (~640x400px) for every cave/chasm/floating-island column — by far the
   largest remaining per-frame cost. Now pre-rendered once per map into a
   world-space cache and stamped into the viewport via row memcpys.
-  Trade-off: this layer no longer has its own camera parallax — it now
-  scrolls 1:1 with the world like terrain. Also added 4 more background
-  variants sliced from BG1.png (pool is now 13, was 9).
 - **Framebuffer blit perf (0.5.4.156)** — the unconditional every-frame
   180-degree screen rotation blit was reversing each row one byte at a time
   (~1.2M indexed ops/frame); now copies whole pixels via chunked slice

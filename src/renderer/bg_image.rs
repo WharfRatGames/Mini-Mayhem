@@ -17,8 +17,12 @@ use crate::world::{Terrain, SCREEN_H, SCREEN_W, WORLD_W, WATER_Y};
 use std::sync::OnceLock;
 
 /// Number of backgrounds in the pool (BG2.png is a 3×3 contact sheet, BG1.png
-/// contributes 4 more slices).
-const BG_COUNT: usize = 13;
+/// is a 2×3 sheet contributing 6 more slices).
+const BG_COUNT: usize = 15;
+
+/// Parallax factor: the background scrolls at this fraction of world-space
+/// movement, baked into the world-x -> image-x mapping in `update_bg_cache_columns`.
+const PAR_BG: f32 = 0.10;
 
 struct Decoded {
     w: u32,
@@ -40,6 +44,8 @@ static PNGS: [&[u8]; BG_COUNT] = [
     include_bytes!("../../deploy/assets/backgrounds/bg_1.png"),
     include_bytes!("../../deploy/assets/backgrounds/bg_2.png"),
     include_bytes!("../../deploy/assets/backgrounds/bg_3.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg_extra_city.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg_extra_pyramids.png"),
 ];
 
 /// Pick which background to use for a map. Deterministic from the seed so client
@@ -99,9 +105,11 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
     }))
 }
 
-/// Draw the seed-chosen static background, pre-scaled to SCREEN_H and tiled
-/// horizontally at the lowest parallax (slowest scroll). No-op if no real image
-/// is available.
+/// Pre-render the seed-chosen background for the whole world (once, at map
+/// load) into a world-space cache, so the per-frame draw is a handful of row
+/// memcpys via `copy_bg_viewport` instead of a per-pixel redraw from the
+/// source image (which, for every cave/chasm/floating-island column, used to
+/// paint down to the waterline — up to ~640x400px/frame).
 ///
 /// The background must cover every pixel the terrain viewport copy leaves
 /// untouched, because the frame buffer is reused across frames (otherwise stale
@@ -111,14 +119,12 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
 ///   * fully-solid column (`solid_to_water`): the copy block-fills `sky_limit..
 ///     WATER_Y`, so we only need to paint the sky band above `sky_limit`.
 ///   * any column with an air gap below the top (caves, chasms, overhangs,
-/// Pre-render the BG2 background for the whole world (once, at map load), tiled
-/// horizontally across world-space columns. Painting the image per-pixel every
-/// frame for every air-gap column (caves/chasms/floating islands) cost up to
-/// ~640x400 pixel writes/frame; baking it into a world-sized cache here turns
-/// the per-frame cost into a handful of row memcpys via `copy_bg_viewport`.
+///     fresh craters): the copy skips those air pixels, so we must paint the
+///     whole air region down to the waterline.
 ///
-/// Trade-off: the slow camera parallax (`PAR_BG`) this layer used to have is
-/// gone — the background now scrolls 1:1 with the world, like the terrain.
+/// Parallax (`PAR_BG`, slow horizontal scroll relative to the foreground) is
+/// baked into the world-x -> image-x mapping itself (`dx` below), so it's
+/// still a fixed per-column lookup and can be precomputed once.
 pub fn build_bg_cache(terrain: &Terrain, seed: u64) -> WorldBuffer {
     let mut cache = WorldBuffer::new();
     update_bg_cache_columns(&mut cache, terrain, seed, 0, WORLD_W as i32);
@@ -141,7 +147,7 @@ pub fn update_bg_cache_columns(cache: &mut WorldBuffer, terrain: &Terrain, seed:
     let x0 = x0.max(0) as u32;
     let x1 = (x1.max(0) as u32).min(WORLD_W);
     for wx in x0..x1 {
-        let dx = wx % dst_w.max(1);
+        let dx = ((wx as f32 * PAR_BG) as u32) % dst_w.max(1);
         // Only the sky band on contiguous-solid columns (the viewport copy
         // block-fills the rest); otherwise the whole air region down to the
         // waterline, so air gaps below the surface aren't left stale.
