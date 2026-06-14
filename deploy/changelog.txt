@@ -1,3 +1,4 @@
+0.5.4.145  Perf: water-surface fill no longer rewrites the ~110 already-correct body rows per column (was 640x122 set_pixel/frame, now ~640x10)
 0.5.4.144  Perf: skip per-pixel sky checks above the terrain surface in viewport copy (iterate only from sky_limit down, instead of scanning the full sky band)
 0.5.4.143  Floating-island maps (archetype 2) had ~57% empty columns - increase land density (lower density threshold) so terrain coverage is more reasonable
 0.5.4.142  Fix invisible terrain on seeds with cliff overhangs/floating islands above y=80 (unclamped sky_limit field for renderer)

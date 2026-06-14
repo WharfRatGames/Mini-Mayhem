@@ -737,10 +737,12 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {
             }
         }
 
-        // Fill from a couple rows above base_y down to bottom of world.
-        // Gradient: foam crest → bright surface zone (6 rows) → mid transition → body.
+        // Fill from a couple rows above base_y through the gradient band. Rows
+        // beyond depth 7 are plain `body`, which the viewport copy already filled
+        // from the world cache (terrain_pixel returns WATER there) — skip those.
         let fill_start = (top - 2).max(0);
-        for wy in fill_start..world_h {
+        let fill_end = (top + 8).min(world_h);
+        for wy in fill_start..fill_end {
             let depth = wy - top;
             let colour = match depth {
                 d if d < 0 => body,
