@@ -20,10 +20,6 @@ use std::sync::OnceLock;
 /// is a 2×3 sheet contributing 6 more slices).
 const BG_COUNT: usize = 15;
 
-/// Parallax factor: the background scrolls at this fraction of world-space
-/// movement, baked into the world-x -> image-x mapping in `update_bg_cache_columns`.
-const PAR_BG: f32 = 0.10;
-
 struct Decoded {
     w: u32,
     h: u32,
@@ -138,9 +134,9 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
 ///     fresh craters): the copy skips those air pixels, so we must paint the
 ///     whole air region down to the waterline.
 ///
-/// Parallax (`PAR_BG`, slow horizontal scroll relative to the foreground) is
-/// baked into the world-x -> image-x mapping itself (`dx` below), so it's
-/// still a fixed per-column lookup and can be precomputed once.
+/// Each world column maps 1:1 to an image column (tiled with `% dst_w`) —
+/// no parallax stretch, so the art isn't blown up/blockier than its native
+/// resolution. This layer scrolls 1:1 with the world, like the terrain.
 pub fn build_bg_cache(terrain: &Terrain, seed: u64) -> WorldBuffer {
     let mut cache = WorldBuffer::new();
     update_bg_cache_columns(&mut cache, terrain, seed, 0, WORLD_W as i32);
@@ -163,7 +159,7 @@ pub fn update_bg_cache_columns(cache: &mut WorldBuffer, terrain: &Terrain, seed:
     let x0 = x0.max(0) as u32;
     let x1 = (x1.max(0) as u32).min(WORLD_W);
     for wx in x0..x1 {
-        let dx = ((wx as f32 * PAR_BG) as u32) % dst_w.max(1);
+        let dx = wx % dst_w.max(1);
         // Only the sky band on contiguous-solid columns (the viewport copy
         // block-fills the rest); otherwise the whole air region down to the
         // waterline, so air gaps below the surface aren't left stale.

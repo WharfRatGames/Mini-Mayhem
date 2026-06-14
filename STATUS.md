@@ -1,9 +1,16 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.159
+## Version: 0.5.4.160
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.159)
+## Recent changes (0.5.4.135–0.5.4.160)
+- **Fix background pixelation (0.5.4.160)** — the 0.5.4.158 parallax fix
+  applied a 0.10 factor directly to the world-x -> image-x mapping, which
+  stretched each source-image column across ~10 world pixels (severe
+  blockiness). The background cache now maps world columns 1:1 to image
+  columns (tiled); this layer scrolls 1:1 with the world like terrain, with
+  no parallax (parallax and pixel-perfect art turned out to be incompatible
+  for a precomputed world-space cache).
 - **Balance + perf (0.5.4.159)** — bazooka direct hits capped at 50 damage
   (was up to 70 with the direct-hit bonus); bee stings reduced from 12 to 5
   damage each; bazooka smoke trail now spawns from the rocket's tail instead
