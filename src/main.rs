@@ -653,15 +653,21 @@ fn main() {
                 (h, u, b, g, w)
             };
             if !lstate.paused { conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names }); }
-            // Drain ALL pending state messages, apply only the latest for
-            // rendering — but collect sounds from every NEW tick so dropped
-            // intermediate ticks don't swallow their SFX.
+            // Drain ALL pending state messages:
+            //   - sounds collected from every state so no SFX tick is skipped
+            //   - first received state's projectiles used for position (avoids the
+            //     2-tick jump when two states arrive in one frame, which looked choppy)
+            //   - latest state used for everything else (turn, soldiers, result)
             let mut latest_state: Option<net::msg::StateMsg> = None;
+            let mut first_projectiles: Option<Vec<net::msg::NetProjectile>> = None;
             let mut pending_sounds: Vec<u8> = Vec::new();
             while let Some(state) = conn.try_recv::<net::msg::StateMsg>() {
                 if state.tick != last_sound_tick {
                     pending_sounds.extend_from_slice(&state.sounds);
                     last_sound_tick = state.tick;
+                }
+                if first_projectiles.is_none() {
+                    first_projectiles = Some(state.projectiles.clone());
                 }
                 latest_state = Some(state);
             }
@@ -677,6 +683,20 @@ fn main() {
                 // StateMsg (result=Ongoing) from the server clear our final result.
                 if final_result.is_none() {
                     apply_server_state(&mut game, &mut cam, &state, my_team);
+                    // Restore projectile positions from the FIRST state received this
+                    // frame so multi-state frames don't cause a 2-tick position jump.
+                    if let Some(projs) = first_projectiles {
+                        use crate::physics::projectile::{Projectile, WeaponKind, FuseState};
+                        use crate::world::{Vec2, WorldPos};
+                        game.projectiles.clear();
+                        for np in &projs {
+                            let kind = WeaponKind::from_net_u8(np.kind_u8);
+                            let mut proj = Projectile::new(WorldPos::new(np.x, np.y), Vec2::new(np.vel_x, np.vel_y), kind);
+                            if np.fuse_ticks > 0 { proj.fuse = FuseState::Burning(np.fuse_ticks); }
+                            proj.is_fragment = np.is_fragment;
+                            game.projectiles.push(proj);
+                        }
+                    }
                     // Latch the result the first time the game ends
                     if !matches!(game.result, game::state::GameResult::Ongoing) {
                         final_result = Some(game.result.clone());
