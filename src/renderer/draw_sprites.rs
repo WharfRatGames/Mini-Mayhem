@@ -699,8 +699,8 @@ pub fn draw_think_indicator(buf: &mut WorldBuffer, pos: WorldPos, tick: u32) {
 ///
 /// The terrain renderer already fills the water body (WATER_Y..WORLD_H) with Bgra::water().
 /// This function overpaints the surface zone with brighter colours + animated foam.
-pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32) {
-    use crate::world::WORLD_H;
+pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {
+    use crate::world::{WORLD_H, WORLD_W, SCREEN_W};
     let base_y  = WATER_Y as i32;
     let world_h = WORLD_H as i32;
 
@@ -710,7 +710,8 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32) {
     let crest   = Bgra::new(110, 195, 250); // wave crest
     let foam    = Bgra::new(215, 235, 252); // foam / white-blue
 
-    for x in 0..crate::world::WORLD_W as i32 {
+    let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W)) as i32;
+    for x in cam_x..(cam_x + SCREEN_W as i32) {
         let xf = x as f32;
         let tf = tick as f32;
 

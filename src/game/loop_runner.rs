@@ -2312,7 +2312,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain);
 
     // 2. Water ripple (dynamic — not cached)
-    draw_water_surface(buf, game.tick);
+    draw_water_surface(buf, game.tick, cam_x);
 
     // Viewport bounds for culling
     let vx0 = cam_x as f32;
@@ -2646,7 +2646,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             let fy = garcia.fall_y as i32;
             draw_garcia_sprite(buf, rx, fy, 80, 107);
             // Redraw water surface on top so the falling hand sinks behind it.
-            draw_water_surface(buf, game.tick);
+            draw_water_surface(buf, game.tick, cam_x);
         }
     }
 

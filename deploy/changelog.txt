@@ -1,3 +1,4 @@
+0.5.4.141  Restrict water-surface redraw to the visible viewport (was rendering all 1920 world columns every frame, 3x oversized)
 0.5.4.140  Major perf fix: clip static bg image draw to on-screen columns (was rendering ~2M px/frame across hidden tiles)
 0.5.4.139  FPS counter moved above timer; removed cloud/ridge landform layers (perf+visual)
 0.5.4.138  Add FPS counter (bottom-right); optimize bg sky-fill/cloud/copy loops via spawn_y bound (skip per-pixel is_solid)
