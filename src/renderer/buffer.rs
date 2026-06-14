@@ -132,7 +132,7 @@ impl WorldBuffer {
                     let wx = cam_x + x;
                     // Above the original surface, this column is guaranteed sky
                     // (explosions only remove material, never add it above spawn_y).
-                    if y < terrain.spawn_y[wx as usize] { continue; }
+                    if y < terrain.sky_limit[wx as usize] { continue; }
                     if terrain.is_solid(wx as i32, y as i32) {
                         let p = off + (x * 4) as usize;
                         self.data[p..p + 4].copy_from_slice(&src.data[p..p + 4]);

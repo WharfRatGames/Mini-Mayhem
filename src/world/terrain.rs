@@ -21,6 +21,13 @@ pub struct Terrain {
     /// Heightmap-derived surface Y for each column — safe spawn positions
     /// guaranteed to be above caves and below islands.
     pub spawn_y: Vec<u32>,
+    /// Unclamped topmost-solid-y per column (or WATER_Y if the column has no
+    /// solid pixels above water). Unlike `spawn_y` (clamped to TERRAIN_MIN_Y
+    /// for texture-depth purposes), this is exact — the renderer uses it as
+    /// "y below this is guaranteed sky" when drawing atmospheric backgrounds
+    /// behind the terrain, so overhangs/islands above TERRAIN_MIN_Y aren't
+    /// hidden.
+    pub sky_limit: Vec<u32>,
     /// Index (0–23) into the terrain texture atlas, chosen per map from the seed.
     /// Renderer samples this tile to texture the solid silhouette.
     pub surface_texture: u8,
@@ -38,6 +45,7 @@ impl Terrain {
             objects: vec![false; WORLD_PIXELS],
             texture: None,
             spawn_y: vec![TERRAIN_MAX_Y; WORLD_W as usize],
+            sky_limit: vec![WATER_Y; WORLD_W as usize],
             surface_texture: 0,
             archetype: 0,
         }
@@ -211,6 +219,7 @@ impl Terrain {
         for x in 0..WORLD_W {
             let surface_y = hm.surface_at(x);
             terrain.spawn_y[x as usize] = surface_y;
+            terrain.sky_limit[x as usize] = surface_y;
             for y in surface_y..WATER_Y {
                 terrain.set_solid(x as i32, y as i32, true);
             }
@@ -744,10 +753,9 @@ impl Terrain {
         // Clamp the reference to TERRAIN_MIN_Y so rare high-altitude pixels don't
         // make deeper pixels appear absurdly deep in the texture.
         for x in 0..WORLD_W as usize {
-            terrain.spawn_y[x] = (0..WATER_Y)
-                .find(|&y| terrain.is_solid(x as i32, y as i32))
-                .map(|y| y.max(TERRAIN_MIN_Y))
-                .unwrap_or(TERRAIN_MAX_Y as u32);
+            let topmost = (0..WATER_Y).find(|&y| terrain.is_solid(x as i32, y as i32));
+            terrain.spawn_y[x] = topmost.map(|y| y.max(TERRAIN_MIN_Y)).unwrap_or(TERRAIN_MAX_Y as u32);
+            terrain.sky_limit[x] = topmost.unwrap_or(WATER_Y);
         }
 
         // Phase 7 (per-column spawn mounds) intentionally removed: spawns are now

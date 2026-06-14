@@ -40,7 +40,7 @@ pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
                 let d = (dx * dx + dy * dy).sqrt();
                 if d >= sun_r { continue; }
                 let wx = cam_x as i32 + sx;
-                if sy as u32 >= terrain.spawn_y[wx as usize] { continue; }
+                if sy as u32 >= terrain.sky_limit[wx as usize] { continue; }
                 let f = 1.0 - d / sun_r;       // 1 at centre → 0 at edge
                 let add = (f * f * 70.0) as u16; // soft falloff
                 let c = buf.get_pixel(wx, sy);
