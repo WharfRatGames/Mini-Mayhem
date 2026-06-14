@@ -4,7 +4,22 @@
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
 ## Recent changes (0.5.4.121–0.5.4.133)
-- **Worms-style atmospheric backgrounds** (client-only visual, `renderer/background.rs`):
+- **Atmospheric backgrounds, second pass** (client-only visual; `renderer/background.rs`
+  + new `renderer/fx.rs`) — adds, on top of the first pass:
+  - **Seed-generated mid-ground landforms**: a procedural silhouette ridge built from the
+    *same map seed* as the terrain (`generate_landform`, `+8000` noise offset), flavored
+    per archetype (rolling hills / ridged cliffs / terraced canyon mesas / island humps /
+    cavern massif). Cached in `LoopState`, regenerated on a new match, drawn at parallax
+    0.65 behind the real terrain which always occludes it.
+  - **Drifting clouds** (parallax 0.15, soft additive biome-tinted blobs) + **wind gusts**
+    (`gust_wind` — synthesized visual modulation of the turn-fixed wind that all ambient
+    layers share; strong gusts throw extra debris).
+  - **Livelier debris**: motes sway in arcs and 2px ones flutter as tumbling flakes/leaves.
+  - **Effect particles** (`fx.rs`, client-only, not networked — same pattern as smoke):
+    explosion fallout (dirt chunks + sparks), water splashes, landing dust, footstep dust,
+    and plasma-torch dig chips. Cheap fake-physics (gravity + wind drift + fade), capped
+    at `FX_MAX`; stepped once per `simulate()` tick, drawn over the explosion rings.
+- **Worms-style atmospheric backgrounds** (first pass, `renderer/background.rs`):
   biome-tinted sky + faint baked cloud bands (`draw_terrain::sky_colour`), a sun glow +
   two parallax distant-hill ridges, and wind-driven ambient debris per map archetype
   (snow / pollen / sea-mist / dust / embers). All drawn behind terrain (sky pixels only).

@@ -32,8 +32,17 @@
 
 ## Render pipeline (loop_runner.rs render_my_team)
 - World cache (sky+terrain) baked once → copy_viewport_from each frame → atmospheric
-  background (renderer/background.rs: sun + parallax hills + wind debris, sky pixels
-  only) → water ripple → entities → particles → HUD. Background is client-only visual.
+  background → water ripple → entities → particles → explosions → fx → HUD.
+  All background/fx layers are client-only visuals.
+- Background order (renderer/background.rs, all share one gusting wind via gust_wind()):
+  clouds (par 0.15) → sun + parallax hills (draw_backdrop) → seed landform (par 0.65,
+  generate_landform/draw_landform, cached in LoopState.bg_landform, regen on map_seed
+  change) → wind debris (sky pixels only; motes now sway + flutter via phase/spin/rot).
+- renderer/fx.rs = event-driven effect particles (FxParticle/FxKind: DirtChunk/Spark/
+  Dust/Splash). Lives in GameState.fx (NOT networked — like smoke_particles). step_fx()
+  runs once per simulate() tick (top, before phase early-returns); draw_fx() after the
+  explosion rings. Spawned in apply_explosion_scaled (fallout/splash), at landing,
+  footstep, and torch-dig sites. biome_dirt(archetype) colours debris. Capped at FX_MAX.
 - sky_colour(x, y, archetype) in draw_terrain.rs is biome-tinted + baked cloud bands;
   horizon color is biome-independent (draw_water_surface trough restore relies on it).
 
