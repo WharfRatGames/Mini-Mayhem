@@ -725,9 +725,9 @@ pub fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
     // spamming jump ratchets the soldier upward.
     (-1..=1).any(|dx| {
         if game.terrain.is_solid(x + dx, y) { return false; }
-        game.terrain.is_solid(x + dx, y + 1)
-            || game.terrain.is_solid(x + dx, y + 2)
-            || game.terrain.is_solid(x + dx, y + 3)
+        game.terrain.is_blocked(x + dx, y + 1)
+            || game.terrain.is_blocked(x + dx, y + 2)
+            || game.terrain.is_blocked(x + dx, y + 3)
     })
 }
 

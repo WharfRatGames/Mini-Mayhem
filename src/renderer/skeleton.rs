@@ -194,7 +194,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8) {
     const S: i32 = 2;
     // Anchor: keep the hat base on the head top (logical dy=-5 → head_cy-5) after
     // scaling, so the bigger hat still sits on the head instead of floating above it.
-    const AY: i32 = 5;
+    const AY: i32 = 8;
     let rect = |buf: &mut WorldBuffer, ldx: i32, ldy: i32, lw: i32, lh: i32, col: Bgra| {
         buf.fill_rect(cx + ldx * S, cy + ldy * S + AY, (lw * S) as u32, (lh * S) as u32, col);
     };
