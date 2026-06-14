@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.137";
+const VERSION: &str = "0.5.4.138";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -596,6 +596,8 @@ fn main() {
     // ELO delta shown on end screen for ranked matches
     let mut elo_delta: i32 = 0;
     let mut elo_delta_rx: Option<std::sync::mpsc::Receiver<i32>> = None;
+    let mut fps_window_start = Instant::now();
+    let mut fps_frame_count: u32 = 0;
     loop {
         let frame_start = Instant::now();
         input.poll();
@@ -943,6 +945,14 @@ fn main() {
         };
 
         buf.blit_to_fb(&mut fb, cam.left_edge());
+
+        fps_frame_count += 1;
+        let fps_elapsed = fps_window_start.elapsed();
+        if fps_elapsed >= Duration::from_secs(1) {
+            lstate.display_fps = (fps_frame_count as f32 / fps_elapsed.as_secs_f32()).round() as u32;
+            fps_frame_count = 0;
+            fps_window_start = Instant::now();
+        }
 
         let elapsed = frame_start.elapsed();
         if elapsed < TICK_DURATION {

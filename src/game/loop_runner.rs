@@ -107,6 +107,8 @@ pub struct LoopState {
     pub bg_debris:               Vec<crate::renderer::background::BgParticle>,
     /// Client-only drifting clouds (furthest parallax layer). Not networked.
     pub bg_clouds:               Vec<crate::renderer::background::Cloud>,
+    /// Smoothed FPS, updated by main.rs once per second and drawn bottom-right.
+    pub display_fps:             u32,
 }
 
 impl LoopState {
@@ -120,6 +122,7 @@ impl LoopState {
             cache_craters_processed: 0,
             bg_debris: Vec::new(),
             bg_clouds: Vec::new(),
+            display_fps: 0,
         }
     }
 }
@@ -3132,6 +3135,16 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let y = 6;
         buf.fill_rect(x - 3, y - 2, (w + 6) as u32, 18, Bgra::new(10, 10, 25));
         draw_str_scaled(buf, &label, x, y, Bgra::new(180, 220, 120), 2);
+    }
+
+    // 9c. FPS counter — bottom-right corner, screen-anchored
+    {
+        use crate::renderer::font::{draw_str, str_width};
+        use crate::renderer::fb::Bgra;
+        let fps_str = format!("{} FPS", lstate.display_fps);
+        let x = cam_x as i32 + sw - str_width(&fps_str) - 6;
+        let y = sh - 14;
+        draw_str(buf, &fps_str, x, y, Bgra::new(200, 200, 200));
     }
 }
 

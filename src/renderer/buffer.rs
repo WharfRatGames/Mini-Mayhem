@@ -129,8 +129,11 @@ impl WorldBuffer {
                 self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
             } else {
                 for x in 0..SCREEN_W {
-                    let wx = (cam_x + x) as i32;
-                    if terrain.is_solid(wx, y as i32) {
+                    let wx = cam_x + x;
+                    // Above the original surface, this column is guaranteed sky
+                    // (explosions only remove material, never add it above spawn_y).
+                    if y < terrain.spawn_y[wx as usize] { continue; }
+                    if terrain.is_solid(wx as i32, y as i32) {
                         let p = off + (x * 4) as usize;
                         self.data[p..p + 4].copy_from_slice(&src.data[p..p + 4]);
                     }
