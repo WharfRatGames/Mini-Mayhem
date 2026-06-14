@@ -2322,7 +2322,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // 1b. Atmospheric background (behind terrain): clouds, hills, seed landform,
     //     wind debris — all driven by a shared gusting wind so they breathe together.
     use crate::renderer::background;
-    crate::renderer::bg_image::draw_static_bg(buf, game.terrain.archetype, cam_x as i32);
+    crate::renderer::bg_image::draw_static_bg(buf, &game.terrain, game.map_seed, cam_x as i32);
     let gw = background::gust_wind(game.wind.value(), lstate.tick);
     background::draw_backdrop(buf, &game.terrain, cam_x);
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);

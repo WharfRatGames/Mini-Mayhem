@@ -45,10 +45,20 @@ impl WorldBuffer {
     }
 
     /// Fill a rectangle with a colour. Clips to world bounds.
+    /// Clamps once, then writes each row as a contiguous span (no per-pixel
+    /// bounds check) — far cheaper than `set_pixel` per cell.
     pub fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, colour: Bgra) {
-        for dy in 0..h as i32 {
-            for dx in 0..w as i32 {
-                self.set_pixel(x + dx, y + dy, colour);
+        let x0 = x.max(0);
+        let y0 = y.max(0);
+        let x1 = (x + w as i32).min(WORLD_W as i32);
+        let y1 = (y + h as i32).min(WORLD_H as i32);
+        if x0 >= x1 || y0 >= y1 { return; }
+        let px = [colour.b, colour.g, colour.r, 0xFF];
+        for yy in y0..y1 {
+            let mut off = (yy as u32 * WORLD_W + x0 as u32) as usize * 4;
+            for _ in x0..x1 {
+                self.data[off..off + 4].copy_from_slice(&px);
+                off += 4;
             }
         }
     }
@@ -64,13 +74,23 @@ impl WorldBuffer {
     }
 
     /// Draw a filled circle. Clips to world bounds.
+    /// Per row computes the horizontal span once and writes it as a contiguous
+    /// run (clamped to world bounds), avoiding a per-pixel bounds check.
     pub fn fill_circle(&mut self, cx: i32, cy: i32, radius: i32, colour: Bgra) {
+        if radius < 0 { return; }
         let r2 = radius * radius;
+        let px = [colour.b, colour.g, colour.r, 0xFF];
         for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx * dx + dy * dy <= r2 {
-                    self.set_pixel(cx + dx, cy + dy, colour);
-                }
+            let yy = cy + dy;
+            if yy < 0 || yy >= WORLD_H as i32 { continue; }
+            let span = ((r2 - dy * dy) as f32).sqrt() as i32;
+            let x0 = (cx - span).max(0);
+            let x1 = (cx + span + 1).min(WORLD_W as i32);
+            if x0 >= x1 { continue; }
+            let mut off = (yy as u32 * WORLD_W + x0 as u32) as usize * 4;
+            for _ in x0..x1 {
+                self.data[off..off + 4].copy_from_slice(&px);
+                off += 4;
             }
         }
     }

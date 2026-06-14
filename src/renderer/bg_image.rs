@@ -1,21 +1,23 @@
 //! Static background image — the lowest render layer, drawn first (behind
-//! everything else: clouds, landform, debris, terrain). One PNG per terrain
-//! archetype, embedded at build time. If the PNG for an archetype is missing
-//! or a 1x1 placeholder, nothing is drawn and the procedural backdrop shows
-//! through unobstructed.
+//! everything else: clouds, landform, debris, terrain). A pool of background
+//! PNGs (sliced from `assets/BG/BG2.png`) embedded at build time; one is chosen
+//! per map from the map seed, so the background varies match-to-match across all
+//! archetypes rather than being fixed per archetype. If a PNG is missing or a
+//! 1x1 placeholder, nothing is drawn and the procedural backdrop shows through.
 //!
-//! To supply real art: drop a PNG (any size, RGB or RGBA) into
-//! `deploy/assets/backgrounds/bg_<archetype>.png` (0=plains/default,
-//! 1=mountains, 2=desert, 3=cave — see Terrain::archetype). The image is
-//! tiled horizontally across the world and scaled vertically to SCREEN_H,
-//! scrolling at a slow parallax factor.
+//! To refresh the art: re-slice the source sheet into
+//! `deploy/assets/backgrounds/bg2_<n>.png`. Each image (any size, RGB or RGBA)
+//! is tiled horizontally across the world and scaled vertically to SCREEN_H,
+//! scrolling at a slow parallax factor. Only the sky region above each column's
+//! terrain top is drawn (the terrain viewport copy covers the rest).
 
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
-use crate::world::{SCREEN_H, SCREEN_W};
+use crate::world::{Terrain, SCREEN_H, SCREEN_W};
 use std::sync::OnceLock;
 
-const ARCHETYPE_COUNT: usize = 4;
+/// Number of backgrounds in the pool (BG2.png is a 3×3 contact sheet).
+const BG_COUNT: usize = 9;
 const PAR_BG: f32 = 0.10;
 
 struct Decoded {
@@ -24,14 +26,25 @@ struct Decoded {
     pixels: Vec<u8>, // RGBA8
 }
 
-static PNGS: [&[u8]; ARCHETYPE_COUNT] = [
-    include_bytes!("../../deploy/assets/backgrounds/bg_0.png"),
-    include_bytes!("../../deploy/assets/backgrounds/bg_1.png"),
-    include_bytes!("../../deploy/assets/backgrounds/bg_2.png"),
-    include_bytes!("../../deploy/assets/backgrounds/bg_3.png"),
+static PNGS: [&[u8]; BG_COUNT] = [
+    include_bytes!("../../deploy/assets/backgrounds/bg2_0.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg2_1.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg2_2.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg2_3.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg2_4.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg2_5.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg2_6.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg2_7.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg2_8.png"),
 ];
 
-static DECODED: OnceLock<[Option<Decoded>; ARCHETYPE_COUNT]> = OnceLock::new();
+/// Pick which background to use for a map. Deterministic from the seed so client
+/// and server (and every client in a live match) agree.
+pub fn bg_index_for_seed(seed: u64) -> usize {
+    (seed.wrapping_mul(2654435761) >> 33) as usize % BG_COUNT
+}
+
+static DECODED: OnceLock<[Option<Decoded>; BG_COUNT]> = OnceLock::new();
 
 fn decode(bytes: &[u8]) -> Option<Decoded> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -52,15 +65,15 @@ fn decode(bytes: &[u8]) -> Option<Decoded> {
     Some(Decoded { w, h, pixels })
 }
 
-fn decoded() -> &'static [Option<Decoded>; ARCHETYPE_COUNT] {
+fn decoded() -> &'static [Option<Decoded>; BG_COUNT] {
     DECODED.get_or_init(|| std::array::from_fn(|i| decode(PNGS[i])))
 }
 
-static SCALED: OnceLock<[Option<Decoded>; ARCHETYPE_COUNT]> = OnceLock::new();
+static SCALED: OnceLock<[Option<Decoded>; BG_COUNT]> = OnceLock::new();
 
 /// Pre-scale each archetype's image to SCREEN_H once, so the per-frame draw
 /// is a plain integer index/modulo instead of a float rescale per pixel.
-fn scaled() -> &'static [Option<Decoded>; ARCHETYPE_COUNT] {
+fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
     SCALED.get_or_init(|| std::array::from_fn(|i| {
         let img = decoded()[i].as_ref()?;
         let scale = SCREEN_H as f32 / img.h as f32;
@@ -82,11 +95,13 @@ fn scaled() -> &'static [Option<Decoded>; ARCHETYPE_COUNT] {
     }))
 }
 
-/// Draw the static background image for `archetype`, pre-scaled to SCREEN_H and
-/// tiled horizontally, at the lowest parallax (slowest scroll). No-op if no
-/// real image is supplied for this archetype.
-pub fn draw_static_bg(buf: &mut WorldBuffer, archetype: u8, cam_x: i32) {
-    let slot = (archetype as usize).min(ARCHETYPE_COUNT - 1);
+/// Draw the seed-chosen static background, pre-scaled to SCREEN_H and tiled
+/// horizontally at the lowest parallax (slowest scroll). No-op if no real image
+/// is available. Only sky pixels (above each column's terrain top) are written —
+/// the terrain viewport copy covers everything from `sky_limit[x]` down, so
+/// painting those rows here is wasted work.
+pub fn draw_static_bg(buf: &mut WorldBuffer, terrain: &Terrain, seed: u64, cam_x: i32) {
+    let slot = bg_index_for_seed(seed);
     let img = match scaled()[slot].as_ref() {
         Some(img) => img,
         None => return,
@@ -106,13 +121,17 @@ pub fn draw_static_bg(buf: &mut WorldBuffer, archetype: u8, cam_x: i32) {
         let dx_lo = (-tile_x0).max(0);
         let dx_hi = (SCREEN_W as i32 - tile_x0).min(dst_w);
         if dx_lo >= dx_hi { continue; }
-        for dy in 0..dst_h {
-            for dx in dx_lo..dx_hi {
+        for dx in dx_lo..dx_hi {
+            let wx = cam_x + tile_x0 + dx;
+            if wx < 0 || wx >= crate::world::WORLD_W as i32 { continue; }
+            // Skip rows the terrain will cover anyway — only paint the sky band.
+            let y_end = terrain.sky_limit[wx as usize].min(dst_h as u32) as i32;
+            for dy in 0..y_end {
                 let idx = ((dy as u32 * img.w + dx as u32) * 4) as usize;
                 let a = img.pixels[idx + 3];
                 if a == 0 { continue; }
                 let col = Bgra::new(img.pixels[idx], img.pixels[idx + 1], img.pixels[idx + 2]);
-                buf.set_pixel(cam_x + tile_x0 + dx, dy, col);
+                buf.set_pixel(wx, dy, col);
             }
         }
     }

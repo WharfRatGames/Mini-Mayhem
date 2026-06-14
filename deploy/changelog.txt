@@ -1,3 +1,4 @@
+0.5.4.148  New backgrounds: 9 painted skies (from BG2.png), one picked per map by seed for variety across all archetypes; backgrounds now only drawn in the sky band (perf); faster fill_rect/fill_circle (clamp-once + contiguous row writes) for crates/barrels/mines/fire/black holes
 0.5.4.147  Tighten soldier/terrain collision (full body width+height checks while walking/airborne, fixes clipping through walls/ceilings); spawns now require the same full-body clearance so soldiers never start wedged in terrain; perf: block-copy fully-solid terrain columns in viewport copy
 0.5.4.146  Fix: last-resort spawn mounds raised on previously-empty columns were never rendered (stale spawn_y/sky_limit) - soldier appeared to float above invisible terrain
 0.5.4.145  Perf: water-surface fill no longer rewrites the ~110 already-correct body rows per column (was 640x122 set_pixel/frame, now ~640x10)
