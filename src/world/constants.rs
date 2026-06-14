@@ -13,7 +13,7 @@ pub const SCREEN_H: u32 = 480;
 
 /// How many rows at the bottom of the world are water.
 /// Worms that enter this zone drown instantly.
-pub const WATER_ROWS: u32 = 72;
+pub const WATER_ROWS: u32 = 120;
 
 /// The Y coordinate at which water begins (inclusive).
 /// Anything at or below this line is water.
