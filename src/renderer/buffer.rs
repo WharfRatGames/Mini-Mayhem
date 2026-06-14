@@ -12,6 +12,10 @@ use super::fb::Bgra;
 pub struct WorldBuffer {
     /// Raw BGRA bytes. Length = WORLD_W * WORLD_H * 4.
     data: Vec<u8>,
+    /// Running count of pixels written via this buffer's draw methods.
+    /// Used by the render loop's per-section profiling overlay (TEST mode) —
+    /// not read/reset anywhere in normal play.
+    pub pixel_writes: u64,
 }
 
 impl WorldBuffer {
@@ -19,6 +23,7 @@ impl WorldBuffer {
     pub fn new() -> Self {
         Self {
             data: vec![0u8; (WORLD_W * WORLD_H * 4) as usize],
+            pixel_writes: 0,
         }
     }
 
@@ -33,6 +38,7 @@ impl WorldBuffer {
         self.data[off + 1] = colour.g;
         self.data[off + 2] = colour.r;
         self.data[off + 3] = 0xFF;
+        self.pixel_writes += 1;
     }
 
     /// Like `set_pixel`, but skips the bounds check — caller must guarantee
@@ -45,6 +51,7 @@ impl WorldBuffer {
         self.data[off + 1] = colour.g;
         self.data[off + 2] = colour.r;
         self.data[off + 3] = 0xFF;
+        self.pixel_writes += 1;
     }
 
     /// Read a pixel colour. Returns black for out-of-bounds.
@@ -80,6 +87,7 @@ impl WorldBuffer {
                 off += 4;
             }
         }
+        self.pixel_writes += (x1 - x0) as u64 * (y1 - y0) as u64;
     }
 
     /// Fill the entire buffer with one colour.
@@ -111,6 +119,7 @@ impl WorldBuffer {
                 self.data[off..off + 4].copy_from_slice(&px);
                 off += 4;
             }
+            self.pixel_writes += (x1 - x0) as u64;
         }
     }
 
@@ -177,6 +186,7 @@ impl WorldBuffer {
             let off = (y * WORLD_W + cam_x) as usize * 4;
             self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
         }
+        self.pixel_writes += SCREEN_W as u64 * (y1.saturating_sub(y0)) as u64;
     }
 
     /// Like copy_viewport_from, but for rows above the waterline only copies
@@ -190,6 +200,7 @@ impl WorldBuffer {
             let off = (y * WORLD_W + cam_x) as usize * 4;
             self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
         }
+        self.pixel_writes += SCREEN_W as u64 * (WORLD_H - WATER_Y) as u64;
         // Sky band: per column, skip straight to the topmost solid pixel
         // (guaranteed sky above it — explosions only remove material, never
         // add it above sky_limit), then copy solid pixels down to the water.
@@ -206,6 +217,7 @@ impl WorldBuffer {
                     self.data[off + 2] = src.data[off + 2];
                     self.data[off + 3] = src.data[off + 3];
                 }
+                self.pixel_writes += (WATER_Y - y0) as u64;
             } else {
                 // Precomputed contiguous solid spans for this column (see
                 // `Terrain::solid_runs`) — memcpy each span directly instead
@@ -221,6 +233,7 @@ impl WorldBuffer {
                         self.data[off + 3] = src.data[off + 3];
                         off += (WORLD_W * 4) as usize;
                     }
+                    self.pixel_writes += (ye - ys) as u64;
                 }
             }
         }

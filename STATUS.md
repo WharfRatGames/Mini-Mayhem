@@ -1,9 +1,15 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.161
+## Version: 0.5.4.162
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.161)
+## Recent changes (0.5.4.135–0.5.4.162)
+- **Per-section pixel-write profiling overlay (0.5.4.162)** — TEST mode now
+  shows a top-right breakdown of how many pixels each render section
+  (terrain+bg, water, objects, soldiers, fire patches, plasma torch, garcia,
+  black holes, smoke trail, projectiles, fx overlay, status, avatars,
+  messages, hud, weapon indicator, seed display, fps counter) wrote in the
+  last frame, sorted descending, to help target the next 30fps optimization.
 - **Restore background parallax without pixelation (0.5.4.161)** — the
   background cache now stores the chosen image at native 1:1 resolution (one
   cache column per source-image column, no stretching), and

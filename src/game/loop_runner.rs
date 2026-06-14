@@ -109,6 +109,9 @@ pub struct LoopState {
     pub bg_debris:               Vec<crate::renderer::background::BgParticle>,
     /// Smoothed FPS, updated by main.rs once per second and drawn bottom-right.
     pub display_fps:             u32,
+    /// Per-section pixel-write counts from the most recent frame's render
+    /// (TEST mode profiling overlay — see `render_my_team`'s `mark!` calls).
+    pub pixel_stats:              Vec<(&'static str, u64)>,
 }
 
 impl LoopState {
@@ -123,6 +126,7 @@ impl LoopState {
             bg_cache: crate::renderer::WorldBuffer::new(),
             bg_debris: Vec::new(),
             display_fps: 0,
+            pixel_stats: Vec::new(),
         }
     }
 }
@@ -2371,6 +2375,18 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // use the simulated plasma_torch; live reconstructs it from networked torch_dir).
     crate::audio::update_torch(game.plasma_torch.is_some());
 
+    // Per-section pixel-write profiling (TEST mode overlay, see section 9b/9d
+    // below). `mark!` records how many pixels were written since the previous
+    // mark and resets the running total.
+    let mut pixel_stats: Vec<(&'static str, u64)> = Vec::new();
+    let mut last_pw = buf.pixel_writes;
+    macro_rules! mark {
+        ($label:expr) => {
+            pixel_stats.push(($label, buf.pixel_writes - last_pw));
+            last_pw = buf.pixel_writes;
+        };
+    }
+
     // 1. World cache: build once, patch on explosions, copy viewport each frame.
     if !lstate.cache_initialized {
         crate::renderer::draw_terrain::build_world_cache(&mut lstate.world_cache, &game.terrain);
@@ -2395,9 +2411,11 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
 
     buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain);
+    mark!("terrain+bg");
 
     // 2. Water ripple (dynamic — not cached)
     draw_water_surface(buf, game.tick, cam_x);
+    mark!("water");
 
     // Viewport bounds for culling
     let vx0 = cam_x as f32;
@@ -2526,6 +2544,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         // Arming is communicated by the slow-blink LED — no countdown number needed
     }
 
+    mark!("objects");
+
     // 5. Soldiers — world coordinates
     let active_ti = game.active_team();
     let active_si = game.teams[active_ti].active;
@@ -2613,6 +2633,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         }
     }
 
+    mark!("soldiers");
+
     // 5b. Fire patches — drawn after soldiers so fire renders in front.
     // Procedural teardrop flame: tapers to a point, concentric colour bands,
     // per-flame flicker + sideways sway that grows toward the tip.
@@ -2671,6 +2693,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         }
     }
 
+    mark!("fire_patches");
+
     // 5c. Plasma torch flame — active-soldier tunneling weapon
     if let Some(ref torch) = game.plasma_torch {
         let ti = game.active_team();
@@ -2693,6 +2717,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             }
         }
     }
+
+    mark!("plasma_torch");
 
     // 5d. Garcia targeting beam / falling sprite
     if let Some(ref garcia) = game.garcia {
@@ -2742,6 +2768,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         }
     }
 
+    mark!("garcia");
+
     // 5e. Black holes — drawn after fire patches, before projectiles
     for hole in &game.black_holes {
         let wx = hole.pos.x as i32;
@@ -2763,6 +2791,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         buf.set_pixel(wx + halo_r + 1, wy,           glow);
     }
 
+    mark!("black_holes");
+
     // 5c. Bazooka smoke trail (behind rockets)
     for (pos, ticks_left) in &game.smoke_particles {
         let t = *ticks_left;
@@ -2775,6 +2805,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             buf.fill_circle(pos.x as i32, pos.y as i32, r, shade);
         }
     }
+
+    mark!("smoke_trail");
 
     // 6. Projectiles + fuse countdown
     for proj in &game.projectiles {
@@ -2910,6 +2942,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         }
     }
 
+    mark!("projectiles");
+
     // 7. Aim arrow
     if game.turn.is_acting() {
         let active = game.active_team_ref().active_soldier();
@@ -2991,6 +3025,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         }
     }
 
+    mark!("fx_overlay");
+
     // 8. Status indicators — fuse timer (grenade), 2nd-shot prompt (shotgun), shots remaining (revolver)
     if game.turn.is_acting() {
         use crate::physics::projectile::WeaponKind;
@@ -3034,6 +3070,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         }
     }
 
+    mark!("status");
+
     // 8d. Team avatars + health meters — small, top corners, screen-anchored
     {
         use crate::renderer::avatar::draw_avatar;
@@ -3074,6 +3112,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             }
         }
     }
+
+    mark!("avatars");
 
     // 8b/8c. Top-of-screen message stack — drawn after avatars so messages appear on top
     {
@@ -3168,6 +3208,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         }
     }
 
+    mark!("messages");
+
     // 8b. HUD — drawn at cam_x offset so it stays screen-anchored
     let team_alive: [u32; 4] = std::array::from_fn(|i| {
         game.teams.get(i).map(|t| t.alive_count()).unwrap_or(0)
@@ -3177,6 +3219,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     });
     draw_hud_world(buf, cam_x, &game.wind, game.turn.secs_remaining(),
         game.turn.turn_number, game.active_team(), &team_alive, &team_hp);
+
+    mark!("hud");
 
     // 9. Weapon indicator (bottom-left, shows current weapon name)
     {
@@ -3211,6 +3255,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         draw_str(buf, hint, bx + 52, by + 2, Bgra::new(70, 70, 100));
     }
 
+    mark!("weapon_indicator");
+
     // 9b. Seed display (TEST mode only) — upper-right corner, screen-anchored
     if game.is_test {
         use crate::renderer::font::{draw_str_scaled, str_width_scaled};
@@ -3224,6 +3270,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         draw_str_scaled(buf, &label, x, y, Bgra::new(180, 220, 120), 2);
     }
 
+    mark!("seed_display");
+
     // 9c. FPS counter — bottom-right corner, screen-anchored
     {
         use crate::renderer::font::{draw_str, str_width};
@@ -3233,6 +3281,28 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let y = crate::renderer::HUD_Y - 12;
         draw_str(buf, &fps_str, x, y, Bgra::new(200, 200, 200));
     }
+    mark!("fps_counter");
+
+    // 9d. Per-section pixel-write breakdown (TEST mode only) — top sections by
+    // pixel count, sorted descending, drawn below the seed display.
+    if game.is_test {
+        use crate::renderer::font::{draw_str_scaled, str_width_scaled};
+        use crate::renderer::fb::Bgra;
+        use crate::world::SCREEN_W;
+        let mut sorted = pixel_stats.clone();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut y = 28;
+        for (label, px) in sorted.iter().take(8) {
+            let text = format!("{:<14}{:>7}", label, px);
+            let w = str_width_scaled(&text, 1);
+            let x = cam_x as i32 + SCREEN_W as i32 - w - 6;
+            buf.fill_rect(x - 2, y - 1, (w + 4) as u32, 10, Bgra::new(10, 10, 25));
+            draw_str_scaled(buf, &text, x, y, Bgra::new(220, 220, 220), 1);
+            y += 10;
+        }
+    }
+
+    lstate.pixel_stats = pixel_stats;
 }
 
 /// HUD drawn at world-space x=cam_x so it stays fixed on screen during panning.
