@@ -207,16 +207,19 @@ impl WorldBuffer {
                     self.data[off + 3] = src.data[off + 3];
                 }
             } else {
-                // wx < WORLD_W and y < WATER_Y <= WORLD_H are guaranteed by
-                // the surrounding loop bounds, so skip the bounds checks in
-                // is_solid/copy_from_slice for this hot per-pixel path.
-                for y in y0..WATER_Y {
-                    if terrain.is_solid_unchecked(wx, y) {
-                        let off = ((y * WORLD_W + wx) * 4) as usize;
+                // Precomputed contiguous solid spans for this column (see
+                // `Terrain::solid_runs`) — memcpy each span directly instead
+                // of testing `is_solid` for every pixel down to the water.
+                for &(ys, ye) in &terrain.solid_runs[wx as usize] {
+                    let off0 = ((ys * WORLD_W + wx) * 4) as usize;
+                    let off1 = ((ye * WORLD_W + wx) * 4) as usize;
+                    let mut off = off0;
+                    while off < off1 {
                         self.data[off]     = src.data[off];
                         self.data[off + 1] = src.data[off + 1];
                         self.data[off + 2] = src.data[off + 2];
                         self.data[off + 3] = src.data[off + 3];
+                        off += (WORLD_W * 4) as usize;
                     }
                 }
             }

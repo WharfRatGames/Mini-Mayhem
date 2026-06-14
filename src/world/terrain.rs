@@ -32,6 +32,13 @@ pub struct Terrain {
     /// `WATER_Y` (no caves/chasm gaps). Lets the renderer block-copy these
     /// columns without a per-pixel `is_solid` check.
     pub solid_to_water: Vec<bool>,
+    /// For columns where `solid_to_water[x] == false` (caves/chasms/overhangs),
+    /// the contiguous solid [start, end) spans between `sky_limit[x]` and
+    /// `WATER_Y`. Lets the renderer's sky-aware viewport copy memcpy each span
+    /// directly instead of testing `is_solid` for every pixel in the column.
+    /// Empty for `solid_to_water[x] == true` columns (handled by a single
+    /// block-copy there instead).
+    pub solid_runs: Vec<Vec<(u32, u32)>>,
     /// Index (0–23) into the terrain texture atlas, chosen per map from the seed.
     /// Renderer samples this tile to texture the solid silhouette.
     pub surface_texture: u8,
@@ -51,6 +58,7 @@ impl Terrain {
             spawn_y: vec![TERRAIN_MAX_Y; WORLD_W as usize],
             sky_limit: vec![WATER_Y; WORLD_W as usize],
             solid_to_water: vec![false; WORLD_W as usize],
+            solid_runs: vec![Vec::new(); WORLD_W as usize],
             surface_texture: 0,
             archetype: 0,
         }
@@ -123,8 +131,30 @@ impl Terrain {
         let topmost = (0..WATER_Y).find(|&y| self.is_solid(x, y as i32));
         let sky_limit = topmost.unwrap_or(WATER_Y);
         self.sky_limit[x as usize] = sky_limit;
-        self.solid_to_water[x as usize] = sky_limit < WATER_Y
+        let solid_to_water = sky_limit < WATER_Y
             && (sky_limit..WATER_Y).all(|y| self.is_solid(x, y as i32));
+        self.solid_to_water[x as usize] = solid_to_water;
+        self.solid_runs[x as usize] = if solid_to_water {
+            Vec::new()
+        } else {
+            self.solid_runs_for_column(x, sky_limit)
+        };
+    }
+
+    /// Contiguous solid [start, end) spans in column `x` between `y0` and
+    /// `WATER_Y`. Used to populate `solid_runs` for caves/chasm columns.
+    fn solid_runs_for_column(&self, x: i32, y0: u32) -> Vec<(u32, u32)> {
+        let mut runs = Vec::new();
+        let mut run_start: Option<u32> = None;
+        for y in y0..WATER_Y {
+            if self.is_solid(x, y as i32) {
+                if run_start.is_none() { run_start = Some(y); }
+            } else if let Some(s) = run_start.take() {
+                runs.push((s, y));
+            }
+        }
+        if let Some(s) = run_start { runs.push((s, WATER_Y)); }
+        runs
     }
 }
 
@@ -782,8 +812,14 @@ impl Terrain {
             terrain.spawn_y[x] = topmost.map(|y| y.max(TERRAIN_MIN_Y)).unwrap_or(TERRAIN_MAX_Y as u32);
             let sky_limit = topmost.unwrap_or(WATER_Y);
             terrain.sky_limit[x] = sky_limit;
-            terrain.solid_to_water[x] = sky_limit < WATER_Y
+            let solid_to_water = sky_limit < WATER_Y
                 && (sky_limit..WATER_Y).all(|y| terrain.is_solid(x as i32, y as i32));
+            terrain.solid_to_water[x] = solid_to_water;
+            terrain.solid_runs[x] = if solid_to_water {
+                Vec::new()
+            } else {
+                terrain.solid_runs_for_column(x as i32, sky_limit)
+            };
         }
 
         // Phase 7 (per-column spawn mounds) intentionally removed: spawns are now
