@@ -97,9 +97,18 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
 
 /// Draw the seed-chosen static background, pre-scaled to SCREEN_H and tiled
 /// horizontally at the lowest parallax (slowest scroll). No-op if no real image
-/// is available. Only sky pixels (above each column's terrain top) are written —
-/// the terrain viewport copy covers everything from `sky_limit[x]` down, so
-/// painting those rows here is wasted work.
+/// is available.
+///
+/// The background must cover every pixel the terrain viewport copy leaves
+/// untouched, because the frame buffer is reused across frames (otherwise stale
+/// content — title screen, old debris/explosions, uninitialized black — ghosts
+/// through). The viewport copy fills: all water rows, plus the solid pixels in
+/// the sky band. So per column:
+///   * fully-solid column (`solid_to_water`): the copy block-fills `sky_limit..
+///     WATER_Y`, so we only need to paint the sky band above `sky_limit`.
+///   * any column with an air gap below the top (caves, chasms, overhangs,
+///     fresh craters): the copy skips those air pixels, so we must paint the
+///     whole air region down to the waterline.
 pub fn draw_static_bg(buf: &mut WorldBuffer, terrain: &Terrain, seed: u64, cam_x: i32) {
     let slot = bg_index_for_seed(seed);
     let img = match scaled()[slot].as_ref() {
@@ -124,8 +133,14 @@ pub fn draw_static_bg(buf: &mut WorldBuffer, terrain: &Terrain, seed: u64, cam_x
         for dx in dx_lo..dx_hi {
             let wx = cam_x + tile_x0 + dx;
             if wx < 0 || wx >= crate::world::WORLD_W as i32 { continue; }
-            // Skip rows the terrain will cover anyway — only paint the sky band.
-            let y_end = terrain.sky_limit[wx as usize].min(dst_h as u32) as i32;
+            // Only clip to the sky band on contiguous-solid columns (the copy
+            // block-fills the rest); otherwise paint down to the waterline so
+            // air gaps below the surface aren't left stale.
+            let y_end = if terrain.solid_to_water[wx as usize] {
+                terrain.sky_limit[wx as usize].min(dst_h as u32) as i32
+            } else {
+                (crate::world::WATER_Y).min(dst_h as u32) as i32
+            };
             for dy in 0..y_end {
                 let idx = ((dy as u32 * img.w + dx as u32) * 4) as usize;
                 let a = img.pixels[idx + 3];

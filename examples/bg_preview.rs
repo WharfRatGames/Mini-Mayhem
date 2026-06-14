@@ -20,6 +20,9 @@ fn main() {
     draw_terrain::build_world_cache(&mut cache, &terrain);
 
     let mut frame = WorldBuffer::new();
+    // Simulate stale prior-frame content (e.g. title screen). After a correct
+    // render no sentinel pixel should survive inside the viewport.
+    frame.clear(arty::renderer::Bgra::new(255, 0, 255));
     bg_image::draw_static_bg(&mut frame, &terrain, seed, cam_x as i32);
     frame.copy_viewport_from_sky_aware(&cache, cam_x, &terrain);
 
@@ -28,15 +31,19 @@ fn main() {
     let h = SCREEN_H as usize;
     let raw = frame.raw(); // BGRA, full-world rows of WORLD_W
     let mut img = vec![0u8; w * h * 3];
+    let mut ghosts = 0u32;
     for y in 0..h {
         for x in 0..w {
             let src = ((y as u32 * WORLD_W + cam_x + x as u32) * 4) as usize;
             let dst = (y * w + x) * 3;
-            img[dst] = raw[src + 2];     // R
-            img[dst + 1] = raw[src + 1]; // G
-            img[dst + 2] = raw[src];     // B
+            let (b, g, r) = (raw[src], raw[src + 1], raw[src + 2]);
+            if b == 255 && g == 0 && r == 255 { ghosts += 1; }
+            img[dst] = r;
+            img[dst + 1] = g;
+            img[dst + 2] = b;
         }
     }
+    println!("sentinel (stale) pixels left in viewport: {ghosts}");
 
     let path = format!("/tmp/bg_preview_{seed}.png");
     let file = File::create(&path).expect("create png");
