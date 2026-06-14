@@ -1,7 +1,16 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.133
+## Version: 0.5.4.134
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.134)
+- Terrain heightmap amplitude +10% (noise scale 0.48 → 0.528 of terrain range)
+- Background debris reacts more strongly to wind (vx scaled 3x at spawn, wind
+  influence per tick 0.05 → 0.25)
+- Garcia targeting cursor speed 6 → 14; removed full-screen vertical targeting line
+- Falling Garcia hand now sinks behind the water surface (re-drawn after the sprite)
+- Soldier airborne terrain collision now checks only the top half of soldier height
+  (was full body) to reduce snagging/clipping through terrain while jumping
 
 ## Recent changes (0.5.4.121–0.5.4.133)
 - **Atmospheric backgrounds, second pass** (client-only visual; `renderer/background.rs`
