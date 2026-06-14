@@ -404,12 +404,28 @@ fn update_camera(game: &GameState, cam: &mut Camera, input: &InputState, step: S
                     cam.follow(game.teams[ti].soldiers[si].pos);
                 } else if let Some(p) = game.projectiles.first() {
                     cam.follow_always(p.pos);
-                } else if let Some(e) = game.explosions.last() {
+                } else if !game.explosions.is_empty() {
+                    // When multiple explosions are live at once, picking `.last()`
+                    // flip-flops the follow target between widely separated x
+                    // positions as the newest explosion finishes and is removed —
+                    // visible as left-right camera shake. Pick the one closest to
+                    // where the camera already is for continuity.
+                    let cam_center = cam.left_edge_f32() + crate::world::SCREEN_W as f32 / 2.0;
+                    let e = game.explosions.iter()
+                        .min_by(|a, b| (a.pos.x - cam_center).abs()
+                            .partial_cmp(&(b.pos.x - cam_center).abs()).unwrap())
+                        .unwrap();
                     cam.follow_always(e.pos);
                 } else {
+                    // Same continuity heuristic for airborne soldiers — the first
+                    // one in team/soldier order can flip-flop between soldiers on
+                    // opposite sides of the map as they land/launch.
+                    let cam_center = cam.left_edge_f32() + crate::world::SCREEN_W as f32 / 2.0;
                     let airborne = game.teams.iter().flat_map(|t| t.soldiers.iter())
                         .filter(|s| matches!(s.state, SoldierState::Airborne { .. }))
-                        .map(|s| s.pos).next();
+                        .map(|s| s.pos)
+                        .min_by(|a, b| (a.x - cam_center).abs()
+                            .partial_cmp(&(b.x - cam_center).abs()).unwrap());
                     if let Some(pos) = airborne { cam.follow(pos); }
                 }
             }
@@ -767,19 +783,23 @@ pub fn snap_to_surface(game: &mut GameState, ti: usize, si: usize) {
 }
 
 pub fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
+    use crate::renderer::draw_sprites::SOLDIER_HALF_W;
     let s = &game.teams[ti].soldiers[si];
     let x = s.pos.x as i32;
     let y = s.pos.y as i32;
-    // Probe a small horizontal window so ledge-edge soldiers (where the exact foot
-    // column can be air) can still jump. But exclude columns where the foot-level pixel
-    // is already solid — those are vertical walls beside the soldier, not ground beneath
-    // it. Without this guard, pressing against a wall makes is_on_ground return true and
+    // Probe the full 3-column body footprint (left edge, center, right edge —
+    // matching try_move_horizontal/snap_to_surface) so a soldier standing with
+    // a clear center column but a blocked edge column isn't reported as "on
+    // ground and free to move" when the move check would actually reject it.
+    // Exclude columns where the foot-level pixel is already solid — those are
+    // vertical walls beside the soldier, not ground beneath it. Without this
+    // guard, pressing against a wall makes is_on_ground return true and
     // spamming jump ratchets the soldier upward.
-    (-1..=1).any(|dx| {
-        if game.terrain.is_solid(x + dx, y) { return false; }
-        game.terrain.is_blocked(x + dx, y + 1)
-            || game.terrain.is_blocked(x + dx, y + 2)
-            || game.terrain.is_blocked(x + dx, y + 3)
+    [x - (SOLDIER_HALF_W - 1), x, x + (SOLDIER_HALF_W - 1)].iter().any(|&xc| {
+        if game.terrain.is_solid(xc, y) { return false; }
+        game.terrain.is_blocked(xc, y + 1)
+            || game.terrain.is_blocked(xc, y + 2)
+            || game.terrain.is_blocked(xc, y + 3)
     })
 }
 
@@ -788,12 +808,19 @@ pub fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 /// the soldier up through solid terrain, so spamming jump in a tight pocket ratchets
 /// them up through the ground to the surface. Airborne physics handles real motion.
 pub fn jump_unstick_lift(game: &GameState, ti: usize, si: usize) -> f32 {
-    use crate::renderer::draw_sprites::SOLDIER_H;
+    use crate::renderer::draw_sprites::{SOLDIER_H, SOLDIER_HALF_W};
     let x = game.teams[ti].soldiers[si].pos.x as i32;
     let head = game.teams[ti].soldiers[si].pos.y as i32 - SOLDIER_H as i32;
+    let x_l = x - (SOLDIER_HALF_W - 1);
+    let x_r = x + (SOLDIER_HALF_W - 1);
     let mut lift = 0.0;
     for k in 1..=2 {
-        if game.terrain.is_solid(x, head - k) { break; }
+        if game.terrain.is_solid(x_l, head - k)
+            || game.terrain.is_solid(x, head - k)
+            || game.terrain.is_solid(x_r, head - k)
+        {
+            break;
+        }
         lift = k as f32;
     }
     lift

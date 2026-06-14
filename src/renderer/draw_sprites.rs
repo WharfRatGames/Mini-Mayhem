@@ -730,9 +730,9 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {
         // as a real dip that matches the foreground wave shape.
         if top - 2 > base_y {
             for wy in base_y..(top - 2) {
-                if buf.get_pixel(x, wy) == body {
+                if buf.get_pixel_unchecked(x as u32, wy as u32) == body {
                     // Horizon sky colour is biome-independent (archetype unused here).
-                    buf.set_pixel(x, wy, crate::renderer::draw_terrain::sky_colour(x, wy, 0));
+                    buf.set_pixel_unchecked(x as u32, wy as u32, crate::renderer::draw_terrain::sky_colour(x, wy, 0));
                 }
             }
         }
@@ -752,17 +752,17 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {
                 6 | 7      => Bgra::new(38, 98, 195), // slightly lighter than body
                 _          => body,
             };
-            buf.set_pixel(x, wy, colour);
+            buf.set_pixel_unchecked(x as u32, wy as u32, colour);
         }
 
         // Foam band: 2–3 px thick at wave crests, brighter where the primary wave peaks
         let foam_phase = (xf * 0.11 + tf * 0.08).sin();
         if foam_phase > 0.30 {
-            buf.set_pixel(x, top,     foam); // crest row — always foam when phase active
-            buf.set_pixel(x, top + 1, foam); // one row below — fills out the stripe
+            buf.set_pixel_unchecked(x as u32, top as u32,     foam); // crest row — always foam when phase active
+            buf.set_pixel_unchecked(x as u32, (top + 1) as u32, foam); // one row below — fills out the stripe
         }
         if foam_phase > 0.60 {
-            buf.set_pixel(x, top - 1, foam); // peak pixels get a third row above
+            buf.set_pixel_unchecked(x as u32, (top - 1) as u32, foam); // peak pixels get a third row above
         }
     }
 }

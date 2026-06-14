@@ -1,9 +1,21 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.151
+## Version: 0.5.4.152
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.151)
+## Recent changes (0.5.4.135–0.5.4.152)
+- **Stuck soldiers (round 3) + camera shake + water perf (0.5.4.152)** —
+  `is_on_ground`/`jump_unstick_lift` now check the full 3-column body
+  footprint (left edge, center, right edge), matching `try_move_horizontal`;
+  previously they only checked the center column, so a soldier could be
+  "on ground" per the gate but have movement silently rejected by the
+  stricter footprint check on an edge column — reading as stuck on invisible
+  terrain. Camera no longer shakes left-right during multi-explosion Watching
+  phases: instead of always following `explosions.last()` or the first
+  airborne soldier (which flip-flop between widely separated x positions as
+  entries are added/removed), it now follows whichever is closest to the
+  camera's current center. Also: `draw_water_surface` now uses unchecked
+  pixel access (closing more of the fps gap).
 - **Crater cache + remaining perf fix (0.5.4.151)** — `Crater::carve` clears `solid[]`
   bits but previously left `sky_limit`/`solid_to_water` stale; for columns that were
   `solid_to_water == true`, the viewport copy's block-copy fast path then painted the
