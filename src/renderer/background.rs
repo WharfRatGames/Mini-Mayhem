@@ -2,8 +2,7 @@
 //! terrain (only on sky pixels) between the world-cache viewport copy and the
 //! water ripple. Two layers:
 //!
-//!   1. `draw_backdrop` — a soft sun glow + two parallax distant-hill ridges that
-//!      scroll slower than the world, giving depth.
+//!   1. `draw_backdrop` — a soft sun glow with slow horizontal parallax.
 //!   2. `update_debris` / `draw_debris` — wind-driven ambient motes (snow / dust /
 //!      embers / pollen) chosen per map archetype: the "alive air".
 //!
@@ -18,37 +17,10 @@ use std::f32::consts::{PI, TAU};
 
 // ── Parallax backdrop ─────────────────────────────────────────────────────────
 
-/// Parallax factors (< 1.0 = scrolls slower than the world → reads as distant).
-const PAR_FAR:  f32 = 0.25;
-const PAR_NEAR: f32 = 0.45;
-const PAR_SUN:  f32 = 0.12;
-/// Drifting clouds sit furthest back (slowest); seed-generated landforms sit
-/// closest (just behind the playable terrain, so it always occludes them).
-const PAR_CLOUD: f32 = 0.15;
+const PAR_SUN: f32 = 0.12;
 
-/// Smooth distant ridgeline from layered sines of the (parallax) world x.
-fn ridge_y(wx: f32, base: f32, amp: f32, phase: f32) -> f32 {
-    base
-        + (wx * 0.0035 + phase).sin() * amp
-        + (wx * 0.0090 + phase * 1.7).sin() * amp * 0.40
-        + (wx * 0.0190 + phase * 2.3).sin() * amp * 0.18
-}
-
-/// Hazy silhouette colour for a ridge, tinted slightly by archetype.
-/// `far` ridges are lighter (more atmospheric haze) than near ones.
-fn ridge_colour(archetype: u8, far: bool) -> Bgra {
-    let (mut r, mut g, mut b) = if far { (112, 126, 152) } else { (82, 96, 122) };
-    match archetype {
-        3 => { r = (r as i32 - 25).max(0) as u8; g = (g as i32 - 25).max(0) as u8; b = (b as i32 - 20).max(0) as u8; } // caverns: darker
-        4 => { r = (r as i32 + 28).min(255) as u8; g = (g as i32 + 8).min(255) as u8; } // canyon: warmer
-        1 => { r = (r as i32 + 14).min(255) as u8; g = (g as i32 + 14).min(255) as u8; b = (b as i32 + 16).min(255) as u8; } // cliffs: paler
-        _ => {}
-    }
-    Bgra::new(r, g, b)
-}
-
-/// Draw the sun glow + two parallax hill ridges into the visible viewport, only on
-/// sky pixels (skips terrain and water so the hills sit behind the landscape).
+/// Draw the sun glow into the visible viewport, only on sky pixels (skips
+/// terrain and water).
 pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
     let water_y = WATER_Y as i32;
@@ -80,25 +52,6 @@ pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
             }
         }
     }
-
-    // ── Two hill ridges, far then near (near drawn over far) ──
-    let far_col  = ridge_colour(terrain.archetype, true);
-    let near_col = ridge_colour(terrain.archetype, false);
-    for &(par, base, amp, phase, col) in &[
-        (PAR_FAR,  water_y as f32 - 70.0,  34.0, 0.0, far_col),
-        (PAR_NEAR, water_y as f32 - 42.0,  46.0, 2.1, near_col),
-    ] {
-        for sx in 0..SCREEN_W as i32 {
-            let sample_x = cam_x as f32 * par + sx as f32;
-            let top = ridge_y(sample_x, base, amp, phase) as i32;
-            if top >= water_y { continue; }
-            let wx = cam_x as i32 + sx;
-            let limit = (terrain.spawn_y[wx as usize] as i32).min(water_y);
-            for sy in top.max(0)..limit {
-                buf.set_pixel(wx, sy, col);
-            }
-        }
-    }
 }
 
 // ── Wind gusts (make the wind visible) ───────────────────────────────────────
@@ -115,91 +68,6 @@ pub fn gust_wind(base: f32, tick: u32) -> f32 {
     let gust = if env > 0.7 { (env - 0.7) / 0.3 * 0.8 } else { 0.0 };
     base * (breath + gust)
 }
-
-// ── Drifting clouds ──────────────────────────────────────────────────────────
-
-/// One soft cloud blob, in world-x (parallax) space + sky-y.
-pub struct Cloud {
-    x: f32,    // cloud-layer x (wraps over WORLD_W); screen x = x - cam_x*PAR_CLOUD
-    y: f32,    // sky y (top band)
-    rx: f32,   // horizontal radius
-    ry: f32,   // vertical radius
-    soft: f32, // peak brightness add (0..~70)
-}
-
-/// Tint for the cloud's additive glow, by archetype.
-fn cloud_tint(archetype: u8) -> (u16, u16, u16) {
-    match archetype {
-        1 => (70, 72, 76), // cliffs/snow: bright cool white
-        2 => (58, 64, 70), // islands: hazy
-        3 => (20, 18, 22), // caverns: faint murk
-        4 => (66, 56, 44), // canyon: warm dust haze
-        _ => (60, 62, 64), // hills: soft white
-    }
-}
-
-fn cloud_count(archetype: u8) -> usize {
-    match archetype { 3 => 2, 2 => 6, _ => 5 }
-}
-
-fn rand_cloud(state: &mut u32, archetype: u8) -> Cloud {
-    let x = rand_f(state) * WORLD_W as f32;
-    let y = 24.0 + rand_f(state) * 96.0;
-    let rx = 26.0 + rand_f(state) * 40.0;
-    let ry = rx * (0.32 + rand_f(state) * 0.18);
-    let (tr, _, _) = cloud_tint(archetype);
-    Cloud { x, y, rx, ry, soft: (tr as f32) * (0.7 + rand_f(state) * 0.5) }
-}
-
-/// Advance clouds: drift with the (gusting) wind, wrap around the world edges.
-pub fn update_clouds(clouds: &mut Vec<Cloud>, terrain: &Terrain, gust: f32, tick: u32) {
-    let target = cloud_count(terrain.archetype);
-    let mut state = tick.wrapping_mul(2246822519).wrapping_add(0x9E3779B9) | 1;
-
-    for c in clouds.iter_mut() {
-        c.x += gust * 0.35 + 0.04;          // always creep a touch, even in calm
-        let span = WORLD_W as f32 + 200.0;
-        if c.x > WORLD_W as f32 + 100.0 { c.x -= span; }
-        if c.x < -100.0 { c.x += span; }
-    }
-    while clouds.len() < target { clouds.push(rand_cloud(&mut state, terrain.archetype)); }
-    clouds.truncate(target);
-}
-
-/// Draw clouds as soft additive blobs on sky pixels only (behind everything).
-pub fn draw_clouds(buf: &mut WorldBuffer, terrain: &Terrain, clouds: &[Cloud], cam_x: u32) {
-    let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
-    let water_y = WATER_Y as i32;
-    let (tr, tg, tb) = cloud_tint(terrain.archetype);
-
-    for c in clouds {
-        let sx0 = c.x - cam_x as f32 * PAR_CLOUD;     // screen x of centre
-        if sx0 < -c.rx || sx0 > SCREEN_W as f32 + c.rx { continue; }
-        let cx = sx0 as i32;
-        let cy = c.y as i32;
-        let rx = c.rx as i32;
-        let ry = c.ry as i32;
-        for sy in (cy - ry).max(0)..(cy + ry).min(water_y) {
-            for sx in (cx - rx).max(0)..(cx + rx).min(SCREEN_W as i32) {
-                let dx = (sx - cx) as f32 / c.rx;
-                let dy = (sy - cy) as f32 / c.ry;
-                let d = (dx * dx + dy * dy).sqrt();
-                if d >= 1.0 { continue; }
-                let wx = cam_x as i32 + sx;
-                if sy as u32 >= terrain.spawn_y[wx as usize] { continue; }
-                let f = 1.0 - d;
-                let k = f * f * c.soft / tr.max(1) as f32; // 0..1 falloff weight
-                let col = buf.get_pixel(wx, sy);
-                buf.set_pixel(wx, sy, Bgra::new(
-                    (col.r as u16 + (tr as f32 * k) as u16).min(255) as u8,
-                    (col.g as u16 + (tg as f32 * k) as u16).min(255) as u8,
-                    (col.b as u16 + (tb as f32 * k) as u16).min(255) as u8,
-                ));
-            }
-        }
-    }
-}
-
 
 // ── Wind-driven ambient debris ──────────────────────────────────────────────
 

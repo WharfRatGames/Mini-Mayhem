@@ -105,8 +105,6 @@ pub struct LoopState {
     pub cache_craters_processed: usize,
     /// Client-only ambient background debris (wind-driven motes). Not networked.
     pub bg_debris:               Vec<crate::renderer::background::BgParticle>,
-    /// Client-only drifting clouds (furthest parallax layer). Not networked.
-    pub bg_clouds:               Vec<crate::renderer::background::Cloud>,
     /// Smoothed FPS, updated by main.rs once per second and drawn bottom-right.
     pub display_fps:             u32,
 }
@@ -121,7 +119,6 @@ impl LoopState {
             cache_initialized: false,
             cache_craters_processed: 0,
             bg_debris: Vec::new(),
-            bg_clouds: Vec::new(),
             display_fps: 0,
         }
     }
@@ -2308,8 +2305,6 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     use crate::renderer::background;
     crate::renderer::bg_image::draw_static_bg(buf, game.terrain.archetype, cam_x as i32);
     let gw = background::gust_wind(game.wind.value(), lstate.tick);
-    background::update_clouds(&mut lstate.bg_clouds, &game.terrain, gw, lstate.tick);
-    background::draw_clouds(buf, &game.terrain, &lstate.bg_clouds, cam_x);
     background::draw_backdrop(buf, &game.terrain, cam_x);
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
     background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
@@ -3143,7 +3138,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         use crate::renderer::fb::Bgra;
         let fps_str = format!("{} FPS", lstate.display_fps);
         let x = cam_x as i32 + sw - str_width(&fps_str) - 6;
-        let y = sh - 14;
+        let y = crate::renderer::HUD_Y - 12;
         draw_str(buf, &fps_str, x, y, Bgra::new(200, 200, 200));
     }
 }

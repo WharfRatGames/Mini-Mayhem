@@ -1,3 +1,4 @@
+0.5.4.139  FPS counter moved above timer; removed cloud/ridge landform layers (perf+visual)
 0.5.4.138  Add FPS counter (bottom-right); optimize bg sky-fill/cloud/copy loops via spawn_y bound (skip per-pixel is_solid)
 0.5.4.137  Remove landform layer (was hiding terrain + heavy perf cost); other bg perf/visibility fixes
 0.5.4.136  Fix bg layering/perf: terrain visible again, debris spread across screen, faster static bg
