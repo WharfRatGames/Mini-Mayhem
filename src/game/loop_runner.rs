@@ -664,7 +664,7 @@ pub fn try_move_horizontal(game: &mut GameState, ti: usize, si: usize, new_x: f3
         || game.terrain.is_blocked(cxi,  cfy - h)
         || game.terrain.is_blocked(cx_r, cfy - h));
 
-    for step_up in 0i32..=4 {
+    for step_up in 0i32..=8 {
         let try_y = cur_y - step_up as f32;
         if try_y < 0.0 { break; }
         let fy = try_y as i32;
@@ -703,8 +703,8 @@ pub fn snap_to_surface(game: &mut GameState, ti: usize, si: usize) {
         else if !game.terrain.is_solid(x, y - 2) { y - 2 }
         else { return; } // deeply embedded — leave for gravity to resolve
     } else { y };
-    // Scan downward to land on surface (0 = already correct, up to 5px gap)
-    for gap in 0i32..=5 {
+    // Scan downward to land on surface (0 = already correct, up to 10px gap for slopes)
+    for gap in 0i32..=10 {
         let fy = start + gap;
         if fy >= crate::world::WORLD_H as i32 { break; }
         if game.terrain.is_solid(x, fy) {
@@ -2237,6 +2237,16 @@ pub fn draw_weapon_menu(
 // ── Render ────────────────────────────────────────────────────────────────────
 
 pub fn render(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate: &mut LoopState) {
+    render_my_team(game, buf, cam, lstate, None);
+}
+
+/// Like render() but filters crate-collection messages to only show those belonging
+/// to `my_team` — used in live mode so opponents don't see what you collected.
+pub fn render_live(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate: &mut LoopState, my_team: usize) {
+    render_my_team(game, buf, cam, lstate, Some(my_team));
+}
+
+fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate: &mut LoopState, my_team: Option<usize>) {
     let cam_x = cam.left_edge() as u32;
     let sw    = crate::world::SCREEN_W as i32;
     let sh    = crate::world::SCREEN_H as i32;
@@ -2981,7 +2991,16 @@ pub fn render(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate: &mu
                 block_h + PAD * 2 + 3
             };
 
-        if let Some(msg) = game.messages.first() {
+        // In live mode filter messages: hide crate-collection notices belonging to
+        // the opponent so only the collecting player sees what they picked up.
+        let visible_msgs: Vec<&GameMessage> = game.messages.iter().filter(|m| {
+            match (my_team, m.team) {
+                (Some(mine), Some(t)) => t == mine, // live: only own-team messages
+                _ => true,
+            }
+        }).collect();
+
+        if let Some(msg) = visible_msgs.first() {
             let col = match msg.team {
                 Some(t) => TEAM_COLOURS[t.min(3)],
                 None    => Bgra::new(255, 210, 50),
@@ -2991,7 +3010,7 @@ pub fn render(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate: &mu
         }
 
         let mut extra_rows = 0;
-        for msg in game.messages.iter().skip(1) {
+        for msg in visible_msgs.iter().skip(1) {
             let col = match msg.team {
                 Some(t) => TEAM_COLOURS[t.min(3)],
                 None    => Bgra::new(255, 210, 50),

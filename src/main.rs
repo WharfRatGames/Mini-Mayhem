@@ -789,7 +789,7 @@ fn main() {
             if input.just_released(input::Button::R1) { cam.release_pan(); }
             game::loop_runner::update_visuals(&mut game);
             cam.tick();
-            game::loop_runner::render(&game, &mut buf, &mut cam, &mut lstate);
+            game::loop_runner::render_live(&game, &mut buf, &mut cam, &mut lstate, my_team);
             // draw_weapon_menu_overlay uses game.weapon_menu_open — same source as tick()
             game::loop_runner::draw_weapon_menu_overlay(&game, &mut buf, cam.left_edge() as i32);
             // Game over overlay — use latched final_result so server's new-game reset can't clear it
