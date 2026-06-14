@@ -43,6 +43,14 @@ impl Crater {
                 }
             }
         }
+
+        // Carving can open a new air gap in a column that was previously
+        // solid_to_water, leaving sky_limit/solid_to_water stale (still
+        // claiming "no caves here") — the renderer's sky-aware viewport copy
+        // would then block-copy the cached pre-carve pixels over this hole.
+        for x in x0..=x1 {
+            terrain.recompute_column_cache(x);
+        }
     }
 
     /// Returns true if this crater overlaps with a given world position.

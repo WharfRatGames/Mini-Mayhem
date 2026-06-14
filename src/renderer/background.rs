@@ -43,8 +43,10 @@ pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
                 if sy as u32 >= terrain.sky_limit[wx as usize] { continue; }
                 let f = 1.0 - d / sun_r;       // 1 at centre → 0 at edge
                 let add = (f * f * 70.0) as u16; // soft falloff
-                let c = buf.get_pixel(wx, sy);
-                buf.set_pixel(wx, sy, Bgra::new(
+                // wx < WORLD_W (cam_x clamped, sx < SCREEN_W) and
+                // sy in 0..water_y < WORLD_H are guaranteed above.
+                let c = buf.get_pixel_unchecked(wx as u32, sy as u32);
+                buf.set_pixel_unchecked(wx as u32, sy as u32, Bgra::new(
                     (c.r as u16 + add).min(255) as u8,
                     (c.g as u16 + add).min(255) as u8,
                     (c.b as u16 + (add / 2)).min(255) as u8, // warmer (less blue)

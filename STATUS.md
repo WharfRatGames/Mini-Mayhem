@@ -1,9 +1,18 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.150
+## Version: 0.5.4.151
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.150)
+## Recent changes (0.5.4.135–0.5.4.151)
+- **Crater cache + remaining perf fix (0.5.4.151)** — `Crater::carve` clears `solid[]`
+  bits but previously left `sky_limit`/`solid_to_water` stale; for columns that were
+  `solid_to_water == true`, the viewport copy's block-copy fast path then painted the
+  cached pre-carve pixels (a flat placeholder sky colour) over the new hole, showing
+  a "light blue" patch instead of the real background. `Crater::carve` now calls
+  `Terrain::recompute_column_cache` for every affected column. Also: the viewport
+  copy's per-column air-gap branch and the sun-glow disc now use
+  `is_solid_unchecked`/`get_pixel_unchecked`/`set_pixel_unchecked` to drop redundant
+  bounds checks from their hot per-pixel loops (closing the rest of the 25->30fps gap).
 - **Stuck soldiers + perf fix (0.5.4.150)** — `snap_to_surface`/`land_on_surface` now
   check the full 3-column body width (left edge, center, right edge), matching
   `try_move_horizontal`'s footprint; previously they only checked the center column,

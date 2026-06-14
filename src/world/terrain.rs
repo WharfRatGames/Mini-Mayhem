@@ -107,6 +107,25 @@ impl Terrain {
         let i = world_index(x as u32, y as u32);
         self.solid[i] || self.objects[i]
     }
+
+    /// Like `is_solid`, but skips the bounds check — caller must guarantee
+    /// `x < WORLD_W` and `y < WORLD_H`. Used in hot per-pixel render loops.
+    pub fn is_solid_unchecked(&self, x: u32, y: u32) -> bool {
+        self.solid[world_index(x, y)]
+    }
+
+    /// Recompute `sky_limit[x]` and `solid_to_water[x]` from the current
+    /// `solid` bits — same logic as the post-generation pass. Call for every
+    /// column affected by terrain destruction (e.g. `Crater::carve`) so these
+    /// caches don't go stale when an explosion opens a new air gap.
+    pub fn recompute_column_cache(&mut self, x: i32) {
+        if x < 0 || x >= WORLD_W as i32 { return; }
+        let topmost = (0..WATER_Y).find(|&y| self.is_solid(x, y as i32));
+        let sky_limit = topmost.unwrap_or(WATER_Y);
+        self.sky_limit[x as usize] = sky_limit;
+        self.solid_to_water[x as usize] = sky_limit < WATER_Y
+            && (sky_limit..WATER_Y).all(|y| self.is_solid(x, y as i32));
+    }
 }
 
 #[cfg(test)]

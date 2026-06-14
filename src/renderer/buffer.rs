@@ -56,6 +56,13 @@ impl WorldBuffer {
         Bgra::new(self.data[off + 2], self.data[off + 1], self.data[off])
     }
 
+    /// Like `get_pixel`, but skips the bounds check — caller must guarantee
+    /// `0 <= x < WORLD_W` and `0 <= y < WORLD_H`. Used in hot per-pixel loops.
+    pub fn get_pixel_unchecked(&self, x: u32, y: u32) -> Bgra {
+        let off = (y * WORLD_W + x) as usize * 4;
+        Bgra::new(self.data[off + 2], self.data[off + 1], self.data[off])
+    }
+
     /// Fill a rectangle with a colour. Clips to world bounds.
     /// Clamps once, then writes each row as a contiguous span (no per-pixel
     /// bounds check) — far cheaper than `set_pixel` per cell.
@@ -174,10 +181,16 @@ impl WorldBuffer {
                     self.data[off..off + 4].copy_from_slice(&src.data[off..off + 4]);
                 }
             } else {
+                // wx < WORLD_W and y < WATER_Y <= WORLD_H are guaranteed by
+                // the surrounding loop bounds, so skip the bounds checks in
+                // is_solid/copy_from_slice for this hot per-pixel path.
                 for y in y0..WATER_Y {
-                    if terrain.is_solid(wx as i32, y as i32) {
+                    if terrain.is_solid_unchecked(wx, y) {
                         let off = ((y * WORLD_W + wx) * 4) as usize;
-                        self.data[off..off + 4].copy_from_slice(&src.data[off..off + 4]);
+                        self.data[off]     = src.data[off];
+                        self.data[off + 1] = src.data[off + 1];
+                        self.data[off + 2] = src.data[off + 2];
+                        self.data[off + 3] = src.data[off + 3];
                     }
                 }
             }
