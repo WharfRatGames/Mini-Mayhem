@@ -945,14 +945,14 @@ mod tests {
     #[test]
     fn water_surface_draws_without_panic() {
         let mut b = buf();
-        draw_water_surface(&mut b, 0);
-        draw_water_surface(&mut b, 100);
+        draw_water_surface(&mut b, 0, 0);
+        draw_water_surface(&mut b, 100, 0);
     }
 
     #[test]
     fn water_surface_draws_near_water_y() {
         let mut b = buf();
-        draw_water_surface(&mut b, 0);
+        draw_water_surface(&mut b, 0, 0);
         // Some pixel near WATER_Y should be the ripple colour
         let water_colour = Bgra::new(80, 160, 255);
         let mut found = false;

@@ -409,7 +409,7 @@ impl Terrain {
             }
             2 => { // Floating islands (radial blob masks)
                 fade = 0.0;
-                threshold = rnd(&mut rng, 0.38, 0.05);
+                threshold = rnd(&mut rng, 0.28, 0.05);
                 scale_x = rnd(&mut rng, 1.8, 1.0);
                 scale_y = 1.5;
                 contrast = 1.4;
