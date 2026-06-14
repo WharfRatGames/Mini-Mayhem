@@ -1,7 +1,15 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.120
+## Version: 0.5.4.132
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.121–0.5.4.132)
+- Bazooka rocket 50% bigger (11×3px) + scaled smoke trail
+- Live opponent charge meter fixed
+- VS screen now shown for all live matches
+- Garcia (Hand of Jerry) sprite: bolt filled solid white, hand colors restored
+  (red/blue), bolt stays white in `deploy/assets/GARCIA.png`
+- Water level raised 10%
 
 ## Recent changes (0.5.4.120 — live/local parity)
 - **Shared simulation core**: `tick()` (local) and `server_tick()` (live+TAT) are
