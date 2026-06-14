@@ -14,7 +14,6 @@
 use crate::world::{Terrain, WATER_Y, WORLD_W, SCREEN_W, SCREEN_H};
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
-use noise::{NoiseFn, OpenSimplex};
 use std::f32::consts::{PI, TAU};
 
 // ── Parallax backdrop ─────────────────────────────────────────────────────────
@@ -26,7 +25,6 @@ const PAR_SUN:  f32 = 0.12;
 /// Drifting clouds sit furthest back (slowest); seed-generated landforms sit
 /// closest (just behind the playable terrain, so it always occludes them).
 const PAR_CLOUD: f32 = 0.15;
-const PAR_LAND:  f32 = 0.65;
 
 /// Smooth distant ridgeline from layered sines of the (parallax) world x.
 fn ridge_y(wx: f32, base: f32, amp: f32, phase: f32) -> f32 {
@@ -202,102 +200,6 @@ pub fn draw_clouds(buf: &mut WorldBuffer, terrain: &Terrain, clouds: &[Cloud], c
     }
 }
 
-// ── Seed-generated mid-ground landform silhouette ────────────────────────────
-
-/// Sentinel column height meaning "no landform here" (a sky gap — used by islands).
-const LAND_GAP: u16 = u16::MAX;
-
-/// Hazy silhouette colour for the mid-ground landform — closer than the parallax
-/// hills, so darker and more saturated than `ridge_colour(.., false)`.
-fn landform_colour(archetype: u8) -> Bgra {
-    let (mut r, mut g, mut b) = (66u32, 78, 100);
-    match archetype {
-        3 => { r = 34; g = 32; b = 38; }            // caverns: dark massif
-        4 => { r = 96; g = 70; b = 50; }            // canyon: warm mesa
-        1 => { r = 78; g = 86; b = 104; }           // cliffs: cool stone
-        2 => { r = 70; g = 86; b = 102; }           // islands
-        _ => {}
-    }
-    Bgra::new(r as u8, g as u8, b as u8)
-}
-
-/// Generate a per-world-column top-y silhouette from the map seed, flavoured by
-/// archetype. Deterministic (same seed → same shape); regenerated only on a new
-/// match. `LAND_GAP` marks columns with no landform (island sky gaps).
-pub fn generate_landform(seed: u64, archetype: u8) -> Vec<u16> {
-    use crate::world::{TERRAIN_MIN_Y, TERRAIN_MAX_Y};
-    // +8000 offset keeps this distinct from the terrain noise (which uses +3000..+7000).
-    let n0 = OpenSimplex::new(seed.wrapping_add(8000) as u32);
-    let n1 = OpenSimplex::new(seed.wrapping_add(8100) as u32);
-
-    // Silhouette band: a bit higher than the playable terrain's range so peaks
-    // poke up behind valleys, but never above the sky headroom.
-    let base_y  = (TERRAIN_MAX_Y as f32 - 30.0).min(WATER_Y as f32 - 24.0); // valley floor
-    let top_min = (TERRAIN_MIN_Y as f32 + 30.0).max(120.0);                 // highest peak
-    let amp = base_y - top_min;
-
-    let ridged = archetype == 1;
-    let scale = match archetype { 1 => 4.2, 4 => 2.6, _ => 3.0 } as f64;
-
-    let mut out = vec![LAND_GAP; WORLD_W as usize];
-    for x in 0..WORLD_W as usize {
-        let nx = x as f64 / WORLD_W as f64;
-        // 3-octave FBM in [0,1]
-        let mut val = 0.0; let mut a = 1.0; let mut fr = 1.0; let mut norm = 0.0;
-        for _ in 0..3 {
-            let s = n0.get([nx * scale * fr, 1.7]) * 0.7 + n1.get([nx * scale * fr * 2.1, 4.3]) * 0.3;
-            let s = if ridged { 1.0 - s.abs() } else { (s + 1.0) * 0.5 };
-            val += s * a; norm += a; a *= 0.5; fr *= 2.0;
-        }
-        let mut h = (val / norm) as f32; // 0..1, taller = bigger
-
-        match archetype {
-            4 => { // canyon: flat-topped mesas (quantise height into terraces)
-                let levels = 5.0;
-                h = (h * levels).floor() / levels;
-            }
-            3 => { // caverns: low, squat massif
-                h = h * 0.45 + 0.05;
-            }
-            2 => { // islands: only the tall humps survive; rest is sky gap
-                if h < 0.55 { out[x] = LAND_GAP; continue; }
-                h = (h - 0.55) / 0.45;
-            }
-            _ => {}
-        }
-        out[x] = (base_y - h * amp).round().clamp(top_min, base_y) as u16;
-    }
-    out
-}
-
-/// Draw the cached landform silhouette behind the playable terrain at PAR_LAND,
-/// skipping pixels behind real terrain or below the waterline.
-pub fn draw_landform(buf: &mut WorldBuffer, terrain: &Terrain, height: &[u16], cam_x: u32) {
-    if height.is_empty() { return; }
-    let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
-    let water_y = WATER_Y as i32;
-    let col = landform_colour(terrain.archetype);
-    // A slightly lighter rim near the silhouette crest for a touch of relief.
-    let rim = Bgra::new(
-        (col.r as u16 + 18).min(255) as u8,
-        (col.g as u16 + 18).min(255) as u8,
-        (col.b as u16 + 20).min(255) as u8,
-    );
-
-    for sx in 0..SCREEN_W as i32 {
-        let sample = (cam_x as f32 * PAR_LAND + sx as f32) as i32;
-        let idx = sample.clamp(0, WORLD_W as i32 - 1) as usize;
-        let top = height[idx];
-        if top == LAND_GAP { continue; }
-        let top = top as i32;
-        if top >= water_y { continue; }
-        let wx = cam_x as i32 + sx;
-        for sy in top.max(0)..water_y {
-            if terrain.is_solid(wx, sy) { continue; }
-            buf.set_pixel(wx, sy, if sy < top + 3 { rim } else { col });
-        }
-    }
-}
 
 // ── Wind-driven ambient debris ──────────────────────────────────────────────
 

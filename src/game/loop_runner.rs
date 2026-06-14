@@ -107,10 +107,6 @@ pub struct LoopState {
     pub bg_debris:               Vec<crate::renderer::background::BgParticle>,
     /// Client-only drifting clouds (furthest parallax layer). Not networked.
     pub bg_clouds:               Vec<crate::renderer::background::Cloud>,
-    /// Cached seed-generated mid-ground landform silhouette (top-y per world
-    /// column). Regenerated only when `landform_seed` != the map seed.
-    pub bg_landform:             Vec<u16>,
-    pub landform_seed:           u64,
 }
 
 impl LoopState {
@@ -124,8 +120,6 @@ impl LoopState {
             cache_craters_processed: 0,
             bg_debris: Vec::new(),
             bg_clouds: Vec::new(),
-            bg_landform: Vec::new(),
-            landform_seed: 0,
         }
     }
 }
@@ -2314,11 +2308,6 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     background::update_clouds(&mut lstate.bg_clouds, &game.terrain, gw, lstate.tick);
     background::draw_clouds(buf, &game.terrain, &lstate.bg_clouds, cam_x);
     background::draw_backdrop(buf, &game.terrain, cam_x);
-    if lstate.bg_landform.is_empty() || lstate.landform_seed != game.map_seed {
-        lstate.bg_landform = background::generate_landform(game.map_seed, game.terrain.archetype);
-        lstate.landform_seed = game.map_seed;
-    }
-    background::draw_landform(buf, &game.terrain, &lstate.bg_landform, cam_x);
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
     background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
 

@@ -1,3 +1,4 @@
+0.5.4.137  Remove landform layer (was hiding terrain + heavy perf cost); other bg perf/visibility fixes
 0.5.4.136  Fix bg layering/perf: terrain visible again, debris spread across screen, faster static bg
 0.5.4.133  Worms-style backgrounds: biome skies, sun, parallax hills, wind debris
 0.5.4.132  Hand of Jerry sprite now fully white including the bolt
