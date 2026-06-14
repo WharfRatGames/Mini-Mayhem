@@ -1,7 +1,0 @@
-/home/dusty/arty/target/aarch64-unknown-linux-gnu/miyoo/deps/cfg_if-5c14a879725e32fa.d: /home/dusty/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.4/src/lib.rs
-
-/home/dusty/arty/target/aarch64-unknown-linux-gnu/miyoo/deps/libcfg_if-5c14a879725e32fa.rlib: /home/dusty/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.4/src/lib.rs
-
-/home/dusty/arty/target/aarch64-unknown-linux-gnu/miyoo/deps/libcfg_if-5c14a879725e32fa.rmeta: /home/dusty/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.4/src/lib.rs
-
-/home/dusty/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.4/src/lib.rs:
