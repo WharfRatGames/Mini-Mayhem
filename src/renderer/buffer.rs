@@ -123,6 +123,22 @@ impl WorldBuffer {
         let sy = if y0 < y1 { 1i32 } else { -1 };
         let mut err = dx + dy;
 
+        // Bresenham never steps outside the bounding box of its endpoints, so if
+        // both endpoints are in bounds, every intermediate pixel is too — check
+        // once up front instead of 4 bounds comparisons per pixel. This loop runs
+        // for every bone segment of every soldier sprite, every frame.
+        let in_bounds = |px: i32, py: i32| px >= 0 && (px as u32) < WORLD_W && py >= 0 && (py as u32) < WORLD_H;
+        if in_bounds(x0, y0) && in_bounds(x1, y1) {
+            loop {
+                self.set_pixel_unchecked(x as u32, y as u32, colour);
+                if x == x1 && y == y1 { break; }
+                let e2 = 2 * err;
+                if e2 >= dy { err += dy; x += sx; }
+                if e2 <= dx { err += dx; y += sy; }
+            }
+            return;
+        }
+
         loop {
             self.set_pixel(x, y, colour);
             if x == x1 && y == y1 { break; }

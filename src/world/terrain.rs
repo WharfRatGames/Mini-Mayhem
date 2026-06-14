@@ -948,17 +948,15 @@ impl Terrain {
                 for y in top..WATER_Y as i32 { self.set_solid(cx, y, true); }   // dirt mass
                 let head = (110.0 * (1.0 - f)) as i32;                           // tapered sky
                 for dy in 1..=head { self.set_solid(cx, top - dy, false); }
-                // This column was previously empty (spawn_y/sky_limit pointed past
-                // WATER_Y, computed before mounds were raised) — without updating
-                // them, the renderer's sky-aware viewport copy would skip this whole
-                // new mound, leaving it invisible (soldier floating "above terrain").
+                // The headroom clear above can punch a hole into ground that was
+                // previously solid between the old sky_limit and the new mound top
+                // (when the mound doesn't raise the column's visible top), leaving
+                // sky_limit/solid_to_water stale — recompute from the actual solid
+                // bits so the renderer's sky-aware viewport copy doesn't block-copy
+                // a cached placeholder over that new gap (and so a previously-empty
+                // column's new mound is correctly picked up too).
+                self.recompute_column_cache(cx);
                 let top_u = top as u32;
-                if top_u < self.sky_limit[cx as usize] {
-                    self.sky_limit[cx as usize] = top_u;
-                    // The new sky_limit is `top`, and the mound fills top..WATER_Y
-                    // solid, so the column is now solid contiguously to water.
-                    self.solid_to_water[cx as usize] = true;
-                }
                 if top_u < self.spawn_y[cx as usize] { self.spawn_y[cx as usize] = top_u.max(TERRAIN_MIN_Y); }
             }
             spawns.push(WorldPos::new(px as f32, (crown_y - 1) as f32));

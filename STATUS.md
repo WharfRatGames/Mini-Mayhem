@@ -1,9 +1,23 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.152
+## Version: 0.5.4.153
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.152)
+## Recent changes (0.5.4.135–0.5.4.153)
+- **Light-blue patches on fresh maps + skeleton draw perf (0.5.4.153)** —
+  found the real root cause of the light-blue patches reported even before
+  any terrain is destroyed: `Terrain::find_team_spawns` (spawn-mound raising)
+  clears a tapered "headroom" dome above each mound, which can punch a new
+  air gap into ground that was previously solid between the old `sky_limit`
+  and the mound top — but only updated `sky_limit`/`solid_to_water` when the
+  mound raised the column's visible top, leaving them stale (`solid_to_water
+  == true` with an actual gap) on ~90-870 columns per map depending on seed.
+  Now calls `Terrain::recompute_column_cache` unconditionally after raising
+  each mound column, like `Crater::carve` already does. Also:
+  `WorldBuffer::draw_line` (used by every soldier skeleton bone segment) now
+  bounds-checks once per line instead of once per pixel, using
+  `set_pixel_unchecked` in the common in-bounds case — closing more of the
+  fps gap.
 - **Stuck soldiers (round 3) + camera shake + water perf (0.5.4.152)** —
   `is_on_ground`/`jump_unstick_lift` now check the full 3-column body
   footprint (left edge, center, right edge), matching `try_move_horizontal`;
