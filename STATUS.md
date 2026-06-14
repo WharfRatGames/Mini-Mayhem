@@ -1,9 +1,17 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.158
+## Version: 0.5.4.159
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.158)
+## Recent changes (0.5.4.135–0.5.4.159)
+- **Balance + perf (0.5.4.159)** — bazooka direct hits capped at 50 damage
+  (was up to 70 with the direct-hit bonus); bee stings reduced from 12 to 5
+  damage each; bazooka smoke trail now spawns from the rocket's tail instead
+  of its nose; background images are now bilinear-scaled instead of
+  nearest-neighbor (fixes pixelation on the ~1.5x upscale to SCREEN_H); perf:
+  cave/chasm terrain columns now use precomputed solid spans
+  (`Terrain::solid_runs`) in the sky-aware viewport copy instead of a
+  per-pixel `is_solid` check (~230k checks/frame removed on cave/chasm maps).
 - **Background cache parallax + full BG1 pool (0.5.4.158)** — the
   0.5.4.157 background cache dropped this layer's camera parallax as a
   tradeoff and only included 4 of BG1.png's 6 slices; parallax (0.10) is
