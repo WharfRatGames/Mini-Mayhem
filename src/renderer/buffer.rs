@@ -164,9 +164,16 @@ impl WorldBuffer {
     /// Copy the 640×480 viewport slice from `src` into the same region of `self`.
     /// Used each frame to stamp the world cache into the working draw buffer.
     pub fn copy_viewport_from(&mut self, src: &WorldBuffer, cam_x: u32) {
+        self.copy_viewport_rows_from(src, cam_x, 0, WORLD_H);
+    }
+
+    /// Like `copy_viewport_from`, but only rows `y0..y1`. Used to stamp a
+    /// pre-rendered background cache (which only covers the sky band) into
+    /// the viewport via cheap row memcpys.
+    pub fn copy_viewport_rows_from(&mut self, src: &WorldBuffer, cam_x: u32, y0: u32, y1: u32) {
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
         let row_bytes = SCREEN_W as usize * 4;
-        for y in 0..WORLD_H {
+        for y in y0..y1 {
             let off = (y * WORLD_W + cam_x) as usize * 4;
             self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
         }
