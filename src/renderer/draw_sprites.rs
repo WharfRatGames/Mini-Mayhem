@@ -588,6 +588,25 @@ pub fn draw_projectile(buf: &mut WorldBuffer, pos: WorldPos, radius: i32, colour
     buf.fill_circle(pos.x as i32, pos.y as i32, radius, colour);
 }
 
+/// Draw a bazooka as a 5-pixel rocket oriented along its velocity.
+pub fn draw_bazooka(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::world::Vec2) {
+    let speed = (vel.x * vel.x + vel.y * vel.y).sqrt();
+    let px = pos.x.round() as i32;
+    let py = pos.y.round() as i32;
+    if speed < 0.1 {
+        buf.fill_circle(px, py, 2, Bgra::yellow());
+        return;
+    }
+    let nx = vel.x / speed;
+    let ny = vel.y / speed;
+    let tail_x = (pos.x - nx * 2.0).round() as i32;
+    let tail_y = (pos.y - ny * 2.0).round() as i32;
+    let tip_x  = (pos.x + nx * 2.0).round() as i32;
+    let tip_y  = (pos.y + ny * 2.0).round() as i32;
+    buf.draw_line(tail_x, tail_y, tip_x, tip_y, Bgra::new(200, 100, 20));
+    buf.set_pixel(tip_x, tip_y, Bgra::new(255, 230, 80));
+}
+
 /// Draw a grenade projectile — small oval body with seam lines and pin, matching the weapon icon style.
 pub fn draw_grenade_projectile(buf: &mut WorldBuffer, pos: WorldPos) {
     let gx = pos.x as i32;

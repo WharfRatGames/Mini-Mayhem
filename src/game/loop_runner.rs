@@ -191,6 +191,14 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
             let exp_before = game.explosions.len();
             let tnt_before = game.projectiles.iter().filter(|p| p.kind == crate::physics::projectile::WeaponKind::Tnt).count();
             game.step_projectiles();
+            {
+                use crate::physics::projectile::WeaponKind;
+                let spawns: Vec<_> = game.projectiles.iter()
+                    .filter(|p| p.kind == WeaponKind::Bazooka)
+                    .map(|p| p.pos)
+                    .collect();
+                for pos in spawns { game.smoke_particles.push((pos, 22)); }
+            }
             if game.explosions.len() > exp_before {
                 let tnt_after = game.projectiles.iter().filter(|p| p.kind == crate::physics::projectile::WeaponKind::Tnt).count();
                 if tnt_after < tnt_before { game.emit_sound(crate::audio::Sfx::Tnt); } else { game.emit_sound(crate::audio::Sfx::Explosion); }
@@ -321,6 +329,7 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
     game.step_death_explosions();
     game.step_explosions();
     game.blood_splats.retain_mut(|(_, t)| { if *t > 0 { *t -= 1; true } else { false } });
+    game.smoke_particles.retain_mut(|(_, t)| { if *t > 0 { *t -= 1; true } else { false } });
     game.bullet_trails.retain_mut(|t| { if t.2 > 0 { t.2 -= 1; true } else { false } });
     game.step_crates();
     game.collect_crates();
@@ -2635,6 +2644,19 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         buf.set_pixel(wx + halo_r + 1, wy,           glow);
     }
 
+    // 5c. Bazooka smoke trail (behind rockets)
+    for (pos, ticks_left) in &game.smoke_particles {
+        let t = *ticks_left;
+        if pos.x >= vx0 && pos.x < vx1 {
+            let shade = if t > 15 { Bgra::new(180, 180, 180) }
+                        else if t > 10 { Bgra::new(140, 140, 140) }
+                        else if t > 5  { Bgra::new(100, 100, 100) }
+                        else            { Bgra::new(65,  65,  65)  };
+            let r = if t > 12 { 2 } else { 1 };
+            buf.fill_circle(pos.x as i32, pos.y as i32, r, shade);
+        }
+    }
+
     // 6. Projectiles + fuse countdown
     for proj in &game.projectiles {
         use crate::physics::projectile::{WeaponKind, FuseState};
@@ -2761,6 +2783,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         draw_str_scaled(buf, &label, lx,     ly,     Bgra::new(255, 220, 50), 2);
                     }
                 }
+            } else if proj.kind == WeaponKind::Bazooka {
+                crate::renderer::draw_sprites::draw_bazooka(buf, proj.pos, proj.vel);
             } else {
                 draw_projectile(buf, proj.pos, 2, Bgra::yellow());
             }

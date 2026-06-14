@@ -308,6 +308,8 @@ pub struct GameState {
     pub messages: Vec<GameMessage>,
     /// Blood splat particles from shotgun hits (visual only — not networked). (pos, ticks_left)
     pub blood_splats: Vec<(WorldPos, u32)>,
+    /// Bazooka smoke trail particles (visual only — not networked). (pos, ticks_left)
+    pub smoke_particles: Vec<(WorldPos, u32)>,
     /// Soldiers waiting to explode before their headstone is placed.
     pub pending_deaths: Vec<PendingDeathExplosion>,
     /// Active plasma torch tunneling session; None = not torching.
@@ -361,6 +363,7 @@ impl GameState {
             crate_watch_ticks: 0,
             messages: Vec::new(),
             blood_splats: Vec::new(),
+            smoke_particles: Vec::new(),
             pending_deaths: Vec::new(),
             plasma_torch: None,
             garcia: None,

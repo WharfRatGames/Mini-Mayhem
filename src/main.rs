@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.127";
+const VERSION: &str = "0.5.4.128";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -720,17 +720,23 @@ fn main() {
                 // Drain WelcomeMsg silently — we'll exit after the game-over timer
                 while conn.try_recv_welcome().is_some() {}
             }
-            // Client-side projectile extrapolation: only advance when no server state
-            // arrived this frame. When a state arrives the position is already the
-            // server's authoritative value for this tick; extrapolating on top would
-            // double the movement and make projectiles appear 2× faster.
-            if !got_state {
-                for proj in &mut game.projectiles {
-                    proj.pos.x += proj.vel.x;
-                    proj.pos.y += proj.vel.y;
-                    proj.vel.y = (proj.vel.y + 0.5).min(18.0);
-                }
+            // Advance projectiles one tick every frame, same as non-live simulate().
+            // When a server state arrived it set positions to tick N; ticking predicts N+1.
+            // The "first state's projectiles" logic above ensures multi-packet frames
+            // still only advance by one tick (first state = N, tick → N+1).
+            let wind = game.wind.value();
+            for proj in &mut game.projectiles {
+                crate::physics::tick::tick(proj, wind);
             }
+            {
+                use crate::physics::projectile::WeaponKind;
+                let spawns: Vec<_> = game.projectiles.iter()
+                    .filter(|p| p.kind == WeaponKind::Bazooka)
+                    .map(|p| p.pos)
+                    .collect();
+                for pos in spawns { game.smoke_particles.push((pos, 22)); }
+            }
+            game.smoke_particles.retain_mut(|(_, t)| { if *t > 0 { *t -= 1; true } else { false } });
         }
         let mut mp_quit = false;
         let running = if net_conn.is_some() {
