@@ -22,3 +22,4 @@
 0.5.4.66  real caves, overhangs, sky islands
 0.5.4.65  bigger maps, more hazards, MP sfx
 0.5.4.64  no jump-clip through ground
+v0.5.4.135: static background images (sunset/aurora/jungle/canyon by biome) as new lowest render layer

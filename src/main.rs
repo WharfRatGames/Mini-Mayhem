@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.134";
+const VERSION: &str = "0.5.4.135";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
