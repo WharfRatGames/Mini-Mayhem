@@ -911,10 +911,27 @@ def handle(db, sock):
         my_elo_val = get_elo(uid2) or 1000
         opp_uid = p1 if my_slot == 0 else p0
         opp_elo_val = (get_elo(opp_uid) or 1000) if opp_uid else 1000
+        # Fetch opponent's roster cosmetics and worm names
+        opp_worm_names = ["", "", "", ""]
+        opp_hat_ids = [0,0,0,0]; opp_uniform_ids = [0,0,0,0]
+        opp_boot_ids = [0,0,0,0]; opp_gun_ids = [0,0,0,0]
+        if opp_uid:
+            opp_roster = db.execute(
+                "SELECT worm_names,hat_ids,uniform_color_ids,boot_color_ids,gun_style_ids FROM rosters WHERE user_id=? ORDER BY id LIMIT 1", (opp_uid,)
+            ).fetchone()
+            if opp_roster:
+                opp_worm_names = json.loads(opp_roster[0] or '["","","",""]')
+                opp_hat_ids    = json.loads(opp_roster[1] or '[0,0,0,0]')
+                opp_uniform_ids= json.loads(opp_roster[2] or '[0,0,0,0]')
+                opp_boot_ids   = json.loads(opp_roster[3] or '[0,0,0,0]')
+                opp_gun_ids    = json.loads(opp_roster[4] or '[0,0,0,0]')
         send_json(sock, 200, {"moves": json.loads(moves), "seed": seed, "turn": turn,
                               "my_slot": my_slot, "opponent": opp, "done": bool(done), "ranked": bool(is_ranked),
                               "my_elo": my_elo_val, "opponent_elo": opp_elo_val,
-                              "has_mines": bool(has_mines_val), "has_barrels": bool(has_barrels_val)})
+                              "has_mines": bool(has_mines_val), "has_barrels": bool(has_barrels_val),
+                              "opponent_worm_names": opp_worm_names,
+                              "opponent_hat_ids": opp_hat_ids, "opponent_uniform_color_ids": opp_uniform_ids,
+                              "opponent_boot_color_ids": opp_boot_ids, "opponent_gun_style_ids": opp_gun_ids})
 
     elif method == "GET" and path == "/matches/pending":
         uid2 = uid(token)

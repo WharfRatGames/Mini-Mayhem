@@ -94,9 +94,27 @@ fn main() {
 
         let i1 = inp1.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let i0 = inp0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        // Apply cosmetics/names from both clients every tick so the server's game
+        // state reflects each player's roster and StateMsg broadcasts them to the opponent.
+        for (team, msg_opt) in [(0usize, &i0), (1usize, &i1)] {
+            if let Some(msg) = msg_opt {
+                if let Some(t) = game.teams.get_mut(team) {
+                    for si in 0..t.soldiers.len().min(4) {
+                        t.soldiers[si].hat_id           = msg.hat_ids[si];
+                        t.soldiers[si].uniform_color_id = msg.uniform_color_ids[si];
+                        t.soldiers[si].boot_color_id    = msg.boot_color_ids[si];
+                        t.soldiers[si].gun_style_id     = msg.gun_style_ids[si];
+                        if !msg.worm_names[si].is_empty() {
+                            t.soldiers[si].name = msg.worm_names[si].clone();
+                        }
+                    }
+                }
+            }
+        }
         let active = game.active_team();
         let inp = if active == 0 { i0 } else { i1 };
         let mut input_state = inp.as_ref().map(msg_to_input).unwrap_or_else(arty::input::InputState::new);
+
         // Apply client's authoritative aim angle directly; strip Up/Down so
         // process_aim doesn't double-apply them on top of the received angle.
         if let Some(ref msg) = inp {
@@ -374,6 +392,7 @@ fn build_state(game: &GameState, tick: u32) -> StateMsg {
             use arty::physics::projectile::FuseState;
             NetProjectile {
                 x: p.pos.x, y: p.pos.y,
+                vel_x: p.vel.x, vel_y: p.vel.y,
                 kind_u8: p.kind.to_net_u8(),
                 fuse_ticks: match p.fuse { FuseState::Burning(n) => n, _ => 0 },
                 is_fragment: p.is_fragment,

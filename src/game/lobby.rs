@@ -6,7 +6,7 @@ use crate::world::{SCREEN_W, SCREEN_H};
 use crate::game::account::{http_post, http_get, json_field};
 
 pub enum LobbyAction {
-    StartMatch { match_id: i64, seed: u64, my_slot: usize, moves: Vec<Move>, my_elo: i32, opp_elo: i32, has_mines: bool, has_barrels: bool, opp_name: String, opp_worm_names: [String; 4], days_remaining: i32 },
+    StartMatch { match_id: i64, seed: u64, my_slot: usize, moves: Vec<Move>, my_elo: i32, opp_elo: i32, has_mines: bool, has_barrels: bool, opp_name: String, opp_worm_names: [String; 4], opp_hat_ids: [u8; 4], opp_uniform_color_ids: [u8; 4], opp_boot_color_ids: [u8; 4], opp_gun_style_ids: [u8; 4], days_remaining: i32 },
     Back,
     LoggedOut,
 }
@@ -377,8 +377,12 @@ impl LobbyScreen {
                         let opp_name: String = json_field(&resp, "opponent").unwrap_or_default();
                         let days_remaining: i32 = json_field(&resp, "days_remaining").and_then(|s| s.parse().ok()).unwrap_or(-1);
                         let has_barrels: bool = json_field(&resp, "has_barrels").map(|s| s == "true" || s == "1").unwrap_or(false);
-                        let opp_worm_names = parse_worm_names(&resp, "opponent_worm_names");
-                        LoadResult::MatchState(Some(LobbyAction::StartMatch { match_id: mid, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, days_remaining }))
+                        let opp_worm_names        = parse_worm_names(&resp, "opponent_worm_names");
+                        let opp_hat_ids            = parse_u8_arr(&resp, "opponent_hat_ids");
+                        let opp_uniform_color_ids  = parse_u8_arr(&resp, "opponent_uniform_color_ids");
+                        let opp_boot_color_ids     = parse_u8_arr(&resp, "opponent_boot_color_ids");
+                        let opp_gun_style_ids      = parse_u8_arr(&resp, "opponent_gun_style_ids");
+                        LoadResult::MatchState(Some(LobbyAction::StartMatch { match_id: mid, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, opp_hat_ids, opp_uniform_color_ids, opp_boot_color_ids, opp_gun_style_ids, days_remaining }))
                     }
                 }
                 Err(e) => LoadResult::Err(format!("NET: {}", e.chars().take(20).collect::<String>())),
@@ -549,6 +553,23 @@ fn parse_inputs(obj: &str) -> Vec<u16> {
                 for tok in rest[..arr_end].split(',') {
                     let tok = tok.trim();
                     if let Ok(v) = tok.parse::<u16>() { out.push(v); }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn parse_u8_arr(json: &str, key: &str) -> [u8; 4] {
+    let search = format!("\"{}\":", key);
+    let mut out = [0u8; 4];
+    if let Some(start) = json.find(&search) {
+        let rest = &json[start + search.len()..];
+        if let Some(arr_start) = rest.find('[') {
+            if let Some(arr_end) = rest.find(']') {
+                let arr = &rest[arr_start + 1..arr_end];
+                for (i, v) in arr.split(',').enumerate().take(4) {
+                    out[i] = v.trim().parse().unwrap_or(0);
                 }
             }
         }

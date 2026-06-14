@@ -646,7 +646,19 @@ fn main() {
                 (input::Button::A, NetButton::A),
             ].iter().filter(|(b,_)| input.just_released(*b)).map(|(_,n)| *n).collect();
             let selected_weapon_kind = game.teams[my_team].current_weapon().to_net_u8();
-            if !lstate.paused { conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind }); }
+            let (hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names) = {
+                let t = &game.teams[my_team];
+                let n = t.soldiers.len().min(4);
+                let mut h = [0u8;4]; let mut u = [0u8;4]; let mut b = [0u8;4]; let mut g = [0u8;4];
+                let mut w: [String;4] = Default::default();
+                for i in 0..n {
+                    h[i] = t.soldiers[i].hat_id; u[i] = t.soldiers[i].uniform_color_id;
+                    b[i] = t.soldiers[i].boot_color_id; g[i] = t.soldiers[i].gun_style_id;
+                    w[i] = t.soldiers[i].name.clone();
+                }
+                (h, u, b, g, w)
+            };
+            if !lstate.paused { conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names }); }
             // Drain ALL pending state messages, apply only the latest for
             // rendering — but collect sounds from every NEW tick so dropped
             // intermediate ticks don't swallow their SFX.
@@ -665,6 +677,7 @@ fn main() {
                     if let Some(s) = crate::audio::Sfx::from_u8(*id) { crate::audio::play(s); }
                 }
             }
+            let got_state = latest_state.is_some();
             if let Some(state) = latest_state {
                 // While showing the 10-second game-over overlay, don't let a new-game
                 // StateMsg (result=Ongoing) from the server clear our final result.
@@ -692,6 +705,15 @@ fn main() {
             } else {
                 // Drain WelcomeMsg silently — we'll exit after the game-over timer
                 while conn.try_recv_welcome().is_some() {}
+            }
+            // Client-side projectile extrapolation: advance positions by last-known velocity
+            // each frame so motion is smooth between server state updates.
+            if !got_state {
+                for proj in &mut game.projectiles {
+                    proj.pos.x += proj.vel.x;
+                    proj.pos.y += proj.vel.y;
+                    proj.vel.y = (proj.vel.y + 0.5).min(18.0);
+                }
             }
         }
         let mut mp_quit = false;
@@ -1433,7 +1455,7 @@ fn apply_server_state(
         use crate::physics::projectile::{Projectile, WeaponKind, FuseState};
         use crate::world::{Vec2, WorldPos};
         let kind = WeaponKind::from_net_u8(np.kind_u8);
-        let mut proj = Projectile::new(WorldPos::new(np.x, np.y), Vec2::new(0.0, 0.0), kind);
+        let mut proj = Projectile::new(WorldPos::new(np.x, np.y), Vec2::new(np.vel_x, np.vel_y), kind);
         if np.fuse_ticks > 0 {
             proj.fuse = FuseState::Burning(np.fuse_ticks);
         }
@@ -1786,13 +1808,13 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
                     AccountAction::Back => break,
                 }
             }
-            Some(LobbyAction::StartMatch { match_id, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, days_remaining }) => {
+            Some(LobbyAction::StartMatch { match_id, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, opp_hat_ids, opp_uniform_color_ids, opp_boot_color_ids, opp_gun_style_ids, days_remaining }) => {
                 let roster_for_match = pick_roster_for_match(fb, input, buf, match_id, &rosters, &token, my_slot, moves.len());
                 let selected_roster = match roster_for_match {
                     Some(r) => r,
                     None => { continue; } // user pressed Back from roster picker
                 };
-                if let Some((new_move, tat_kills, tat_deaths, tat_weapon_kills)) = run_tat_game(fb, input, buf, seed, my_slot, &moves, &selected_roster.name, selected_roster.avatar_id, selected_roster.headstone_id, &selected_roster.worm_names, &selected_roster.hat_ids, &selected_roster.uniform_color_ids, &selected_roster.boot_color_ids, &selected_roster.gun_style_ids, my_elo, opp_elo, has_mines, has_barrels, &opp_name, &opp_worm_names, days_remaining) {
+                if let Some((new_move, tat_kills, tat_deaths, tat_weapon_kills)) = run_tat_game(fb, input, buf, seed, my_slot, &moves, &selected_roster.name, selected_roster.avatar_id, selected_roster.headstone_id, &selected_roster.worm_names, &selected_roster.hat_ids, &selected_roster.uniform_color_ids, &selected_roster.boot_color_ids, &selected_roster.gun_style_ids, my_elo, opp_elo, has_mines, has_barrels, &opp_name, &opp_worm_names, &opp_hat_ids, &opp_uniform_color_ids, &opp_boot_color_ids, &opp_gun_style_ids, days_remaining) {
                     // Submit move (with kill/death/weapon-kill stats) in background
                     use game::account::load_saved_creds;
                     if let Some((_, token)) = load_saved_creds() {
@@ -1854,7 +1876,11 @@ fn run_tat_game(
     has_mines:    bool,
     has_barrels:  bool,
     opp_name:      &str,
-    opp_worm_names: &[String; 4],
+    opp_worm_names:        &[String; 4],
+    opp_hat_ids:           &[u8; 4],
+    opp_uniform_color_ids: &[u8; 4],
+    opp_boot_color_ids:    &[u8; 4],
+    opp_gun_style_ids:     &[u8; 4],
     days_remaining: i32,
 ) -> Option<(game::lobby::Move, u32, u32, std::collections::HashMap<&'static str, u32>)> { // (move, kills, deaths, weapon_kills)
     use game::turn::TurnPhase;
@@ -1880,7 +1906,7 @@ fn run_tat_game(
     if !opp_name.is_empty() {
         game.teams[1 - my_slot].name = opp_name.to_string();
     }
-    // Apply opponent worm names if available, otherwise fall back to "TeamName N"
+    // Apply opponent worm names and cosmetics
     let opp_slot = 1 - my_slot;
     let opp_team_name = game.teams[opp_slot].name.clone();
     for si in 0..game.teams[opp_slot].soldiers.len().min(4) {
@@ -1890,6 +1916,10 @@ fn run_tat_game(
         } else {
             name.to_string()
         };
+        game.teams[opp_slot].soldiers[si].hat_id           = opp_hat_ids[si];
+        game.teams[opp_slot].soldiers[si].uniform_color_id = opp_uniform_color_ids[si];
+        game.teams[opp_slot].soldiers[si].boot_color_id    = opp_boot_color_ids[si];
+        game.teams[opp_slot].soldiers[si].gun_style_id     = opp_gun_style_ids[si];
     }
     // Drain any button held from lobby / roster picker before showing intro screens
     loop {

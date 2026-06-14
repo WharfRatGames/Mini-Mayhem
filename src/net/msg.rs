@@ -12,6 +12,13 @@ pub struct InputMsg {
     /// Client's authoritative selected-weapon KIND (net id). The server selects by
     /// kind, not index, so a pruned/diverged loadout can't make the wrong weapon fire.
     pub selected_weapon_kind: u8,
+    /// Per-soldier cosmetics and names sent by the client so the server can
+    /// broadcast them to the opponent. Applied whenever received (idempotent).
+    pub hat_ids:           [u8; 4],
+    pub uniform_color_ids: [u8; 4],
+    pub boot_color_ids:    [u8; 4],
+    pub gun_style_ids:     [u8; 4],
+    pub worm_names:        [String; 4],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +186,8 @@ pub struct NetSoldier {
 pub struct NetProjectile {
     pub x:           f32,
     pub y:           f32,
+    pub vel_x:       f32,
+    pub vel_y:       f32,
     pub kind_u8:     u8,   // WeaponKind index
     pub fuse_ticks:  u32,  // 0 = no fuse / expired
     pub is_fragment: bool, // true for BananaBomb sub-munitions
