@@ -207,7 +207,17 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
                 use crate::physics::projectile::WeaponKind;
                 let spawns: Vec<_> = game.projectiles.iter()
                     .filter(|p| p.kind == WeaponKind::Bazooka)
-                    .map(|p| p.pos)
+                    .map(|p| {
+                        let speed = (p.vel.x * p.vel.x + p.vel.y * p.vel.y).sqrt();
+                        if speed < 0.1 {
+                            p.pos
+                        } else {
+                            let nx = p.vel.x / speed;
+                            let ny = p.vel.y / speed;
+                            // Tail is ~7px behind the rocket's center along its axis.
+                            crate::world::WorldPos::new(p.pos.x - nx * 7.0, p.pos.y - ny * 7.0)
+                        }
+                    })
                     .collect();
                 for pos in spawns { game.smoke_particles.push((pos, 22)); }
             }
