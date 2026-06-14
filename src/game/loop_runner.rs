@@ -2374,7 +2374,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // 1. World cache: build once, patch on explosions, copy viewport each frame.
     if !lstate.cache_initialized {
         crate::renderer::draw_terrain::build_world_cache(&mut lstate.world_cache, &game.terrain);
-        lstate.bg_cache = crate::renderer::bg_image::build_bg_cache(&game.terrain, game.map_seed);
+        lstate.bg_cache = crate::renderer::bg_image::build_bg_cache(game.map_seed);
         lstate.cache_initialized = true;
         lstate.cache_craters_processed = game.crater_log.len();
     }
@@ -2383,16 +2383,12 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         crate::renderer::draw_terrain::update_cache_region(
             &mut lstate.world_cache, &game.terrain, cx, cy, r,
         );
-        crate::renderer::bg_image::update_bg_cache_columns(
-            &mut lstate.bg_cache, &game.terrain, game.map_seed,
-            (cx - r).floor() as i32, (cx + r).ceil() as i32,
-        );
         lstate.cache_craters_processed += 1;
     }
     // 1b. Atmospheric background (behind terrain): clouds, hills, seed landform,
     //     wind debris — all driven by a shared gusting wind so they breathe together.
     use crate::renderer::background;
-    crate::renderer::bg_image::copy_bg_viewport(buf, &lstate.bg_cache, cam_x);
+    crate::renderer::bg_image::copy_bg_viewport(buf, &lstate.bg_cache, &game.terrain, game.map_seed, cam_x);
     let gw = background::gust_wind(game.wind.value(), lstate.tick);
     background::draw_backdrop(buf, &game.terrain, cam_x);
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);

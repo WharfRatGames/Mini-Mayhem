@@ -1,9 +1,15 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.160
+## Version: 0.5.4.161
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.160)
+## Recent changes (0.5.4.135–0.5.4.161)
+- **Restore background parallax without pixelation (0.5.4.161)** — the
+  background cache now stores the chosen image at native 1:1 resolution (one
+  cache column per source-image column, no stretching), and
+  `copy_bg_viewport` re-samples it each frame with a parallax-shifted (0.10)
+  column offset that wraps within the cached width. The cache is no longer
+  terrain-dependent, so crater carves no longer need to repaint it.
 - **Fix background pixelation (0.5.4.160)** — the 0.5.4.158 parallax fix
   applied a 0.10 factor directly to the world-x -> image-x mapping, which
   stretched each source-image column across ~10 world pixels (severe

@@ -7,9 +7,10 @@
 //!
 //! To refresh the art: re-slice the source sheet into
 //! `deploy/assets/backgrounds/bg2_<n>.png`. Each image (any size, RGB or RGBA)
-//! is tiled horizontally across the world and scaled vertically to SCREEN_H,
-//! scrolling at a slow parallax factor. Only the sky region above each column's
-//! terrain top is drawn (the terrain viewport copy covers the rest).
+//! is scaled vertically to SCREEN_H and cached 1:1 (no stretching), then tiled
+//! horizontally and scrolled at a slow parallax factor. Only the sky region
+//! above each column's terrain top is drawn (the terrain viewport copy covers
+//! the rest).
 
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
@@ -117,11 +118,39 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
     }))
 }
 
-/// Pre-render the seed-chosen background for the whole world (once, at map
-/// load) into a world-space cache, so the per-frame draw is a handful of row
-/// memcpys via `copy_bg_viewport` instead of a per-pixel redraw from the
-/// source image (which, for every cave/chasm/floating-island column, used to
-/// paint down to the waterline — up to ~640x400px/frame).
+/// Parallax factor: this layer scrolls at this fraction of camera movement
+/// (slow horizontal scroll relative to the foreground).
+const PAR_BG: f32 = 0.10;
+
+/// Pre-render the seed-chosen background image into a small world-space cache
+/// (one cache column per source-image column, 1:1 — no stretching, so the art
+/// isn't blown up/blockier than its native resolution), once at map load.
+/// `copy_bg_viewport` re-samples this cache each frame with a parallax-shifted
+/// offset, so the per-frame cost is a cheap column copy instead of a per-pixel
+/// redraw from the source image.
+pub fn build_bg_cache(seed: u64) -> WorldBuffer {
+    let mut cache = WorldBuffer::new();
+    let slot = bg_index_for_seed(seed);
+    let img = match scaled()[slot].as_ref() {
+        Some(img) => img,
+        None => return cache,
+    };
+    let dst_w = img.w.min(WORLD_W);
+    let dst_h = img.h.min(WATER_Y);
+    for dx in 0..dst_w {
+        for dy in 0..dst_h {
+            let idx = ((dy * img.w + dx) * 4) as usize;
+            let a = img.pixels[idx + 3];
+            if a == 0 { continue; }
+            let col = Bgra::new(img.pixels[idx], img.pixels[idx + 1], img.pixels[idx + 2]);
+            cache.set_pixel_unchecked(dx, dy, col);
+        }
+    }
+    cache
+}
+
+/// Copy the cached background into the viewport with a slow parallax scroll
+/// (`PAR_BG`).
 ///
 /// The background must cover every pixel the terrain viewport copy leaves
 /// untouched, because the frame buffer is reused across frames (otherwise stale
@@ -133,53 +162,27 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
 ///   * any column with an air gap below the top (caves, chasms, overhangs,
 ///     fresh craters): the copy skips those air pixels, so we must paint the
 ///     whole air region down to the waterline.
-///
-/// Each world column maps 1:1 to an image column (tiled with `% dst_w`) —
-/// no parallax stretch, so the art isn't blown up/blockier than its native
-/// resolution. This layer scrolls 1:1 with the world, like the terrain.
-pub fn build_bg_cache(terrain: &Terrain, seed: u64) -> WorldBuffer {
-    let mut cache = WorldBuffer::new();
-    update_bg_cache_columns(&mut cache, terrain, seed, 0, WORLD_W as i32);
-    cache
-}
-
-/// Repaint the cached background for world columns `x0..x1` (clamped to world
-/// bounds). Call after a crater carve changes `sky_limit`/`solid_to_water` for
-/// those columns, so newly-opened air gaps get background instead of stale
-/// (black) cache pixels.
-pub fn update_bg_cache_columns(cache: &mut WorldBuffer, terrain: &Terrain, seed: u64, x0: i32, x1: i32) {
+pub fn copy_bg_viewport(buf: &mut WorldBuffer, cache: &WorldBuffer, terrain: &Terrain, seed: u64, cam_x: u32) {
     let slot = bg_index_for_seed(seed);
-    let img = match scaled()[slot].as_ref() {
-        Some(img) => img,
+    let dst_w = match scaled()[slot].as_ref() {
+        Some(img) => img.w.min(WORLD_W),
         None => return,
     };
-    let dst_w = img.w;
-    let dst_h = img.h;
+    if dst_w == 0 { return; }
 
-    let x0 = x0.max(0) as u32;
-    let x1 = (x1.max(0) as u32).min(WORLD_W);
-    for wx in x0..x1 {
-        let dx = wx % dst_w.max(1);
-        // Only the sky band on contiguous-solid columns (the viewport copy
-        // block-fills the rest); otherwise the whole air region down to the
-        // waterline, so air gaps below the surface aren't left stale.
+    let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+    let par_x = ((cam_x as f32) * PAR_BG) as u32 % dst_w;
+    for sx in 0..SCREEN_W {
+        let wx = cam_x + sx;
+        let src_x = (par_x + sx) % dst_w;
         let y_end = if terrain.solid_to_water[wx as usize] {
-            terrain.sky_limit[wx as usize].min(dst_h)
+            terrain.sky_limit[wx as usize].min(WATER_Y)
         } else {
-            WATER_Y.min(dst_h)
+            WATER_Y
         };
-        for dy in 0..y_end {
-            let idx = ((dy * img.w + dx) * 4) as usize;
-            let a = img.pixels[idx + 3];
-            if a == 0 { continue; }
-            let col = Bgra::new(img.pixels[idx], img.pixels[idx + 1], img.pixels[idx + 2]);
-            cache.set_pixel_unchecked(wx, dy, col);
+        for y in 0..y_end {
+            let c = cache.get_pixel_unchecked(src_x, y);
+            buf.set_pixel_unchecked(wx, y, c);
         }
     }
-}
-
-/// Copy the cached background into the viewport. Cheap row-range memcpys —
-/// see `build_bg_cache`.
-pub fn copy_bg_viewport(buf: &mut WorldBuffer, cache: &WorldBuffer, cam_x: u32) {
-    buf.copy_viewport_rows_from(cache, cam_x, 0, WATER_Y);
 }
