@@ -103,6 +103,8 @@ pub struct LoopState {
     pub world_cache:             crate::renderer::WorldBuffer,
     pub cache_initialized:       bool,
     pub cache_craters_processed: usize,
+    /// Client-only ambient background debris (wind-driven motes). Not networked.
+    pub bg_debris:               Vec<crate::renderer::background::BgParticle>,
 }
 
 impl LoopState {
@@ -114,6 +116,7 @@ impl LoopState {
             world_cache: crate::renderer::WorldBuffer::new(),
             cache_initialized: false,
             cache_craters_processed: 0,
+            bg_debris: Vec::new(),
         }
     }
 }
@@ -2279,6 +2282,11 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         lstate.cache_craters_processed += 1;
     }
     buf.copy_viewport_from(&lstate.world_cache, cam_x);
+
+    // 1b. Atmospheric background (behind terrain): parallax hills + wind debris.
+    crate::renderer::background::draw_backdrop(buf, &game.terrain, cam_x);
+    crate::renderer::background::update_debris(&mut lstate.bg_debris, &game.terrain, game.wind.value(), lstate.tick);
+    crate::renderer::background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
 
     // 2. Water ripple (dynamic — not cached)
     draw_water_surface(buf, game.tick);

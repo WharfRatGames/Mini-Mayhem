@@ -1,9 +1,13 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.132
+## Version: 0.5.4.133
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.121–0.5.4.132)
+## Recent changes (0.5.4.121–0.5.4.133)
+- **Worms-style atmospheric backgrounds** (client-only visual, `renderer/background.rs`):
+  biome-tinted sky + faint baked cloud bands (`draw_terrain::sky_colour`), a sun glow +
+  two parallax distant-hill ridges, and wind-driven ambient debris per map archetype
+  (snow / pollen / sea-mist / dust / embers). All drawn behind terrain (sky pixels only).
 - Bazooka rocket 50% bigger (11×3px) + scaled smoke trail
 - Live opponent charge meter fixed
 - VS screen now shown for all live matches

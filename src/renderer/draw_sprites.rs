@@ -730,7 +730,8 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32) {
         if top - 2 > base_y {
             for wy in base_y..(top - 2) {
                 if buf.get_pixel(x, wy) == body {
-                    buf.set_pixel(x, wy, crate::renderer::draw_terrain::sky_colour(wy));
+                    // Horizon sky colour is biome-independent (archetype unused here).
+                    buf.set_pixel(x, wy, crate::renderer::draw_terrain::sky_colour(x, wy, 0));
                 }
             }
         }

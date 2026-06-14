@@ -10,13 +10,50 @@ const GRASS: Bgra = Bgra::grass();
 const EARTH: Bgra = Bgra::earth();
 const WATER: Bgra = Bgra::water();
 
-/// Sky gradient: deep blue at top → light hazy blue at water horizon.
-pub fn sky_colour(y: i32) -> Bgra {
+/// Per-archetype top-of-sky colour. The horizon (bottom) colour is kept identical
+/// across biomes so the waterline reads consistently and the water-trough sky
+/// restore in `draw_water_surface` matches regardless of map. Only the upper sky
+/// tint varies: hills (default), cliffs (cold pale), islands (bright teal),
+/// caverns (dim grey-blue), canyon (warm dusty).
+fn sky_top(archetype: u8) -> (f32, f32, f32) {
+    match archetype {
+        1 => (95.0, 120.0, 165.0),  // cliffs — cold, pale
+        2 => (40.0, 120.0, 165.0),  // islands — bright teal
+        3 => (45.0, 60.0,  92.0),   // caverns — dim grey-blue
+        4 => (98.0, 92.0,  130.0),  // canyon — warm dusty
+        _ => (50.0, 85.0,  145.0),  // hills / default — original
+    }
+}
+
+/// Faint baked cloud bands: soft additive whitening in the upper sky only, from a
+/// cheap layered sine of (x, y). Deterministic, so it bakes into the world cache at
+/// zero per-frame cost. Returns 0 below the cloud zone so the horizon stays clean.
+fn cloud_amount(x: i32, y: i32) -> f32 {
+    let zone = WATER_Y as f32 * 0.55;
+    if (y as f32) >= zone { return 0.0; }
+    let xf = x as f32;
+    let yf = y as f32;
+    // Two slow waves → broad, drifting band shapes.
+    let n = (xf * 0.0060 + yf * 0.020).sin() * 0.5
+          + (xf * 0.0021 - yf * 0.012).sin() * 0.5;
+    // Keep only the band crests, soften the edges.
+    let band = ((n - 0.28) / 0.72).clamp(0.0, 1.0);
+    // Fade clouds out toward the bottom of the zone and the very top.
+    let fade = 1.0 - (yf / zone);
+    band * fade * 30.0
+}
+
+/// Sky gradient: deep blue at top → light hazy blue at water horizon, tinted per
+/// map archetype, with faint baked cloud bands in the upper sky.
+pub fn sky_colour(x: i32, y: i32, archetype: u8) -> Bgra {
     let t = (y as f32 / WATER_Y as f32).clamp(0.0, 1.0);
+    let (tr, tg, tb) = sky_top(archetype);
+    // Bottom (horizon) endpoint is biome-independent.
+    let c = cloud_amount(x, y);
     Bgra::new(
-        (50.0 + 70.0 * t) as u8,   // R: 50 → 120
-        (85.0 + 95.0 * t) as u8,   // G: 85 → 180
-        (145.0 + 85.0 * t) as u8,  // B: 145 → 230
+        (tr + (120.0 - tr) * t + c).clamp(0.0, 255.0) as u8,
+        (tg + (180.0 - tg) * t + c).clamp(0.0, 255.0) as u8,
+        (tb + (230.0 - tb) * t + c).clamp(0.0, 255.0) as u8,
     )
 }
 
@@ -43,7 +80,7 @@ fn terrain_pixel(terrain: &Terrain, x: i32, y: i32) -> Bgra {
         return WATER;
     }
     if !terrain.is_solid(x, y) {
-        return sky_colour(y);
+        return sky_colour(x, y, terrain.archetype);
     }
     let air_above = !terrain.is_solid(x, y - 1);
     let air_below = !terrain.is_solid(x, y + 1);
@@ -277,7 +314,7 @@ mod tests {
         let mut buf = WorldBuffer::new();
         draw_terrain(&mut buf, &t);
         let p = buf.get_pixel(100, 200);
-        assert_ne!(p, sky_colour(200), "surface pixel should be terrain, not sky");
+        assert_ne!(p, sky_colour(100, 200, t.archetype), "surface pixel should be terrain, not sky");
         assert_ne!(p, WATER, "surface pixel should be terrain, not water");
     }
 
@@ -287,8 +324,8 @@ mod tests {
         t.set_solid(100, 200, true);
         let mut buf = WorldBuffer::new();
         draw_terrain(&mut buf, &t);
-        assert_eq!(buf.get_pixel(100, 199), sky_colour(199), "pixel above surface should be sky gradient");
-        assert_eq!(buf.get_pixel(100, 0),   sky_colour(0),   "top of world should be sky gradient");
+        assert_eq!(buf.get_pixel(100, 199), sky_colour(100, 199, t.archetype), "pixel above surface should be sky gradient");
+        assert_eq!(buf.get_pixel(100, 0),   sky_colour(100, 0, t.archetype),   "top of world should be sky gradient");
     }
 
     #[test]
@@ -302,7 +339,7 @@ mod tests {
         // Below-surface pixels render as terrain (textured), not sky or water.
         for y in [201, 202] {
             let p = buf.get_pixel(100, y);
-            assert_ne!(p, sky_colour(y), "y={y} below surface should be terrain, not sky");
+            assert_ne!(p, sky_colour(100, y, t.archetype), "y={y} below surface should be terrain, not sky");
             assert_ne!(p, WATER, "y={y} below surface should be terrain, not water");
         }
     }
@@ -328,7 +365,7 @@ mod tests {
         let mut buf = WorldBuffer::new();
         draw_terrain(&mut buf, &t);
         for y in 0..WATER_Y as i32 {
-            assert_eq!(buf.get_pixel(500, y), sky_colour(y),
+            assert_eq!(buf.get_pixel(500, y), sky_colour(500, y, t.archetype),
                 "y={y} should be sky gradient in empty column");
         }
     }
@@ -343,13 +380,13 @@ mod tests {
         let mut buf = WorldBuffer::new();
         draw_terrain(&mut buf, &t);
 
-        assert_ne!(buf.get_pixel(100, 200), sky_colour(200), "surface should be terrain");
+        assert_ne!(buf.get_pixel(100, 200), sky_colour(100, 200, t.archetype), "surface should be terrain");
         // Crater gap shows sky gradient
-        assert_eq!(buf.get_pixel(100, 230), sky_colour(230));
-        assert_eq!(buf.get_pixel(100, 231), sky_colour(231));
+        assert_eq!(buf.get_pixel(100, 230), sky_colour(100, 230, t.archetype));
+        assert_eq!(buf.get_pixel(100, 231), sky_colour(100, 231, t.archetype));
         // Solid pixels render as terrain, not sky
-        assert_ne!(buf.get_pixel(100, 220), sky_colour(220), "y=220 should be terrain");
-        assert_ne!(buf.get_pixel(100, 250), sky_colour(250), "y=250 should be terrain");
+        assert_ne!(buf.get_pixel(100, 220), sky_colour(100, 220, t.archetype), "y=220 should be terrain");
+        assert_ne!(buf.get_pixel(100, 250), sky_colour(100, 250, t.archetype), "y=250 should be terrain");
     }
 
     #[test]
@@ -360,7 +397,7 @@ mod tests {
         let mut buf = WorldBuffer::new();
         draw_terrain(&mut buf, &t);
         for y in 0..WATER_Y as i32 {
-            assert_eq!(buf.get_pixel(200, y), sky_colour(y));
+            assert_eq!(buf.get_pixel(200, y), sky_colour(200, y, t.archetype));
         }
     }
 
@@ -374,11 +411,11 @@ mod tests {
         for x in (0..WORLD_W as i32).step_by(100) {
             if let Some(sy) = find_surface(&t, x) {
                 let p = buf.get_pixel(x, sy);
-                assert_ne!(p, sky_colour(sy), "x={x} surface y={sy} should be terrain, not sky");
+                assert_ne!(p, sky_colour(x, sy, t.archetype), "x={x} surface y={sy} should be terrain, not sky");
                 assert_ne!(p, WATER, "x={x} surface y={sy} should be terrain, not water");
                 if sy > 0 {
                     assert_eq!(
-                        buf.get_pixel(x, sy - 1), sky_colour(sy - 1),
+                        buf.get_pixel(x, sy - 1), sky_colour(x, sy - 1, t.archetype),
                         "x={x} y={} should be sky", sy - 1
                     );
                 }

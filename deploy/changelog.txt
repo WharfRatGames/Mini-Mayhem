@@ -1,3 +1,4 @@
+0.5.4.133  Worms-style backgrounds: biome skies, sun, parallax hills, wind debris
 0.5.4.132  Hand of Jerry sprite now fully white including the bolt
 0.5.4.120  live parity: death blasts, graves, blood, crate types
 0.5.4.94  update notes now served live
