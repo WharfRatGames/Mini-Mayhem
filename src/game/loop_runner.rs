@@ -2638,10 +2638,17 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 buf.set_pixel(fcx, y, inner);
                 continue;
             }
+            // Row is in-bounds vertically (checked above) and, in the common case,
+            // horizontally too — skip the per-pixel bounds check then.
+            let row_in_bounds = fcx - half >= 0 && fcx + half < crate::world::WORLD_W as i32;
             for dx in -half..=half {
                 let edge = dx.abs() as f32 / (half as f32 + 0.5); // 0 centre → ~1 edge
                 let col = if edge > 0.70 { outer } else if edge > 0.34 { mid } else { inner };
-                buf.set_pixel(fcx + dx, y, col);
+                if row_in_bounds {
+                    buf.set_pixel_unchecked((fcx + dx) as u32, y as u32, col);
+                } else {
+                    buf.set_pixel(fcx + dx, y, col);
+                }
             }
         }
         // White-hot core near the base

@@ -1,9 +1,13 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.154
+## Version: 0.5.4.155
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.154)
+## Recent changes (0.5.4.135–0.5.4.155)
+- **Fire-patch flame perf (0.5.4.155)** — flame rendering now uses
+  unchecked pixel access for the common in-bounds case (was bounds-checking
+  every pixel of every flame row, up to ~250 checks per burning fire/soldier
+  each frame).
 - **Soldiers stuck on any uphill slope (0.5.4.154)** — the horizontal-move
   leading-edge sweep in `try_move_horizontal` checked each intermediate
   column against the soldier's *current* foot height with no step-up
