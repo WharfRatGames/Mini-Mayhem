@@ -30,6 +30,13 @@
 - fire_bazooka() private, fire_bazooka_tat() public wrapper
 - snap_to_surface(), is_on_ground(), jump_unstick_lift(), death_phrase() public
 
+## Render pipeline (loop_runner.rs render_my_team)
+- World cache (sky+terrain) baked once → copy_viewport_from each frame → atmospheric
+  background (renderer/background.rs: sun + parallax hills + wind debris, sky pixels
+  only) → water ripple → entities → particles → HUD. Background is client-only visual.
+- sky_colour(x, y, archetype) in draw_terrain.rs is biome-tinted + baked cloud bands;
+  horizon color is biome-independent (draw_water_surface trough restore relies on it).
+
 ## Gotchas
 - cargo miyoo → target/armv7-unknown-linux-gnueabihf/miyoo/arty (NOT release/)
 - Server binary stripped by LTO — version not visible via strings, check source
