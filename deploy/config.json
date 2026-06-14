@@ -1,0 +1,6 @@
+{
+        "label":        "Arty",
+        "icon":         "/mnt/SDCARD/App/Arty/icon.png",
+        "launch":       "launch.sh",
+        "description":  "Artillery game"
+}

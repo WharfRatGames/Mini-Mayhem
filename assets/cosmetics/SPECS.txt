@@ -1,0 +1,36 @@
+COSMETIC SPRITE REQUIREMENTS
+=============================
+
+Format:     PNG, RGBA8, transparent background
+Scale:      3x  (1 game pixel = 3×3 image pixels)
+Naming:     hat_<id>.png, gun_<id>.png  (IDs match in-game cosmetic IDs)
+
+
+GUNS
+----
+Image size:   138 × 78 px  (46 × 26 game px at 3x)
+Orientation:  pointing right
+Barrel axis:  game y = 10  (image y = 30) — barrel centre must sit on this line
+Anchor:       barrel origin (where arm meets gun) at game x = 10-12
+
+Rules:
+- Every gun must have a visible body/receiver block, not just a bare barrel
+- Every gun must have a grip/handle extending downward from the receiver
+- Barrel tip must face right; leave ~4 game px of padding on the right edge
+- Use dark outline (22, 14, 6) on all exterior edges
+- Barrel colour and style must clearly distinguish the gun type at a glance
+
+
+HATS
+----
+Image size:   66 × 60 px  (22 × 20 game px at 3x)
+Anchor:       head centre at game CX = 11, CY = 15  (image: 33, 45)
+              All hat pixels must sit ABOVE CY (negative Y offsets only)
+              Maximum height: CY - 13 = game y 2  (do not go above row 2)
+              Maximum width:  CX ± 5  (game x 6 to 16)
+
+Rules:
+- Hat must be recognisable as a distinct silhouette from the ones already in game
+- Must include at least one detail beyond a flat block (band, gem, pattern, etc.)
+- Use dark outline (22, 14, 6) on lower/outer edges to separate from the head
+- Avoid placing pixels below CY — the head is drawn there, not the hat

@@ -1,0 +1,9 @@
+[alias]
+miyoo = "zigbuild --profile miyoo --target armv7-unknown-linux-gnueabihf.2.17"
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "zig-cc"
+
+[env]
+PKG_CONFIG_ALLOW_CROSS = "1"
+PKG_CONFIG_PATH_armv7_unknown_linux_gnueabihf = "/usr/lib/arm-linux-gnueabihf/pkgconfig"

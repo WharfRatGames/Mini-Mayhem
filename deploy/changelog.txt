@@ -1,0 +1,22 @@
+0.5.4.120  live parity: death blasts, graves, blood, crate types
+0.5.4.94  update notes now served live
+0.5.4.92  backflip animates every time
+0.5.4.91  fix garbled terrain on chasm maps
+0.5.4.90  full map seed shown in test mode
+0.5.4.89  fix garbled textures (new tiles)
+0.5.4.88  plasma torch, crate + texture fixes
+0.5.4.82  plasma torch weapon
+0.5.4.81  spread spawn mounds, no flat slab
+0.5.4.80  charge meter from gun muzzle
+0.5.4.78  even spawn spread, instant win on wipe
+0.5.4.77  wider spawn spacing, seed shown in test
+0.5.4.76  bigger maps (3 screens), smaller black hole
+0.5.4.75  chasms central, fair team home landforms
+0.5.4.74  team spawns cluster on real landforms
+0.5.4.73  varied terrain: ledges, pits, water chasms
+0.5.4.72  stronger hills, more headroom, labels up
+0.5.4.71  rolling terrain, headroom, cave spawns
+0.5.4.67  removed pillar maps
+0.5.4.66  real caves, overhangs, sky islands
+0.5.4.65  bigger maps, more hazards, MP sfx
+0.5.4.64  no jump-clip through ground
