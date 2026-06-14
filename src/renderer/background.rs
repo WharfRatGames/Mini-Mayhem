@@ -360,7 +360,7 @@ fn spawn(state: &mut u32, style: &DebrisStyle, wind: f32, spread: bool) -> BgPar
     let vy = style.fall * (0.6 + rand_f(state) * 0.8);
     BgParticle {
         x, y,
-        vx: wind * style.drift,
+        vx: wind * style.drift * 3.0,
         vy,
         size: if (rng(state) % 100) < style.big_chance as u32 { 2 } else { 1 },
         glow: (rng(state) % 100) < style.glow_chance as u32,
@@ -377,7 +377,7 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
     let mut state = tick.wrapping_mul(2654435761).wrapping_add(0x9E3779B9) | 1;
 
     for p in particles.iter_mut() {
-        p.vx += wind * style.drift * 0.05;
+        p.vx += wind * style.drift * 0.25;
         p.vx *= 0.97;                       // damp so drift tracks wind, not runaway
         p.phase += style.sway_speed;
         p.x += p.vx + p.phase.sin() * style.sway_amp; // wavy arc, not a straight fall

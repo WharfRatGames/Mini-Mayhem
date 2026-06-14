@@ -1393,7 +1393,7 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
     }
 
     // Targeting phase: Left/Right move cursor, A confirms, B cancels
-    const CURSOR_SPEED: f32 = 6.0;
+    const CURSOR_SPEED: f32 = 14.0;
     if input.held(Button::Left) {
         g.cursor_x = (g.cursor_x - CURSOR_SPEED).max(0.0);
     }
@@ -2623,13 +2623,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             let alpha = 60u8.saturating_add(
                 ((garcia.blink_timer as f32 * 0.15).sin() * 0.5 + 0.5) as u8 * 195
             );
-            let beam_col = Bgra::new(alpha, alpha, alpha);
-
-            // Vertical beam — 2px wide, full screen height
-            for y in 0..sh {
-                buf.set_pixel(rx,     y, beam_col);
-                buf.set_pixel(rx + 1, y, beam_col);
-            }
+            let _ = alpha;
 
             // Find terrain impact Y
             let mut impact_y = sh;
@@ -2663,6 +2657,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             // Falling: draw scaled GARCIA sprite (~5× worm height, close to classic Worms Donkey scale)
             let fy = garcia.fall_y as i32;
             draw_garcia_sprite(buf, rx, fy, 80, 107);
+            // Redraw water surface on top so the falling hand sinks behind it.
+            draw_water_surface(buf, game.tick);
         }
     }
 
@@ -3498,7 +3494,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         cy += sy_;
                         let ix = cx as i32;
                         let iy = cy as i32;
-                        let terrain_hit = (0..=crate::renderer::draw_sprites::SOLDIER_H)
+                        let terrain_hit = (0..=crate::renderer::draw_sprites::SOLDIER_H / 2)
                             .any(|h| game.terrain.is_blocked(ix, iy - h));
                         let soldier_hit = !terrain_hit && game.teams.iter().enumerate().any(|(oti, oteam)| {
                             oteam.soldiers.iter().enumerate().any(|(osi, os)| {

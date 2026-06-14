@@ -89,7 +89,7 @@ impl Heightmap {
         // Map to Y coords
         let mut surface_y: Vec<u32> = heights.iter()
             .map(|&h| {
-                let y = mid_y + h * terrain_range * 0.48;
+                let y = mid_y + h * terrain_range * 0.528;
                 (y.round() as u32).clamp(TERRAIN_MIN_Y, TERRAIN_MAX_Y)
             })
             .collect();
