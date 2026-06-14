@@ -102,8 +102,12 @@ pub fn draw_static_bg(buf: &mut WorldBuffer, archetype: u8, cam_x: i32) {
 
     for tile in start_tile..=end_tile {
         let tile_x0 = tile * dst_w - par_x;
+        // Clip to the columns of this tile that actually land on screen.
+        let dx_lo = (-tile_x0).max(0);
+        let dx_hi = (SCREEN_W as i32 - tile_x0).min(dst_w);
+        if dx_lo >= dx_hi { continue; }
         for dy in 0..dst_h {
-            for dx in 0..dst_w {
+            for dx in dx_lo..dx_hi {
                 let idx = ((dy as u32 * img.w + dx as u32) * 4) as usize;
                 let a = img.pixels[idx + 3];
                 if a == 0 { continue; }
