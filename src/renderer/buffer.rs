@@ -134,10 +134,19 @@ impl WorldBuffer {
         for x in 0..SCREEN_W {
             let wx = cam_x + x;
             let y0 = terrain.sky_limit[wx as usize];
-            for y in y0..WATER_Y {
-                if terrain.is_solid(wx as i32, y as i32) {
+            if terrain.solid_to_water[wx as usize] {
+                // No caves/chasms in this column — copy the whole solid span
+                // without a per-pixel is_solid check.
+                for y in y0..WATER_Y {
                     let off = ((y * WORLD_W + wx) * 4) as usize;
                     self.data[off..off + 4].copy_from_slice(&src.data[off..off + 4]);
+                }
+            } else {
+                for y in y0..WATER_Y {
+                    if terrain.is_solid(wx as i32, y as i32) {
+                        let off = ((y * WORLD_W + wx) * 4) as usize;
+                        self.data[off..off + 4].copy_from_slice(&src.data[off..off + 4]);
+                    }
                 }
             }
         }

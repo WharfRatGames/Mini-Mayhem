@@ -668,6 +668,25 @@ pub fn try_move_horizontal(game: &mut GameState, ti: usize, si: usize, new_x: f3
     let cur_x = game.teams[ti].soldiers[si].pos.x;
     let dir   = if new_x >= cur_x { 1 } else { -1 }; // travel direction
 
+    let cfy0 = cur_y as i32;
+    // Sweep the leading edge across every intermediate column between the current
+    // and target position so a multi-px step can't jump over a thin (1-2px) wall
+    // that the destination-only check would miss.
+    let lead_off = if dir > 0 { SOLDIER_HALF_W - 1 } else { -(SOLDIER_HALF_W - 1) };
+    let cur_lead = cur_x as i32 + lead_off;
+    let target_lead = new_x as i32 + lead_off;
+    let mut new_x = new_x;
+    let mut lc = cur_lead;
+    while lc != target_lead {
+        let step = if target_lead > lc { 1 } else { -1 };
+        let next_lc = lc + step;
+        if (0..=SOLDIER_H).any(|h| game.terrain.is_blocked(next_lc, cfy0 - h)) {
+            new_x = (lc - lead_off) as f32;
+            break;
+        }
+        lc = next_lc;
+    }
+
     let ix = new_x as i32;
     // Edge columns of the soldier body (center ± half-width - 1).
     let ix_l = ix - (SOLDIER_HALF_W - 1);
@@ -3492,8 +3511,12 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         cy += sy_;
                         let ix = cx as i32;
                         let iy = cy as i32;
-                        let terrain_hit = (0..=crate::renderer::draw_sprites::SOLDIER_H / 2)
-                            .any(|h| game.terrain.is_blocked(ix, iy - h));
+                        let ix_l = ix - (crate::renderer::draw_sprites::SOLDIER_HALF_W - 1);
+                        let ix_r = ix + (crate::renderer::draw_sprites::SOLDIER_HALF_W - 1);
+                        let terrain_hit = (0..=crate::renderer::draw_sprites::SOLDIER_H)
+                            .any(|h| game.terrain.is_blocked(ix_l, iy - h)
+                                || game.terrain.is_blocked(ix,   iy - h)
+                                || game.terrain.is_blocked(ix_r, iy - h));
                         let soldier_hit = !terrain_hit && game.teams.iter().enumerate().any(|(oti, oteam)| {
                             oteam.soldiers.iter().enumerate().any(|(osi, os)| {
                                 if (oti == ti && osi == si) || !os.is_alive() { return false; }

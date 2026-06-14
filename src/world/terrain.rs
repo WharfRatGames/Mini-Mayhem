@@ -28,6 +28,10 @@ pub struct Terrain {
     /// behind the terrain, so overhangs/islands above TERRAIN_MIN_Y aren't
     /// hidden.
     pub sky_limit: Vec<u32>,
+    /// True if column `x` is solid contiguously from `sky_limit[x]` down to
+    /// `WATER_Y` (no caves/chasm gaps). Lets the renderer block-copy these
+    /// columns without a per-pixel `is_solid` check.
+    pub solid_to_water: Vec<bool>,
     /// Index (0–23) into the terrain texture atlas, chosen per map from the seed.
     /// Renderer samples this tile to texture the solid silhouette.
     pub surface_texture: u8,
@@ -46,6 +50,7 @@ impl Terrain {
             texture: None,
             spawn_y: vec![TERRAIN_MAX_Y; WORLD_W as usize],
             sky_limit: vec![WATER_Y; WORLD_W as usize],
+            solid_to_water: vec![false; WORLD_W as usize],
             surface_texture: 0,
             archetype: 0,
         }
@@ -220,6 +225,7 @@ impl Terrain {
             let surface_y = hm.surface_at(x);
             terrain.spawn_y[x as usize] = surface_y;
             terrain.sky_limit[x as usize] = surface_y;
+            terrain.solid_to_water[x as usize] = true;
             for y in surface_y..WATER_Y {
                 terrain.set_solid(x as i32, y as i32, true);
             }
@@ -755,7 +761,10 @@ impl Terrain {
         for x in 0..WORLD_W as usize {
             let topmost = (0..WATER_Y).find(|&y| terrain.is_solid(x as i32, y as i32));
             terrain.spawn_y[x] = topmost.map(|y| y.max(TERRAIN_MIN_Y)).unwrap_or(TERRAIN_MAX_Y as u32);
-            terrain.sky_limit[x] = topmost.unwrap_or(WATER_Y);
+            let sky_limit = topmost.unwrap_or(WATER_Y);
+            terrain.sky_limit[x] = sky_limit;
+            terrain.solid_to_water[x] = sky_limit < WATER_Y
+                && (sky_limit..WATER_Y).all(|y| terrain.is_solid(x as i32, y as i32));
         }
 
         // Phase 7 (per-column spawn mounds) intentionally removed: spawns are now
@@ -925,7 +934,12 @@ impl Terrain {
                 // them, the renderer's sky-aware viewport copy would skip this whole
                 // new mound, leaving it invisible (soldier floating "above terrain").
                 let top_u = top as u32;
-                if top_u < self.sky_limit[cx as usize] { self.sky_limit[cx as usize] = top_u; }
+                if top_u < self.sky_limit[cx as usize] {
+                    self.sky_limit[cx as usize] = top_u;
+                    // The new sky_limit is `top`, and the mound fills top..WATER_Y
+                    // solid, so the column is now solid contiguously to water.
+                    self.solid_to_water[cx as usize] = true;
+                }
                 if top_u < self.spawn_y[cx as usize] { self.spawn_y[cx as usize] = top_u.max(TERRAIN_MIN_Y); }
             }
             spawns.push(WorldPos::new(px as f32, (crown_y - 1) as f32));
@@ -939,9 +953,12 @@ impl Terrain {
     /// the pixel below is solid, there's a ≥7px platform under the feet, and ≥100px
     /// of open sky above (rejects ceilings / enclosed caves). None if no such spot.
     pub fn standable_foot_y(&self, x: i32) -> Option<i32> {
+        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
         const CLEAR_H: i32 = 24; // soldier body + clearance
         const SKY_H:   i32 = 100;
         if x < 0 || x >= WORLD_W as i32 { return None; }
+        let x_l = x - (SOLDIER_HALF_W - 1);
+        let x_r = x + (SOLDIER_HALF_W - 1);
         let ok = |foot_y: i32| -> bool {
             // Body must fit in-world; high islands are fine (their open sky is
             // verified by the all-air scan below, not by a hard Y floor).
@@ -949,7 +966,13 @@ impl Terrain {
             if !self.is_solid(x, foot_y + 1) { return false; }
             let platform = (-4..=4).filter(|&dx| self.is_solid(x + dx, foot_y + 1)).count() >= 7;
             if !platform { return false; }
-            (foot_y - CLEAR_H - SKY_H + 1 ..= foot_y).all(|y| !self.is_solid(x, y.max(0)))
+            // Full body footprint must be clear, matching the tightened movement
+            // collision (try_move_horizontal / airborne terrain_hit), so a soldier
+            // never spawns wedged in a passage it can't legally move out of.
+            (foot_y - CLEAR_H - SKY_H + 1 ..= foot_y).all(|y| {
+                let y = y.max(0);
+                !self.is_solid(x_l, y) && !self.is_solid(x, y) && !self.is_solid(x_r, y)
+            })
         };
         // Scan top-down from the very top so we can land on high sky-islands (whose
         // tops sit above CLEAR_H+SKY_H) before any ground far below.
@@ -962,16 +985,22 @@ impl Terrain {
     /// Scans bottom-up so soldiers land on the main void floor, not a shallow tunnel.
     /// None if no roofed standing spot exists.
     pub fn standable_cave_foot_y(&self, x: i32) -> Option<i32> {
+        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
         const HEAD_H: i32 = 26;   // body + small clearance above the foot
         const CEIL_MAX: i32 = 220; // a ceiling must sit within this height to count as a cave
         if x < 0 || x >= WORLD_W as i32 { return None; }
+        let x_l = x - (SOLDIER_HALF_W - 1);
+        let x_r = x + (SOLDIER_HALF_W - 1);
         let ok = |foot_y: i32| -> bool {
             if foot_y < HEAD_H || foot_y >= WATER_Y as i32 { return false; }
             if !self.is_solid(x, foot_y + 1) { return false; }
             let platform = (-4..=4).filter(|&dx| self.is_solid(x + dx, foot_y + 1)).count() >= 7;
             if !platform { return false; }
-            // Body clearance: open air directly above the feet.
-            if !(foot_y - HEAD_H + 1 ..= foot_y).all(|y| !self.is_solid(x, y.max(0))) { return false; }
+            // Full body footprint clearance, matching the tightened movement collision.
+            if !(foot_y - HEAD_H + 1 ..= foot_y).all(|y| {
+                let y = y.max(0);
+                !self.is_solid(x_l, y) && !self.is_solid(x, y) && !self.is_solid(x_r, y)
+            }) { return false; }
             // Roofed: a solid ceiling somewhere above the head within CEIL_MAX.
             ((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y))
         };

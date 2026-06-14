@@ -1,3 +1,4 @@
+0.5.4.147  Tighten soldier/terrain collision (full body width+height checks while walking/airborne, fixes clipping through walls/ceilings); spawns now require the same full-body clearance so soldiers never start wedged in terrain; perf: block-copy fully-solid terrain columns in viewport copy
 0.5.4.146  Fix: last-resort spawn mounds raised on previously-empty columns were never rendered (stale spawn_y/sky_limit) - soldier appeared to float above invisible terrain
 0.5.4.145  Perf: water-surface fill no longer rewrites the ~110 already-correct body rows per column (was 640x122 set_pixel/frame, now ~640x10)
 0.5.4.144  Perf: skip per-pixel sky checks above the terrain surface in viewport copy (iterate only from sky_limit down, instead of scanning the full sky band)
