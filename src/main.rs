@@ -671,6 +671,7 @@ fn main() {
                     if let Some(s) = crate::audio::Sfx::from_u8(*id) { crate::audio::play(s); }
                 }
             }
+            let got_state = latest_state.is_some();
             if let Some(state) = latest_state {
                 // While showing the 10-second game-over overlay, don't let a new-game
                 // StateMsg (result=Ongoing) from the server clear our final result.
@@ -699,13 +700,16 @@ fn main() {
                 // Drain WelcomeMsg silently — we'll exit after the game-over timer
                 while conn.try_recv_welcome().is_some() {}
             }
-            // Client-side projectile extrapolation: always advance by last-known velocity
-            // so motion is smooth. When a server state arrives positions are snapped first
-            // then re-extrapolated by one frame — correct latency compensation.
-            for proj in &mut game.projectiles {
-                proj.pos.x += proj.vel.x;
-                proj.pos.y += proj.vel.y;
-                proj.vel.y = (proj.vel.y + 0.5).min(18.0);
+            // Client-side projectile extrapolation: only advance when no server state
+            // arrived this frame. When a state arrives the position is already the
+            // server's authoritative value for this tick; extrapolating on top would
+            // double the movement and make projectiles appear 2× faster.
+            if !got_state {
+                for proj in &mut game.projectiles {
+                    proj.pos.x += proj.vel.x;
+                    proj.pos.y += proj.vel.y;
+                    proj.vel.y = (proj.vel.y + 0.5).min(18.0);
+                }
             }
         }
         let mut mp_quit = false;
