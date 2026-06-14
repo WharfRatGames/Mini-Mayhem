@@ -105,6 +105,12 @@ pub struct LoopState {
     pub cache_craters_processed: usize,
     /// Client-only ambient background debris (wind-driven motes). Not networked.
     pub bg_debris:               Vec<crate::renderer::background::BgParticle>,
+    /// Client-only drifting clouds (furthest parallax layer). Not networked.
+    pub bg_clouds:               Vec<crate::renderer::background::Cloud>,
+    /// Cached seed-generated mid-ground landform silhouette (top-y per world
+    /// column). Regenerated only when `landform_seed` != the map seed.
+    pub bg_landform:             Vec<u16>,
+    pub landform_seed:           u64,
 }
 
 impl LoopState {
@@ -117,6 +123,9 @@ impl LoopState {
             cache_initialized: false,
             cache_craters_processed: 0,
             bg_debris: Vec::new(),
+            bg_clouds: Vec::new(),
+            bg_landform: Vec::new(),
+            landform_seed: 0,
         }
     }
 }
@@ -143,6 +152,9 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
     use super::turn::TurnPhase;
 
     game.sounds.clear(); // per-tick sound event buffer (shipped to live client)
+    // Advance client-only effect particles (explosion fallout / dust / sparks /
+    // splashes) once per tick, before any phase early-returns. Visual only.
+    crate::renderer::fx::step_fx(&mut game.fx, &game.terrain, game.wind.value());
     // Object mask: re-stamp barrels + armed mines so collision sees them as solid.
     stamp_objects(game);
 
@@ -606,6 +618,12 @@ fn process_movement(game: &mut GameState, input: &InputState) {
             game.teams[ti].soldiers[si].walk_ticks.wrapping_add(1);
         game.teams[ti].soldiers[si].state =
             SoldierState::Walking { dir: game.teams[ti].soldiers[si].facing as f32 };
+        // Footstep dust kicked up behind the trailing foot every few steps.
+        let s = &game.teams[ti].soldiers[si];
+        if s.walk_ticks % 6 == 0 {
+            let foot = crate::world::WorldPos::new(s.pos.x, s.pos.y + 3.0);
+            crate::renderer::fx::dust(&mut game.fx, foot, 2, 0.4, s.facing as f32);
+        }
     } else {
         game.teams[ti].soldiers[si].walk_ticks = 0;
         if matches!(game.teams[ti].soldiers[si].state, SoldierState::Walking { .. }) {
@@ -1236,6 +1254,13 @@ fn step_plasma_torch(game: &mut GameState) {
     // Carve ahead (tip) then at body so soldier fits in the tunnel
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, tip_x, tip_y, TORCH_RADIUS);
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, sx, body_cy, BODY_RADIUS);
+
+    // Dirt chips spat back out of the bore (visual only).
+    if game.tick % 3 == 0 {
+        let tip = crate::world::WorldPos::new(tip_x, tip_y);
+        let dirt = crate::game::state::biome_dirt(game.terrain.archetype);
+        crate::renderer::fx::dig(&mut game.fx, tip, dx.signum(), dirt);
+    }
 
     // Trigger any barrel the torch tip touches
     for barrel in &mut game.barrels {
@@ -2283,10 +2308,20 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     }
     buf.copy_viewport_from(&lstate.world_cache, cam_x);
 
-    // 1b. Atmospheric background (behind terrain): parallax hills + wind debris.
-    crate::renderer::background::draw_backdrop(buf, &game.terrain, cam_x);
-    crate::renderer::background::update_debris(&mut lstate.bg_debris, &game.terrain, game.wind.value(), lstate.tick);
-    crate::renderer::background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
+    // 1b. Atmospheric background (behind terrain): clouds, hills, seed landform,
+    //     wind debris — all driven by a shared gusting wind so they breathe together.
+    use crate::renderer::background;
+    let gw = background::gust_wind(game.wind.value(), lstate.tick);
+    background::update_clouds(&mut lstate.bg_clouds, &game.terrain, gw, lstate.tick);
+    background::draw_clouds(buf, &game.terrain, &lstate.bg_clouds, cam_x);
+    background::draw_backdrop(buf, &game.terrain, cam_x);
+    if lstate.bg_landform.is_empty() || lstate.landform_seed != game.map_seed {
+        lstate.bg_landform = background::generate_landform(game.map_seed, game.terrain.archetype);
+        lstate.landform_seed = game.map_seed;
+    }
+    background::draw_landform(buf, &game.terrain, &lstate.bg_landform, cam_x);
+    background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
+    background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
 
     // 2. Water ripple (dynamic — not cached)
     draw_water_surface(buf, game.tick);
@@ -2856,6 +2891,9 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             draw_explosion(buf, exp.pos, exp.radius, exp.age);
         }
     }
+
+    // 7b'. Effect particles — explosion fallout, dust, sparks, splashes.
+    crate::renderer::fx::draw_fx(buf, &game.fx, cam_x);
 
     // 7c. TNT fuse countdown banner — screen-anchored so it's visible regardless of camera
     if game.tnt_placed {
@@ -3557,6 +3595,12 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 game.teams[ti].soldiers[si].pos.x = cx;
                                 game.teams[ti].soldiers[si].pos.y = cy.max(0.0);
                                 game.teams[ti].soldiers[si].airtime = 0;
+                                // Landing dust puff — count scales with impact speed.
+                                if vel.y > 2.0 {
+                                    let n = (2.0 + vel.y.min(8.0) * 0.6) as u32;
+                                    let foot = crate::world::WorldPos::new(cx, cy.max(0.0) + 3.0);
+                                    crate::renderer::fx::dust(&mut game.fx, foot, n, 0.8, 0.0);
+                                }
                                 // Don't overwrite Dead state set by take_damage
                                 if !game.teams[ti].soldiers[si].is_dead() {
                                     game.teams[ti].soldiers[si].state = SoldierState::Idle;

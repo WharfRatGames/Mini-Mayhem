@@ -4,6 +4,7 @@ pub mod buffer;
 pub mod camera;
 pub mod draw_terrain;
 pub mod background;
+pub mod fx;
 pub mod draw_sprites;
 pub mod font;
 pub mod hud;

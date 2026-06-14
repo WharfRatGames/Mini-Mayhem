@@ -14,6 +14,8 @@
 use crate::world::{Terrain, WATER_Y, WORLD_W, SCREEN_W, SCREEN_H};
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
+use noise::{NoiseFn, OpenSimplex};
+use std::f32::consts::{PI, TAU};
 
 // ── Parallax backdrop ─────────────────────────────────────────────────────────
 
@@ -21,6 +23,10 @@ use super::fb::Bgra;
 const PAR_FAR:  f32 = 0.25;
 const PAR_NEAR: f32 = 0.45;
 const PAR_SUN:  f32 = 0.12;
+/// Drifting clouds sit furthest back (slowest); seed-generated landforms sit
+/// closest (just behind the playable terrain, so it always occludes them).
+const PAR_CLOUD: f32 = 0.15;
+const PAR_LAND:  f32 = 0.65;
 
 /// Smooth distant ridgeline from layered sines of the (parallax) world x.
 fn ridge_y(wx: f32, base: f32, amp: f32, phase: f32) -> f32 {
@@ -97,6 +103,202 @@ pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
     }
 }
 
+// ── Wind gusts (make the wind visible) ───────────────────────────────────────
+
+/// The map wind is fixed for a whole turn, so we synthesise gusts as a purely
+/// visual modulation of it: a steady "breathing" plus occasional stronger gusts.
+/// Returned value drives the ambient debris drift and the cloud scroll so every
+/// background system breathes together. Magnitude can briefly exceed `base`.
+pub fn gust_wind(base: f32, tick: u32) -> f32 {
+    let t = tick as f32;
+    let breath = 1.0 + 0.35 * (t * 0.030).sin() + 0.25 * (t * 0.011).sin();
+    // Slow envelope that occasionally crests → a short gust burst.
+    let env = (t * 0.006).sin();
+    let gust = if env > 0.7 { (env - 0.7) / 0.3 * 0.8 } else { 0.0 };
+    base * (breath + gust)
+}
+
+// ── Drifting clouds ──────────────────────────────────────────────────────────
+
+/// One soft cloud blob, in world-x (parallax) space + sky-y.
+pub struct Cloud {
+    x: f32,    // cloud-layer x (wraps over WORLD_W); screen x = x - cam_x*PAR_CLOUD
+    y: f32,    // sky y (top band)
+    rx: f32,   // horizontal radius
+    ry: f32,   // vertical radius
+    soft: f32, // peak brightness add (0..~70)
+}
+
+/// Tint for the cloud's additive glow, by archetype.
+fn cloud_tint(archetype: u8) -> (u16, u16, u16) {
+    match archetype {
+        1 => (70, 72, 76), // cliffs/snow: bright cool white
+        2 => (58, 64, 70), // islands: hazy
+        3 => (20, 18, 22), // caverns: faint murk
+        4 => (66, 56, 44), // canyon: warm dust haze
+        _ => (60, 62, 64), // hills: soft white
+    }
+}
+
+fn cloud_count(archetype: u8) -> usize {
+    match archetype { 3 => 2, 2 => 6, _ => 5 }
+}
+
+fn rand_cloud(state: &mut u32, archetype: u8) -> Cloud {
+    let x = rand_f(state) * WORLD_W as f32;
+    let y = 24.0 + rand_f(state) * 96.0;
+    let rx = 26.0 + rand_f(state) * 40.0;
+    let ry = rx * (0.32 + rand_f(state) * 0.18);
+    let (tr, _, _) = cloud_tint(archetype);
+    Cloud { x, y, rx, ry, soft: (tr as f32) * (0.7 + rand_f(state) * 0.5) }
+}
+
+/// Advance clouds: drift with the (gusting) wind, wrap around the world edges.
+pub fn update_clouds(clouds: &mut Vec<Cloud>, terrain: &Terrain, gust: f32, tick: u32) {
+    let target = cloud_count(terrain.archetype);
+    let mut state = tick.wrapping_mul(2246822519).wrapping_add(0x9E3779B9) | 1;
+
+    for c in clouds.iter_mut() {
+        c.x += gust * 0.35 + 0.04;          // always creep a touch, even in calm
+        let span = WORLD_W as f32 + 200.0;
+        if c.x > WORLD_W as f32 + 100.0 { c.x -= span; }
+        if c.x < -100.0 { c.x += span; }
+    }
+    while clouds.len() < target { clouds.push(rand_cloud(&mut state, terrain.archetype)); }
+    clouds.truncate(target);
+}
+
+/// Draw clouds as soft additive blobs on sky pixels only (behind everything).
+pub fn draw_clouds(buf: &mut WorldBuffer, terrain: &Terrain, clouds: &[Cloud], cam_x: u32) {
+    let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+    let water_y = WATER_Y as i32;
+    let (tr, tg, tb) = cloud_tint(terrain.archetype);
+
+    for c in clouds {
+        let sx0 = c.x - cam_x as f32 * PAR_CLOUD;     // screen x of centre
+        if sx0 < -c.rx || sx0 > SCREEN_W as f32 + c.rx { continue; }
+        let cx = sx0 as i32;
+        let cy = c.y as i32;
+        let rx = c.rx as i32;
+        let ry = c.ry as i32;
+        for sy in (cy - ry).max(0)..(cy + ry).min(water_y) {
+            for sx in (cx - rx).max(0)..(cx + rx).min(SCREEN_W as i32) {
+                let dx = (sx - cx) as f32 / c.rx;
+                let dy = (sy - cy) as f32 / c.ry;
+                let d = (dx * dx + dy * dy).sqrt();
+                if d >= 1.0 { continue; }
+                let wx = cam_x as i32 + sx;
+                if terrain.is_solid(wx, sy) { continue; }
+                let f = 1.0 - d;
+                let k = f * f * c.soft / tr.max(1) as f32; // 0..1 falloff weight
+                let col = buf.get_pixel(wx, sy);
+                buf.set_pixel(wx, sy, Bgra::new(
+                    (col.r as u16 + (tr as f32 * k) as u16).min(255) as u8,
+                    (col.g as u16 + (tg as f32 * k) as u16).min(255) as u8,
+                    (col.b as u16 + (tb as f32 * k) as u16).min(255) as u8,
+                ));
+            }
+        }
+    }
+}
+
+// ── Seed-generated mid-ground landform silhouette ────────────────────────────
+
+/// Sentinel column height meaning "no landform here" (a sky gap — used by islands).
+const LAND_GAP: u16 = u16::MAX;
+
+/// Hazy silhouette colour for the mid-ground landform — closer than the parallax
+/// hills, so darker and more saturated than `ridge_colour(.., false)`.
+fn landform_colour(archetype: u8) -> Bgra {
+    let (mut r, mut g, mut b) = (66u32, 78, 100);
+    match archetype {
+        3 => { r = 34; g = 32; b = 38; }            // caverns: dark massif
+        4 => { r = 96; g = 70; b = 50; }            // canyon: warm mesa
+        1 => { r = 78; g = 86; b = 104; }           // cliffs: cool stone
+        2 => { r = 70; g = 86; b = 102; }           // islands
+        _ => {}
+    }
+    Bgra::new(r as u8, g as u8, b as u8)
+}
+
+/// Generate a per-world-column top-y silhouette from the map seed, flavoured by
+/// archetype. Deterministic (same seed → same shape); regenerated only on a new
+/// match. `LAND_GAP` marks columns with no landform (island sky gaps).
+pub fn generate_landform(seed: u64, archetype: u8) -> Vec<u16> {
+    use crate::world::{TERRAIN_MIN_Y, TERRAIN_MAX_Y};
+    // +8000 offset keeps this distinct from the terrain noise (which uses +3000..+7000).
+    let n0 = OpenSimplex::new(seed.wrapping_add(8000) as u32);
+    let n1 = OpenSimplex::new(seed.wrapping_add(8100) as u32);
+
+    // Silhouette band: a bit higher than the playable terrain's range so peaks
+    // poke up behind valleys, but never above the sky headroom.
+    let base_y  = (TERRAIN_MAX_Y as f32 - 30.0).min(WATER_Y as f32 - 24.0); // valley floor
+    let top_min = (TERRAIN_MIN_Y as f32 + 30.0).max(120.0);                 // highest peak
+    let amp = base_y - top_min;
+
+    let ridged = archetype == 1;
+    let scale = match archetype { 1 => 4.2, 4 => 2.6, _ => 3.0 } as f64;
+
+    let mut out = vec![LAND_GAP; WORLD_W as usize];
+    for x in 0..WORLD_W as usize {
+        let nx = x as f64 / WORLD_W as f64;
+        // 3-octave FBM in [0,1]
+        let mut val = 0.0; let mut a = 1.0; let mut fr = 1.0; let mut norm = 0.0;
+        for _ in 0..3 {
+            let s = n0.get([nx * scale * fr, 1.7]) * 0.7 + n1.get([nx * scale * fr * 2.1, 4.3]) * 0.3;
+            let s = if ridged { 1.0 - s.abs() } else { (s + 1.0) * 0.5 };
+            val += s * a; norm += a; a *= 0.5; fr *= 2.0;
+        }
+        let mut h = (val / norm) as f32; // 0..1, taller = bigger
+
+        match archetype {
+            4 => { // canyon: flat-topped mesas (quantise height into terraces)
+                let levels = 5.0;
+                h = (h * levels).floor() / levels;
+            }
+            3 => { // caverns: low, squat massif
+                h = h * 0.45 + 0.05;
+            }
+            2 => { // islands: only the tall humps survive; rest is sky gap
+                if h < 0.55 { out[x] = LAND_GAP; continue; }
+                h = (h - 0.55) / 0.45;
+            }
+            _ => {}
+        }
+        out[x] = (base_y - h * amp).round().clamp(top_min, base_y) as u16;
+    }
+    out
+}
+
+/// Draw the cached landform silhouette behind the playable terrain at PAR_LAND,
+/// skipping pixels behind real terrain or below the waterline.
+pub fn draw_landform(buf: &mut WorldBuffer, terrain: &Terrain, height: &[u16], cam_x: u32) {
+    if height.is_empty() { return; }
+    let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+    let water_y = WATER_Y as i32;
+    let col = landform_colour(terrain.archetype);
+    // A slightly lighter rim near the silhouette crest for a touch of relief.
+    let rim = Bgra::new(
+        (col.r as u16 + 18).min(255) as u8,
+        (col.g as u16 + 18).min(255) as u8,
+        (col.b as u16 + 20).min(255) as u8,
+    );
+
+    for sx in 0..SCREEN_W as i32 {
+        let sample = (cam_x as f32 * PAR_LAND + sx as f32) as i32;
+        let idx = sample.clamp(0, WORLD_W as i32 - 1) as usize;
+        let top = height[idx];
+        if top == LAND_GAP { continue; }
+        let top = top as i32;
+        if top >= water_y { continue; }
+        let wx = cam_x as i32 + sx;
+        for sy in top.max(0)..water_y {
+            if terrain.is_solid(wx, sy) { continue; }
+            buf.set_pixel(wx, sy, if sy < top + 3 { rim } else { col });
+        }
+    }
+}
+
 // ── Wind-driven ambient debris ──────────────────────────────────────────────
 
 /// One ambient air particle, in viewport-relative coords (0..SCREEN_W/H).
@@ -107,6 +309,9 @@ pub struct BgParticle {
     vy: f32,
     size: u8,
     glow: bool,
+    phase: f32, // sway clock
+    spin: f32,  // rotation speed (rad/tick)
+    rot: f32,   // current rotation (drives leaf/flake flutter shape)
 }
 
 struct DebrisStyle {
@@ -116,17 +321,20 @@ struct DebrisStyle {
     count: usize,     // target particle count
     big_chance: u8,   // 0..100 chance of a 2px particle
     glow_chance: u8,  // 0..100 chance of being a glowing ember
+    sway_amp: f32,    // lateral sway magnitude (px)
+    sway_speed: f32,  // sway clock advance (rad/tick)
+    spin: f32,        // max rotation speed for flutter
 }
 
 /// Per-archetype debris look: hills→pollen, cliffs→snow, islands→mist,
 /// caverns→dust+embers, canyon→dust.
 fn debris_style(archetype: u8) -> DebrisStyle {
     match archetype {
-        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 70, big_chance: 30, glow_chance: 0 }, // snow
-        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 40, big_chance: 10, glow_chance: 0 }, // sea mist
-        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 52, big_chance: 8,  glow_chance: 20 }, // dust + embers
-        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 46, big_chance: 12, glow_chance: 0 }, // canyon dust
-        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 36, big_chance: 8,  glow_chance: 0 }, // pollen
+        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 70, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow: flutters
+        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 40, big_chance: 10, glow_chance: 0,  sway_amp: 0.5, sway_speed: 0.05, spin: 0.04 }, // sea mist
+        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 52, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
+        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 46, big_chance: 12, glow_chance: 0,  sway_amp: 0.4, sway_speed: 0.07, spin: 0.10 }, // canyon dust
+        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 36, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen: drifts in arcs
     }
 }
 
@@ -156,6 +364,9 @@ fn spawn(state: &mut u32, style: &DebrisStyle, wind: f32, spread: bool) -> BgPar
         vy,
         size: if (rng(state) % 100) < style.big_chance as u32 { 2 } else { 1 },
         glow: (rng(state) % 100) < style.glow_chance as u32,
+        phase: rand_f(state) * TAU,
+        spin: (rand_f(state) - 0.5) * 2.0 * style.spin,
+        rot: rand_f(state) * TAU,
     }
 }
 
@@ -168,15 +379,19 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
     for p in particles.iter_mut() {
         p.vx += wind * style.drift * 0.05;
         p.vx *= 0.97;                       // damp so drift tracks wind, not runaway
-        p.x += p.vx;
+        p.phase += style.sway_speed;
+        p.x += p.vx + p.phase.sin() * style.sway_amp; // wavy arc, not a straight fall
         p.y += p.vy;
+        p.rot += p.spin;
     }
     particles.retain(|p| {
         p.y < SCREEN_H as f32 + 4.0 && p.x > -8.0 && p.x < SCREEN_W as f32 + 8.0
     });
 
+    // A strong gust visibly throws more motes across the screen.
+    let target = style.count + (wind.abs() * 22.0) as usize;
     let spread = particles.is_empty();
-    while particles.len() < style.count {
+    while particles.len() < target {
         particles.push(spawn(&mut state, &style, wind, spread));
     }
 }
@@ -201,15 +416,24 @@ pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgPart
             style.colour
         };
 
-        let r = p.size as i32;
-        for oy in 0..r {
-            for ox in 0..r {
-                let px = sx + ox;
-                let py = sy + oy;
-                if py < 0 || py >= water_y || px < 0 || px >= SCREEN_W as i32 { continue; }
-                let wx = cam_x as i32 + px;
-                if terrain.is_solid(wx, py) { continue; }
-                buf.set_pixel(wx, py, colour);
+        // 1px motes are a single pixel; 2px motes draw a 3-pixel "flake/leaf"
+        // whose orientation flips with `rot`, giving a tumbling flutter.
+        let mut put = |ox: i32, oy: i32| {
+            let px = sx + ox;
+            let py = sy + oy;
+            if py < 0 || py >= water_y || px < 0 || px >= SCREEN_W as i32 { return; }
+            let wx = cam_x as i32 + px;
+            if terrain.is_solid(wx, py) { return; }
+            buf.set_pixel(wx, py, colour);
+        };
+        put(0, 0);
+        if p.size >= 2 {
+            // L-shaped trio rotated through 4 orientations by the rotation phase.
+            match (((p.rot / (PI * 0.5)) as i32) & 3).abs() {
+                0 => { put(1, 0); put(0, 1); }
+                1 => { put(-1, 0); put(0, 1); }
+                2 => { put(-1, 0); put(0, -1); }
+                _ => { put(1, 0); put(0, -1); }
             }
         }
     }

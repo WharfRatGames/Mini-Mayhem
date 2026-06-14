@@ -4,6 +4,19 @@ use super::soldier::DeathCause;
 use super::team::Team;
 use super::turn::TurnManager;
 
+/// Representative dirt tone per map archetype, used to colour explosion debris
+/// chunks so the fallout matches the biome.
+pub fn biome_dirt(archetype: u8) -> crate::renderer::fb::Bgra {
+    use crate::renderer::fb::Bgra;
+    match archetype {
+        1 => Bgra::new(120, 122, 128), // cliffs: grey stone
+        2 => Bgra::new(150, 130, 96),  // islands: sandy
+        3 => Bgra::new(78, 70, 64),    // caverns: dark earth
+        4 => Bgra::new(166, 116, 78),  // canyon: red-brown
+        _ => Bgra::new(132, 104, 64),  // hills: brown
+    }
+}
+
 /// A crate sitting on the terrain waiting to be collected.
 #[derive(Debug, Clone)]
 pub struct DroppedCrate {
@@ -310,6 +323,9 @@ pub struct GameState {
     pub blood_splats: Vec<(WorldPos, u32)>,
     /// Bazooka smoke trail particles (visual only — not networked). (pos, ticks_left)
     pub smoke_particles: Vec<(WorldPos, u32)>,
+    /// Event-driven effect particles — explosion fallout, dust, sparks, splashes
+    /// (visual only — not networked). Spawned at event sites, stepped in simulate().
+    pub fx: Vec<crate::renderer::fx::FxParticle>,
     /// Soldiers waiting to explode before their headstone is placed.
     pub pending_deaths: Vec<PendingDeathExplosion>,
     /// Active plasma torch tunneling session; None = not torching.
@@ -364,6 +380,7 @@ impl GameState {
             messages: Vec::new(),
             blood_splats: Vec::new(),
             smoke_particles: Vec::new(),
+            fx: Vec::new(),
             pending_deaths: Vec::new(),
             plasma_torch: None,
             garcia: None,
@@ -446,6 +463,14 @@ impl GameState {
 
         // Spawn explosion animation (visual only — happens regardless of terrain)
         self.explosions.push(Explosion::new(pos, radius));
+
+        // Spawn effect fallout: dirt chunks + sparks (or a water splash on water).
+        // Visual only — not networked.
+        if pos.y >= WATER_Y as f32 {
+            crate::renderer::fx::splash(&mut self.fx, pos);
+        } else {
+            crate::renderer::fx::explosion(&mut self.fx, pos, radius, biome_dirt(self.terrain.archetype));
+        }
 
         // Track active worm HP before damage to detect hits
         let active_ti = self.active_team();
