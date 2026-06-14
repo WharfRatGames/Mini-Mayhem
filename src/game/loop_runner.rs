@@ -2306,8 +2306,6 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         );
         lstate.cache_craters_processed += 1;
     }
-    buf.copy_viewport_from(&lstate.world_cache, cam_x);
-
     // 1b. Atmospheric background (behind terrain): clouds, hills, seed landform,
     //     wind debris — all driven by a shared gusting wind so they breathe together.
     use crate::renderer::background;
@@ -2323,6 +2321,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     background::draw_landform(buf, &game.terrain, &lstate.bg_landform, cam_x);
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
     background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
+
+    buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain);
 
     // 2. Water ripple (dynamic — not cached)
     draw_water_surface(buf, game.tick);

@@ -4,7 +4,7 @@
 //! the 640px viewport slice to the framebuffer each frame.
 //! This keeps all drawing logic independent of the hardware.
 
-use crate::world::{WORLD_W, WORLD_H, SCREEN_W, SCREEN_H};
+use crate::world::{WORLD_W, WORLD_H, SCREEN_W, SCREEN_H, WATER_Y, Terrain};
 use super::fb::Bgra;
 
 /// Full-world BGRA pixel buffer.
@@ -114,6 +114,28 @@ impl WorldBuffer {
         for y in 0..WORLD_H {
             let off = (y * WORLD_W + cam_x) as usize * 4;
             self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
+        }
+    }
+
+    /// Like copy_viewport_from, but for rows above the waterline only copies
+    /// pixels where the terrain is solid — sky pixels are left untouched so
+    /// atmospheric background layers drawn earlier remain visible.
+    pub fn copy_viewport_from_sky_aware(&mut self, src: &WorldBuffer, cam_x: u32, terrain: &Terrain) {
+        let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+        let row_bytes = SCREEN_W as usize * 4;
+        for y in 0..WORLD_H {
+            let off = (y * WORLD_W + cam_x) as usize * 4;
+            if y >= WATER_Y {
+                self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
+            } else {
+                for x in 0..SCREEN_W {
+                    let wx = (cam_x + x) as i32;
+                    if terrain.is_solid(wx, y as i32) {
+                        let p = off + (x * 4) as usize;
+                        self.data[p..p + 4].copy_from_slice(&src.data[p..p + 4]);
+                    }
+                }
+            }
         }
     }
 

@@ -390,9 +390,8 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
 
     // A strong gust visibly throws more motes across the screen.
     let target = style.count + (wind.abs() * 22.0) as usize;
-    let spread = particles.is_empty();
     while particles.len() < target {
-        particles.push(spawn(&mut state, &style, wind, spread));
+        particles.push(spawn(&mut state, &style, wind, true));
     }
 }
 

@@ -56,19 +56,44 @@ fn decoded() -> &'static [Option<Decoded>; ARCHETYPE_COUNT] {
     DECODED.get_or_init(|| std::array::from_fn(|i| decode(PNGS[i])))
 }
 
-/// Draw the static background image for `archetype`, scaled to SCREEN_H and
+static SCALED: OnceLock<[Option<Decoded>; ARCHETYPE_COUNT]> = OnceLock::new();
+
+/// Pre-scale each archetype's image to SCREEN_H once, so the per-frame draw
+/// is a plain integer index/modulo instead of a float rescale per pixel.
+fn scaled() -> &'static [Option<Decoded>; ARCHETYPE_COUNT] {
+    SCALED.get_or_init(|| std::array::from_fn(|i| {
+        let img = decoded()[i].as_ref()?;
+        let scale = SCREEN_H as f32 / img.h as f32;
+        let dst_w = ((img.w as f32) * scale).round().max(1.0) as u32;
+        let dst_h = SCREEN_H;
+        let mut pixels = vec![0u8; (dst_w * dst_h * 4) as usize];
+        for dy in 0..dst_h {
+            let sy = ((dy as f32) / scale) as u32;
+            let sy = sy.min(img.h - 1);
+            for dx in 0..dst_w {
+                let sx = ((dx as f32) / scale) as u32;
+                let sx = sx.min(img.w - 1);
+                let src = ((sy * img.w + sx) * 4) as usize;
+                let dst = ((dy * dst_w + dx) * 4) as usize;
+                pixels[dst..dst + 4].copy_from_slice(&img.pixels[src..src + 4]);
+            }
+        }
+        Some(Decoded { w: dst_w, h: dst_h, pixels })
+    }))
+}
+
+/// Draw the static background image for `archetype`, pre-scaled to SCREEN_H and
 /// tiled horizontally, at the lowest parallax (slowest scroll). No-op if no
 /// real image is supplied for this archetype.
 pub fn draw_static_bg(buf: &mut WorldBuffer, archetype: u8, cam_x: i32) {
     let slot = (archetype as usize).min(ARCHETYPE_COUNT - 1);
-    let img = match decoded()[slot].as_ref() {
+    let img = match scaled()[slot].as_ref() {
         Some(img) => img,
         None => return,
     };
 
-    let scale = SCREEN_H as f32 / img.h as f32;
-    let dst_w = ((img.w as f32) * scale).round().max(1.0) as i32;
-    let dst_h = SCREEN_H as i32;
+    let dst_w = img.w as i32;
+    let dst_h = img.h as i32;
 
     let par_x = (cam_x as f32 * PAR_BG) as i32;
     // Tile horizontally to cover the viewport plus one extra tile each side.
@@ -78,13 +103,8 @@ pub fn draw_static_bg(buf: &mut WorldBuffer, archetype: u8, cam_x: i32) {
     for tile in start_tile..=end_tile {
         let tile_x0 = tile * dst_w - par_x;
         for dy in 0..dst_h {
-            let sy = ((dy as f32) / scale) as u32;
-            if sy >= img.h { continue; }
             for dx in 0..dst_w {
-                let sx = ((dx as f32) / scale) as u32;
-                if sx >= img.w { continue; }
-                let idx = ((sy * img.w + sx) * 4) as usize;
-                if idx + 3 >= img.pixels.len() { continue; }
+                let idx = ((dy as u32 * img.w + dx as u32) * 4) as usize;
                 let a = img.pixels[idx + 3];
                 if a == 0 { continue; }
                 let col = Bgra::new(img.pixels[idx], img.pixels[idx + 1], img.pixels[idx + 2]);
