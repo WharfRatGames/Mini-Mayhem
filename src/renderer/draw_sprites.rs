@@ -559,8 +559,8 @@ pub fn draw_aim_arrow(
             let base_x = ox as f32 + ca * col as f32;
             let base_y = oy as f32 - sa * col as f32;
             let is_cap = col == 0 || col == right_cap;
-            // Taper: half-width grows from 1 at muzzle to 4 at full bar
-            let half = (1 + col * 3 / bar_len).min(4) as i32;
+            // Taper: half-width grows from 1 at muzzle to 4 at end of current charge
+            let half = (1 + col * 3 / fill_px.max(1)).min(4) as i32;
             for row_off in -half..=half {
                 let px = (base_x + sa * row_off as f32).round() as i32;
                 let py = (base_y + ca * row_off as f32).round() as i32;
