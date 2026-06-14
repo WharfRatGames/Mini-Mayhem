@@ -145,13 +145,11 @@ impl Framebuffer {
         let dst_off = (ry * self.stride) as usize;
         let w = self.width as usize;
         let dst = &mut self.buf[dst_off..dst_off + w * 4];
-        // Reverse pixels horizontally in one pass
-        for x in 0..w {
-            let rx = w - 1 - x;
-            dst[rx * 4]     = src[x * 4];
-            dst[rx * 4 + 1] = src[x * 4 + 1];
-            dst[rx * 4 + 2] = src[x * 4 + 2];
-            dst[rx * 4 + 3] = src[x * 4 + 3];
+        // Reverse pixels horizontally: walk src forward and dst backward,
+        // copying whole 4-byte pixels per step instead of indexing each byte
+        // through `rx * 4 + k` (4 multiplications + bounds checks per pixel).
+        for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4).rev()) {
+            d.copy_from_slice(s);
         }
     }
 

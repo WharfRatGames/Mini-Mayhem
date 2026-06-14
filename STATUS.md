@@ -1,9 +1,15 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.155
+## Version: 0.5.4.156
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.155)
+## Recent changes (0.5.4.135–0.5.4.156)
+- **Framebuffer blit perf (0.5.4.156)** — the unconditional every-frame
+  180-degree screen rotation blit was reversing each row one byte at a time
+  (~1.2M indexed ops/frame); now copies whole pixels via chunked slice
+  copies. Unlike fire patches (which the user confirmed don't affect fps),
+  this runs every frame regardless of scene contents, making it the most
+  likely remaining cause of the 25fps vs 30fps target.
 - **Fire-patch flame perf (0.5.4.155)** — flame rendering now uses
   unchecked pixel access for the common in-bounds case (was bounds-checking
   every pixel of every flame row, up to ~250 checks per burning fire/soldier

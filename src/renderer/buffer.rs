@@ -194,7 +194,10 @@ impl WorldBuffer {
                 // without a per-pixel is_solid check.
                 for y in y0..WATER_Y {
                     let off = ((y * WORLD_W + wx) * 4) as usize;
-                    self.data[off..off + 4].copy_from_slice(&src.data[off..off + 4]);
+                    self.data[off]     = src.data[off];
+                    self.data[off + 1] = src.data[off + 1];
+                    self.data[off + 2] = src.data[off + 2];
+                    self.data[off + 3] = src.data[off + 3];
                 }
             } else {
                 // wx < WORLD_W and y < WATER_Y <= WORLD_H are guaranteed by

@@ -523,7 +523,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.155";
+const REQUIRED_VERSION: &str = "0.5.4.156";
 
 fn accept_player(listener: &TcpListener, slot: usize) -> (TcpStream, std::net::SocketAddr) {
     loop {
