@@ -489,7 +489,7 @@ impl GameState {
 
                 // Damage: linear falloff + direct-hit bonus when nearly touching center
                 let mut dmg = (max_dmg as f32 * falloff) as u32;
-                if dist < 10.0 && kind != WeaponKind::Blasthive { dmg = (dmg + 20).min(99); }
+                if dist < 10.0 && kind != WeaponKind::Blasthive && kind != WeaponKind::Bazooka { dmg = (dmg + 20).min(99); }
                 if dmg > 0 {
                     soldier.death_cause = super::soldier::DeathCause::Explosion;
                     soldier.kill_weapon = Some(kind);

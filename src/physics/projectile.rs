@@ -92,7 +92,7 @@ impl WeaponKind {
             Self::SuperSheep     => 60,
             Self::NinjaRope      => 0,
             Self::Revolver       => 15,
-            Self::Blasthive        => 12,    // per bee sting
+            Self::Blasthive        => 5,     // per bee sting
             Self::BlackHoleBomb    => 35,    // collapse burst damage
             Self::PlasmaTorch      => 0,     // no explosion
             Self::Garcia           => 85,
