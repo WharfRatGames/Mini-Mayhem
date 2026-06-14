@@ -1,9 +1,18 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.149
+## Version: 0.5.4.150
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.149)
+## Recent changes (0.5.4.135–0.5.4.150)
+- **Stuck soldiers + perf fix (0.5.4.150)** — `snap_to_surface`/`land_on_surface` now
+  check the full 3-column body width (left edge, center, right edge), matching
+  `try_move_horizontal`'s footprint; previously they only checked the center column,
+  so a soldier could be snapped sideways into terrain at an edge and then appear stuck
+  on nothing. Also fixes the 25fps regression from 0.5.4.149: `draw_static_bg`'s
+  air-gap paint (up to ~360 rows/column) now writes pixels directly via
+  `set_pixel_unchecked` instead of the bounds-checked `set_pixel`. `dp.sh` now also
+  runs `update_server.sh` so the nginx zip/`version.txt`/changelog/manifest/server
+  binary are refreshed on every normal deploy.
 - **New backgrounds (0.5.4.148)** — `assets/BG/BG2.png` (a 3×3 contact sheet) is sliced
   into 9 painted skies (`deploy/assets/backgrounds/bg2_0..8.png`). `renderer/bg_image.rs`
   holds the 9-image pool; one is chosen per map from the seed (`bg_index_for_seed`), so

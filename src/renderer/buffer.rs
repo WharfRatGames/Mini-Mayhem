@@ -35,6 +35,18 @@ impl WorldBuffer {
         self.data[off + 3] = 0xFF;
     }
 
+    /// Like `set_pixel`, but skips the bounds check — caller must guarantee
+    /// `0 <= x < WORLD_W` and `0 <= y < WORLD_H`. Used in hot per-pixel loops
+    /// (e.g. background painting) where bounds are already established by the
+    /// surrounding range clipping.
+    pub fn set_pixel_unchecked(&mut self, x: u32, y: u32, colour: Bgra) {
+        let off = (y * WORLD_W + x) as usize * 4;
+        self.data[off]     = colour.b;
+        self.data[off + 1] = colour.g;
+        self.data[off + 2] = colour.r;
+        self.data[off + 3] = 0xFF;
+    }
+
     /// Read a pixel colour. Returns black for out-of-bounds.
     pub fn get_pixel(&self, x: i32, y: i32) -> Bgra {
         if x < 0 || y < 0 || x >= WORLD_W as i32 || y >= WORLD_H as i32 {

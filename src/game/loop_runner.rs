@@ -737,20 +737,29 @@ pub fn try_move_horizontal(game: &mut GameState, ti: usize, si: usize, new_x: f3
 }
 
 pub fn snap_to_surface(game: &mut GameState, ti: usize, si: usize) {
+    use crate::renderer::draw_sprites::SOLDIER_HALF_W;
     let x = game.teams[ti].soldiers[si].pos.x as i32;
     let y = game.teams[ti].soldiers[si].pos.y as i32;
+    // Check all 3 body columns (left edge, center, right edge) — matching
+    // try_move_horizontal's footprint — so a move that lands clear there
+    // can't be snapped sideways into terrain at an edge column.
+    let x_l = x - (SOLDIER_HALF_W - 1);
+    let x_r = x + (SOLDIER_HALF_W - 1);
+    let any_solid = |yy: i32| {
+        game.terrain.is_solid(x_l, yy) || game.terrain.is_solid(x, yy) || game.terrain.is_solid(x_r, yy)
+    };
     // If foot is inside terrain, escape upward by at most 2px (float rounding artifact).
     // More than 2px of escape means we'd push through a wall — don't do it.
-    let start = if game.terrain.is_solid(x, y) {
-        if !game.terrain.is_solid(x, y - 1)      { y - 1 }
-        else if !game.terrain.is_solid(x, y - 2) { y - 2 }
+    let start = if any_solid(y) {
+        if !any_solid(y - 1)      { y - 1 }
+        else if !any_solid(y - 2) { y - 2 }
         else { return; } // deeply embedded — leave for gravity to resolve
     } else { y };
     // Scan downward to land on surface (0 = already correct, up to 10px gap for slopes)
     for gap in 0i32..=10 {
         let fy = start + gap;
         if fy >= crate::world::WORLD_H as i32 { break; }
-        if game.terrain.is_solid(x, fy) {
+        if any_solid(fy) {
             game.teams[ti].soldiers[si].pos.y = (fy - 1).max(0) as f32;
             return;
         }
@@ -796,17 +805,26 @@ pub fn jump_unstick_lift(game: &GameState, ti: usize, si: usize) -> f32 {
 /// Each physics sub-step is ≤1px, so after stepping back, the foot is at most 1-2px
 /// inside terrain due to float→int rounding. Correct by at most 2px upward only —
 /// never push through walls — then scan down to find the exact surface.
-fn land_on_surface(terrain: &crate::world::Terrain, ix: i32, cy: f32) -> i32 {
+fn land_on_surface(terrain: &crate::world::Terrain, cx: f32, cy: f32) -> i32 {
+    use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+    let ix = cx as i32;
+    let ix_l = ix - (SOLDIER_HALF_W - 1);
+    let ix_r = ix + (SOLDIER_HALF_W - 1);
     let fy = cy as i32;
-    // Tiny upward correction for float-rounding (max 2px — cannot teleport through walls).
+    // Check all 3 body columns (left edge, center, right edge) — matching
+    // try_move_horizontal's footprint — so landing can't embed an edge column.
     // Use is_blocked so barrels/mines count as landing surfaces.
-    let start = if terrain.is_blocked(ix, fy) {
-        if !terrain.is_blocked(ix, fy - 1)      { fy - 1 }
-        else if !terrain.is_blocked(ix, fy - 2) { fy - 2 }
+    let any_blocked = |yy: i32| {
+        terrain.is_blocked(ix_l, yy) || terrain.is_blocked(ix, yy) || terrain.is_blocked(ix_r, yy)
+    };
+    // Tiny upward correction for float-rounding (max 2px — cannot teleport through walls).
+    let start = if any_blocked(fy) {
+        if !any_blocked(fy - 1)      { fy - 1 }
+        else if !any_blocked(fy - 2) { fy - 2 }
         else { fy }
     } else { fy };
-    for gap in 0i32..8 {
-        if terrain.is_blocked(ix, start + 1 + gap) { return (start + gap).max(0); }
+    for gap in 0i32..=9 {
+        if any_blocked(start + 1 + gap) { return (start + gap).max(0); }
     }
     start.max(0)
 }
@@ -3451,7 +3469,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                     .any(|h| game.terrain.is_solid(ix, iy - h));
                             if hit {
                                 // Swinging into ground — detach rope and land
-                                let land_y = land_on_surface(&game.terrain, ix, ny) as f32;
+                                let land_y = land_on_surface(&game.terrain, nx, ny) as f32;
                                 let dmg = game.teams[ti].soldiers[si].fall.land(land_y);
                                 if dmg > 0 {
                                     game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
@@ -3562,7 +3580,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if !still { break; }
                             }
                             cx = tx.clamp(1.0, crate::world::WORLD_W as f32 - 1.0);
-                            cy = land_on_surface(&game.terrain, cx as i32, cy) as f32;
+                            cy = land_on_surface(&game.terrain, cx, cy) as f32;
                             let dmg = game.teams[ti].soldiers[si].fall.land(cy);
                             if dmg > 0 {
                                 game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
@@ -3597,7 +3615,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 landed = true;
                             } else {
                                 // Moving downward — snap foot to surface, apply distance-based fall damage
-                                cy = land_on_surface(&game.terrain, ix, cy) as f32;
+                                cy = land_on_surface(&game.terrain, cx, cy) as f32;
                                 {
                                     let dmg = game.teams[ti].soldiers[si].fall.land(cy);
                                     if dmg > 0 {

@@ -141,12 +141,15 @@ pub fn draw_static_bg(buf: &mut WorldBuffer, terrain: &Terrain, seed: u64, cam_x
             } else {
                 (crate::world::WATER_Y).min(dst_h as u32) as i32
             };
+            // wx is already clamped to WORLD_W above, and dy < dst_h <= SCREEN_H <=
+            // WORLD_H, so the bounds check in set_pixel is dead weight here —
+            // multiplied by up to ~360 rows on air-gap columns, every frame.
             for dy in 0..y_end {
                 let idx = ((dy as u32 * img.w + dx as u32) * 4) as usize;
                 let a = img.pixels[idx + 3];
                 if a == 0 { continue; }
                 let col = Bgra::new(img.pixels[idx], img.pixels[idx + 1], img.pixels[idx + 2]);
-                buf.set_pixel(wx, dy, col);
+                buf.set_pixel_unchecked(wx as u32, dy as u32, col);
             }
         }
     }
