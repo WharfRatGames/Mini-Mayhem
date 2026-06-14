@@ -588,13 +588,13 @@ pub fn draw_projectile(buf: &mut WorldBuffer, pos: WorldPos, radius: i32, colour
     buf.fill_circle(pos.x as i32, pos.y as i32, radius, colour);
 }
 
-/// Draw a bazooka rocket — 11 px long, 3 px wide body, rotated to face velocity.
+/// Draw a bazooka rocket — ~17 px long, 5 px wide body, rotated to face velocity.
 pub fn draw_bazooka(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::world::Vec2) {
     let speed = (vel.x * vel.x + vel.y * vel.y).sqrt();
     let px = pos.x.round() as i32;
     let py = pos.y.round() as i32;
     if speed < 0.1 {
-        buf.fill_circle(px, py, 3, Bgra::new(200, 100, 20));
+        buf.fill_circle(px, py, 4, Bgra::new(200, 100, 20));
         return;
     }
     let nx = vel.x / speed;  // forward unit
@@ -605,36 +605,42 @@ pub fn draw_bazooka(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::world::Vec
          (pos.y + ny * t + nx * p).round() as i32)
     };
 
-    let exhaust   = Bgra::new( 80,  25,  5);   // tail glow
-    let body_side = Bgra::new(140,  60, 10);   // body edges
-    let body_ctr  = Bgra::new(200, 100, 20);   // body centre
-    let nose_col  = Bgra::new(230, 145, 35);   // nose cone
-    let tip_col   = Bgra::new(255, 230, 80);   // bright nose tip
+    let exhaust    = Bgra::new( 80,  25,  5);   // tail glow
+    let body_edge  = Bgra::new(120,  50,  8);   // outermost body edges (±2)
+    let body_side  = Bgra::new(160,  75, 15);   // inner body (±1)
+    let body_ctr   = Bgra::new(210, 110, 25);   // body centre
+    let nose_col   = Bgra::new(235, 150, 40);   // nose cone
+    let tip_col    = Bgra::new(255, 230, 80);   // bright nose tip
 
-    // Tail exhaust dot (-5)
-    let (ex, ey) = pt(-5.0, 0.0);
+    // Tail exhaust dot (-7)
+    let (ex, ey) = pt(-7.0, 0.0);
     buf.set_pixel(ex, ey, exhaust);
 
-    // Body: 3 parallel lines from -4 to +2
-    let (b0x, b0y) = pt(-4.0,  0.0);
-    let (b1x, b1y) = pt( 2.0,  0.0);
+    // Body: 5 parallel lines from -6 to +3
+    let (b0x, b0y) = pt(-6.0,  0.0); let (b1x, b1y) = pt(3.0,  0.0);
     buf.draw_line(b0x, b0y, b1x, b1y, body_ctr);
 
-    let (s0x, s0y) = pt(-4.0,  1.0);
-    let (s1x, s1y) = pt( 2.0,  1.0);
+    let (s0x, s0y) = pt(-6.0,  1.0); let (s1x, s1y) = pt(3.0,  1.0);
     buf.draw_line(s0x, s0y, s1x, s1y, body_side);
-
-    let (s2x, s2y) = pt(-4.0, -1.0);
-    let (s3x, s3y) = pt( 2.0, -1.0);
+    let (s2x, s2y) = pt(-6.0, -1.0); let (s3x, s3y) = pt(3.0, -1.0);
     buf.draw_line(s2x, s2y, s3x, s3y, body_side);
 
-    // Nose cone (+2 to +4, centre only — tapers the front)
-    let (n0x, n0y) = pt(2.0, 0.0);
-    let (n1x, n1y) = pt(4.0, 0.0);
-    buf.draw_line(n0x, n0y, n1x, n1y, nose_col);
+    let (e0x, e0y) = pt(-6.0,  2.0); let (e1x, e1y) = pt(3.0,  2.0);
+    buf.draw_line(e0x, e0y, e1x, e1y, body_edge);
+    let (e2x, e2y) = pt(-6.0, -2.0); let (e3x, e3y) = pt(3.0, -2.0);
+    buf.draw_line(e2x, e2y, e3x, e3y, body_edge);
 
-    // Bright tip pixel (+5)
-    let (tx, ty) = pt(5.0, 0.0);
+    // Nose cone (+3 to +6, centre only — tapers the front)
+    let (n0x, n0y) = pt(3.0, 0.0); let (n1x, n1y) = pt(6.0, 0.0);
+    buf.draw_line(n0x, n0y, n1x, n1y, nose_col);
+    // Nose inner edges (taper from ±1 at base to tip)
+    let (ni0x, ni0y) = pt(3.0,  1.0); let (ni1x, ni1y) = pt(5.0, 0.0);
+    buf.draw_line(ni0x, ni0y, ni1x, ni1y, nose_col);
+    let (ni2x, ni2y) = pt(3.0, -1.0); let (ni3x, ni3y) = pt(5.0, 0.0);
+    buf.draw_line(ni2x, ni2y, ni3x, ni3y, nose_col);
+
+    // Bright tip pixel (+7)
+    let (tx, ty) = pt(7.0, 0.0);
     buf.set_pixel(tx, ty, tip_col);
 }
 

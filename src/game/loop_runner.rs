@@ -2652,7 +2652,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         else if t > 10 { Bgra::new(140, 140, 140) }
                         else if t > 5  { Bgra::new(100, 100, 100) }
                         else            { Bgra::new(65,  65,  65)  };
-            let r = if t > 15 { 3 } else if t > 8 { 2 } else { 1 };
+            let r = if t > 15 { 5 } else if t > 8 { 3 } else { 2 };
             buf.fill_circle(pos.x as i32, pos.y as i32, r, shade);
         }
     }

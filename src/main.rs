@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.130";
+const VERSION: &str = "0.5.4.131";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -542,8 +542,8 @@ fn main() {
             game.teams[my_t].soldiers[si].gun_style_id     = roster.gun_style_ids[si];
         }
     }
-    // Match intro screen for live ranked
-    if live_ranked_match {
+    // Match intro screen for all live matches
+    if is_live || live_ranked_match {
         show_match_intro(&mut fb, &mut buf, &mut input, &game, my_team);
     }
 
@@ -775,9 +775,7 @@ fn main() {
                 game::loop_runner::tick_fire_grace(&mut game);
                 if lstate.fire_grace > 0 { lstate.fire_grace -= 1; game.aim.power = 0.0; }
             } else if !my_turn {
-                // Not our turn — keep aim state neutral so arrow doesn't drift,
-                // and never show the opponent's weapon-selection menu.
-                game.aim.power = 0.0;
+                // Not our turn — block weapon menu; aim.power comes from server state.
                 game.weapon_menu_open = false;
             }
             // Camera pan or follow active soldier
