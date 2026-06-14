@@ -186,6 +186,7 @@ SHOP_CATALOG = [
     {"type":"hat","id":9, "name":"Devil Horns",   "cost_scrap":500,"cost_warbonds":0},
     {"type":"hat","id":10,"name":"Gold Crown",    "cost_scrap":0,  "cost_warbonds":50},
     {"type":"hat","id":11,"name":"Laurel Wreath", "cost_scrap":0,  "cost_warbonds":30},
+    {"type":"hat","id":12,"name":"Blue Party Hat","cost_scrap":200,"cost_warbonds":0},
     # Gun styles (full shape replacement, not just color)
     {"type":"gun_style","id":1,"name":"Pistol",      "cost_scrap":200,"cost_warbonds":0},
     {"type":"gun_style","id":2,"name":"Shotgun",     "cost_scrap":300,"cost_warbonds":0},

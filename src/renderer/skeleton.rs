@@ -287,6 +287,13 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8) {
                 dot(buf, dx, dy, col);
             }
         }
+        12 => { // Blue Party Hat
+            let col = Bgra::new(50, 120, 230);
+            dot(buf, 0, -11, Bgra::new(255, 255, 255)); // white tip star
+            rect(buf, -1, -10, 3, 2, col);
+            rect(buf, -2,  -8, 5, 2, col);
+            rect(buf, -3,  -6, 7, 1, dark);
+        }
         _ => {}
     }
 }
