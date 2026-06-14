@@ -1,9 +1,17 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.153
+## Version: 0.5.4.154
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.153)
+## Recent changes (0.5.4.135–0.5.4.154)
+- **Soldiers stuck on any uphill slope (0.5.4.154)** — the horizontal-move
+  leading-edge sweep in `try_move_horizontal` checked each intermediate
+  column against the soldier's *current* foot height with no step-up
+  allowance, so a 1px rise in terrain immediately ahead halted the entire
+  move (truncating it back to 0px) even though the destination check a few
+  lines later would happily step up to 8px. Projectiles don't go through
+  this function and were unaffected — explaining "soldiers can't move,
+  projectiles can." The sweep now allows the same 0-8px step-up tolerance.
 - **Light-blue patches on fresh maps + skeleton draw perf (0.5.4.153)** —
   found the real root cause of the light-blue patches reported even before
   any terrain is destroyed: `Terrain::find_team_spawns` (spawn-mound raising)

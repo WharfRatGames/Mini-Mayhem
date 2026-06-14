@@ -696,7 +696,14 @@ pub fn try_move_horizontal(game: &mut GameState, ti: usize, si: usize, new_x: f3
     while lc != target_lead {
         let step = if target_lead > lc { 1 } else { -1 };
         let next_lc = lc + step;
-        if (0..=SOLDIER_H).any(|h| game.terrain.is_blocked(next_lc, cfy0 - h)) {
+        // A column is passable if there's SOME step-up (0-8px, matching the
+        // destination check below) that clears the full body height — not just
+        // at the current foot level. Without this, any uphill slope (the first
+        // column rises even 1px) makes the very first sweep step "blocked" and
+        // truncates new_x back to cur_x, freezing the soldier in place.
+        let passable = (0..=8i32).any(|su|
+            (0..=SOLDIER_H).all(|h| !game.terrain.is_blocked(next_lc, cfy0 - su - h)));
+        if !passable {
             new_x = (lc - lead_off) as f32;
             break;
         }
