@@ -588,23 +588,54 @@ pub fn draw_projectile(buf: &mut WorldBuffer, pos: WorldPos, radius: i32, colour
     buf.fill_circle(pos.x as i32, pos.y as i32, radius, colour);
 }
 
-/// Draw a bazooka as a 5-pixel rocket oriented along its velocity.
+/// Draw a bazooka rocket — 11 px long, 3 px wide body, rotated to face velocity.
 pub fn draw_bazooka(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::world::Vec2) {
     let speed = (vel.x * vel.x + vel.y * vel.y).sqrt();
     let px = pos.x.round() as i32;
     let py = pos.y.round() as i32;
     if speed < 0.1 {
-        buf.fill_circle(px, py, 2, Bgra::yellow());
+        buf.fill_circle(px, py, 3, Bgra::new(200, 100, 20));
         return;
     }
-    let nx = vel.x / speed;
+    let nx = vel.x / speed;  // forward unit
     let ny = vel.y / speed;
-    let tail_x = (pos.x - nx * 2.0).round() as i32;
-    let tail_y = (pos.y - ny * 2.0).round() as i32;
-    let tip_x  = (pos.x + nx * 2.0).round() as i32;
-    let tip_y  = (pos.y + ny * 2.0).round() as i32;
-    buf.draw_line(tail_x, tail_y, tip_x, tip_y, Bgra::new(200, 100, 20));
-    buf.set_pixel(tip_x, tip_y, Bgra::new(255, 230, 80));
+    // Compute a point offset by (t) along the axis and (p) perpendicular (-ny, nx).
+    let pt = |t: f32, p: f32| -> (i32, i32) {
+        ((pos.x + nx * t - ny * p).round() as i32,
+         (pos.y + ny * t + nx * p).round() as i32)
+    };
+
+    let exhaust   = Bgra::new( 80,  25,  5);   // tail glow
+    let body_side = Bgra::new(140,  60, 10);   // body edges
+    let body_ctr  = Bgra::new(200, 100, 20);   // body centre
+    let nose_col  = Bgra::new(230, 145, 35);   // nose cone
+    let tip_col   = Bgra::new(255, 230, 80);   // bright nose tip
+
+    // Tail exhaust dot (-5)
+    let (ex, ey) = pt(-5.0, 0.0);
+    buf.set_pixel(ex, ey, exhaust);
+
+    // Body: 3 parallel lines from -4 to +2
+    let (b0x, b0y) = pt(-4.0,  0.0);
+    let (b1x, b1y) = pt( 2.0,  0.0);
+    buf.draw_line(b0x, b0y, b1x, b1y, body_ctr);
+
+    let (s0x, s0y) = pt(-4.0,  1.0);
+    let (s1x, s1y) = pt( 2.0,  1.0);
+    buf.draw_line(s0x, s0y, s1x, s1y, body_side);
+
+    let (s2x, s2y) = pt(-4.0, -1.0);
+    let (s3x, s3y) = pt( 2.0, -1.0);
+    buf.draw_line(s2x, s2y, s3x, s3y, body_side);
+
+    // Nose cone (+2 to +4, centre only — tapers the front)
+    let (n0x, n0y) = pt(2.0, 0.0);
+    let (n1x, n1y) = pt(4.0, 0.0);
+    buf.draw_line(n0x, n0y, n1x, n1y, nose_col);
+
+    // Bright tip pixel (+5)
+    let (tx, ty) = pt(5.0, 0.0);
+    buf.set_pixel(tx, ty, tip_col);
 }
 
 /// Draw a grenade projectile — small oval body with seam lines and pin, matching the weapon icon style.
