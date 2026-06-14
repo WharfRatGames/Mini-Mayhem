@@ -1,7 +1,32 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.134
+## Version: 0.5.4.149
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.135–0.5.4.149)
+- **New backgrounds (0.5.4.148)** — `assets/BG/BG2.png` (a 3×3 contact sheet) is sliced
+  into 9 painted skies (`deploy/assets/backgrounds/bg2_0..8.png`). `renderer/bg_image.rs`
+  holds the 9-image pool; one is chosen per map from the seed (`bg_index_for_seed`), so
+  backgrounds vary match-to-match across every archetype (replaces the old per-archetype
+  bg_0..3). Deterministic so client/server/live agree.
+- **Ghosting fix (0.5.4.149)** — the 0.5.4.148 background sky-band clip left air pixels
+  below the surface (chasms, caves, fresh craters) un-repainted, so stale frame-buffer
+  content (title screen, persistent wind particles/explosions, blacked-out terrain) showed
+  through. Now the sky-band clip is only applied to fully-solid columns; columns with an
+  air gap are painted down to the waterline.
+- **Render perf (0.5.4.148)** — background drawn only in the sky band on solid columns;
+  `WorldBuffer::fill_rect`/`fill_circle` rewritten to clamp-once + contiguous-row
+  `copy_from_slice` instead of per-pixel bounds-checked `set_pixel`.
+- **Collision + spawns (0.5.4.147)** — walk/airborne collision now uses full body
+  width+height (fixes clipping through walls/ceilings); spawns require the same full-body
+  clearance; viewport copy block-copies fully-solid columns (`solid_to_water`).
+- **Spawn-mound + water-surface render fixes (0.5.4.144–146)**; **floating-island land
+  density tuned (0.5.4.143)**.
+- **Static background images, first version (0.5.4.135)** — `renderer/bg_image.rs` added,
+  per-archetype PNGs from `deploy/assets/backgrounds/` (later superseded by the 9-image
+  seed-rotated pool in 0.5.4.148).
+- `examples/bg_preview.rs` — composites background + terrain to a viewport PNG (with a
+  sentinel-fill ghosting check) for host-side eyeballing.
 
 ## Recent changes (0.5.4.134)
 - Terrain heightmap amplitude +10% (noise scale 0.48 → 0.528 of terrain range)
