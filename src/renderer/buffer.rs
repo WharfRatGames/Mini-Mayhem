@@ -192,7 +192,13 @@ impl WorldBuffer {
     /// Like copy_viewport_from, but for rows above the waterline only copies
     /// pixels where the terrain is solid — sky pixels are left untouched so
     /// atmospheric background layers drawn earlier remain visible.
-    pub fn copy_viewport_from_sky_aware(&mut self, src: &WorldBuffer, cam_x: u32, terrain: &Terrain) {
+    ///
+    /// For columns with air gaps below `sky_limit` (caves/chasms/overhangs),
+    /// the gaps are filled with `bg_cache`'s parallax-shifted pixels in the
+    /// same pass that copies the solid spans, so each pixel in
+    /// `sky_limit..WATER_Y` is written exactly once (instead of `bg_image`
+    /// painting the whole column first and this then overwriting most of it).
+    pub fn copy_viewport_from_sky_aware(&mut self, src: &WorldBuffer, cam_x: u32, terrain: &Terrain, bg_cache: &WorldBuffer, seed: u64) {
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
         let row_bytes = SCREEN_W as usize * 4;
         // Water rows: full-row memcpy.
@@ -201,6 +207,7 @@ impl WorldBuffer {
             self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
         }
         self.pixel_writes += SCREEN_W as u64 * (WORLD_H - WATER_Y) as u64;
+        let par = super::bg_image::par_x_and_dst_w(seed, cam_x);
         // Sky band: per column, skip straight to the topmost solid pixel
         // (guaranteed sky above it — explosions only remove material, never
         // add it above sky_limit), then copy solid pixels down to the water.
@@ -220,9 +227,20 @@ impl WorldBuffer {
                 self.pixel_writes += (WATER_Y - y0) as u64;
             } else {
                 // Precomputed contiguous solid spans for this column (see
-                // `Terrain::solid_runs`) — memcpy each span directly instead
-                // of testing `is_solid` for every pixel down to the water.
+                // `Terrain::solid_runs`) — memcpy each span directly, filling
+                // the gaps between/around them with the background cache so
+                // every row in y0..WATER_Y is written exactly once.
+                let src_x = par.map(|(par_x, dst_w)| (par_x + x) % dst_w);
+                let mut y = y0;
                 for &(ys, ye) in &terrain.solid_runs[wx as usize] {
+                    if let Some(src_x) = src_x {
+                        for gy in y..ys {
+                            let c = bg_cache.get_pixel_unchecked(src_x, gy);
+                            self.set_pixel_unchecked(wx, gy, c);
+                        }
+                    }
+                    self.pixel_writes += (ys.saturating_sub(y)) as u64;
+
                     let off0 = ((ys * WORLD_W + wx) * 4) as usize;
                     let off1 = ((ye * WORLD_W + wx) * 4) as usize;
                     let mut off = off0;
@@ -234,7 +252,15 @@ impl WorldBuffer {
                         off += (WORLD_W * 4) as usize;
                     }
                     self.pixel_writes += (ye - ys) as u64;
+                    y = ye;
                 }
+                if let Some(src_x) = src_x {
+                    for gy in y..WATER_Y {
+                        let c = bg_cache.get_pixel_unchecked(src_x, gy);
+                        self.set_pixel_unchecked(wx, gy, c);
+                    }
+                }
+                self.pixel_writes += (WATER_Y.saturating_sub(y)) as u64;
             }
         }
     }

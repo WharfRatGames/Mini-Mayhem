@@ -122,6 +122,22 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
 /// (slow horizontal scroll relative to the foreground).
 const PAR_BG: f32 = 0.10;
 
+/// Compute the parallax-shifted source column offset and cached image width
+/// for `seed` at `cam_x`, shared by `copy_bg_viewport` and
+/// `WorldBuffer::copy_viewport_from_sky_aware`'s merged cave-column pass so
+/// both sample the same background column for a given screen column.
+/// Returns `None` if there's no background image for this seed.
+pub(crate) fn par_x_and_dst_w(seed: u64, cam_x: u32) -> Option<(u32, u32)> {
+    let slot = bg_index_for_seed(seed);
+    let dst_w = match scaled()[slot].as_ref() {
+        Some(img) => img.w.min(WORLD_W),
+        None => return None,
+    };
+    if dst_w == 0 { return None; }
+    let par_x = ((cam_x as f32) * PAR_BG) as u32 % dst_w;
+    Some((par_x, dst_w))
+}
+
 /// Pre-render the seed-chosen background image into a small world-space cache
 /// (one cache column per source-image column, 1:1 — no stretching, so the art
 /// isn't blown up/blockier than its native resolution), once at map load.
@@ -149,37 +165,24 @@ pub fn build_bg_cache(seed: u64) -> WorldBuffer {
     cache
 }
 
-/// Copy the cached background into the viewport with a slow parallax scroll
-/// (`PAR_BG`).
+/// Copy the cached background into the viewport's sky band with a slow
+/// parallax scroll (`PAR_BG`).
 ///
-/// The background must cover every pixel the terrain viewport copy leaves
-/// untouched, because the frame buffer is reused across frames (otherwise stale
-/// content — title screen, old debris/explosions, uninitialized black — ghosts
-/// through). The viewport copy fills: all water rows, plus the solid pixels in
-/// the sky band. So per column:
-///   * fully-solid column (`solid_to_water`): the copy block-fills `sky_limit..
-///     WATER_Y`, so we only need to paint the sky band above `sky_limit`.
-///   * any column with an air gap below the top (caves, chasms, overhangs,
-///     fresh craters): the copy skips those air pixels, so we must paint the
-///     whole air region down to the waterline.
+/// Only paints `0..sky_limit` for every column: any air gaps below
+/// `sky_limit` (caves, chasms, overhangs, fresh craters) are filled by
+/// `WorldBuffer::copy_viewport_from_sky_aware`'s merged pass instead, so each
+/// pixel is written exactly once instead of being painted here and then
+/// overwritten by the terrain copy.
 pub fn copy_bg_viewport(buf: &mut WorldBuffer, cache: &WorldBuffer, terrain: &Terrain, seed: u64, cam_x: u32) {
-    let slot = bg_index_for_seed(seed);
-    let dst_w = match scaled()[slot].as_ref() {
-        Some(img) => img.w.min(WORLD_W),
+    let (par_x, dst_w) = match par_x_and_dst_w(seed, cam_x) {
+        Some(v) => v,
         None => return,
     };
-    if dst_w == 0 { return; }
-
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
-    let par_x = ((cam_x as f32) * PAR_BG) as u32 % dst_w;
     for sx in 0..SCREEN_W {
         let wx = cam_x + sx;
         let src_x = (par_x + sx) % dst_w;
-        let y_end = if terrain.solid_to_water[wx as usize] {
-            terrain.sky_limit[wx as usize].min(WATER_Y)
-        } else {
-            WATER_Y
-        };
+        let y_end = terrain.sky_limit[wx as usize].min(WATER_Y);
         for y in 0..y_end {
             let c = cache.get_pixel_unchecked(src_x, y);
             buf.set_pixel_unchecked(wx, y, c);

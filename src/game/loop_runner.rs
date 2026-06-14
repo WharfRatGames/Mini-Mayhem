@@ -2410,7 +2410,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
     background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
 
-    buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain);
+    buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain, &lstate.bg_cache, game.map_seed);
     mark!("terrain+bg");
 
     // 2. Water ripple (dynamic — not cached)

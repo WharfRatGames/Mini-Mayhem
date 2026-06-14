@@ -1,9 +1,16 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.162
+## Version: 0.5.4.163
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.162)
+## Recent changes (0.5.4.135–0.5.4.163)
+- **Merge bg+terrain viewport copy for cave columns (0.5.4.163)** — perf:
+  the background cache now only paints the sky band above `sky_limit`; the
+  terrain viewport copy's cave/chasm/overhang branch now fills the gaps
+  between solid spans with background pixels in the same pass, so each pixel
+  in `sky_limit..WATER_Y` is written once instead of twice. Parallax preserved
+  (same parallax-shifted source column used for both the sky band and the gap
+  fills).
 - **Per-section pixel-write profiling overlay (0.5.4.162)** — TEST mode now
   shows a top-right breakdown of how many pixels each render section
   (terrain+bg, water, objects, soldiers, fire patches, plasma torch, garcia,
