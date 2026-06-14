@@ -334,13 +334,7 @@ fn main() {
         if rosters.is_empty() { rosters.push(game::account::Roster::default_named(0)); }
         // Daily login bonus
         if let Some((earned, weekly)) = game::account::claim_daily_login(&token) {
-            let msg = if weekly > 0 {
-                format!("WEEKLY STREAK BONUS! +{} SCRAP", earned)
-            } else {
-                format!("DAILY LOGIN BONUS: +{} SCRAP", earned)
-            };
-            draw_status(&mut buf, &mut fb, &msg);
-            std::thread::sleep(std::time::Duration::from_secs(2));
+            show_login_bonus(&mut buf, &mut fb, &mut input, earned, weekly);
         }
         // Roster picker
         let mut picker = RosterPicker::new(token, rosters);
@@ -1289,6 +1283,89 @@ fn draw_status(buf: &mut renderer::WorldBuffer, fb: &mut renderer::Framebuffer, 
     buf.blit_to_fb(fb, 0);
 }
 
+fn show_login_bonus(
+    buf:     &mut renderer::WorldBuffer,
+    fb:      &mut renderer::Framebuffer,
+    input:   &mut input::InputState,
+    earned:  u32,
+    weekly:  u32,
+) {
+    use renderer::Bgra;
+    use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+    use world::{SCREEN_W, SCREEN_H};
+    let sw = SCREEN_W as i32;
+    let sh = SCREEN_H as i32;
+    let cx = sw / 2;
+
+    let bg       = Bgra::new(8, 10, 22);
+    let gold     = Bgra::new(255, 210, 50);
+    let gold_dim = Bgra::new(180, 140, 20);
+    let teal     = Bgra::new(80, 220, 200);
+    let white    = Bgra::new(220, 220, 220);
+    let panel_bg = Bgra::new(18, 22, 48);
+    let bar_col  = if weekly > 0 { Bgra::new(200, 100, 255) } else { teal };
+
+    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, bg);
+
+    // Top accent bar
+    buf.fill_rect(0, 0, SCREEN_W, 6, bar_col);
+
+    // Card panel
+    let pw = 280i32; let ph = 180i32;
+    let px = cx - pw / 2; let py = sh / 2 - ph / 2 - 10;
+    buf.fill_rect(px - 2, py - 2, (pw + 4) as u32, (ph + 4) as u32, bar_col);
+    buf.fill_rect(px, py, pw as u32, ph as u32, panel_bg);
+
+    // Title
+    let title = if weekly > 0 { "WEEKLY STREAK!" } else { "DAILY LOGIN" };
+    let tx = cx - str_width_scaled(title, 2) / 2;
+    draw_str_scaled(buf, title, tx, py + 14, bar_col, 2);
+
+    // Divider
+    buf.fill_rect(px + 16, py + 36, (pw - 32) as u32, 1, gold_dim);
+
+    // Big gear icon (centred, large)
+    let gx = cx; let gy = py + 80;
+    let gear_col = gold;
+    let gear_bg  = panel_bg;
+    buf.fill_circle(gx, gy, 22, gear_col);
+    // 4 teeth N/S/E/W
+    buf.fill_rect(gx - 5, gy - 30, 11, 10, gear_col);
+    buf.fill_rect(gx - 5, gy + 20, 11, 10, gear_col);
+    buf.fill_rect(gx - 30, gy - 5, 10, 11, gear_col);
+    buf.fill_rect(gx + 20, gy - 5, 10, 11, gear_col);
+    // Hollow centre
+    buf.fill_circle(gx, gy, 10, gear_bg);
+
+    // Scrap amount — large, to the right of the gear
+    let amount = format!("+{}", earned);
+    let ax = gx + 38;
+    let ay = gy - str_width_scaled(&amount, 3) / 2 - 4; // rough vertical centre
+    draw_str_scaled(buf, &amount, ax, gy - 14, gold, 3);
+
+    // "SCRAP" label below amount
+    let scrap_lbl = "SCRAP";
+    draw_str_scaled(buf, scrap_lbl, ax, gy + 10, gold_dim, 2);
+
+    // Bottom hint
+    let hint = "PRESS A TO CONTINUE";
+    let hx = cx - str_width(hint) / 2;
+    draw_str(buf, hint, hx, py + ph - 20, white);
+
+    // Bottom accent bar
+    buf.fill_rect(0, sh - 6, SCREEN_W, 6, bar_col);
+
+    buf.blit_to_fb(fb, 0);
+
+    // Wait up to 3s or A press
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        input.poll();
+        if input.just_pressed(input::Button::A) || std::time::Instant::now() >= deadline { break; }
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+}
+
 /// Full-screen match intro: shows both teams side-by-side with avatars and ELO.
 /// Dismisses on A/Start or after 3 seconds.
 fn show_match_intro(
@@ -1728,15 +1805,9 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
 
     if rosters.is_empty() { rosters.push(game::account::Roster::default_named(0)); }
 
-    // Daily login bonus — silent if already claimed today, brief notice if new
+    // Daily login bonus — silent if already claimed today, presentable screen if new
     if let Some((earned, weekly)) = game::account::claim_daily_login(&token) {
-        let msg = if weekly > 0 {
-            format!("WEEKLY STREAK BONUS! +{} SCRAP", earned)
-        } else {
-            format!("DAILY LOGIN BONUS: +{} SCRAP", earned)
-        };
-        draw_status(buf, fb, &msg);
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        show_login_bonus(buf, fb, input, earned, weekly);
     }
 
     // Helper: pick/load roster for a specific match (locked after first selection)
