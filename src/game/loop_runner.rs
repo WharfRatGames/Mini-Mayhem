@@ -1231,6 +1231,8 @@ fn process_fire(game: &mut GameState, input: &InputState) {
             game.garcia = Some(crate::game::state::GarciaState {
                 cursor_x:    sx,
                 render_x:    sx,
+                cursor_y:    12.0,
+                render_y:    12.0,
                 blink_timer: 0,
                 falling:     false,
                 fall_y:      -200.0,
@@ -1482,8 +1484,15 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
     if input.held(Button::Right) {
         g.cursor_x = (g.cursor_x + CURSOR_SPEED).min(WORLD_W as f32 - 1.0);
     }
-    // Smooth render_x toward cursor_x
+    if input.held(Button::Up) {
+        g.cursor_y = (g.cursor_y - CURSOR_SPEED).max(12.0);
+    }
+    if input.held(Button::Down) {
+        g.cursor_y = (g.cursor_y + CURSOR_SPEED).min(400.0);
+    }
+    // Smooth render_x/render_y toward cursor_x/cursor_y
     g.render_x += (g.cursor_x - g.render_x) * 0.25;
+    g.render_y += (g.cursor_y - g.render_y) * 0.25;
     g.blink_timer = g.blink_timer.wrapping_add(1);
 
     if input.just_pressed(Button::A) && game.garcia.is_some() {
@@ -1499,7 +1508,7 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
         game.turn.on_fired();
         if let Some(g) = game.garcia.as_mut() {
             g.falling      = true;
-            g.fall_y       = -200.0;
+            g.fall_y       = g.cursor_y - 200.0;
             g.vel_y        = 8.0;
             g.bounce_count = 0;
         }
@@ -2749,7 +2758,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 
             // Downward arrow near top of screen (screen-space: add cam_x)
             let arrow_x = rx;
-            let arrow_y = 12i32;
+            let arrow_y = garcia.render_y as i32;
             let ac = Bgra::new(255, 240, 60);
             // Triangle: tip at bottom, 7px wide, 7px tall
             for i in 0i32..7 {
@@ -3223,6 +3232,10 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         game.turn.turn_number, game.active_team(), &team_alive, &team_hp);
 
     mark!("hud");
+
+    // Clear stale HUD text pixels (weapon name / FPS) left over from a
+    // previous frame's camera position before redrawing them this frame.
+    buf.fill_deep_water_band();
 
     // 9. Weapon indicator (bottom-left, shows current weapon name)
     {

@@ -108,7 +108,9 @@
       "Bash(./deploy/update_server.sh 0.5.4.172)",
       "Bash(scp deploy/arty_api.py arty-pi:~/mayhem-server/arty_api.py)",
       "Bash(scp -i ~/.ssh/arty_pi arty-pi:~/mayhem-server/arty_api.py /tmp/arty_api.py)",
-      "Bash(scp *)"
+      "Bash(scp *)",
+      "Bash(xargs ls -1)",
+      "Bash(./deploy/update_server.sh 0.5.4.185)"
     ]
   }
 }

@@ -156,6 +156,8 @@ pub struct NetRope {
 pub struct NetGarcia {
     pub cursor_x:    f32,
     pub render_x:    f32,
+    pub cursor_y:    f32,
+    pub render_y:    f32,
     pub blink_timer: u32,
     pub falling:     bool,
     pub fall_y:      f32,
