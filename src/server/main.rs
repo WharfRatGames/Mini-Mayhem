@@ -73,6 +73,7 @@ struct SharedConn {
 
 struct MatchSlot {
     conns: [Mutex<SharedConn>; 2],
+    seed:  u64,
 }
 
 type Registry = Arc<Mutex<HashMap<String, Arc<MatchSlot>>>>;
@@ -85,6 +86,7 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
         if sc.disc.load(Ordering::Relaxed) {
             let write_clone = match stream.try_clone() { Ok(s) => s, Err(_) => return false };
             let read_clone  = match stream.try_clone() { Ok(s) => s, Err(_) => return false };
+            let welcome_clone = match stream.try_clone() { Ok(s) => s, Err(_) => return false };
             write_clone.set_nodelay(true).ok();
             write_clone.set_write_timeout(Some(Duration::from_millis(50))).ok();
             read_clone.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -96,6 +98,13 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
             let disc = sc.disc.clone();
             let gen = sc.gen.clone();
             drop(sc);
+            // Send a fresh WelcomeMsg so a client returning from the title screen
+            // (no in-memory game state) can rebuild the match from the same seed;
+            // the next StateMsg then syncs positions/terrain/HP to the live state.
+            if let Some(bytes) = encode(&WelcomeMsg { your_team: team, seed: slot.seed }) {
+                let mut s = &welcome_clone;
+                let _ = s.write_all(&bytes);
+            }
             thread::spawn(move || {
                 read_loop(read_clone, inbox);
                 if gen.load(Ordering::Relaxed) == new_gen {
@@ -158,7 +167,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     let match_slot = Arc::new(MatchSlot { conns: [
         Mutex::new(SharedConn { stream: ws0, inbox: inp0.clone(), disc: disc0.clone(), gen: gen0.clone() }),
         Mutex::new(SharedConn { stream: ws1, inbox: inp1.clone(), disc: disc1.clone(), gen: gen1.clone() }),
-    ]});
+    ], seed });
     let reconnectable = !session_token.is_empty();
     if reconnectable {
         registry.lock().unwrap_or_else(|e| e.into_inner()).insert(session_token.clone(), match_slot.clone());
@@ -656,7 +665,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.173";
+const REQUIRED_VERSION: &str = "0.5.4.174";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

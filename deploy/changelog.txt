@@ -1,3 +1,4 @@
+0.5.4.174  Title screen now offers RECONNECT/ABANDON if you lose connection mid-match (not on a normal exit), letting you rejoin the same paused live match.
 0.5.4.173  Live ranked matches now pause (up to 3 min) if your opponent's connection drops, letting them reconnect and resume the same match instead of forfeiting.
 0.5.4.171  Redesigned hat/gun cosmetics with full pixel-art remakes, sprite-based boots and equip-screen icons, taller Wizard Hat, and 6 new cosmetics (Blue Party Hat, Cowboy Hat, Pirate Hat, Viking Helm, Revolver, Flamethrower, Rocket Launcher).
 0.5.4.168  Update-available screen now shows only the 5 most recent changelog entries, drawn at 2x font size (was 24 lines at 1x).

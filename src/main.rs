@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.173";
+const VERSION: &str = "0.5.4.174";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -74,6 +74,12 @@ fn main() {
 
     // After a live game ends, return to the MP submenu rather than full title.
     let mut return_to_mp = false;
+    // Set when a ranked live match drops involuntarily (not a player-chosen
+    // exit) — offers a reconnect popup on the title screen for up to 180s.
+    let mut pending_reconnect: Option<(String, u16, Instant)> = None;
+    // Set when the player accepts the reconnect popup; consumed to skip
+    // login/roster/matchmaking and resume the existing match directly.
+    let mut force_reconnect: Option<(String, u16)> = None;
     // Cached result from the background update-check thread.
     let mut update_available = false;
 
@@ -145,7 +151,23 @@ fn main() {
     'game: loop {
     let mut title = TitleScreen::new(VERSION);
     if return_to_mp { title.continue_to_submenu(); return_to_mp = false; }
-    let choice = loop {
+
+    // Reconnect popup — only shown for involuntary disconnects from a
+    // reconnectable ranked match, while the server's pause window is open.
+    if let Some((tok, port, since)) = pending_reconnect.take() {
+        if since.elapsed() < std::time::Duration::from_secs(180) {
+            let accept = loop {
+                input.poll();
+                draw_msg(&mut buf, &mut fb, "CONNECTION LOST  A=RECONNECT  B=ABANDON");
+                if input.just_pressed(input::Button::A) { break true; }
+                if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { break false; }
+                std::thread::sleep(TICK_DURATION);
+            };
+            if accept { force_reconnect = Some((tok, port)); }
+        }
+    }
+    let is_reconnect_resume = force_reconnect.is_some();
+    let choice = if is_reconnect_resume { CHOICE_LIVE } else { loop {
         let c = loop {
             let frame_start = Instant::now();
             input.poll();
@@ -174,7 +196,7 @@ fn main() {
         if c != game::title::CHOICE_MULTI { break c; }
         input.poll();
         title.continue_to_submenu();
-    };
+    }};
     if choice == CHOICE_QUIT { return; }
     // ── Unified update gate: optional for SP, required for MP ────────────────
     // Non-blocking drain — catches results that arrived while in the title loop.
@@ -309,7 +331,12 @@ fn main() {
     let mut live_elo_opp: i32 = 0;
     let mut live_game_port: u16 = 7777; // port of the spawned game server instance
     let mut session_token = String::new(); // empty for casual/non-ranked — server treats as non-reconnectable
-    if is_live || is_live_ranked {
+    if is_reconnect_resume {
+        let (tok, port) = force_reconnect.take().unwrap();
+        session_token = tok;
+        live_game_port = port;
+        live_ranked_match = true;
+    } else if is_live || is_live_ranked {
         use game::account::{AccountScreen, AccountAction, RosterPicker, RosterAction,
                              load_saved_creds};
         // Login — load teams from local cache instantly (no network call)
@@ -611,31 +638,15 @@ fn main() {
         if let Some(ref mut conn) = net_conn {
             // Disconnect detection — reader thread or write failure sets this flag.
             if conn.is_disconnected() {
-                let mut reconnected = false;
-                let recon_start = Instant::now();
-                while recon_start.elapsed() < Duration::from_secs(180) {
-                    input.poll();
-                    draw_msg(&mut buf, &mut fb, "RECONNECTING...");
-                    let addr = format!("crumbonium.duckdns.org:{}", live_game_port);
-                    if let Ok(mut c) = net::ServerConn::connect(&addr) {
-                        c.send_raw(b"MMAY");
-                        c.send_raw(VERSION.as_bytes());
-                        c.send_raw(b"\n");
-                        c.send_raw(session_token.as_bytes());
-                        c.send_raw(b"\n");
-                        c.start_reader();
-                        *conn = c;
-                        reconnected = true;
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_secs(2));
+                draw_msg(&mut buf, &mut fb, "LOST CONNECTION");
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                // If this was a reconnectable ranked match, offer a reconnect popup
+                // on the title screen (only for involuntary drops, not B/Start exits).
+                if !session_token.is_empty() {
+                    pending_reconnect = Some((session_token.clone(), live_game_port, Instant::now()));
                 }
-                if !reconnected {
-                    draw_msg(&mut buf, &mut fb, "CONNECTION LOST");
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    return_to_mp = true;
-                    continue 'game;
-                }
+                return_to_mp = true;
+                continue 'game;
             }
             use net::msg::{InputMsg, NetButton};
             // Suppress A-HELD when server_fire_grace active (same state used in tick/server_tick).
