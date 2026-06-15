@@ -2391,6 +2391,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     if !lstate.cache_initialized {
         crate::renderer::draw_terrain::build_world_cache(&mut lstate.world_cache, &game.terrain);
         lstate.bg_cache = crate::renderer::bg_image::build_bg_cache(game.map_seed);
+        buf.fill_deep_water_band();
         lstate.cache_initialized = true;
         lstate.cache_craters_processed = game.crater_log.len();
     }

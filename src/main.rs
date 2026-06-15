@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.182";
+const VERSION: &str = "0.5.4.183";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -360,9 +360,14 @@ fn main() {
             }
         };
         if rosters.is_empty() { rosters.push(game::account::Roster::default_named(0)); }
-        // Daily login bonus
-        if let Some((earned, weekly)) = game::account::claim_daily_login(&token) {
-            show_login_bonus(&mut buf, &mut fb, &mut input, earned, weekly);
+        // Daily login bonus — fired off in the background so a slow/laggy
+        // connection to the bonus endpoint doesn't freeze the screen before
+        // every match (this blocking call was the main cause of "match start
+        // is slow"). Picked up after the roster picker if it's ready by then.
+        let (bonus_tx, bonus_rx) = std::sync::mpsc::channel();
+        {
+            let token = token.clone();
+            std::thread::spawn(move || { let _ = bonus_tx.send(game::account::claim_daily_login(&token)); });
         }
         // Roster picker
         let mut picker = RosterPicker::new(token, rosters);
@@ -375,6 +380,9 @@ fn main() {
             buf.blit_to_fb(&mut fb, 0);
             let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
         };
+        if let Ok(Some((earned, weekly))) = bonus_rx.try_recv() {
+            show_login_bonus(&mut buf, &mut fb, &mut input, earned, weekly);
+        }
         match picked {
             RosterAction::Selected(r) => live_roster = Some(r),
             RosterAction::Skip => {} // proceed with default generic names
@@ -1730,8 +1738,10 @@ fn apply_server_state(
         _ => None,
     };
 
-    let known = game.crater_log.len();
-    for nc in state.craters.iter().skip(known) {
+    // `state.craters` is now a delta (new craters since the last StateMsg —
+    // see `build_state` on the server), not the full match history, so apply
+    // every entry rather than skipping ones we've already seen.
+    for nc in state.craters.iter() {
         use crate::world::{Crater, WorldPos};
         Crater::new(nc.cx, nc.cy, nc.radius).carve(&mut game.terrain);
         game.crater_log.push((nc.cx, nc.cy, nc.radius));
@@ -1911,9 +1921,12 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
 
     if rosters.is_empty() { rosters.push(game::account::Roster::default_named(0)); }
 
-    // Daily login bonus — silent if already claimed today, presentable screen if new
-    if let Some((earned, weekly)) = game::account::claim_daily_login(&token) {
-        show_login_bonus(buf, fb, input, earned, weekly);
+    // Daily login bonus — fired off in the background (not awaited) so a
+    // slow connection to the bonus endpoint can't freeze match start; the
+    // reward is recorded server-side regardless of whether this popup shows.
+    {
+        let token = token.clone();
+        std::thread::spawn(move || { game::account::claim_daily_login(&token); });
     }
 
     // Helper: pick/load roster for a specific match (locked after first selection)

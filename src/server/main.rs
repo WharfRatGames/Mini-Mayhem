@@ -225,6 +225,9 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     let mut game = build_game(seed);
     let mut tick: u32 = 0;
     let mut paused: Option<(usize, Instant)> = None; // (disconnected_team, since)
+    // Index into game.crater_log of the first crater not yet sent to clients
+    // via the main per-tick broadcast — see `build_state`.
+    let mut last_craters_sent: usize = 0;
 
     loop {
         let t = Instant::now();
@@ -235,21 +238,24 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             if !still_disc {
                 let name = game.teams[dteam].soldiers.get(0).map(|s| s.name.as_str()).unwrap_or("?");
                 mboth!(&mut mfile, match_id, "team {dteam} ({name}) reconnected — resuming");
-                if let Some(state_bytes) = encode(&build_state(&game, tick)) {
+                // Reconnecting client has no crater history — send the full
+                // backlog once (one-off catch-up cost is fine here).
+                if let Some(state_bytes) = encode(&build_state(&game, tick, 0)) {
                     write_team!(dteam, &state_bytes);
                 }
+                last_craters_sent = game.crater_log.len();
                 paused = None;
             } else if since.elapsed() >= RECONNECT_TIMEOUT {
                 let name = game.teams[dteam].soldiers.get(0).map(|s| s.name.as_str()).unwrap_or("?");
                 mboth!(&mut mfile, match_id, "team {dteam} ({name}) did not reconnect — ending match");
                 let connected = 1 - dteam;
-                let mut state = build_state(&game, tick);
+                let mut state = build_state(&game, tick, last_craters_sent);
                 state.opponent_abandoned = true;
                 state.result = NetResult::Winner(connected);
                 if let Some(bytes) = encode(&state) { write_team!(connected, &bytes); }
                 break;
             } else {
-                let mut state = build_state(&game, tick);
+                let mut state = build_state(&game, tick, last_craters_sent);
                 state.paused_opponent = Some((RECONNECT_TIMEOUT - since.elapsed()).as_secs() as u32);
                 if let Some(bytes) = encode(&state) { write_team!(1 - dteam, &bytes); }
                 let e = t.elapsed();
@@ -355,7 +361,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
 
         // Game over — send final state for 3 seconds then start a new game
         if !matches!(game.result, arty::game::state::GameResult::Ongoing) {
-            if let Some(final_bytes) = encode(&build_state(&game, tick)) {
+            if let Some(final_bytes) = encode(&build_state(&game, tick, last_craters_sent)) {
             for _ in 0..90 {
                 if disc0.load(Ordering::Relaxed) || disc1.load(Ordering::Relaxed) { break; }
                 write_team!(0, &final_bytes);
@@ -373,6 +379,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
                 .as_secs();
             game = build_game(seed);
             tick = 0;
+            last_craters_sent = 0;
             *inp0.lock().unwrap_or_else(|e| e.into_inner()) = None;
             *inp1.lock().unwrap_or_else(|e| e.into_inner()) = None;
             if let Some(bytes) = encode(&WelcomeMsg { your_team: 0, seed }) { write_team!(0, &bytes); }
@@ -381,7 +388,8 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             continue;
         }
 
-        if let Some(state_bytes) = encode(&build_state(&game, tick)) {
+        if let Some(state_bytes) = encode(&build_state(&game, tick, last_craters_sent)) {
+            last_craters_sent = game.crater_log.len();
             write_team!(0, &state_bytes);
             write_team!(1, &state_bytes);
         }
@@ -572,7 +580,13 @@ fn too_close_to_soldiers_srv(game: &GameState, pos: WorldPos) -> bool {
     })
 }
 
-fn build_state(game: &GameState, tick: u32) -> StateMsg {
+/// `crater_start` is the index into `game.crater_log` of the first crater the
+/// recipient hasn't seen yet — `craters` only carries the new tail. The log
+/// grows unboundedly over a match (every explosion/torch-carve appends), so
+/// resending it in full every tick made StateMsg grow (and cost more to
+/// encode/send) as the match went on. The client already applies craters
+/// incrementally.
+fn build_state(game: &GameState, tick: u32, crater_start: usize) -> StateMsg {
     let phase = match game.turn.phase {
         TurnPhase::Acting       => NetPhase::Acting,
         TurnPhase::Watching     => NetPhase::Watching,
@@ -629,7 +643,8 @@ fn build_state(game: &GameState, tick: u32) -> StateMsg {
             arty::game::state::GameResult::Winner(t) => NetResult::Winner(t),
             arty::game::state::GameResult::Draw      => NetResult::Draw,
         },
-        craters: game.crater_log.iter().map(|e| NetCrater { cx: e.0, cy: e.1, radius: e.2 }).collect(),
+        craters: game.crater_log.get(crater_start..).unwrap_or(&[]).iter()
+            .map(|e| NetCrater { cx: e.0, cy: e.1, radius: e.2 }).collect(),
         graves: game.graves.iter().map(|g| NetGrave {
             x: g.pos.x, y: g.pos.y, team: g.team, headstone_id: g.headstone_id,
         }).collect(),
@@ -743,7 +758,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.182";
+const REQUIRED_VERSION: &str = "0.5.4.183";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

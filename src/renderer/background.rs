@@ -33,16 +33,20 @@ pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
         let cx = sun_sx as i32;
         let cy = sun_sy as i32;
         let ri = sun_r as i32;
+        let sun_r2 = sun_r * sun_r;
         for sy in (cy - ri).max(0)..(cy + ri).min(water_y) {
             for sx in (cx - ri).max(0)..(cx + ri).min(SCREEN_W as i32) {
                 let dx = (sx - cx) as f32;
                 let dy = (sy - cy) as f32;
-                let d = (dx * dx + dy * dy).sqrt();
-                if d >= sun_r { continue; }
+                let d2 = dx * dx + dy * dy;
+                if d2 >= sun_r2 { continue; }
+                // Quadratic falloff using squared distance directly — avoids a
+                // per-pixel sqrt (this loop covers ~6600 px/frame).
+                let f = 1.0 - d2 / sun_r2;      // 1 at centre → 0 at edge
+                let add = (f * f * 70.0) as u16; // soft falloff
+                if add == 0 { continue; }
                 let wx = cam_x as i32 + sx;
                 if sy as u32 >= terrain.sky_limit[wx as usize] { continue; }
-                let f = 1.0 - d / sun_r;       // 1 at centre → 0 at edge
-                let add = (f * f * 70.0) as u16; // soft falloff
                 // wx < WORLD_W (cam_x clamped, sx < SCREEN_W) and
                 // sy in 0..water_y < WORLD_H are guaranteed above.
                 let c = buf.get_pixel_unchecked(wx as u32, sy as u32);
