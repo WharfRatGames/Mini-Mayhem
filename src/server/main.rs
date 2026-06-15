@@ -182,8 +182,8 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     s1.set_nodelay(true).ok();
     s0.set_write_timeout(Some(Duration::from_millis(50))).ok();
     s1.set_write_timeout(Some(Duration::from_millis(50))).ok();
-    s0.set_read_timeout(Some(Duration::from_secs(5))).ok();
-    s1.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    s0.set_read_timeout(Some(Duration::from_secs(15))).ok();
+    s1.set_read_timeout(Some(Duration::from_secs(15))).ok();
     mboth!(&mut mfile, match_id, "Both connected - starting!");
     thread::sleep(Duration::from_secs(2));
 
