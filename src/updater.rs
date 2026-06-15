@@ -48,7 +48,7 @@ pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
         .lines()
         .map(|l| l.trim_end().to_string())
         .filter(|l| !l.trim().is_empty())
-        .take(24) // fits the screen
+        .take(5) // most recent entries only — fits the update screen at scale 2
         .collect();
     if lines.is_empty() { None } else { Some(lines) }
 }

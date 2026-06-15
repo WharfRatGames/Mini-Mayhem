@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.167";
+const VERSION: &str = "0.5.4.168";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -131,7 +131,7 @@ fn main() {
                 let v = format!("VERSION {}", VERSION);
                 draw_str_scaled(&mut buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
                 for (i, line) in changelog.iter().enumerate() {
-                    draw_str_scaled(&mut buf, line, 18, 54 + i as i32 * 12, Bgra::new(110, 130, 160), 1);
+                    draw_str_scaled(&mut buf, line, 18, 54 + i as i32 * 20, Bgra::new(110, 130, 160), 2);
                 }
                 draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
                 draw_str_scaled(&mut buf, "B = SKIP", sw/2 - str_width_scaled("B = SKIP",2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
@@ -253,7 +253,7 @@ fn main() {
             let v = format!("VERSION {}", VERSION);
             draw_str_scaled(&mut buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
             for (i, line) in changelog.iter().enumerate() {
-                draw_str_scaled(&mut buf, line, 18, 54 + i as i32 * 12, Bgra::new(110, 130, 160), 1);
+                draw_str_scaled(&mut buf, line, 18, 54 + i as i32 * 20, Bgra::new(110, 130, 160), 2);
             }
             draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
             let b_label = if forced { "B = BACK" } else { "B = SKIP" };
