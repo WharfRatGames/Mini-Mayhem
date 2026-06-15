@@ -64,6 +64,11 @@ def init_db(c):
     ]:
         try: c.execute(f"ALTER TABLE matches ADD COLUMN {col} {defn}")
         except: pass
+    for col, defn in [
+        ("session_token", "TEXT DEFAULT NULL"),
+    ]:
+        try: c.execute(f"ALTER TABLE live_queue ADD COLUMN {col} {defn}")
+        except: pass
     # Currency columns (scrap = soft, warbonds = premium)
     for col, defn in [
         ("scrap",         "INTEGER DEFAULT 0"),
@@ -975,11 +980,12 @@ def handle(db, sock):
             window = 200 + (wait_secs // 30) * 50
             if abs(my_elo - opp_elo) <= window:
                 port = 7777
+                tok = gen_game_token()
                 my_row = db.execute("SELECT id FROM live_queue WHERE user_id=?", (uid2,)).fetchone()
-                db.execute("UPDATE live_queue SET paired_with=?,game_token=? WHERE id=?", (opp_uid, str(port), pool_id))
-                db.execute("UPDATE live_queue SET paired_with=?,game_token=? WHERE id=?", (uid2, str(port), my_row[0]))
+                db.execute("UPDATE live_queue SET paired_with=?,game_token=?,session_token=? WHERE id=?", (opp_uid, str(port), tok, pool_id))
+                db.execute("UPDATE live_queue SET paired_with=?,game_token=?,session_token=? WHERE id=?", (uid2, str(port), tok, my_row[0]))
                 db.commit()
-                send_json(sock, 200, {"status":"matched","port":port,"opponent_elo":opp_elo,"my_elo":my_elo})
+                send_json(sock, 200, {"status":"matched","port":port,"opponent_elo":opp_elo,"my_elo":my_elo,"session_token":tok})
                 sock.close(); return
         send_json(sock, 200, {"status":"waiting","my_elo":my_elo})
 
@@ -990,12 +996,12 @@ def handle(db, sock):
         now = int(time.time())
         # Try to match with anyone in queue now
         db.execute("DELETE FROM live_queue WHERE joined_at < ?", (now - 300,))
-        row = db.execute("SELECT id,paired_with,game_token,elo FROM live_queue WHERE user_id=?", (uid2,)).fetchone()
+        row = db.execute("SELECT id,paired_with,game_token,elo,session_token FROM live_queue WHERE user_id=?", (uid2,)).fetchone()
         if not row: send_json(sock, 200, {"status":"not_in_queue"}); return
-        my_q_id, paired_with, game_token, my_q_elo = row
+        my_q_id, paired_with, game_token, my_q_elo, session_token = row
         if paired_with:
             opp_elo = db.execute("SELECT elo FROM live_queue WHERE user_id=?", (paired_with,)).fetchone()
-            send_json(sock, 200, {"status":"matched","port":int(game_token) if game_token and game_token.isdigit() else 7777,"opponent_elo":opp_elo[0] if opp_elo else my_q_elo,"my_elo":my_elo})
+            send_json(sock, 200, {"status":"matched","port":int(game_token) if game_token and game_token.isdigit() else 7777,"opponent_elo":opp_elo[0] if opp_elo else my_q_elo,"my_elo":my_elo,"session_token":session_token or ""})
             sock.close(); return
         # Try to pair now
         opponent = db.execute(
@@ -1008,10 +1014,11 @@ def handle(db, sock):
             window = 200 + (wait_secs // 30) * 50
             if abs(my_q_elo - opp_elo) <= window:
                 port = 7777
-                db.execute("UPDATE live_queue SET paired_with=?,game_token=? WHERE id=?", (opp_uid, str(port), pool_id))
-                db.execute("UPDATE live_queue SET paired_with=?,game_token=? WHERE id=?", (uid2, str(port), my_q_id))
+                tok = gen_game_token()
+                db.execute("UPDATE live_queue SET paired_with=?,game_token=?,session_token=? WHERE id=?", (opp_uid, str(port), tok, pool_id))
+                db.execute("UPDATE live_queue SET paired_with=?,game_token=?,session_token=? WHERE id=?", (uid2, str(port), tok, my_q_id))
                 db.commit()
-                send_json(sock, 200, {"status":"matched","port":port,"opponent_elo":opp_elo,"my_elo":my_elo})
+                send_json(sock, 200, {"status":"matched","port":port,"opponent_elo":opp_elo,"my_elo":my_elo,"session_token":tok})
                 sock.close(); return
         send_json(sock, 200, {"status":"waiting","my_elo":my_elo})
 

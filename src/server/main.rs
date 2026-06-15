@@ -1,7 +1,9 @@
 mod msg;
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -33,18 +35,84 @@ fn main() {
     info!("Miyoo Mayhem server on :{}", port);
     let listener = TcpListener::bind(("0.0.0.0", port)).expect("bind failed");
     let mut match_id: u64 = 0;
+    let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
+    let mut pending: Option<(TcpStream, String)> = None;
     loop {
-    info!("Waiting for 2 players...");
+        let (stream, _addr, token) = accept_one(&listener);
 
-    let (s0, _a0) = accept_player(&listener, 0);
-    let (s1, _a1) = accept_player(&listener, 1);
-    match_id += 1;
-    let mid = match_id;
-    thread::spawn(move || run_match(mid, s0, s1));
+        // Reconnect: token matches a paused slot of an in-progress match.
+        if !token.is_empty() {
+            let slot = registry.lock().unwrap_or_else(|e| e.into_inner()).get(&token).cloned();
+            if let Some(slot) = slot {
+                if reconnect_into(&slot, &stream) {
+                    continue;
+                }
+            }
+        }
+
+        // Fresh pairing — first of a pair waits for the second.
+        match pending.take() {
+            None => { pending = Some((stream, token)); }
+            Some((s0, tok0)) => {
+                let shared_token = if !tok0.is_empty() { tok0 } else { token };
+                match_id += 1;
+                let mid = match_id;
+                let registry2 = registry.clone();
+                thread::spawn(move || run_match(mid, s0, stream, registry2, shared_token));
+            }
+        }
     }
 }
 
-fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream) {
+struct SharedConn {
+    stream: TcpStream,
+    inbox:  Arc<Mutex<Option<InputMsg>>>,
+    disc:   Arc<AtomicBool>,
+    gen:    Arc<AtomicU64>,
+}
+
+struct MatchSlot {
+    conns: [Mutex<SharedConn>; 2],
+}
+
+type Registry = Arc<Mutex<HashMap<String, Arc<MatchSlot>>>>;
+
+/// Attempt to swap `stream` into whichever team slot of `slot` is currently
+/// disconnected. Returns true on success (a fresh read thread was spawned).
+fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
+    for team in 0..2 {
+        let mut sc = slot.conns[team].lock().unwrap_or_else(|e| e.into_inner());
+        if sc.disc.load(Ordering::Relaxed) {
+            let write_clone = match stream.try_clone() { Ok(s) => s, Err(_) => return false };
+            let read_clone  = match stream.try_clone() { Ok(s) => s, Err(_) => return false };
+            write_clone.set_nodelay(true).ok();
+            write_clone.set_write_timeout(Some(Duration::from_millis(50))).ok();
+            read_clone.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            sc.stream = write_clone;
+            let new_gen = sc.gen.fetch_add(1, Ordering::Relaxed) + 1;
+            sc.disc.store(false, Ordering::Relaxed);
+            *sc.inbox.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            let inbox = sc.inbox.clone();
+            let disc = sc.disc.clone();
+            let gen = sc.gen.clone();
+            drop(sc);
+            thread::spawn(move || {
+                read_loop(read_clone, inbox);
+                if gen.load(Ordering::Relaxed) == new_gen {
+                    disc.store(true, Ordering::Relaxed);
+                }
+            });
+            info!("Reconnected into team {team}");
+            return true;
+        }
+    }
+    false
+}
+
+/// How long a paused match waits for the disconnected player to reconnect.
+const RECONNECT_TIMEOUT: Duration = Duration::from_secs(180);
+
+fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, session_token: String) {
     info!("[match {match_id}] starting");
     s0.set_nodelay(true).ok();
     s1.set_nodelay(true).ok();
@@ -67,35 +135,86 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream) {
     // Atomic flags set by read threads the instant a client TCP connection closes.
     // Much more reliable than write errors — writes succeed even when client is gone
     // because data sits in the kernel TCP send buffer.
-    use std::sync::atomic::{AtomicBool, Ordering};
     let disc0 = Arc::new(AtomicBool::new(false));
     let disc1 = Arc::new(AtomicBool::new(false));
+    let gen0 = Arc::new(AtomicU64::new(0));
+    let gen1 = Arc::new(AtomicU64::new(0));
 
-    let (read_s0, mut ws0, mut ws1, read_s1) = match (
+    let (read_s0, ws0, ws1, read_s1) = match (
         s0.try_clone(), s0.try_clone(), s1.try_clone(), s1.try_clone()
     ) {
         (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
         _ => { info!("[match {match_id}] socket clone failed — aborting"); return; }
     };
     thread::spawn({
-        let i = inp0.clone(); let d = disc0.clone();
-        move || { read_loop(read_s0, i); d.store(true, Ordering::Relaxed); }
+        let i = inp0.clone(); let d = disc0.clone(); let g = gen0.clone();
+        move || { read_loop(read_s0, i); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
     });
     thread::spawn({
-        let i = inp1.clone(); let d = disc1.clone();
-        move || { read_loop(read_s1, i); d.store(true, Ordering::Relaxed); }
+        let i = inp1.clone(); let d = disc1.clone(); let g = gen1.clone();
+        move || { read_loop(read_s1, i); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
     });
+
+    let match_slot = Arc::new(MatchSlot { conns: [
+        Mutex::new(SharedConn { stream: ws0, inbox: inp0.clone(), disc: disc0.clone(), gen: gen0.clone() }),
+        Mutex::new(SharedConn { stream: ws1, inbox: inp1.clone(), disc: disc1.clone(), gen: gen1.clone() }),
+    ]});
+    let reconnectable = !session_token.is_empty();
+    if reconnectable {
+        registry.lock().unwrap_or_else(|e| e.into_inner()).insert(session_token.clone(), match_slot.clone());
+    }
+    macro_rules! write_team {
+        ($team:expr, $bytes:expr) => {{
+            let sc = match_slot.conns[$team].lock().unwrap_or_else(|e| e.into_inner());
+            let mut s = &sc.stream; let _ = s.write_all($bytes);
+        }};
+    }
 
     let mut game = build_game(seed);
     let mut tick: u32 = 0;
+    let mut paused: Option<(usize, Instant)> = None; // (disconnected_team, since)
 
     loop {
         let t = Instant::now();
+
+        // Pause/resume handling — only meaningful when registered (session_token set).
+        if let Some((dteam, since)) = paused {
+            let still_disc = match dteam { 0 => disc0.load(Ordering::Relaxed), _ => disc1.load(Ordering::Relaxed) };
+            if !still_disc {
+                info!("[match {match_id}] team {dteam} reconnected — resuming");
+                if let Some(state_bytes) = encode(&build_state(&game, tick)) {
+                    write_team!(dteam, &state_bytes);
+                }
+                paused = None;
+            } else if since.elapsed() >= RECONNECT_TIMEOUT {
+                info!("[match {match_id}] team {dteam} did not reconnect — ending match");
+                let connected = 1 - dteam;
+                let mut state = build_state(&game, tick);
+                state.opponent_abandoned = true;
+                state.result = NetResult::Winner(connected);
+                if let Some(bytes) = encode(&state) { write_team!(connected, &bytes); }
+                break;
+            } else {
+                let mut state = build_state(&game, tick);
+                state.paused_opponent = Some((RECONNECT_TIMEOUT - since.elapsed()).as_secs() as u32);
+                if let Some(bytes) = encode(&state) { write_team!(1 - dteam, &bytes); }
+                let e = t.elapsed();
+                if e < TICK_DURATION { thread::sleep(TICK_DURATION - e); }
+                continue;
+            }
+        }
+
         tick = tick.wrapping_add(1);
         game.tick = tick;
 
-        // Immediate disconnect detection via read-thread flags
+        // Disconnect detection via read-thread flags
         if disc0.load(Ordering::Relaxed) || disc1.load(Ordering::Relaxed) {
+            let dteam = if disc0.load(Ordering::Relaxed) { 0 } else { 1 };
+            if reconnectable {
+                info!("[match {match_id}] team {dteam} disconnected — pausing");
+                paused = Some((dteam, Instant::now()));
+                continue;
+            }
             info!("Client disconnected — resetting (disc0={} disc1={})",
                 disc0.load(Ordering::Relaxed), disc1.load(Ordering::Relaxed));
             break;
@@ -152,8 +271,8 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream) {
             if let Some(final_bytes) = encode(&build_state(&game, tick)) {
             for _ in 0..90 {
                 if disc0.load(Ordering::Relaxed) || disc1.load(Ordering::Relaxed) { break; }
-                let _ = ws0.write_all(&final_bytes);
-                let _ = ws1.write_all(&final_bytes);
+                write_team!(0, &final_bytes);
+                write_team!(1, &final_bytes);
                 thread::sleep(TICK_DURATION);
             }
             } // end if let Some(final_bytes)
@@ -169,19 +288,22 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream) {
             tick = 0;
             *inp0.lock().unwrap_or_else(|e| e.into_inner()) = None;
             *inp1.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            send_msg(&ws0, &WelcomeMsg { your_team: 0, seed });
-            send_msg(&ws1, &WelcomeMsg { your_team: 1, seed });
+            if let Some(bytes) = encode(&WelcomeMsg { your_team: 0, seed }) { write_team!(0, &bytes); }
+            if let Some(bytes) = encode(&WelcomeMsg { your_team: 1, seed }) { write_team!(1, &bytes); }
             info!("Game over — new game with seed {}", seed);
             continue;
         }
 
         if let Some(state_bytes) = encode(&build_state(&game, tick)) {
-            let _ = ws0.write_all(&state_bytes);
-            let _ = ws1.write_all(&state_bytes);
+            write_team!(0, &state_bytes);
+            write_team!(1, &state_bytes);
         }
 
         let e = t.elapsed();
         if e < TICK_DURATION { thread::sleep(TICK_DURATION - e); }
+    }
+    if reconnectable {
+        registry.lock().unwrap_or_else(|e| e.into_inner()).remove(&session_token);
     }
     info!("[match {match_id}] ended");
 }
@@ -479,6 +601,8 @@ fn build_state(game: &GameState, tick: u32) -> StateMsg {
                 None                        => 0,
             }
         },
+        paused_opponent: None,
+        opponent_abandoned: false,
     }
 }
 
@@ -532,9 +656,25 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.172";
+const REQUIRED_VERSION: &str = "0.5.4.173";
 
-fn accept_player(listener: &TcpListener, slot: usize) -> (TcpStream, std::net::SocketAddr) {
+/// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
+/// Returns None on read error.
+fn read_line(stream: &mut TcpStream, max: usize) -> Option<String> {
+    let mut s = String::new();
+    for _ in 0..max {
+        let mut b = [0u8; 1];
+        if stream.read_exact(&mut b).is_err() { return None; }
+        if b[0] == b'\n' { break; }
+        s.push(b[0] as char);
+    }
+    Some(s.trim().to_string())
+}
+
+/// Accept a single client connection, perform the MAGIC + version + session-token
+/// handshake, and return the live stream, peer address, and session token
+/// (empty string for non-reconnectable connections, e.g. casual play).
+fn accept_one(listener: &TcpListener) -> (TcpStream, std::net::SocketAddr, String) {
     loop {
         let (mut stream, addr) = match listener.accept() {
             Ok(pair) => pair,
@@ -544,23 +684,21 @@ fn accept_player(listener: &TcpListener, slot: usize) -> (TcpStream, std::net::S
         stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
         match stream.read_exact(&mut buf) {
             Ok(_) if &buf == MAGIC => {
-                // Read version line
-                let mut ver_buf = [0u8; 16];
-                let mut ver = String::new();
-                for i in 0..16 {
-                    let mut b = [0u8; 1];
-                    if stream.read_exact(&mut b).is_err() { break; }
-                    if b[0] == b'\n' { break; }
-                    ver_buf[i] = b[0];
-                    ver.push(b[0] as char);
-                }
-                if ver.trim() != REQUIRED_VERSION {
-                    info!("Rejected wrong version {}: {}", ver.trim(), addr);
+                let ver = match read_line(&mut stream, 16) {
+                    Some(v) => v,
+                    None => { info!("Handshake read failed: {}", addr); continue; }
+                };
+                if ver != REQUIRED_VERSION {
+                    info!("Rejected wrong version {}: {}", ver, addr);
                     continue;
                 }
+                let token = match read_line(&mut stream, 32) {
+                    Some(t) => t,
+                    None => { info!("Handshake read failed: {}", addr); continue; }
+                };
                 stream.set_read_timeout(None).ok();
-                info!("Player {} (v{}): {}", slot, ver.trim(), addr);
-                return (stream, addr);
+                info!("Player (v{}): {}", ver, addr);
+                return (stream, addr, token);
             }
             _ => {
                 info!("Rejected: {}", addr);
