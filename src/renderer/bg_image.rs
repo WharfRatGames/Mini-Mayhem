@@ -18,8 +18,9 @@ use crate::world::{Terrain, SCREEN_H, SCREEN_W, WORLD_W, WATER_Y};
 use std::sync::OnceLock;
 
 /// Number of backgrounds in the pool (BG2.png is a 3×3 contact sheet, BG1.png
-/// is a 2×3 sheet contributing 6 more slices).
-const BG_COUNT: usize = 15;
+/// is a 2×3 sheet contributing 6 more slices, bg3.png is another 3×3 sheet
+/// contributing 9 more).
+const BG_COUNT: usize = 24;
 
 struct Decoded {
     w: u32,
@@ -43,6 +44,15 @@ static PNGS: [&[u8]; BG_COUNT] = [
     include_bytes!("../../deploy/assets/backgrounds/bg_3.png"),
     include_bytes!("../../deploy/assets/backgrounds/bg_extra_city.png"),
     include_bytes!("../../deploy/assets/backgrounds/bg_extra_pyramids.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_0.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_1.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_2.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_3.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_4.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_5.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_6.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_7.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg3_8.png"),
 ];
 
 /// Pick which background to use for a map. Deterministic from the seed so client
@@ -72,11 +82,12 @@ fn decode(bytes: &[u8]) -> Option<Decoded> {
     Some(Decoded { w, h, pixels })
 }
 
-/// Slices 9-14 (the BG1.png-derived backgrounds: bg_0..3, bg_extra_city,
-/// bg_extra_pyramids) have a near-black border up to ~9px thick baked in from
-/// the source contact sheet's grid lines. Crop it off before scaling so the
-/// remaining art is stretched to fill the screen instead of showing a black
-/// edge. The bg2_* slices (0-8) are clean and need no crop.
+/// Slices 9-23 (the BG1.png- and bg3.png-derived backgrounds: bg_0..3,
+/// bg_extra_city, bg_extra_pyramids, bg3_0..8) have a near-black border up to
+/// ~9px thick baked in from the source contact sheet's grid lines. Crop it
+/// off before scaling so the remaining art is stretched to fill the screen
+/// instead of showing a black edge. The bg2_* slices (0-8) are clean and
+/// need no crop.
 const BORDER_CROP: u32 = 10;
 
 fn decoded() -> &'static [Option<Decoded>; BG_COUNT] {
