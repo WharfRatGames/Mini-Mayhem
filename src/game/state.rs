@@ -4,6 +4,10 @@ use super::soldier::DeathCause;
 use super::team::Team;
 use super::turn::TurnManager;
 
+/// How long (in sim ticks) the camera holds on a soldier that just took
+/// explosion damage, so the player can read the resulting HP loss.
+pub const DAMAGE_FOCUS_TICKS: u32 = 50;
+
 /// Representative dirt tone per map archetype, used to colour explosion debris
 /// chunks so the fallout matches the biome.
 pub fn biome_dirt(archetype: u8) -> crate::renderer::fb::Bgra {
@@ -300,6 +304,9 @@ pub struct GameState {
     pub active_worm_hit: bool,
     /// True during retreat when the active worm was hit — movement locked, camera forced on worm.
     pub retreat_locked: bool,
+    /// Position + remaining tick count for "hold camera on damaged soldier so the
+    /// HP loss can be read" — set by explosion damage, ticked down during retreat.
+    pub damage_focus: Option<(WorldPos, u32)>,
     /// Weapon menu open in server_tick() contexts (TAT / live server).
     pub weapon_menu_open:   bool,
     pub weapon_menu_cursor: usize,
@@ -369,6 +376,7 @@ impl GameState {
             graves: Vec::new(),
             explosions: Vec::new(),
             active_worm_hit: false,
+            damage_focus: None,
             retreat_locked: false,
             weapon_menu_open: false,
             weapon_menu_cursor: 0,
@@ -480,6 +488,7 @@ impl GameState {
         let active_ti = self.active_team();
         let active_si = self.teams[active_ti].active;
         let active_hp_before = self.teams[active_ti].soldiers[active_si].hp;
+        let mut last_damaged: Option<WorldPos> = None;
 
         for team in &mut self.teams {
             for soldier in &mut team.soldiers {
@@ -498,6 +507,7 @@ impl GameState {
                     soldier.death_cause = super::soldier::DeathCause::Explosion;
                     soldier.kill_weapon = Some(kind);
                     soldier.take_damage(dmg);
+                    last_damaged = Some(soldier.pos);
                 }
 
                 // Bee stings sting for damage only — never launch soldiers airborne.
@@ -535,6 +545,12 @@ impl GameState {
         // Flag if active worm was hit so retreat can be skipped
         if self.teams[active_ti].soldiers[active_si].hp < active_hp_before {
             self.active_worm_hit = true;
+        }
+
+        // Remember where the most recently damaged soldier ended up so the camera
+        // can briefly hold there during retreat, letting the HP loss be read.
+        if let Some(pos) = last_damaged {
+            self.damage_focus = Some((pos, DAMAGE_FOCUS_TICKS));
         }
 
         // Damage any landed crates caught in the blast (20+ total this turn destroys them)

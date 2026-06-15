@@ -258,6 +258,16 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
         TurnPhase::Retreating { .. } => {
             if !game.retreat_locked { process_movement(game, input); }
             apply_all_gravity(game, input);
+            // Tick down (and clear once expired) the damage-focus camera hold;
+            // the player taking the stick cancels it immediately (see update_camera).
+            if let Some((pos, ticks)) = game.damage_focus {
+                let moving = input.held(Button::Left) || input.held(Button::Right);
+                if moving || ticks <= 1 {
+                    game.damage_focus = None;
+                } else {
+                    game.damage_focus = Some((pos, ticks - 1));
+                }
+            }
         }
         TurnPhase::Ending => {
             use crate::game::soldier::SoldierState as SS;
@@ -271,6 +281,7 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
             } else {
             game.active_worm_hit   = false;
             game.retreat_locked    = false;
+            game.damage_focus      = None;
             game.weapon_menu_open  = false;
             game.shotgun_shots_left  = 0;
             game.revolver_shots_left = 0;
@@ -453,8 +464,15 @@ fn update_camera(game: &GameState, cam: &mut Camera, input: &InputState, step: S
                     cam.follow(game.teams[ti].soldiers[si].pos);
                 } else {
                     process_camera_pan(cam, input, game);
-                    if !cam.panning && (input.held(Button::Left) || input.held(Button::Right)) {
+                    let moving = input.held(Button::Left) || input.held(Button::Right);
+                    if !cam.panning && moving {
                         cam.follow(game.teams[ti].soldiers[si].pos);
+                    } else if let Some((pos, ticks)) = game.damage_focus {
+                        // Hold on the damaged soldier until the player pans/moves
+                        // or the hold timer runs out — whichever comes first.
+                        if !cam.panning && !moving && ticks > 0 {
+                            cam.follow(pos);
+                        }
                     }
                 }
             }

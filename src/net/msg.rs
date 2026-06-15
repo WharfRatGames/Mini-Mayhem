@@ -57,6 +57,14 @@ pub struct NetCrater {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetMessage {
+    pub text: String,
+    /// -1 = neutral (None), else team slot index.
+    pub team: i8,
+    pub ticks: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetGrave {
     pub x:            f32,
     pub y:            f32,
@@ -85,6 +93,8 @@ pub struct StateMsg {
     pub aim_power:          f32,
     pub result:             NetResult,
     pub craters:            Vec<NetCrater>,
+    /// Event messages (crate pickups, etc.) for the live client to show.
+    pub messages:           Vec<NetMessage>,
     /// Headstones — server-authoritative so live clients show them without
     /// re-deriving deaths locally (which would double the death SFX).
     pub graves:             Vec<NetGrave>,
