@@ -28,9 +28,10 @@ static CATALOG: &[(&str, u8, &str, u32)] = &[
     ("hat",       9, "Devil Horns",   500),
     ("hat",       10, "Wizard Hat",   650),
     ("hat",       11, "Ninja Band",   450),
-    ("hat",       12, "Cowboy Hat",   350),
-    ("hat",       13, "Pirate Hat",   500),
-    ("hat",       14, "Viking Helm",  550),
+    ("hat",       12, "Blue Party Hat", 200),
+    ("hat",       13, "Cowboy Hat",   350),
+    ("hat",       14, "Pirate Hat",   500),
+    ("hat",       15, "Viking Helm",  550),
     // Gun styles (scrap only)
     ("gun_style", 1, "Pistol",        200),
     ("gun_style", 2, "Shotgun",       300),
