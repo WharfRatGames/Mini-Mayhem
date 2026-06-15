@@ -655,6 +655,9 @@ fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMsg {
         // client's terrain. The client dedupes by length (see apply_server_state).
         craters: game.crater_log.iter()
             .map(|e| NetCrater { cx: e.0, cy: e.1, radius: e.2 }).collect(),
+        messages: game.messages.iter()
+            .map(|m| NetMessage { text: m.text.clone(), team: m.team.map(|t| t as i8).unwrap_or(-1), ticks: m.ticks })
+            .collect(),
         graves: game.graves.iter().map(|g| NetGrave {
             x: g.pos.x, y: g.pos.y, team: g.team, headstone_id: g.headstone_id,
         }).collect(),
@@ -769,7 +772,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.188";
+const REQUIRED_VERSION: &str = "0.5.4.189";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

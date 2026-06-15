@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.188";
+const VERSION: &str = "0.5.4.189";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1765,6 +1765,14 @@ fn apply_server_state(
             ));
         }
     }
+
+    // Sync event messages (crate pickups etc.) — server is authoritative for
+    // both content and remaining-tick countdown.
+    game.messages = state.messages.iter().map(|m| crate::game::state::GameMessage {
+        text: m.text.clone(),
+        team: if m.team < 0 { None } else { Some(m.team as usize) },
+        ticks: m.ticks,
+    }).collect();
 
     // Sync headstones (server-authoritative; settled server-side). Rendering only
     // uses pos/team/headstone_id, so the other fields are placeholders.
