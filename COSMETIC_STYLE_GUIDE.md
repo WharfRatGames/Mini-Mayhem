@@ -7,18 +7,18 @@
 ## Hats - in-game
 
 In-game rendering blits the actual shop sprite (`cosmetic_sprites::draw_hat`),
-scaled to 32 x 29 game px (1.45x the shop sprite's native 22 x 20 gp), centred
-on (cx, cy - 7) where (cx, cy) = head center. The 7px upward shift accounts for
-the sprite's head-anchor pixel sitting 5px below sprite centre at native scale
-(5 x 1.45 ≈ 7).
+scaled to 40 x 36 game px, centred on (cx, cy - 9) where (cx, cy) = head center.
 
-Propeller Hat (id 2) additionally draws an animated 2x2px blade overlay above
-the sprite (`top_y = cy - 7 - 29/2 - 2`), spinning direction/speed tied to wind.
+Propeller Hat (id 2): the sprite's own static propeller bar (source rows 18-26
+of the 66x60 sprite) is skipped during the blit (`blit_scaled_skip_rows`), and a
+single rotating bar (half-length 6px, thickness 3px, colour sampled from the
+sprite's propeller) is drawn at the hub in its place, spinning direction/speed
+tied to wind.
 
 | Bound | Value |
 |---|---|
-| Render size | 32 x 29 gp |
-| Anchor offset from head centre | (0, -7) |
+| Render size | 40 x 36 gp |
+| Anchor offset from head centre | (0, -9) |
 
 ## Hats - shop sprite
 

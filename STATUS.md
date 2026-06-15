@@ -1,7 +1,30 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.194
+## Version: 0.5.4.197
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.195–0.5.4.197)
+- **Live opponent-name sync fix** — `StateMsg.opp_team_name` (computed relative
+  to whose turn it was, so the non-active client saw their *own* name reflected
+  back as the opponent's) replaced with `team_names: [String; 2]`; each client
+  now reads `team_names[1 - my_team]`.
+- **Propeller Hat** — sprite's own static propeller bar (source rows 18-26) is
+  now skipped at render time; a single rotating bar is drawn at the hub instead,
+  sized to match the hat (half-length 6px, thickness 3px) and matching the
+  sprite's propeller color.
+- **Plasma Torch** can now be activated and used as a weapon with no terrain
+  immediately ahead (removed the "stop if tip is in open air" early-exit).
+- **Black Hole projectile** now renders as a layered void circle (dark purple →
+  purple → black) with two orbiting glow particles, instead of a plain yellow dot.
+- **Update screen changelog** now word-wraps to the screen width and caps total
+  lines to fit above the A/B prompts (`renderer::font::wrap_text`).
+- **Garcia (Hand of Jerry) cursor** now starts near the active soldier
+  (`pos.y - 40`) instead of at the top of the screen.
+- **Fire squirm** — soldiers standing in a `FirePatch` now jitter slightly each
+  tick (`Soldier::on_fire_ticks`, consumed in `draw_soldier_skeletal`).
+- **CPU AI** now picks a random weapon (Bazooka/Grenade/Shotgun/Tnt/Meteor Bomb/
+  Blasthive/Black Hole, ammo permitting) each turn via `cpu::AI_USABLE_WEAPONS`,
+  instead of always firing Bazooka.
 
 ## Recent changes (0.5.4.168–0.5.4.192)
 - **HUD smear fix** — `fill_deep_water_band()` now runs before `draw_hud_world()`
