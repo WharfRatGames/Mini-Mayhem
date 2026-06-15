@@ -2594,7 +2594,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     soldier.gun_style_id
                 };
                 let muzzle = draw_soldier_skeletal(buf, soldier.pos, team.slot, soldier.facing, soldier.hp, &anim, aim_angle, soldier.hp > 0,
-                    soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style);
+                    soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style,
+                    game.wind.value(), game.tick);
                 if ti == active_ti && si == active_si { active_muzzle = muzzle; }
 
                 // Soldier name — bold 8px (drawn twice offset by 1px) with shadow

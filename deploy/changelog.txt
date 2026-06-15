@@ -1,3 +1,4 @@
+0.5.4.182  Propeller Hat blades now spin, with direction and speed following the current wind.
 0.5.4.181  Cowboy Hat, Pirate Hat, Viking Helm, Beanie, Bandana, Angel Ring, Flamethrower, Rocket Launcher, and SMG cosmetics now all draw correctly on your soldier in-game (previously shop-icon only).
 0.5.4.180  New cosmetics: Beanie, Bandana, and Angel Ring hats, plus an SMG gun style. Boot cosmetics (all colors) now use a redesigned sprite shape in-game.
 0.5.4.179  Server-side: match logs now record fall damage and drowning deaths with proper labels, and disconnect/reconnect events include the player's name (no client-visible change).
