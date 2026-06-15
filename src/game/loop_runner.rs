@@ -2742,33 +2742,12 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             );
             let _ = alpha;
 
-            // Find terrain impact Y
-            let mut impact_y = sh;
-            for y in 0..sh {
-                if game.terrain.is_solid(rx, y) {
-                    impact_y = y;
-                    break;
-                }
-            }
-
-            // Impact cross-hair at terrain intersection
+            // Cross-hair cursor, freely movable on both axes
+            let cross_x = rx;
+            let cross_y = garcia.render_y as i32;
             let cross_col = Bgra::new(255, 240, 60);
-            buf.fill_rect(rx - 6, impact_y - 1, 13, 3, cross_col);
-            buf.fill_rect(rx - 1, impact_y - 6,  3, 13, cross_col);
-
-            // Downward arrow near top of screen (screen-space: add cam_x)
-            let arrow_x = rx;
-            let arrow_y = garcia.render_y as i32;
-            let ac = Bgra::new(255, 240, 60);
-            // Triangle: tip at bottom, 7px wide, 7px tall
-            for i in 0i32..7 {
-                let w = i * 2 + 1;
-                let ax = arrow_x - i;
-                let ay = arrow_y + i;
-                buf.fill_rect(ax, ay, w as u32, 1, ac);
-            }
-            // Stem above triangle
-            buf.fill_rect(arrow_x, arrow_y - 7, 1, 8, ac);
+            buf.fill_rect(cross_x - 6, cross_y - 1, 13, 3, cross_col);
+            buf.fill_rect(cross_x - 1, cross_y - 6,  3, 13, cross_col);
 
         } else {
             // Falling: draw scaled GARCIA sprite (~5× worm height, close to classic Worms Donkey scale)
@@ -3228,14 +3207,14 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     let team_hp: [u32; 4] = std::array::from_fn(|i| {
         game.teams.get(i).map(|t| t.total_hp()).unwrap_or(0)
     });
+    // Clear stale HUD pixels (wind meter / weapon name / FPS) left over from a
+    // previous frame's camera position before redrawing the HUD this frame.
+    buf.fill_deep_water_band();
+
     draw_hud_world(buf, cam_x, &game.wind, game.turn.secs_remaining(),
         game.turn.turn_number, game.active_team(), &team_alive, &team_hp);
 
     mark!("hud");
-
-    // Clear stale HUD text pixels (weapon name / FPS) left over from a
-    // previous frame's camera position before redrawing them this frame.
-    buf.fill_deep_water_band();
 
     // 9. Weapon indicator (bottom-left, shows current weapon name)
     {

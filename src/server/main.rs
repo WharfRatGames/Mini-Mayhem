@@ -592,13 +592,7 @@ fn too_close_to_soldiers_srv(game: &GameState, pos: WorldPos) -> bool {
     })
 }
 
-/// `crater_start` is the index into `game.crater_log` of the first crater the
-/// recipient hasn't seen yet — `craters` only carries the new tail. The log
-/// grows unboundedly over a match (every explosion/torch-carve appends), so
-/// resending it in full every tick made StateMsg grow (and cost more to
-/// encode/send) as the match went on. The client already applies craters
-/// incrementally.
-fn build_state(game: &GameState, tick: u32, crater_start: usize) -> StateMsg {
+fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMsg {
     let phase = match game.turn.phase {
         TurnPhase::Acting       => NetPhase::Acting,
         TurnPhase::Watching     => NetPhase::Watching,
@@ -655,7 +649,11 @@ fn build_state(game: &GameState, tick: u32, crater_start: usize) -> StateMsg {
             arty::game::state::GameResult::Winner(t) => NetResult::Winner(t),
             arty::game::state::GameResult::Draw      => NetResult::Draw,
         },
-        craters: game.crater_log.get(crater_start..).unwrap_or(&[]).iter()
+        // Send the full crater log every tick — a StateMsg can be silently
+        // dropped (write_team! ignores write errors under the 50ms write
+        // timeout), and a dropped delta would permanently desync the
+        // client's terrain. The client dedupes by length (see apply_server_state).
+        craters: game.crater_log.iter()
             .map(|e| NetCrater { cx: e.0, cy: e.1, radius: e.2 }).collect(),
         graves: game.graves.iter().map(|g| NetGrave {
             x: g.pos.x, y: g.pos.y, team: g.team, headstone_id: g.headstone_id,

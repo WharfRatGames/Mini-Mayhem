@@ -1752,10 +1752,10 @@ fn apply_server_state(
         _ => None,
     };
 
-    // `state.craters` is now a delta (new craters since the last StateMsg —
-    // see `build_state` on the server), not the full match history, so apply
-    // every entry rather than skipping ones we've already seen.
-    for nc in state.craters.iter() {
+    // `state.craters` is the full match history every tick; only apply the
+    // tail we haven't seen yet.
+    let known = game.crater_log.len();
+    for nc in state.craters.iter().skip(known) {
         use crate::world::{Crater, WorldPos};
         Crater::new(nc.cx, nc.cy, nc.radius).carve(&mut game.terrain);
         game.crater_log.push((nc.cx, nc.cy, nc.radius));
@@ -2172,7 +2172,7 @@ fn run_tat_game(
             replay_cam.snap_to(game.teams[opp_slot].soldiers[opp_si].pos);
             // Clear messages accumulated during fast-forward — only the live replay's messages should show
             game.messages.clear();
-            // Static black "OPPONENT'S MOVE" screen for 4 seconds before replay begins
+            // Static black "OPPONENT'S MOVE" screen for 5 seconds before replay begins
             crate::audio::set_muted(true);
             {
                 use renderer::Bgra;
