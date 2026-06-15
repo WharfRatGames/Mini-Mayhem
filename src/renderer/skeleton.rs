@@ -231,10 +231,12 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
         }
         4 => { // Crown
             let col = Bgra::new(220, 170, 0);
+            let gem = Bgra::new(60, 160, 220);
             rect(buf, -3, -9, 7, 3, col);    // base band
             dot(buf, -3, -10, col);          // left spike
             dot(buf,  0, -11, col);          // center spike
             dot(buf,  3, -10, col);          // right spike
+            dot(buf,  0,  -9, gem);          // centre gem (matches shop icon)
         }
         5 => { // Fez
             let col = Bgra::new(180, 20, 20);
@@ -250,10 +252,11 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
             dot(buf,  3, -7, dark);          // right edge
         }
         7 => { // Party Hat
-            let col = Bgra::new(220, 60, 200);
-            dot(buf, 0, -11, Bgra::new(255, 220, 50)); // tip star
+            let col = Bgra::new(240, 150, 30);
+            let stripe = Bgra::new(255, 220, 50);
+            dot(buf, 0, -11, stripe); // tip
             rect(buf, -1, -10, 3, 2, col);
-            rect(buf, -2,  -8, 5, 2, col);
+            rect(buf, -2,  -8, 5, 2, stripe);
             rect(buf, -3,  -6, 7, 1, dark);
         }
         8 => { // Halo
@@ -272,23 +275,19 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
             dot(buf,  4, -10, col);
             dot(buf,  3, -11, col);
         }
-        10 => { // Gold Crown (premium)
-            let col = Bgra::new(255, 200, 0);
-            let gem = Bgra::new(100, 180, 255);
-            rect(buf, -3, -9, 7, 3, col);
-            dot(buf, -3, -10, col);
-            dot(buf,  0, -11, col);
-            dot(buf,  3, -10, col);
-            dot(buf,  0,  -9, gem); // center gem
+        10 => { // Wizard Hat
+            let col = Bgra::new(110, 60, 180);
+            dot(buf, 0, -12, Bgra::new(255, 220, 50)); // tip star
+            rect(buf, -1, -11, 3, 2, col);
+            rect(buf, -2,  -9, 5, 2, col);
+            rect(buf, -4,  -7, 9, 2, col);   // brim
+            rect(buf, -4,  -5, 9, 1, dark);  // brim shadow
         }
-        11 => { // Laurel Wreath
-            let col = Bgra::new(60, 160, 50);
-            for (dx, dy) in [(-4,-8),(-3,-9),(-2,-9),(-1,-10),(0,-10),(1,-10),(2,-9),(3,-9),(4,-8)] {
-                dot(buf, dx, dy, col);
-            }
-            for (dx, dy) in [(-3,-7),(-2,-8),(2,-8),(3,-7)] {
-                dot(buf, dx, dy, col);
-            }
+        11 => { // Ninja Band
+            let col = Bgra::new(60, 140, 60);
+            rect(buf, -4,  -8, 9, 2, col);   // headband
+            dot(buf,  5,  -8, col);          // knot tail
+            dot(buf,  6,  -7, col);
         }
         12 => { // Blue Party Hat
             let col = Bgra::new(50, 120, 230);
