@@ -8,12 +8,25 @@ pub struct CpuState {
     pub thinking:   u32,  // pause ticks after walking, before firing
     pub angle:      f32,
     pub power:      f32,
+    pub weapon_idx: usize, // index into team.weapons to fire with
     pub decided:    bool,
 }
 
+/// Weapon kinds the CPU's ballistic aim/simulate logic can usefully fire.
+use crate::physics::projectile::WeaponKind;
+const AI_USABLE_WEAPONS: &[WeaponKind] = &[
+    WeaponKind::Bazooka,
+    WeaponKind::Grenade,
+    WeaponKind::Shotgun,
+    WeaponKind::Tnt,
+    WeaponKind::BananaBomb,
+    WeaponKind::Blasthive,
+    WeaponKind::BlackHoleBomb,
+];
+
 impl CpuState {
     pub fn undecided() -> Self {
-        Self { walk_dir: 0, walk_ticks: 0, thinking: 0, angle: 0.0, power: 0.5, decided: false }
+        Self { walk_dir: 0, walk_ticks: 0, thinking: 0, angle: 0.0, power: 0.5, weapon_idx: 0, decided: false }
     }
 
     /// Decide movement + shot for this turn.
@@ -37,7 +50,16 @@ impl CpuState {
         let target = match best_pos {
             Some(p) => p,
             None => return Self { walk_dir: 0, walk_ticks: 0, thinking: 30,
-                                   angle: std::f32::consts::FRAC_PI_4, power: 0.6, decided: true },
+                                   angle: std::f32::consts::FRAC_PI_4, power: 0.6, weapon_idx: 0, decided: true },
+        };
+
+        // Pick a random usable weapon with ammo remaining (infinite = None).
+        let candidates: Vec<usize> = game.teams[cpu_team].weapons.iter().enumerate()
+            .filter(|(_, (kind, ammo))| AI_USABLE_WEAPONS.contains(kind) && ammo.map_or(true, |a| a > 0))
+            .map(|(i, _)| i)
+            .collect();
+        let weapon_idx = if candidates.is_empty() { 0 } else {
+            candidates[(lcg(noise_seed + 6) as usize) % candidates.len()]
         };
 
         let r1 = lcg(noise_seed)     as f32 / u32::MAX as f32;
@@ -104,6 +126,7 @@ impl CpuState {
             thinking,
             angle: final_angle,
             power: final_power,
+            weapon_idx,
             decided: true,
         }
     }

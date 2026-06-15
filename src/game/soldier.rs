@@ -56,6 +56,8 @@ pub struct Soldier {
     pub death_explosion_pending: bool,
     /// Ticks remaining to display the HP box after taking damage. Visual-only.
     pub hp_display_ticks: u32,
+    /// Ticks remaining of "on fire" squirm animation. Visual-only.
+    pub on_fire_ticks: u32,
     /// How the soldier died — set just before the fatal take_damage call.
     pub death_cause: DeathCause,
     /// Which weapon last dealt damage to this soldier — used to credit kill weapon.
@@ -89,6 +91,7 @@ impl Soldier {
             has_grave: false,
             death_explosion_pending: false,
             hp_display_ticks: 0,
+            on_fire_ticks: 0,
             death_cause: DeathCause::Generic,
             kill_weapon: None,
             hat_id:           0,

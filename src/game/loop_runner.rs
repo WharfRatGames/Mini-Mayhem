@@ -1246,11 +1246,12 @@ fn process_fire(game: &mut GameState, input: &InputState) {
         if game.garcia.is_none() {
             let ti = game.active_team();
             let sx = game.teams[ti].soldiers[game.teams[ti].active].pos.x;
+            let sy = (game.teams[ti].soldiers[game.teams[ti].active].pos.y - 40.0).max(12.0);
             game.garcia = Some(crate::game::state::GarciaState {
                 cursor_x:    sx,
                 render_x:    sx,
-                cursor_y:    12.0,
-                render_y:    12.0,
+                cursor_y:    sy,
+                render_y:    sy,
                 blink_timer: 0,
                 falling:     false,
                 fall_y:      -200.0,
@@ -1329,29 +1330,6 @@ fn step_plasma_torch(game: &mut GameState) {
 
     let tip_x = sx + dx * TORCH_TIP_DIST;
     let tip_y = body_cy + dy * TORCH_TIP_DIST;
-
-    // Stop if the tip is in open air — soldier has broken through the surface.
-    // Count solid pixels in the tip circle; if none, torch exits into sky/chasm.
-    let tip_ix = tip_x as i32;
-    let tip_iy = tip_y as i32;
-    let r = TORCH_RADIUS as i32;
-    let r2 = (TORCH_RADIUS * TORCH_RADIUS) as i32;
-    let has_solid_ahead = (-r..=r).any(|dy2| {
-        (-r..=r).any(|dx2| {
-            if dx2 * dx2 + dy2 * dy2 <= r2 {
-                game.terrain.is_solid(tip_ix + dx2, tip_iy + dy2)
-            } else { false }
-        })
-    });
-    if !has_solid_ahead {
-        game.plasma_torch = None;
-        let ti2 = game.active_team();
-        let si2 = game.teams[ti2].active;
-        game.teams[ti2].soldiers[si2].has_fired = true;
-        game.teams[ti2].soldiers[si2].state = SoldierState::Idle;
-        game.turn.on_fired();
-        return;
-    }
 
     // Carve ahead (tip) then at body so soldier fits in the tunnel
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, tip_x, tip_y, TORCH_RADIUS);
@@ -2623,7 +2601,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 };
                 let muzzle = draw_soldier_skeletal(buf, soldier.pos, team.slot, soldier.facing, soldier.hp, &anim, aim_angle, soldier.hp > 0,
                     soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style,
-                    game.wind.value(), game.tick);
+                    game.wind.value(), game.tick, soldier.on_fire_ticks);
                 if ti == active_ti && si == active_si { active_muzzle = muzzle; }
 
                 // Soldier name — bold 8px (drawn twice offset by 1px) with shadow
@@ -2944,6 +2922,23 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 }
             } else if proj.kind == WeaponKind::Bazooka {
                 crate::renderer::draw_sprites::draw_bazooka(buf, proj.pos, proj.vel);
+            } else if proj.kind == WeaponKind::BlackHoleBomb {
+                let px = proj.pos.x as i32;
+                let py = proj.pos.y as i32;
+                let purpd = Bgra::new(60, 0, 90);
+                let purp  = Bgra::new(160, 0, 220);
+                let void  = Bgra::new(0, 0, 0);
+                let glow  = Bgra::new(200, 80, 255);
+                buf.fill_circle(px, py, 7, purpd);
+                buf.fill_circle(px, py, 5, purp);
+                buf.fill_circle(px, py, 3, void);
+                // Orbiting glow particles
+                let a = proj.age_ticks as f32 * 0.35;
+                for &off in &[0.0f32, std::f32::consts::PI] {
+                    let gx = px + (6.0 * (a + off).cos()) as i32;
+                    let gy = py + (6.0 * (a + off).sin()) as i32;
+                    buf.set_pixel(gx, gy, glow);
+                }
             } else {
                 draw_projectile(buf, proj.pos, 2, Bgra::yellow());
             }

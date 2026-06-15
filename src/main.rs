@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.194";
+const VERSION: &str = "0.5.4.196";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -99,7 +99,7 @@ fn main() {
         if let Ok(true) = update_rx.recv_timeout(std::time::Duration::from_millis(2500)) {
             update_available = true;
             use renderer::Bgra;
-            use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width};
+            use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
             use world::{SCREEN_W, SCREEN_H};
             let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
             let bar_x = 40i32; let bar_w = sw - 80;
@@ -108,6 +108,11 @@ fn main() {
             // without rebuilding the app. Falls back if offline.
             let changelog = updater::fetch_changelog(3)
                 .unwrap_or_else(|| vec!["update notes unavailable offline".to_string()]);
+            let max_lines = ((sh - 70 - 54) / 20).max(1) as usize;
+            let changelog: Vec<String> = changelog.iter()
+                .flat_map(|line| wrap_text(line, 2, sw - 36))
+                .take(max_lines)
+                .collect();
             'pre_update: loop {
                 input.poll();
                 if input.just_pressed(input::Button::A) {
@@ -237,7 +242,7 @@ fn main() {
     }
     if update_available && (is_sp_mode || is_mp_mode) {
         use renderer::Bgra;
-        use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width};
+        use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
         use world::{SCREEN_W, SCREEN_H};
         let forced = is_mp_mode;
         let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
@@ -246,6 +251,11 @@ fn main() {
         // Pi-served changelog (see pre-title block) — always current, no rebuild.
         let changelog = updater::fetch_changelog(3)
             .unwrap_or_else(|| vec!["update notes unavailable offline".to_string()]);
+        let max_lines = ((sh - 70 - 54) / 20).max(1) as usize;
+        let changelog: Vec<String> = changelog.iter()
+            .flat_map(|line| wrap_text(line, 2, sw - 36))
+            .take(max_lines)
+            .collect();
         let proceed = loop {
             input.poll();
             if input.just_pressed(input::Button::A) {
@@ -1010,6 +1020,7 @@ fn main() {
                             // Fire
                             game.aim.angle = cpu_state.angle;
                             game.aim.power = cpu_state.power;
+                            game.teams[ct].selected_weapon = cpu_state.weapon_idx;
                             game::loop_runner::fire_bazooka_tat(&mut game);
                             cpu_state = CpuState::undecided();
                         }
