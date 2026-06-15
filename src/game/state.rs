@@ -244,6 +244,10 @@ pub struct GarciaState {
     pub cursor_x:    f32,
     /// Smoothed render X for the vertical beam / arrow.
     pub render_x:    f32,
+    /// Screen-space cursor Y (drop height indicator), chosen by the player.
+    pub cursor_y:    f32,
+    /// Smoothed render Y for the drop-height arrow.
+    pub render_y:    f32,
     /// Tick counter for pulsing alpha.
     pub blink_timer: u32,
     /// True once the player has confirmed the target and Garcia is falling.

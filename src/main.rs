@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.184";
+const VERSION: &str = "0.5.4.185";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1841,7 +1841,8 @@ fn apply_server_state(
     {
         use crate::game::state::GarciaState;
         game.garcia = state.garcia.as_ref().map(|ng| GarciaState {
-            cursor_x: ng.cursor_x, render_x: ng.render_x, blink_timer: ng.blink_timer,
+            cursor_x: ng.cursor_x, render_x: ng.render_x, cursor_y: ng.cursor_y, render_y: ng.render_y,
+            blink_timer: ng.blink_timer,
             falling: ng.falling, fall_y: ng.fall_y, vel_y: ng.vel_y, bounce_count: ng.bounce_count,
         });
     }
