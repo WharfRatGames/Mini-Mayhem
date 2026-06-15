@@ -19,12 +19,13 @@ fn main() {
     let mut cache = WorldBuffer::new();
     draw_terrain::build_world_cache(&mut cache, &terrain);
 
+    let bg_cache = bg_image::build_bg_cache(seed);
     let mut frame = WorldBuffer::new();
     // Simulate stale prior-frame content (e.g. title screen). After a correct
     // render no sentinel pixel should survive inside the viewport.
     frame.clear(arty::renderer::Bgra::new(255, 0, 255));
-    bg_image::draw_static_bg(&mut frame, &terrain, seed, cam_x as i32);
-    frame.copy_viewport_from_sky_aware(&cache, cam_x, &terrain);
+    bg_image::copy_bg_viewport(&mut frame, &bg_cache, &terrain, seed, cam_x);
+    frame.copy_viewport_from_sky_aware(&cache, cam_x, &terrain, &bg_cache, seed);
 
     // Extract the viewport region into an RGB image.
     let w = SCREEN_W as usize;
