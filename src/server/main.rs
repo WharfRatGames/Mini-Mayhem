@@ -233,13 +233,15 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         if let Some((dteam, since)) = paused {
             let still_disc = match dteam { 0 => disc0.load(Ordering::Relaxed), _ => disc1.load(Ordering::Relaxed) };
             if !still_disc {
-                mboth!(&mut mfile, match_id, "team {dteam} reconnected — resuming");
+                let name = game.teams[dteam].soldiers.get(0).map(|s| s.name.as_str()).unwrap_or("?");
+                mboth!(&mut mfile, match_id, "team {dteam} ({name}) reconnected — resuming");
                 if let Some(state_bytes) = encode(&build_state(&game, tick)) {
                     write_team!(dteam, &state_bytes);
                 }
                 paused = None;
             } else if since.elapsed() >= RECONNECT_TIMEOUT {
-                mboth!(&mut mfile, match_id, "team {dteam} did not reconnect — ending match");
+                let name = game.teams[dteam].soldiers.get(0).map(|s| s.name.as_str()).unwrap_or("?");
+                mboth!(&mut mfile, match_id, "team {dteam} ({name}) did not reconnect — ending match");
                 let connected = 1 - dteam;
                 let mut state = build_state(&game, tick);
                 state.opponent_abandoned = true;
@@ -262,12 +264,13 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         // Disconnect detection via read-thread flags
         if disc0.load(Ordering::Relaxed) || disc1.load(Ordering::Relaxed) {
             let dteam = if disc0.load(Ordering::Relaxed) { 0 } else { 1 };
+            let name = game.teams[dteam].soldiers.get(0).map(|s| s.name.as_str()).unwrap_or("?");
             if reconnectable {
-                mboth!(&mut mfile, match_id, "team {dteam} disconnected — pausing");
+                mboth!(&mut mfile, match_id, "team {dteam} ({name}) disconnected — pausing");
                 paused = Some((dteam, Instant::now()));
                 continue;
             }
-            mboth!(&mut mfile, match_id, "Client disconnected — resetting (disc0={} disc1={})",
+            mboth!(&mut mfile, match_id, "Client disconnected — resetting (team {dteam} = {name}, disc0={} disc1={})",
                 disc0.load(Ordering::Relaxed), disc1.load(Ordering::Relaxed));
             break;
         }
@@ -316,7 +319,39 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         // Clear one-shot events so pressed/released dont repeat
         if active == 0 { if let Some(ref mut i) = *inp0.lock().unwrap_or_else(|e| e.into_inner()) { i.pressed.clear(); i.released.clear(); } }
         else           { if let Some(ref mut i) = *inp1.lock().unwrap_or_else(|e| e.into_inner()) { i.pressed.clear(); i.released.clear(); } }
+        // Snapshot HP before the tick so we can detect damage/kills caused by it,
+        // and attribute them to whichever team's turn it was (the acting player —
+        // also correct for self-damage, where attacker == victim's team).
+        let attacker_team = game.turn.current_team;
+        let hp_before: Vec<Vec<(u8, bool)>> = game.teams.iter()
+            .map(|t| t.soldiers.iter().map(|s| (s.hp, s.is_alive())).collect())
+            .collect();
+
         arty::game::loop_runner::server_tick(&mut game, &input_state);
+
+        // Log per-soldier damage/kills caused by this tick, with the weapon
+        // responsible (kill_weapon is set on every damaging hit, not just kills).
+        for (ti, team) in game.teams.iter().enumerate() {
+            for (si, soldier) in team.soldiers.iter().enumerate() {
+                let (hp_pre, alive_pre) = hp_before[ti][si];
+                use arty::game::soldier::DeathCause;
+                let cause_label = match soldier.death_cause {
+                    DeathCause::Fall  => "FALL".to_string(),
+                    DeathCause::Water => "DROWNING".to_string(),
+                    _ => soldier.kill_weapon.map(|w| w.display_name().to_string()).unwrap_or_else(|| "UNKNOWN".to_string()),
+                };
+                if soldier.hp < hp_pre {
+                    let dmg = hp_pre - soldier.hp;
+                    mboth!(&mut mfile, match_id,
+                        "DAMAGE: team {attacker_team} -> team {ti} soldier {si} for {dmg} with {cause_label} (hp {hp_pre}->{})",
+                        soldier.hp);
+                }
+                if alive_pre && !soldier.is_alive() {
+                    mboth!(&mut mfile, match_id,
+                        "KILL: team {attacker_team} killed team {ti} soldier {si} with {cause_label}");
+                }
+            }
+        }
 
         // Game over — send final state for 3 seconds then start a new game
         if !matches!(game.result, arty::game::state::GameResult::Ongoing) {
@@ -708,7 +743,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.177";
+const REQUIRED_VERSION: &str = "0.5.4.179";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
