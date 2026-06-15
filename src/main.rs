@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.196";
+const VERSION: &str = "0.5.4.197";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1850,9 +1850,11 @@ fn apply_server_state(
     }
 
     // Sync opponent team name
-    if let Some(opp_team) = game.teams.get_mut(1 - my_team) {
-        if !state.opp_team_name.is_empty() {
-            opp_team.name = state.opp_team_name.clone();
+    let opp_slot = 1 - my_team;
+    if let Some(opp_team) = game.teams.get_mut(opp_slot) {
+        let opp_name = &state.team_names[opp_slot];
+        if !opp_name.is_empty() {
+            opp_team.name = opp_name.clone();
         }
     }
 

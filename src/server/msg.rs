@@ -113,7 +113,7 @@ pub struct StateMsg {
     pub black_holes:        Vec<NetBlackHole>,
     pub fire_patches:       Vec<NetFirePatch>,
     pub rope:               Option<NetRope>,
-    pub opp_team_name:      String,
+    pub team_names:         [String; 2],
     pub garcia:             Option<NetGarcia>,
     /// Active plasma-torch direction: 0=none, 1=UpForward, 2=Forward, 3=DownForward.
     /// Lets the live client draw the torch flame at the tip and suppress the

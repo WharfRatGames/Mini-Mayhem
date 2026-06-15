@@ -699,10 +699,10 @@ fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMsg {
             hook_x: r.hook.x, hook_y: r.hook.y,
             flying: r.flying, length: r.length,
         }),
-        opp_team_name: {
-            let opp = 1 - game.active_team();
-            game.teams.get(opp).map(|t| t.name.clone()).unwrap_or_default()
-        },
+        team_names: [
+            game.teams.get(0).map(|t| t.name.clone()).unwrap_or_default(),
+            game.teams.get(1).map(|t| t.name.clone()).unwrap_or_default(),
+        ],
         garcia: game.garcia.as_ref().map(|g| NetGarcia {
             cursor_x: g.cursor_x, render_x: g.render_x, cursor_y: g.cursor_y, render_y: g.render_y,
             blink_timer: g.blink_timer,
@@ -772,7 +772,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.196";
+const REQUIRED_VERSION: &str = "0.5.4.197";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

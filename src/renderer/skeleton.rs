@@ -199,9 +199,9 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
         let speed = 1.0 + wind.abs() * 5.0;
         let frame = (tick as f32 / 4.0).floor() * dir * speed;
         let angle = frame * std::f32::consts::FRAC_PI_4; // 45° steps
-        let half_len = 11.0;
+        let half_len = 6.0;
         let (dx, dy) = (angle.cos() * half_len, angle.sin() * half_len);
-        thick_line(buf, hub_x - dx, hub_y - dy, hub_x + dx, hub_y + dy, blade, 5);
+        thick_line(buf, hub_x - dx, hub_y - dy, hub_x + dx, hub_y + dy, blade, 3);
     }
 }
 
