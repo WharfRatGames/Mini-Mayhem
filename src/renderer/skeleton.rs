@@ -179,8 +179,11 @@ fn uniform_color(id: u8) -> Bgra {
 fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, _wind: f32, _tick: u32) {
     if hat_id == 0 { return; }
     // Render the real shop-icon sprite at its intended in-game size
-    // (22x20 game px), anchored so it sits on top of the head.
-    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - 9, 22, 20);
+    // (22x20 game px). Per COSMETIC_STYLE_GUIDE.md the sprite's head-anchor
+    // pixel is (33,45) of 66x60 -> (11,15) of 22x20, i.e. 5px below sprite
+    // centre; shift the centred blit up by that 5px so the anchor lands on
+    // the head centre (cx, cy).
+    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - 5, 22, 20);
 }
 
 // ── Gun style drawing ─────────────────────────────────────────────────────────

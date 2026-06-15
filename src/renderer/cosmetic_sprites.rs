@@ -129,15 +129,19 @@ pub fn draw_gun_oriented(
     let idx = id as usize;
     if idx >= sprites.len() { return origin; }
     let sp = match &sprites[idx] { Some(s) => s, None => return origin };
-    let game_w = sp.w as f32 / 3.0;
-    let game_h = sp.h as f32 / 3.0;
-    let scale = length_px / game_w;
+    // Per COSMETIC_STYLE_GUIDE.md: barrel origin ~ image x33 (game px 11),
+    // barrel axis at image y30 (game px 10); the gun's tip is ~46-4=42 game
+    // px from the left edge, so ~31 game px of barrel ahead of the origin.
+    const ORIGIN_GX: f32 = 11.0;
+    const AXIS_GY:   f32 = 10.0;
+    const BARREL_GW: f32 = 31.0;
+    let scale = length_px / BARREL_GW;
     for sy in 0..sp.h {
         for sx in 0..sp.w {
             let [r, g, b, a] = sp.px[sy * sp.w + sx];
             if a < 16 { continue; }
-            let t = (sx as f32 / 3.0) * scale;
-            let p = ((sy as f32 / 3.0) - game_h / 2.0) * scale;
+            let t = (sx as f32 / 3.0 - ORIGIN_GX) * scale;
+            let p = (sy as f32 / 3.0 - AXIS_GY) * scale;
             let x = (origin.0 + fwd.0 * t + prp.0 * p).round() as i32;
             let y = (origin.1 + fwd.1 * t + prp.1 * p).round() as i32;
             buf.set_pixel(x, y, super::fb::Bgra::new(r, g, b));
