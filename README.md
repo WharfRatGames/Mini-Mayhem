@@ -51,7 +51,7 @@ PATH="$ZIG:$PATH" cargo zigbuild --target aarch64-unknown-linux-gnu --release --
 
 ## Deployment
 
-`./dp.sh` builds the Miyoo client, syncs it to a connected device, and runs `deploy/update_server.sh` to refresh the OTA update server (binary, changelog, version manifest). See `STATUS.md` for full infrastructure details and manual deploy steps.
+Build the Miyoo client and run `deploy/update_server.sh <version>` to refresh the OTA update server (binary, changelog, version manifest) and push to connected devices. See `STATUS.md` for full infrastructure details and manual deploy steps.
 
 ## Status
 
