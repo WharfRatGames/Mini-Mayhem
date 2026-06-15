@@ -3218,7 +3218,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 
     // 9. Weapon indicator (bottom-left, shows current weapon name)
     {
-        use crate::renderer::font::{draw_str, draw_str_shadow};
+        use crate::renderer::font::{draw_str, draw_str_shadow, str_width};
         use crate::renderer::fb::Bgra;
         use crate::physics::projectile::WeaponKind;
         use crate::world::{SCREEN_H, SCREEN_W};
@@ -3240,13 +3240,16 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::BlackHoleBomb => "BLACK HOLE",
             _ => "WEAPON",
         };
-        // Small box bottom-left
+        // Small box bottom-left, sized to fit the weapon name + hint
         let bx = cam_x as i32 + 6;
         let by = SCREEN_H as i32 - 24;
-        buf.fill_rect(bx - 2, by - 2, 74, 18, Bgra::new(10, 10, 25));
-        draw_str_shadow(buf, name, bx, by, Bgra::new(255, 220, 80));
         let hint = "[SEL]";
-        draw_str(buf, hint, bx + 52, by + 2, Bgra::new(70, 70, 100));
+        let name_w = str_width(name);
+        let hint_w = str_width(hint);
+        let box_w = (name_w + hint_w + 12).max(74) as u32;
+        buf.fill_rect(bx - 2, by - 2, box_w, 18, Bgra::new(10, 10, 25));
+        draw_str_shadow(buf, name, bx, by, Bgra::new(255, 220, 80));
+        draw_str(buf, hint, bx + name_w + 8, by + 2, Bgra::new(110, 110, 150));
     }
 
     mark!("weapon_indicator");
@@ -3310,7 +3313,7 @@ fn draw_hud_world(
     team_alive:  &[u32; 4],
     total_hp:    &[u32; 4],
 ) {
-    use crate::renderer::font::{draw_str, str_width};
+    use crate::renderer::font::{draw_str, draw_str_shadow, str_width};
     use crate::renderer::draw_sprites::TEAM_COLOURS;
 
     let ox    = cam_x as i32;
@@ -3331,23 +3334,38 @@ fn draw_hud_world(
     let turn_str = format!("T{}", turn_number);
     draw_str(buf, &turn_str, timer_x - str_width(&turn_str) - 6, hud_y + 6,
         Bgra::new(220, 220, 220));
-    // Wind meter — left to right, direction shown by colour and arrow
+    // Wind meter — centre-anchored deflection gauge with numeric strength readout
     let bar_w = 80i32;
-    let bar_h = 6u32;
+    let bar_h = 8u32;
     let bar_x = ox + sw / 2 - bar_w / 2;
+    let bar_y = hud_y + 6;
+    let centre_x = bar_x + bar_w / 2;
     let wcolour = if wind.value() >= 0.0 { Bgra::new(80, 180, 255) } else { Bgra::new(255, 140, 60) };
-    let fill = (wind.value().abs() * bar_w as f32) as u32;
-    buf.fill_rect(bar_x, hud_y + 7, bar_w as u32, bar_h, Bgra::new(40, 40, 60));
+    // Background + quarter-marks
+    buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h, Bgra::new(40, 40, 60));
+    buf.fill_rect(bar_x + bar_w/4 - 1, bar_y, 1, bar_h, Bgra::new(70, 70, 100));
+    buf.fill_rect(bar_x + 3*bar_w/4,   bar_y, 1, bar_h, Bgra::new(70, 70, 100));
+    // Fill from centre outward toward wind direction
+    let fill = (wind.value().abs() * (bar_w / 2) as f32) as u32;
     if fill > 0 {
         if wind.value() >= 0.0 {
-            buf.fill_rect(bar_x, hud_y + 7, fill, bar_h, wcolour);
+            buf.fill_rect(centre_x, bar_y, fill, bar_h, wcolour);
         } else {
-            buf.fill_rect(bar_x + bar_w as i32 - fill as i32, hud_y + 7, fill, bar_h, wcolour);
+            buf.fill_rect(centre_x - fill as i32, bar_y, fill, bar_h, wcolour);
         }
     }
-    let dir_str = if wind.is_calm() { "-" } else if wind.value() > 0.0 { ">" } else { "<" };
-    draw_str(buf, "WIND", bar_x - str_width("WIND") - 3, hud_y + 7, Bgra::new(255, 220, 0));
-    draw_str(buf, dir_str, bar_x + bar_w + 3, hud_y + 7, wcolour);
+    // Centre tick — zero-wind reference point
+    buf.fill_rect(centre_x - 1, bar_y, 2, bar_h, Bgra::new(140, 140, 180));
+    // Numeric strength readout (e.g. "<7" / "7>" / "0")
+    let strength = (wind.value().abs() * 10.0).round() as u32;
+    let label = if wind.value() < -0.05 {
+        format!("<{}", strength)
+    } else if wind.value() > 0.05 {
+        format!("{}>", strength)
+    } else {
+        "0".to_string()
+    };
+    draw_str_shadow(buf, &label, bar_x - str_width(&label) - 4, bar_y - 1, wcolour);
 
     // Team strips (left)
     for team in 0..4usize {
