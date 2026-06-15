@@ -1,9 +1,25 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.165
+## Version: 0.5.4.167
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.165)
+## Recent changes (0.5.4.135–0.5.4.167)
+- **Fix background sky-band double-paint (0.5.4.167)** — `copy_bg_viewport`'s
+  row-memcpy background pass previously covered `0..max_y` (the *tallest*
+  on-screen `sky_limit`), so columns with a shorter sky had rows
+  `sky_limit[wx]..max_y` painted by the background and then immediately
+  overwritten by the terrain copy in `copy_viewport_from_sky_aware`. The
+  background pass now covers only `0..min_y` (the *shortest* on-screen
+  `sky_limit`, guaranteed sky for every column); columns whose own
+  `sky_limit` is taller get that extra `min_y..sky_limit[wx]` band filled
+  once from the background cache during the terrain copy instead. Net
+  "terrain+bg" pixel writes drop by exactly the previously double-painted
+  amount — most on terrain with high height variance across the screen
+  (cliffs/canyons/floating islands), negligible on flat terrain.
+- **Row-memcpy background sky-band copy (0.5.4.166)** — the background
+  sky-band copy (parallax layer) now uses per-row slice copies instead of
+  per-pixel reads/writes, cutting up to ~150k individual pixel ops/frame down
+  to a handful of contiguous memcpys.
 - **Fix sealed/unescapable cave spawns on caverns maps (0.5.4.165)** — cave
   spawn placement now flood-fills (walk/fall/jump within reasonable limits)
   from the candidate floor to confirm it actually connects to an open-to-sky

@@ -208,8 +208,11 @@ pub fn copy_bg_viewport(buf: &mut WorldBuffer, cache: &WorldBuffer, terrain: &Te
         None => return,
     };
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
-    let max_y = terrain.sky_limit[cam_x as usize..(cam_x + SCREEN_W) as usize]
-        .iter().copied().max().unwrap_or(0)
+    // Only paint rows that are sky for *every* visible column via the cheap
+    // row-memcpy pass; taller-sky columns get the extra band filled in by
+    // `copy_viewport_from_sky_aware` instead, avoiding double-painting.
+    let min_y = terrain.sky_limit[cam_x as usize..(cam_x + SCREEN_W) as usize]
+        .iter().copied().min().unwrap_or(0)
         .min(WATER_Y);
-    buf.copy_bg_sky_band(cache, cam_x, par_x, dst_w, max_y);
+    buf.copy_bg_sky_band(cache, cam_x, par_x, dst_w, min_y);
 }

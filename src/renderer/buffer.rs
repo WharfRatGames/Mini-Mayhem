@@ -208,6 +208,13 @@ impl WorldBuffer {
         }
         self.pixel_writes += SCREEN_W as u64 * (WORLD_H - WATER_Y) as u64;
         let par = super::bg_image::par_x_and_dst_w(seed, cam_x);
+        // `copy_bg_viewport` only row-memcpys the background for rows that
+        // are sky for *every* visible column (0..min_y, where min_y is the
+        // smallest `sky_limit` on screen). Columns whose own `sky_limit` is
+        // taller than `min_y` need that extra band of background filled in
+        // here instead, so it isn't double-painted by the row-memcpy pass.
+        let min_y = terrain.sky_limit[cam_x as usize..(cam_x + SCREEN_W) as usize]
+            .iter().copied().min().unwrap_or(0);
         // Sky band: per column, skip straight to the topmost solid pixel
         // (guaranteed sky above it — explosions only remove material, never
         // add it above sky_limit), then copy solid pixels down to the water.
@@ -217,6 +224,16 @@ impl WorldBuffer {
             if terrain.solid_to_water[wx as usize] {
                 // No caves/chasms in this column — copy the whole solid span
                 // without a per-pixel is_solid check.
+                if y0 > min_y {
+                    if let Some((par_x, dst_w)) = par {
+                        let src_x = (par_x + x) % dst_w;
+                        for gy in min_y..y0 {
+                            let c = bg_cache.get_pixel_unchecked(src_x, gy);
+                            self.set_pixel_unchecked(wx, gy, c);
+                        }
+                    }
+                    self.pixel_writes += (y0 - min_y) as u64;
+                }
                 for y in y0..WATER_Y {
                     let off = ((y * WORLD_W + wx) * 4) as usize;
                     self.data[off]     = src.data[off];
@@ -231,6 +248,15 @@ impl WorldBuffer {
                 // the gaps between/around them with the background cache so
                 // every row in y0..WATER_Y is written exactly once.
                 let src_x = par.map(|(par_x, dst_w)| (par_x + x) % dst_w);
+                if y0 > min_y {
+                    if let Some(src_x) = src_x {
+                        for gy in min_y..y0 {
+                            let c = bg_cache.get_pixel_unchecked(src_x, gy);
+                            self.set_pixel_unchecked(wx, gy, c);
+                        }
+                    }
+                    self.pixel_writes += (y0 - min_y) as u64;
+                }
                 let mut y = y0;
                 for &(ys, ye) in &terrain.solid_runs[wx as usize] {
                     if let Some(src_x) = src_x {
@@ -273,10 +299,11 @@ impl WorldBuffer {
     /// `copy_from_slice` calls (split only where the parallax-shifted source
     /// wraps past `dst_w`).
     ///
-    /// `max_y` is the tallest on-screen `sky_limit`, so some columns get
-    /// background painted below their own `sky_limit` — harmless, because
-    /// `copy_viewport_from_sky_aware` always repaints `sky_limit[wx]..WATER_Y`
-    /// afterward.
+    /// `max_y` should be the *smallest* on-screen `sky_limit`, so this only
+    /// covers rows that are sky for every visible column. Columns whose own
+    /// `sky_limit` is taller get the extra `max_y..sky_limit[wx]` band filled
+    /// in by `copy_viewport_from_sky_aware` instead, so no pixel is painted
+    /// twice.
     pub fn copy_bg_sky_band(&mut self, cache: &WorldBuffer, cam_x: u32, par_x: u32, dst_w: u32, max_y: u32) {
         if dst_w == 0 { return; }
         for y in 0..max_y {
