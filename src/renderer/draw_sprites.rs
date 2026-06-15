@@ -711,7 +711,12 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {
     let foam    = Bgra::new(215, 235, 252); // foam / white-blue
 
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W)) as i32;
-    for x in cam_x..(cam_x + SCREEN_W as i32) {
+    let end_x = cam_x + SCREEN_W as i32;
+    // Wave/foam phases vary slowly across x, so compute them once per 2-column
+    // stripe and paint both columns — halves the sin() calls and per-pixel
+    // bookkeeping for this per-frame pass without a visible change in motion.
+    let mut x = cam_x;
+    while x < end_x {
         let xf = x as f32;
         let tf = tick as f32;
 
@@ -723,47 +728,53 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {
         let wave = (w0 + w1 + w2) as i32;  // ≈ –10 to +10 px
         let top  = base_y + wave;
 
-        // In a wave trough the surface dips below the cached flat waterline, which
-        // the world cache filled with solid water up to a straight edge at base_y —
-        // a flat-topped band that masks the trough. Restore the sky there (over
-        // cached water pixels only, never a terrain shoreline) so the trough reads
-        // as a real dip that matches the foreground wave shape.
-        if top - 2 > base_y {
-            for wy in base_y..(top - 2) {
-                if buf.get_pixel_unchecked(x as u32, wy as u32) == body {
-                    // Horizon sky colour is biome-independent (archetype unused here).
-                    buf.set_pixel_unchecked(x as u32, wy as u32, crate::renderer::draw_terrain::sky_colour(x, wy, 0));
+        let foam_phase = (xf * 0.11 + tf * 0.08).sin();
+
+        let x2 = (x + 1).min(end_x - 1);
+        for &xi in &[x, x2] {
+            // In a wave trough the surface dips below the cached flat waterline, which
+            // the world cache filled with solid water up to a straight edge at base_y —
+            // a flat-topped band that masks the trough. Restore the sky there (over
+            // cached water pixels only, never a terrain shoreline) so the trough reads
+            // as a real dip that matches the foreground wave shape.
+            if top - 2 > base_y {
+                for wy in base_y..(top - 2) {
+                    if buf.get_pixel_unchecked(xi as u32, wy as u32) == body {
+                        // Horizon sky colour is biome-independent (archetype unused here).
+                        buf.set_pixel_unchecked(xi as u32, wy as u32, crate::renderer::draw_terrain::sky_colour(xi, wy, 0));
+                    }
                 }
+            }
+
+            // Fill from a couple rows above base_y through the gradient band. Rows
+            // beyond depth 7 are plain `body`, which the viewport copy already filled
+            // from the world cache (terrain_pixel returns WATER there) — skip those.
+            let fill_start = (top - 2).max(0);
+            let fill_end = (top + 8).min(world_h);
+            for wy in fill_start..fill_end {
+                let depth = wy - top;
+                let colour = match depth {
+                    d if d < 0 => body,
+                    0 | 1      => crest,      // 2 rows of crest under the foam
+                    2 | 3      => surface,    // bright surface band
+                    4 | 5      => mid,        // transition
+                    6 | 7      => Bgra::new(38, 98, 195), // slightly lighter than body
+                    _          => body,
+                };
+                buf.set_pixel_unchecked(xi as u32, wy as u32, colour);
+            }
+
+            // Foam band: 2–3 px thick at wave crests, brighter where the primary wave peaks
+            if foam_phase > 0.30 {
+                buf.set_pixel_unchecked(xi as u32, top as u32,     foam); // crest row — always foam when phase active
+                buf.set_pixel_unchecked(xi as u32, (top + 1) as u32, foam); // one row below — fills out the stripe
+            }
+            if foam_phase > 0.60 {
+                buf.set_pixel_unchecked(xi as u32, (top - 1) as u32, foam); // peak pixels get a third row above
             }
         }
 
-        // Fill from a couple rows above base_y through the gradient band. Rows
-        // beyond depth 7 are plain `body`, which the viewport copy already filled
-        // from the world cache (terrain_pixel returns WATER there) — skip those.
-        let fill_start = (top - 2).max(0);
-        let fill_end = (top + 8).min(world_h);
-        for wy in fill_start..fill_end {
-            let depth = wy - top;
-            let colour = match depth {
-                d if d < 0 => body,
-                0 | 1      => crest,      // 2 rows of crest under the foam
-                2 | 3      => surface,    // bright surface band
-                4 | 5      => mid,        // transition
-                6 | 7      => Bgra::new(38, 98, 195), // slightly lighter than body
-                _          => body,
-            };
-            buf.set_pixel_unchecked(x as u32, wy as u32, colour);
-        }
-
-        // Foam band: 2–3 px thick at wave crests, brighter where the primary wave peaks
-        let foam_phase = (xf * 0.11 + tf * 0.08).sin();
-        if foam_phase > 0.30 {
-            buf.set_pixel_unchecked(x as u32, top as u32,     foam); // crest row — always foam when phase active
-            buf.set_pixel_unchecked(x as u32, (top + 1) as u32, foam); // one row below — fills out the stripe
-        }
-        if foam_phase > 0.60 {
-            buf.set_pixel_unchecked(x as u32, (top - 1) as u32, foam); // peak pixels get a third row above
-        }
+        x += 2;
     }
 }
 
