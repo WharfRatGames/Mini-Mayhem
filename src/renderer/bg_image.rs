@@ -208,13 +208,8 @@ pub fn copy_bg_viewport(buf: &mut WorldBuffer, cache: &WorldBuffer, terrain: &Te
         None => return,
     };
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
-    for sx in 0..SCREEN_W {
-        let wx = cam_x + sx;
-        let src_x = (par_x + sx) % dst_w;
-        let y_end = terrain.sky_limit[wx as usize].min(WATER_Y);
-        for y in 0..y_end {
-            let c = cache.get_pixel_unchecked(src_x, y);
-            buf.set_pixel_unchecked(wx, y, c);
-        }
-    }
+    let max_y = terrain.sky_limit[cam_x as usize..(cam_x + SCREEN_W) as usize]
+        .iter().copied().max().unwrap_or(0)
+        .min(WATER_Y);
+    buf.copy_bg_sky_band(cache, cam_x, par_x, dst_w, max_y);
 }

@@ -265,6 +265,38 @@ impl WorldBuffer {
         }
     }
 
+    /// Paint the sky band (`0..max_y` world rows, `cam_x..cam_x+SCREEN_W`
+    /// columns) from a background cache with parallax offset `par_x` /
+    /// width `dst_w`, using per-row slice copies instead of per-pixel
+    /// `get_pixel_unchecked`/`set_pixel_unchecked`. `cache` and `self` share
+    /// the same `WORLD_W` row stride, so each row is 1-2 contiguous
+    /// `copy_from_slice` calls (split only where the parallax-shifted source
+    /// wraps past `dst_w`).
+    ///
+    /// `max_y` is the tallest on-screen `sky_limit`, so some columns get
+    /// background painted below their own `sky_limit` — harmless, because
+    /// `copy_viewport_from_sky_aware` always repaints `sky_limit[wx]..WATER_Y`
+    /// afterward.
+    pub fn copy_bg_sky_band(&mut self, cache: &WorldBuffer, cam_x: u32, par_x: u32, dst_w: u32, max_y: u32) {
+        if dst_w == 0 { return; }
+        for y in 0..max_y {
+            let mut dst_x = cam_x;
+            let mut src_x = par_x % dst_w;
+            let mut remaining = SCREEN_W;
+            while remaining > 0 {
+                let seg = remaining.min(dst_w - src_x);
+                let src_off = ((y * WORLD_W + src_x) * 4) as usize;
+                let dst_off = ((y * WORLD_W + dst_x) * 4) as usize;
+                let len = (seg * 4) as usize;
+                self.data[dst_off..dst_off + len].copy_from_slice(&cache.data[src_off..src_off + len]);
+                dst_x += seg;
+                src_x = (src_x + seg) % dst_w;
+                remaining -= seg;
+            }
+        }
+        self.pixel_writes += SCREEN_W as u64 * max_y as u64;
+    }
+
     /// Blit an RGBA sprite (row-major, `src_w`×`src_h`) at (x0, y0).
     /// Pixels with alpha < 16 are skipped. Source is RGBA, dest is BGRA.
     pub fn draw_sprite_rgba(
