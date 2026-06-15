@@ -1,0 +1,44 @@
+{
+  "torso": {
+    "file": "torso.png",
+    "pivot": [
+      10,
+      39
+    ]
+  },
+  "head": {
+    "file": "head.png",
+    "pivot": [
+      18,
+      18
+    ]
+  },
+  "arm": {
+    "file": "arm.png",
+    "pivot": [
+      7,
+      27
+    ]
+  },
+  "leg_upper": {
+    "file": "leg_upper.png",
+    "pivot": [
+      7,
+      18
+    ]
+  },
+  "leg_lower": {
+    "file": "leg_lower.png",
+    "pivot": [
+      7,
+      15
+    ]
+  },
+  "boot": {
+    "file": "boot.png",
+    "pivot": [
+      6,
+      2
+    ]
+  }
+}

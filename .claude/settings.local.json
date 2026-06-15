@@ -88,7 +88,9 @@
       "Bash(PATH=/home/dusty/miyoo-games/move_square/zig-linux-x86_64-0.13.0:__TRACKED_VAR__ cargo zigbuild --target armv7-unknown-linux-gnueabihf --profile miyoo)",
       "Bash(sed -n '1131,1140p' src/game/loop_runner.rs)",
       "Bash(sed -n '/pub fn draw_weapon_menu_overlay/,/^}/p' src/game/loop_runner.rs)",
-      "Bash(xargs -I{} sh -c 'echo \"=== {} \\($\\(wc -l < \"{}\"\\) lines\\) ===\"')"
+      "Bash(xargs -I{} sh -c 'echo \"=== {} \\($\\(wc -l < \"{}\"\\) lines\\) ===\"')",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

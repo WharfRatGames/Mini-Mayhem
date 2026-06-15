@@ -1,5 +1,9 @@
 # Arty Cosmetic Dimensions
 
+> For previewing hat/gun cosmetics (and prototyping sprite-based body parts)
+> against the in-game soldier rig in every pose, see `tools/paperdoll.py`
+> and `tools/paperdoll_parts/README.md`.
+
 ## Hats - in-game
 
 Anchor: (cx, cy) = head center.
