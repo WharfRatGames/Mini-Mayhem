@@ -218,30 +218,43 @@ impl WorldBuffer {
         // Sky band: per column, skip straight to the topmost solid pixel
         // (guaranteed sky above it — explosions only remove material, never
         // add it above sky_limit), then copy solid pixels down to the water.
-        for x in 0..SCREEN_W {
+        let mut x = 0;
+        while x < SCREEN_W {
             let wx = cam_x + x;
             let y0 = terrain.sky_limit[wx as usize];
             if terrain.solid_to_water[wx as usize] {
-                // No caves/chasms in this column — copy the whole solid span
-                // without a per-pixel is_solid check.
+                // Group consecutive columns sharing this sky_limit so their
+                // solid spans can be copied with one wide slice per row
+                // instead of one tiny copy per column.
+                let mut run_end = x + 1;
+                while run_end < SCREEN_W {
+                    let wx2 = cam_x + run_end;
+                    if !terrain.solid_to_water[wx2 as usize] || terrain.sky_limit[wx2 as usize] != y0 {
+                        break;
+                    }
+                    run_end += 1;
+                }
+                let run_w = run_end - x;
                 if y0 > min_y {
                     if let Some((par_x, dst_w)) = par {
-                        let src_x = (par_x + x) % dst_w;
-                        for gy in min_y..y0 {
-                            let c = bg_cache.get_pixel_unchecked(src_x, gy);
-                            self.set_pixel_unchecked(wx, gy, c);
+                        for rx in x..run_end {
+                            let src_x = (par_x + rx) % dst_w;
+                            for gy in min_y..y0 {
+                                let c = bg_cache.get_pixel_unchecked(src_x, gy);
+                                self.set_pixel_unchecked(cam_x + rx, gy, c);
+                            }
                         }
                     }
-                    self.pixel_writes += (y0 - min_y) as u64;
+                    self.pixel_writes += (run_w * (y0 - min_y)) as u64;
                 }
+                let span_bytes = run_w as usize * 4;
                 for y in y0..WATER_Y {
                     let off = ((y * WORLD_W + wx) * 4) as usize;
-                    self.data[off]     = src.data[off];
-                    self.data[off + 1] = src.data[off + 1];
-                    self.data[off + 2] = src.data[off + 2];
-                    self.data[off + 3] = src.data[off + 3];
+                    self.data[off..off + span_bytes].copy_from_slice(&src.data[off..off + span_bytes]);
                 }
-                self.pixel_writes += (WATER_Y - y0) as u64;
+                self.pixel_writes += (run_w * (WATER_Y - y0)) as u64;
+                x = run_end;
+                continue;
             } else {
                 // Precomputed contiguous solid spans for this column (see
                 // `Terrain::solid_runs`) — memcpy each span directly, filling
@@ -288,6 +301,7 @@ impl WorldBuffer {
                 }
                 self.pixel_writes += (WATER_Y.saturating_sub(y)) as u64;
             }
+            x += 1;
         }
     }
 

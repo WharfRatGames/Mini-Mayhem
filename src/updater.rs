@@ -1,6 +1,29 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use sha2::{Sha256, Digest};
 use crate::renderer::{WorldBuffer, Framebuffer};
+
+/// Hex-encoded SHA256 of a file's contents, or None if it can't be read.
+fn sha256_file(path: &std::path::Path) -> Option<String> {
+    let data = std::fs::read(path).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    Some(hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect())
+}
+
+/// True if `fpath` is out of date relative to the manifest entry: missing,
+/// wrong size, or (when the manifest provides a sha256) wrong hash.
+fn needs_update(fpath: &std::path::Path, expected_size: u64, expected_hash: Option<&str>) -> bool {
+    let meta = match std::fs::metadata(fpath) {
+        Ok(m) => m,
+        Err(_) => return true,
+    };
+    if meta.len() != expected_size { return true; }
+    match expected_hash {
+        Some(h) => sha256_file(fpath).as_deref() != Some(h),
+        None => false,
+    }
+}
 
 const UPDATE_HOST: &str = "crumbonium.duckdns.org";
 const UPDATE_PORT: u16 = 80;
@@ -72,7 +95,8 @@ pub fn sync_assets_bg() {
             if parts.len() < 2 { continue; }
             let fpath = app_dir.join(parts[0]);
             let expected: u64 = parts[1].parse().unwrap_or(0);
-            if std::fs::metadata(&fpath).map(|m| m.len()).unwrap_or(0) == expected { continue; }
+            let expected_hash = parts.get(2).copied();
+            if !needs_update(&fpath, expected, expected_hash) { continue; }
             if let Some(data) = http_get_body(&format!("/arty/{}", parts[0]), 10) {
                 if let Some(parent) = fpath.parent() {
                     let _ = std::fs::create_dir_all(parent);
@@ -176,7 +200,8 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
             if parts.len() < 2 { continue; }
             let fpath = app_dir.join(parts[0]);
             let expected: u64 = parts[1].parse().unwrap_or(0);
-            if std::fs::metadata(&fpath).map(|m| m.len()).unwrap_or(0) != expected {
+            let expected_hash = parts.get(2).copied();
+            if needs_update(&fpath, expected, expected_hash) {
                 if let Some(data) = http_get_body(&format!("/arty/{}", parts[0]), 5) {
                     if let Some(parent) = fpath.parent() {
                         let _ = std::fs::create_dir_all(parent);
@@ -260,10 +285,9 @@ pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
             if parts.len() < 2 { continue; }
             let fname = parts[0];
             let expected_size: u64 = parts[1].parse().unwrap_or(0);
+            let expected_hash = parts.get(2).copied();
             let fpath = app_dir.join(fname);
-            // Only download if size differs
-            let current_size = std::fs::metadata(&fpath).map(|m| m.len()).unwrap_or(0);
-            if current_size != expected_size {
+            if needs_update(&fpath, expected_size, expected_hash) {
                 let url = format!("/arty/{}", fname);
                 if let Some(data) = http_get_body(&url, 30) {
                     if let Some(parent) = fpath.parent() {

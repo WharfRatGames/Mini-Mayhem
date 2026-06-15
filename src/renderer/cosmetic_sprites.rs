@@ -7,7 +7,7 @@ use super::buffer::WorldBuffer;
 
 // ── Hat sprites (IDs 1–11) ────────────────────────────────────────────────────
 
-static HAT_PNGS: [&[u8]; 15] = [
+static HAT_PNGS: [&[u8]; 18] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_2.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_3.png"),
@@ -23,9 +23,12 @@ static HAT_PNGS: [&[u8]; 15] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_13.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_14.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_15.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_16.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_17.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_18.png"),
 ];
 
-static GUN_PNGS: [&[u8]; 11] = [
+static GUN_PNGS: [&[u8]; 12] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_0.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_2.png"),
@@ -37,6 +40,7 @@ static GUN_PNGS: [&[u8]; 11] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_8.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_9.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_10.png"),
+    include_bytes!("../../deploy/assets/cosmetics/gun_11.png"),
 ];
 
 // ── Boot sprites (IDs 0–5) ───────────────────────────────────────────────────
@@ -52,8 +56,8 @@ static BOOT_PNGS: [&[u8]; 6] = [
 
 struct Sprite { pub w: usize, pub h: usize, pub px: Vec<[u8; 4]> }
 
-static HAT_SPRITES:  OnceLock<[Option<Sprite>; 15]> = OnceLock::new();
-static GUN_SPRITES:  OnceLock<[Option<Sprite>; 11]>  = OnceLock::new();
+static HAT_SPRITES:  OnceLock<[Option<Sprite>; 18]> = OnceLock::new();
+static GUN_SPRITES:  OnceLock<[Option<Sprite>; 12]>  = OnceLock::new();
 static BOOT_SPRITES: OnceLock<[Option<Sprite>; 6]>  = OnceLock::new();
 
 fn decode(bytes: &[u8]) -> Option<Sprite> {
@@ -72,11 +76,11 @@ fn decode(bytes: &[u8]) -> Option<Sprite> {
     Some(Sprite { w, h, px })
 }
 
-fn hat_sprites() -> &'static [Option<Sprite>; 15] {
+fn hat_sprites() -> &'static [Option<Sprite>; 18] {
     HAT_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(HAT_PNGS[i])))
 }
 
-fn gun_sprites() -> &'static [Option<Sprite>; 11] {
+fn gun_sprites() -> &'static [Option<Sprite>; 12] {
     GUN_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(GUN_PNGS[i])))
 }
 
