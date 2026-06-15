@@ -176,14 +176,37 @@ fn uniform_color(id: u8) -> Bgra {
 
 // ── Hat drawing ───────────────────────────────────────────────────────────────
 
-fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, _wind: f32, _tick: u32) {
+fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick: u32) {
     if hat_id == 0 { return; }
-    // Render the real shop-icon sprite at its intended in-game size
-    // (22x20 game px). Per COSMETIC_STYLE_GUIDE.md the sprite's head-anchor
-    // pixel is (33,45) of 66x60 -> (11,15) of 22x20, i.e. 5px below sprite
-    // centre; shift the centred blit up by that 5px so the anchor lands on
-    // the head centre (cx, cy).
-    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - 5, 22, 20);
+    // Render the real shop-icon sprite, scaled up (32x29, 1.45x the
+    // documented 22x20 game-px size) for in-game readability.
+    // Per COSMETIC_STYLE_GUIDE.md the sprite's head-anchor pixel is (33,45)
+    // of 66x60 -> 5px below sprite centre at this size's ~7px (1.45x);
+    // shift the centred blit up so the anchor lands on the head centre.
+    const W: i32 = 32;
+    const H: i32 = 29;
+    const ANCHOR_DY: i32 = 7;
+    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - ANCHOR_DY, W, H);
+
+    // Propeller Hat: animate spinning blades above the sprite, matching
+    // wind direction/speed (the static icon has no animation of its own).
+    if hat_id == 2 {
+        let blade = Bgra::new(220, 40, 40);
+        let top_x = cx;
+        let top_y = cy - ANCHOR_DY - H / 2 - 2;
+        let dir = if wind >= 0.0 { 1i32 } else { -1 };
+        let speed = 1 + (wind.abs() * 5.0) as i32;
+        let frame = (tick as i32 / 4 * dir * speed).rem_euclid(4);
+        let (ax, ay): (i32, i32) = match frame {
+            0 => (1, 0),
+            1 => (1, 1),
+            2 => (0, 1),
+            _ => (-1, 1),
+        };
+        for &s in &[1, 2, -1, -2] {
+            buf.fill_rect(top_x + ax * s - 1, top_y + ay * s - 1, 2, 2, blade);
+        }
+    }
 }
 
 // ── Gun style drawing ─────────────────────────────────────────────────────────
@@ -195,7 +218,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, _wind: f32, _ti
 fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_style_id: u8) -> (f32, f32) {
     let fwd = (disp.cos(), -disp.sin());
     let prp = (disp.sin(),  disp.cos());
-    super::cosmetic_sprites::draw_gun_oriented(buf, gun_style_id, origin, fwd, prp, 12.0)
+    super::cosmetic_sprites::draw_gun_oriented(buf, gun_style_id, origin, fwd, prp, 17.0)
 }
 
 // ── Public draw function ──────────────────────────────────────────────────────
