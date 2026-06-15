@@ -2,6 +2,7 @@ use crate::world::WorldPos;
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
 use super::draw_sprites::{TEAM_COLOURS, TEAM_COLOURS_DEAD, draw_hp_number_lifted};
+use super::cosmetic_sprites::draw_boot;
 
 // ── Bone indices ─────────────────────────────────────────────────────────────
 
@@ -170,17 +171,6 @@ fn uniform_color(id: u8) -> Bgra {
         6 => Bgra::new(200, 120, 160), // Pink Camo
         7 => Bgra::new(200, 165,  40), // Gold Plate
         _ => Bgra::new(  0,   0,   0), // fallback (caller should pass team_col for id=0)
-    }
-}
-
-fn boot_color(id: u8) -> Bgra {
-    match id {
-        1 => Bgra::new(180,  40,  40), // Red
-        2 => Bgra::new(220, 215, 205), // White
-        3 => Bgra::new(190, 155,  30), // Gold
-        4 => Bgra::new( 50,  80,  40), // Combat Green
-        5 => Bgra::new( 30,  80, 220), // Electric Blue
-        _ => Bgra::new( 35,  30,  22), // Default dark brown
     }
 }
 
@@ -478,7 +468,6 @@ pub fn draw_soldier_skeletal(
     let body_col = if uniform_color_id == 0 { team_col } else { uniform_color(uniform_color_id) };
     let skin_col = Bgra::new(218, 178, 140);
     let dark_col = Bgra::new(22,  14,  6);
-    let boot_col = boot_color(boot_color_id);
 
     let f = facing as f32; // +1 right, -1 left
 
@@ -585,7 +574,7 @@ pub fn draw_soldier_skeletal(
     thick_line(buf, hip.0, hip.1, back_knee.0, back_knee.1, body_col, 5);
     thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, dark_col, 7);
     thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, body_col, 5);
-    buf.fill_rect(back_foot.0 as i32 - 1, back_foot.1 as i32 - 1, 4, 3, boot_col);
+    draw_boot(buf, boot_color_id, back_foot.0 as i32, back_foot.1 as i32, 5, 4);
 
     // ── Back arm ──────────────────────────────────────────────────────────────
     let (back_arm, fwd_arm) = if f >= 0.0 { (arm_l_vis, arm_r_vis) } else { (arm_r_vis, arm_l_vis) };
@@ -630,7 +619,7 @@ pub fn draw_soldier_skeletal(
     thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, body_col, 5);
     thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, dark_col, 7);
     thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, body_col, 5);
-    buf.fill_rect(front_foot.0 as i32 - 1, front_foot.1 as i32 - 1, 4, 3, boot_col);
+    draw_boot(buf, boot_color_id, front_foot.0 as i32, front_foot.1 as i32, 5, 4);
 
     // ── Front arm ─────────────────────────────────────────────────────────────
     thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, dark_col, 5);

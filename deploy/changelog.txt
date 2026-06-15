@@ -1,3 +1,4 @@
+0.5.4.180  New cosmetics: Beanie, Bandana, and Angel Ring hats, plus an SMG gun style. Boot cosmetics (all colors) now use a redesigned sprite shape in-game.
 0.5.4.179  Server-side: match logs now record fall damage and drowning deaths with proper labels, and disconnect/reconnect events include the player's name (no client-visible change).
 0.5.4.177  Server-side: each live match now also logs to its own match-N.log file alongside the main server log (no client-visible change).
 0.5.4.176  Server-side: game server now logs to a text file for easier debugging (no client-visible change).

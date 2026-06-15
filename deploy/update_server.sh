@@ -35,25 +35,29 @@ MANIFEST=""
 for f in launch.sh config.json icon.png; do
     if [ -f "$DEPLOY_DIR/$f" ]; then
         SIZE=$(wc -c < "$DEPLOY_DIR/$f")
-        MANIFEST="$MANIFEST$f $SIZE\n"
+        HASH=$(sha256sum "$DEPLOY_DIR/$f" | awk '{print $1}')
+        MANIFEST="$MANIFEST$f $SIZE $HASH\n"
         scp "$DEPLOY_DIR/$f" arty-pi:/var/www/html/arty/$f
     fi
 done
-# Include sfx WAV files in manifest
+# Include sfx WAV files in manifest (size + sha256 so clients can detect
+# content changes even when file size happens to match).
 if [ -d "$DEPLOY_DIR/assets/sfx" ]; then
     ssh arty-pi "mkdir -p /var/www/html/arty/sfx/death"
     for wav in "$DEPLOY_DIR/assets/sfx/"*.wav; do
         [ -f "$wav" ] || continue
         fname="sfx/$(basename "$wav")"
         SIZE=$(wc -c < "$wav")
-        MANIFEST="$MANIFEST$fname $SIZE\n"
+        HASH=$(sha256sum "$wav" | awk '{print $1}')
+        MANIFEST="$MANIFEST$fname $SIZE $HASH\n"
         scp "$wav" "arty-pi:/var/www/html/arty/$fname"
     done
     for wav in "$DEPLOY_DIR/assets/sfx/death/"*.wav; do
         [ -f "$wav" ] || continue
         fname="sfx/death/$(basename "$wav")"
         SIZE=$(wc -c < "$wav")
-        MANIFEST="$MANIFEST$fname $SIZE\n"
+        HASH=$(sha256sum "$wav" | awk '{print $1}')
+        MANIFEST="$MANIFEST$fname $SIZE $HASH\n"
         scp "$wav" "arty-pi:/var/www/html/arty/$fname"
     done
 fi
