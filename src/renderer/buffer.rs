@@ -170,6 +170,21 @@ impl WorldBuffer {
         }
     }
 
+    /// Fill the deep water band (`WATER_Y+24..WORLD_H`, all columns) with
+    /// `Bgra::water()` once at cache init. `copy_viewport_from_sky_aware`
+    /// only refreshes the shallow band each frame (where the wave/foam can
+    /// reach); this colour never changes underneath, so it's correct for
+    /// every camera position without a per-frame re-copy.
+    pub fn fill_deep_water_band(&mut self) {
+        let y0 = (WATER_Y + 24).min(WORLD_H);
+        let colour = super::fb::Bgra::water();
+        for y in y0..WORLD_H {
+            for x in 0..WORLD_W {
+                self.set_pixel_unchecked(x, y, colour);
+            }
+        }
+    }
+
     /// Copy the 640×480 viewport slice from `src` into the same region of `self`.
     /// Used each frame to stamp the world cache into the working draw buffer.
     pub fn copy_viewport_from(&mut self, src: &WorldBuffer, cam_x: u32) {
@@ -201,12 +216,19 @@ impl WorldBuffer {
     pub fn copy_viewport_from_sky_aware(&mut self, src: &WorldBuffer, cam_x: u32, terrain: &Terrain, bg_cache: &WorldBuffer, seed: u64) {
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
         let row_bytes = SCREEN_W as usize * 4;
-        // Water rows: full-row memcpy.
-        for y in WATER_Y..WORLD_H {
+        // Water rows: world_cache is a uniform `WATER` colour across the whole
+        // band (terrain_pixel never varies it, and nothing draws below
+        // WATER_Y+~18 — see draw_water_surface's wave fill and fx.rs's
+        // particle depth cap). Only the rows the wave/foam can touch need
+        // refreshing each frame; the deep band is filled once at cache init
+        // (see `fill_deep_water_band`) and stays correct under camera pans
+        // since the colour is identical for every column.
+        let wave_band_end = (WATER_Y + 24).min(WORLD_H);
+        for y in WATER_Y..wave_band_end {
             let off = (y * WORLD_W + cam_x) as usize * 4;
             self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
         }
-        self.pixel_writes += SCREEN_W as u64 * (WORLD_H - WATER_Y) as u64;
+        self.pixel_writes += SCREEN_W as u64 * (wave_band_end - WATER_Y) as u64;
         let par = super::bg_image::par_x_and_dst_w(seed, cam_x);
         // `copy_bg_viewport` only row-memcpys the background for rows that
         // are sky for *every* visible column (0..min_y, where min_y is the
