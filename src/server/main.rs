@@ -61,15 +61,27 @@ fn main() {
             }
         }
 
-        // Fresh pairing — first of a pair waits for the second.
-        match pending.take() {
-            None => { pending = Some((stream, token)); }
-            Some((s0, tok0)) => {
-                let shared_token = if !tok0.is_empty() { tok0 } else { token };
-                match_id += 1;
-                let mid = match_id;
-                let registry2 = registry.clone();
-                thread::spawn(move || run_match(mid, s0, stream, registry2, shared_token));
+        // Fresh pairing — first of a pair waits for the second. If the player
+        // holding the `pending` slot gave up (closed their connection) before
+        // a second player arrived, the dead stream would otherwise get paired
+        // with this new, unrelated connection — starting a match against a
+        // socket nobody is on the other end of. Discard dead pendings and let
+        // this new connection take the slot instead.
+        loop {
+            match pending.take() {
+                None => { pending = Some((stream, token)); break; }
+                Some((s0, tok0)) => {
+                    if !stream_alive(&s0) {
+                        info!("Dropping dead pending connection");
+                        continue;
+                    }
+                    let shared_token = if !tok0.is_empty() { tok0 } else { token };
+                    match_id += 1;
+                    let mid = match_id;
+                    let registry2 = registry.clone();
+                    thread::spawn(move || run_match(mid, s0, stream, registry2, shared_token));
+                    break;
+                }
             }
         }
     }
@@ -776,6 +788,21 @@ fn read_line(stream: &mut TcpStream, max: usize) -> Option<String> {
 /// Accept a single client connection, perform the MAGIC + version + session-token
 /// handshake, and return the live stream, peer address, and session token
 /// (empty string for non-reconnectable connections, e.g. casual play).
+/// True unless the peer has closed the connection (a 1-byte `peek` returns
+/// `Ok(0)` on EOF). A live connection with nothing to read returns
+/// `WouldBlock`/`TimedOut`, which we also treat as alive.
+fn stream_alive(s: &TcpStream) -> bool {
+    let mut b = [0u8; 1];
+    s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+    let r = s.peek(&mut b);
+    s.set_read_timeout(None).ok();
+    match r {
+        Ok(0) => false,
+        Ok(_) => true,
+        Err(e) => e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut,
+    }
+}
+
 fn accept_one(listener: &TcpListener) -> (TcpStream, std::net::SocketAddr, String) {
     loop {
         let (mut stream, addr) = match listener.accept() {
