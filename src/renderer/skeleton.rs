@@ -176,7 +176,7 @@ fn uniform_color(id: u8) -> Bgra {
 
 // ── Hat drawing ───────────────────────────────────────────────────────────────
 
-fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8) {
+fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick: u32) {
     let dark = Bgra::new(22, 14, 6);
     // Hats are drawn at 2× scale so the shape is readable in-game. All shape
     // coordinates below are in the original logical (small) units; `rect`/`dot`
@@ -200,11 +200,24 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8) {
         }
         2 => { // Propeller Hat
             let col = Bgra::new(60, 80, 200);
+            let blade = Bgra::new(220, 40, 40);
             rect(buf, -2, -9, 5, 4, col);    // bowl
             rect(buf, -3, -5, 7, 1, dark);   // rim
-            rect(buf, -4, -9, 4, 1, Bgra::new(220, 40, 40)); // blade L
-            rect(buf,  1, -9, 4, 1, Bgra::new(220, 40, 40)); // blade R
             dot(buf, 0, -10, dark);          // pin
+            // Blades spin to follow the wind: direction matches wind sign,
+            // speed scales with wind strength.
+            let dir = if wind >= 0.0 { 1i32 } else { -1 };
+            let speed = 1 + (wind.abs() * 5.0) as i32;
+            let frame = (tick as i32 / 4 * dir * speed).rem_euclid(4);
+            let (ax, ay): (i32, i32) = match frame {
+                0 => (1, 0),
+                1 => (1, 1),
+                2 => (0, 1),
+                _ => (-1, 1),
+            };
+            for &s in &[1, 2, -1, -2] {
+                dot(buf, ax * s, -9 + ay * s, blade);
+            }
         }
         3 => { // Flower
             let petal = Bgra::new(240, 100, 160);
@@ -553,6 +566,8 @@ pub fn draw_soldier_skeletal(
     uniform_color_id: u8,
     boot_color_id:    u8,
     gun_style_id:     u8,
+    wind:             f32,
+    tick:             u32,
 ) -> Option<(f32, f32)> {
     let team_col = if hp == 0 { TEAM_COLOURS_DEAD[team.min(3)] } else { TEAM_COLOURS[team.min(3)] };
     // body_col: uniform override for torso/arms/legs; helmet cap always keeps team_col
@@ -703,7 +718,7 @@ pub fn draw_soldier_skeletal(
     buf.set_pixel(eye_x,     head_cy + 1, dark_col);
     buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);
     // Hat drawn after head
-    if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id); }
+    if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick); }
 
     // ── Front leg (after body for correct depth) ──────────────────────────────
     thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, dark_col, 7);
