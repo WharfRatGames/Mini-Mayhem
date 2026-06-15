@@ -1,5 +1,6 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{WorldBuffer, Bgra};
+use crate::renderer::cosmetic_sprites;
 use crate::renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
 use crate::renderer::keyboard::Keyboard;
 use crate::world::{SCREEN_W, SCREEN_H};
@@ -967,30 +968,31 @@ impl CosmeticsScreen {
 
                 let id = self.current_id(c, si);
                 let owned = self.owned_for_col(c);
-                let label: String = if id == 0 {
-                    if owned.is_empty() { "NONE".to_string() } else { "(none)".to_string() }
-                } else {
-                    // Show cosmetic name
-                    match c {
-                        0 => hat_name(id),
-                        1 => uniform_name(id),
-                        2 => boot_name(id),
-                        3 => gun_name(id),
-                        _ => format!("#{}", id),
-                    }
-                };
-                let tc = if id == 0 {
-                    Bgra::new(60, 65, 90)
-                } else if cell_selected {
-                    Bgra::new(255, 240, 100)
-                } else {
-                    Bgra::new(180, 200, 255)
-                };
-                let lw = str_width(&label) as i32;
                 let center_x = cx + col_w / 2;
-                let text_y = ry + row_h / 2 - 4;
-                draw_str(buf, &label, center_x - lw/2, text_y, tc);
+                let icon_cy = ry + row_h / 2;
+                let icon_w = col_w - 12;
+                let icon_h = row_h - 10;
 
+                // Cosmetic icon (sprite for hat/boots/gun, swatch for uniform)
+                match c {
+                    0 => if id > 0 { cosmetic_sprites::draw_hat(buf, id, center_x, icon_cy, icon_w, icon_h); },
+                    1 => if id > 0 {
+                        let col = uniform_swatch_color(id);
+                        let sw = (icon_w / 2) as u32;
+                        let sh = (icon_h / 2) as u32;
+                        buf.fill_rect(center_x - sw as i32 / 2, icon_cy - sh as i32 / 2, sw, sh, col);
+                    },
+                    2 => cosmetic_sprites::draw_boot(buf, id, center_x, icon_cy, icon_w, icon_h),
+                    3 => cosmetic_sprites::draw_gun(buf, id, center_x, icon_cy, icon_w, icon_h),
+                    _ => {}
+                }
+                if id == 0 && (c == 0 || c == 1) {
+                    let dash = "--";
+                    let dw = str_width(dash) as i32;
+                    draw_str(buf, dash, center_x - dw/2, icon_cy - 3, Bgra::new(60, 65, 90));
+                }
+
+                let text_y = ry + row_h - 12;
                 // L1/R1 arrows on selected cell
                 if cell_selected && !owned.is_empty() {
                     draw_str(buf, "<", cx + 3, text_y, Bgra::new(140, 160, 255));
@@ -1006,48 +1008,15 @@ impl CosmeticsScreen {
     }
 }
 
-fn hat_name(id: u8) -> String {
+fn uniform_swatch_color(id: u8) -> Bgra {
     match id {
-        1 => "Top Hat".to_string(),
-        2 => "Propeller".to_string(),
-        3 => "Flower".to_string(),
-        4 => "Crown".to_string(),
-        5 => "Fez".to_string(),
-        6 => "Beret".to_string(),
-        7 => "Party Hat".to_string(),
-        8 => "Halo".to_string(),
-        9 => "Devil Horns".to_string(),
-        _ => format!("Hat {}", id),
-    }
-}
-fn uniform_name(id: u8) -> String {
-    match id {
-        1 => "Camo Green".to_string(),
-        2 => "Desert Tan".to_string(),
-        3 => "Midnight".to_string(),
-        4 => "Snow White".to_string(),
-        5 => "Navy".to_string(),
-        _ => format!("Unif {}", id),
-    }
-}
-fn boot_name(id: u8) -> String {
-    match id {
-        1 => "Red".to_string(),
-        2 => "White".to_string(),
-        3 => "Gold".to_string(),
-        4 => "Combat Grn".to_string(),
-        _ => format!("Boot {}", id),
-    }
-}
-fn gun_name(id: u8) -> String {
-    match id {
-        1 => "Pistol".to_string(),
-        2 => "Shotgun".to_string(),
-        3 => "Sniper".to_string(),
-        4 => "Minigun".to_string(),
-        5 => "Cannon".to_string(),
-        6 => "Laser".to_string(),
-        7 => "Golden Gun".to_string(),
-        _ => format!("Gun {}", id),
+        1 => Bgra::new( 60, 100,  50), // Camo Green
+        2 => Bgra::new(190, 155,  90), // Desert Tan
+        3 => Bgra::new( 30,  30,  35), // Midnight Black
+        4 => Bgra::new(230, 230, 235), // Snow White
+        5 => Bgra::new( 30,  40, 120), // Navy
+        6 => Bgra::new(200, 120, 160), // Pink Camo
+        7 => Bgra::new(200, 165,  40), // Gold Plate
+        _ => Bgra::new(120, 120, 120),
     }
 }
