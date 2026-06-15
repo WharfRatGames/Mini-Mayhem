@@ -132,15 +132,47 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
 /// How long a paused match waits for the disconnected player to reconnect.
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// Open (creating if needed) a per-match log file alongside the main server
+/// log, so each game's history can be tailed/grepped independently when many
+/// matches run concurrently. Falls back to /dev/null if it can't be opened.
+fn match_log_file(match_id: u64) -> std::fs::File {
+    let dir = std::env::var("ARTY_LOG_PATH").ok()
+        .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_path_buf()))
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let path = dir.join(format!("match-{match_id}.log"));
+    std::fs::OpenOptions::new().create(true).append(true).open(&path)
+        .unwrap_or_else(|_| std::fs::File::open("/dev/null").unwrap())
+}
+
+/// Write a timestamped line to a per-match log file.
+fn mlog(f: &mut std::fs::File, msg: &str) {
+    use std::io::Write as _;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let _ = writeln!(f, "[{now}] {msg}");
+}
+
+/// Log to both the shared server log (with the `[match N]` prefix, as before)
+/// and this match's own log file.
+macro_rules! mboth {
+    ($mfile:expr, $match_id:expr, $($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        info!("[match {}] {}", $match_id, msg);
+        mlog($mfile, &msg);
+    }};
+}
+
 fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, session_token: String) {
-    info!("[match {match_id}] starting");
+    let mut mfile = match_log_file(match_id);
+    mboth!(&mut mfile, match_id, "starting");
     s0.set_nodelay(true).ok();
     s1.set_nodelay(true).ok();
     s0.set_write_timeout(Some(Duration::from_millis(50))).ok();
     s1.set_write_timeout(Some(Duration::from_millis(50))).ok();
     s0.set_read_timeout(Some(Duration::from_secs(5))).ok();
     s1.set_read_timeout(Some(Duration::from_secs(5))).ok();
-    info!("Both connected - starting!");
+    mboth!(&mut mfile, match_id, "Both connected - starting!");
     thread::sleep(Duration::from_secs(2));
 
     let seed = std::time::SystemTime::now()
@@ -164,7 +196,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         s0.try_clone(), s0.try_clone(), s1.try_clone(), s1.try_clone()
     ) {
         (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
-        _ => { info!("[match {match_id}] socket clone failed — aborting"); return; }
+        _ => { mboth!(&mut mfile, match_id, "socket clone failed — aborting"); return; }
     };
     thread::spawn({
         let i = inp0.clone(); let d = disc0.clone(); let g = gen0.clone();
@@ -201,13 +233,13 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         if let Some((dteam, since)) = paused {
             let still_disc = match dteam { 0 => disc0.load(Ordering::Relaxed), _ => disc1.load(Ordering::Relaxed) };
             if !still_disc {
-                info!("[match {match_id}] team {dteam} reconnected — resuming");
+                mboth!(&mut mfile, match_id, "team {dteam} reconnected — resuming");
                 if let Some(state_bytes) = encode(&build_state(&game, tick)) {
                     write_team!(dteam, &state_bytes);
                 }
                 paused = None;
             } else if since.elapsed() >= RECONNECT_TIMEOUT {
-                info!("[match {match_id}] team {dteam} did not reconnect — ending match");
+                mboth!(&mut mfile, match_id, "team {dteam} did not reconnect — ending match");
                 let connected = 1 - dteam;
                 let mut state = build_state(&game, tick);
                 state.opponent_abandoned = true;
@@ -231,11 +263,11 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         if disc0.load(Ordering::Relaxed) || disc1.load(Ordering::Relaxed) {
             let dteam = if disc0.load(Ordering::Relaxed) { 0 } else { 1 };
             if reconnectable {
-                info!("[match {match_id}] team {dteam} disconnected — pausing");
+                mboth!(&mut mfile, match_id, "team {dteam} disconnected — pausing");
                 paused = Some((dteam, Instant::now()));
                 continue;
             }
-            info!("Client disconnected — resetting (disc0={} disc1={})",
+            mboth!(&mut mfile, match_id, "Client disconnected — resetting (disc0={} disc1={})",
                 disc0.load(Ordering::Relaxed), disc1.load(Ordering::Relaxed));
             break;
         }
@@ -297,7 +329,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             }
             } // end if let Some(final_bytes)
             if disc0.load(Ordering::Relaxed) || disc1.load(Ordering::Relaxed) {
-                info!("Client left during game-over — resetting");
+                mboth!(&mut mfile, match_id, "Client left during game-over — resetting");
                 break;
             }
             let seed = std::time::SystemTime::now()
@@ -310,7 +342,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             *inp1.lock().unwrap_or_else(|e| e.into_inner()) = None;
             if let Some(bytes) = encode(&WelcomeMsg { your_team: 0, seed }) { write_team!(0, &bytes); }
             if let Some(bytes) = encode(&WelcomeMsg { your_team: 1, seed }) { write_team!(1, &bytes); }
-            info!("Game over — new game with seed {}", seed);
+            mboth!(&mut mfile, match_id, "Game over — new game with seed {}", seed);
             continue;
         }
 
@@ -325,7 +357,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     if reconnectable {
         registry.lock().unwrap_or_else(|e| e.into_inner()).remove(&session_token);
     }
-    info!("[match {match_id}] ended");
+    mboth!(&mut mfile, match_id, "ended");
 }
 
 fn apply_input(game: &mut GameState, input: &InputMsg) {
@@ -676,7 +708,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.176";
+const REQUIRED_VERSION: &str = "0.5.4.177";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
