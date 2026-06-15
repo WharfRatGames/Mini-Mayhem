@@ -90,7 +90,22 @@
       "Bash(sed -n '/pub fn draw_weapon_menu_overlay/,/^}/p' src/game/loop_runner.rs)",
       "Bash(xargs -I{} sh -c 'echo \"=== {} \\($\\(wc -l < \"{}\"\\) lines\\) ===\"')",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git commit *)",
+      "Bash(git restore *)",
+      "Bash(git rm *)",
+      "Bash(PATH=/home/dusty/miyoo-games/move_square/zig-linux-x86_64-0.13.0:__TRACKED_VAR__ cargo zigbuild --target aarch64-unknown-linux-gnu --release --bin server)",
+      "Bash(scp deploy/arty_api.py arty-pi:/home/Grunkus/mayhem-server/arty_api.py.new)",
+      "Bash(scp deploy/changelog.txt arty-pi:/var/www/html/arty/changelog.txt)",
+      "Bash(git push *)",
+      "Bash(git fetch *)",
+      "Bash(git rebase *)",
+      "Bash(git stash *)",
+      "Bash(find / -maxdepth 6 -iname \"*aarch64-linux-gnu-gcc*\")",
+      "Bash(find / -maxdepth 6 -iname \"*arm-linux-gnueabihf-gcc*\")",
+      "Bash(dpkg -l)",
+      "Bash(sudo apt-get install -y gcc-aarch64-linux-gnu)",
+      "Bash(./deploy/update_server.sh 0.5.4.172)"
     ]
   }
 }

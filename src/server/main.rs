@@ -32,11 +32,20 @@ fn main() {
         .unwrap_or(PORT_DEFAULT);
     info!("Miyoo Mayhem server on :{}", port);
     let listener = TcpListener::bind(("0.0.0.0", port)).expect("bind failed");
+    let mut match_id: u64 = 0;
     loop {
     info!("Waiting for 2 players...");
 
-    let (s0, a0) = accept_player(&listener, 0);
-    let (s1, a1) = accept_player(&listener, 1);
+    let (s0, _a0) = accept_player(&listener, 0);
+    let (s1, _a1) = accept_player(&listener, 1);
+    match_id += 1;
+    let mid = match_id;
+    thread::spawn(move || run_match(mid, s0, s1));
+    }
+}
+
+fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream) {
+    info!("[match {match_id}] starting");
     s0.set_nodelay(true).ok();
     s1.set_nodelay(true).ok();
     s0.set_write_timeout(Some(Duration::from_millis(50))).ok();
@@ -66,7 +75,7 @@ fn main() {
         s0.try_clone(), s0.try_clone(), s1.try_clone(), s1.try_clone()
     ) {
         (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
-        _ => { info!("Socket clone failed — resetting"); continue; }
+        _ => { info!("[match {match_id}] socket clone failed — aborting"); return; }
     };
     thread::spawn({
         let i = inp0.clone(); let d = disc0.clone();
@@ -174,7 +183,7 @@ fn main() {
         let e = t.elapsed();
         if e < TICK_DURATION { thread::sleep(TICK_DURATION - e); }
     }
-    } // end outer loop
+    info!("[match {match_id}] ended");
 }
 
 fn apply_input(game: &mut GameState, input: &InputMsg) {
@@ -523,7 +532,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.171";
+const REQUIRED_VERSION: &str = "0.5.4.172";
 
 fn accept_player(listener: &TcpListener, slot: usize) -> (TcpStream, std::net::SocketAddr) {
     loop {
