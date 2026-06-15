@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.183";
+const VERSION: &str = "0.5.4.184";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -77,6 +77,14 @@ fn main() {
     // Set when a ranked live match drops involuntarily (not a player-chosen
     // exit) — offers a reconnect popup on the title screen for up to 180s.
     let mut pending_reconnect: Option<(String, u16, Instant)> = None;
+    // Restore reconnect state across a full app restart (e.g. the player
+    // exited after "LOST CONNECTION" instead of waiting at the title screen).
+    if let Some((tok, port, since_unix)) = game::account::take_pending_reconnect() {
+        let now_unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let age = std::time::Duration::from_secs(now_unix.saturating_sub(since_unix));
+        let since = Instant::now() - age;
+        pending_reconnect = Some((tok, port, since));
+    }
     // Set when the player accepts the reconnect popup; consumed to skip
     // login/roster/matchmaking and resume the existing match directly.
     let mut force_reconnect: Option<(String, u16)> = None;
@@ -164,6 +172,7 @@ fn main() {
                 std::thread::sleep(TICK_DURATION);
             };
             if accept { force_reconnect = Some((tok, port)); }
+            game::account::clear_pending_reconnect();
         }
     }
     let is_reconnect_resume = force_reconnect.is_some();
@@ -652,6 +661,8 @@ fn main() {
                 // on the title screen (only for involuntary drops, not B/Start exits).
                 if !session_token.is_empty() {
                     pending_reconnect = Some((session_token.clone(), live_game_port, Instant::now()));
+                    let now_unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                    game::account::save_pending_reconnect(&session_token, live_game_port, now_unix);
                 }
                 return_to_mp = true;
                 continue 'game;
@@ -1560,14 +1571,17 @@ fn show_match_intro(
     }
 }
 
+/// Full-screen status message, styled like the other menu screens (account,
+/// missions, lobby): dark background with a yellow title in a header bar.
 fn draw_msg(buf: &mut WorldBuffer, fb: &mut Framebuffer, msg: &str) {
     use renderer::Bgra;
     use renderer::font::{draw_str_scaled, str_width_scaled};
     use world::{SCREEN_W, SCREEN_H};
+    let sw = SCREEN_W as i32;
     buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(8, 10, 22));
-    let x = SCREEN_W as i32 / 2 - str_width_scaled(msg, 2) / 2;
-    let y = SCREEN_H as i32 / 2 - 8;
-    draw_str_scaled(buf, msg, x, y, Bgra::new(255, 210, 50), 2);
+    buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
+    let x = sw / 2 - str_width_scaled(msg, 2) / 2;
+    draw_str_scaled(buf, msg, x, 10, Bgra::new(255, 210, 50), 2);
     buf.blit_to_fb(fb, 0);
 }
 
