@@ -1,9 +1,15 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.164
+## Version: 0.5.4.165
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.164)
+## Recent changes (0.5.4.135–0.5.4.165)
+- **Fix sealed/unescapable cave spawns on caverns maps (0.5.4.165)** — cave
+  spawn placement now flood-fills (walk/fall/jump within reasonable limits)
+  from the candidate floor to confirm it actually connects to an open-to-sky
+  exit, instead of just checking that an unroofed floor exists somewhere
+  nearby (which could be on the other side of a wall). Fixes seed
+  `18B918CE5F30EA29`'s bottom-left soldier trapped in an unreachable tunnel.
 - **Fix black borders on BG1-derived backgrounds (0.5.4.164)** — bg_0..3,
   bg_extra_city, and bg_extra_pyramids (6 of the 15 pooled backgrounds) had a
   ~3-9px near-black border baked in from BG1.png's contact-sheet grid lines,

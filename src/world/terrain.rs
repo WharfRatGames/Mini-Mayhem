@@ -1055,10 +1055,80 @@ impl Terrain {
                 !self.is_solid(x_l, y) && !self.is_solid(x, y) && !self.is_solid(x_r, y)
             }) { return false; }
             // Roofed: a solid ceiling somewhere above the head within CEIL_MAX.
-            ((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y))
+            if !((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y)) {
+                return false;
+            }
+            // Never spawn in a sealed pocket: there must be a way out within walking
+            // distance — a nearby floor at a similar height that opens to the sky
+            // (unroofed), reachable along the cave/tunnel.
+            self.cave_has_escape(x, foot_y)
         };
         // Bottom-up: prefer the deepest (main chamber) floor over thin upper tunnels.
         (HEAD_H..WATER_Y as i32).rev().find(|&foot_y| ok(foot_y))
+    }
+
+    /// True if a soldier standing at `(x, foot_y)` can walk/fall/jump (via a
+    /// flood-fill over nearby standable floors) to some floor that is open to
+    /// the sky (not roofed within `OPEN_CLEAR`) — i.e. the cave/tunnel
+    /// containing `(x, foot_y)` actually connects to a way out, rather than
+    /// just having one somewhere nearby with walls in between.
+    fn cave_has_escape(&self, x: i32, foot_y: i32) -> bool {
+        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+        use std::collections::{HashSet, VecDeque};
+
+        const STEP:       i32 = 8;   // grid step for the flood fill (px)
+        const HEAD_H:     i32 = 26;  // body height above the foot
+        const MAX_STEP:   i32 = 8;   // walk step-up/down allowance
+        const JUMP_H:     i32 = 48;  // max jump height
+        const FALL_MAX:   i32 = 120; // max fall the search will follow in one hop
+        const OPEN_CLEAR: i32 = 220; // clear space above a floor = "open to sky"
+        const MAX_VISITED: usize = 300;
+
+        let half = (SOLDIER_HALF_W - 1) as i32;
+        let clear_col = |cx: i32, y0: i32, y1: i32| -> bool {
+            let (lo, hi) = (y0.min(y1), y0.max(y1));
+            (lo..=hi).all(|y| !self.is_solid(cx, y.max(0)))
+        };
+        let body_clear = |cx: i32, fy: i32| -> bool {
+            (fy - HEAD_H + 1..=fy).all(|y| {
+                let y = y.max(0);
+                !self.is_solid(cx - half, y) && !self.is_solid(cx, y) && !self.is_solid(cx + half, y)
+            })
+        };
+        let is_floor = |cx: i32, fy: i32| -> bool {
+            cx >= 0 && cx < WORLD_W as i32
+                && fy >= HEAD_H && fy < WATER_Y as i32
+                && self.is_solid(cx, fy + 1) && !self.is_solid(cx, fy)
+                && body_clear(cx, fy)
+        };
+        let is_open = |cx: i32, fy: i32| -> bool {
+            !((fy - OPEN_CLEAR).max(0)..=fy - HEAD_H).any(|y| self.is_solid(cx, y))
+        };
+
+        let mut visited: HashSet<(i32, i32)> = HashSet::new();
+        let mut queue: VecDeque<(i32, i32)> = VecDeque::new();
+        visited.insert((x, foot_y));
+        queue.push_back((x, foot_y));
+
+        while let Some((cx, fy)) = queue.pop_front() {
+            if is_open(cx, fy) { return true; }
+            if visited.len() >= MAX_VISITED { break; }
+            for &ncx in &[cx - STEP, cx + STEP, cx] {
+                if ncx < 0 || ncx >= WORLD_W as i32 { continue; }
+                for nfy in ((fy - JUMP_H)..=(fy + FALL_MAX)).step_by(STEP as usize) {
+                    if !is_floor(ncx, nfy) || !visited.insert((ncx, nfy)) { continue; }
+                    let reachable = if nfy <= fy + MAX_STEP {
+                        clear_col(ncx, nfy - HEAD_H + 1, fy)
+                    } else {
+                        clear_col(ncx, fy + 1, nfy)
+                    };
+                    if reachable {
+                        queue.push_back((ncx, nfy));
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Generate a 256×256 tiling dirt texture using layered Perlin noise.
