@@ -105,7 +105,8 @@
       "Bash(find / -maxdepth 6 -iname \"*arm-linux-gnueabihf-gcc*\")",
       "Bash(dpkg -l)",
       "Bash(sudo apt-get install -y gcc-aarch64-linux-gnu)",
-      "Bash(./deploy/update_server.sh 0.5.4.172)"
+      "Bash(./deploy/update_server.sh 0.5.4.172)",
+      "Bash(scp deploy/arty_api.py arty-pi:~/mayhem-server/arty_api.py)"
     ]
   }
 }
