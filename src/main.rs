@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.172";
+const VERSION: &str = "0.5.4.173";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -308,6 +308,7 @@ fn main() {
     let mut live_elo_my:  i32 = 0;
     let mut live_elo_opp: i32 = 0;
     let mut live_game_port: u16 = 7777; // port of the spawned game server instance
+    let mut session_token = String::new(); // empty for casual/non-ranked — server treats as non-reconnectable
     if is_live || is_live_ranked {
         use game::account::{AccountScreen, AccountAction, RosterPicker, RosterAction,
                              load_saved_creds};
@@ -368,12 +369,13 @@ fn main() {
                     live_elo_opp     = json_field(&resp, "opponent_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
                     live_elo_my      = json_field(&resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
                     live_game_port   = json_field(&resp, "port").and_then(|s| s.parse().ok()).unwrap_or(7777);
+                    session_token    = json_field(&resp, "session_token").unwrap_or_default();
                 }
             }
             Ok(ref wait_resp) => {
                 // Waiting — capture our ELO from the waiting response before the poll loop
                 live_elo_my = json_field(wait_resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(0);
-                let (tx, rx) = std::sync::mpsc::channel::<Option<(u16,i32,i32)>>();
+                let (tx, rx) = std::sync::mpsc::channel::<Option<(u16,i32,i32,String)>>();
                 let token2 = token.clone();
                 std::thread::spawn(move || {
                     for _ in 0..60 { // poll up to 60 times (max 30 seconds)
@@ -384,7 +386,8 @@ fn main() {
                                 let port: u16 = json_field(&resp, "port").and_then(|s| s.parse().ok()).unwrap_or(7777);
                                 let opp: i32  = json_field(&resp, "opponent_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
                                 let my: i32   = json_field(&resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
-                                let _ = tx.send(Some((port, my, opp)));
+                                let tok = json_field(&resp, "session_token").unwrap_or_default();
+                                let _ = tx.send(Some((port, my, opp, tok)));
                                 return;
                             }
                         }
@@ -409,7 +412,7 @@ fn main() {
                     std::thread::sleep(std::time::Duration::from_millis(33));
                 };
                 match matched {
-                    Some((port, my, opp)) => { live_ranked_match = true; live_game_port = port; live_elo_my = my; live_elo_opp = opp; }
+                    Some((port, my, opp, tok)) => { live_ranked_match = true; live_game_port = port; live_elo_my = my; live_elo_opp = opp; session_token = tok; }
                     None => { draw_msg(&mut buf, &mut fb, "NO MATCH FOUND"); std::thread::sleep(std::time::Duration::from_secs(2)); continue 'game; }
                 }
             }
@@ -438,6 +441,8 @@ fn main() {
                 Ok(Ok(mut c)) => {
                     c.send_raw(b"MMAY");
                     c.send_raw(ver.as_bytes());
+                    c.send_raw(b"\n");
+                    c.send_raw(session_token.as_bytes());
                     c.send_raw(b"\n");
                     break Some(c);
                 }
@@ -598,16 +603,39 @@ fn main() {
     let mut elo_delta_rx: Option<std::sync::mpsc::Receiver<i32>> = None;
     let mut fps_window_start = Instant::now();
     let mut fps_frame_count: u32 = 0;
+    let mut paused_secs: Option<u32> = None;
+    let mut opponent_abandoned = false;
     loop {
         let frame_start = Instant::now();
         input.poll();
         if let Some(ref mut conn) = net_conn {
             // Disconnect detection — reader thread or write failure sets this flag.
             if conn.is_disconnected() {
-                draw_msg(&mut buf, &mut fb, "LOST CONNECTION");
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                return_to_mp = true;
-                continue 'game;
+                let mut reconnected = false;
+                let recon_start = Instant::now();
+                while recon_start.elapsed() < Duration::from_secs(180) {
+                    input.poll();
+                    draw_msg(&mut buf, &mut fb, "RECONNECTING...");
+                    let addr = format!("crumbonium.duckdns.org:{}", live_game_port);
+                    if let Ok(mut c) = net::ServerConn::connect(&addr) {
+                        c.send_raw(b"MMAY");
+                        c.send_raw(VERSION.as_bytes());
+                        c.send_raw(b"\n");
+                        c.send_raw(session_token.as_bytes());
+                        c.send_raw(b"\n");
+                        c.start_reader();
+                        *conn = c;
+                        reconnected = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                }
+                if !reconnected {
+                    draw_msg(&mut buf, &mut fb, "CONNECTION LOST");
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    return_to_mp = true;
+                    continue 'game;
+                }
             }
             use net::msg::{InputMsg, NetButton};
             // Suppress A-HELD when server_fire_grace active (same state used in tick/server_tick).
@@ -680,6 +708,10 @@ fn main() {
                 }
             }
             let got_state = latest_state.is_some();
+            if let Some(state) = &latest_state {
+                if state.opponent_abandoned { opponent_abandoned = true; }
+                paused_secs = state.paused_opponent;
+            }
             if let Some(state) = latest_state {
                 // While showing the 10-second game-over overlay, don't let a new-game
                 // StateMsg (result=Ongoing) from the server clear our final result.
@@ -822,6 +854,12 @@ fn main() {
             game::loop_runner::render_live(&game, &mut buf, &mut cam, &mut lstate, my_team);
             // draw_weapon_menu_overlay uses game.weapon_menu_open — same source as tick()
             game::loop_runner::draw_weapon_menu_overlay(&game, &mut buf, cam.left_edge() as i32);
+            if let Some(secs) = paused_secs {
+                use renderer::font::{draw_str_scaled, str_width_scaled};
+                let msg = format!("OPPONENT DISCONNECTED - WAITING {}s", secs);
+                let x = cam.left_edge() as i32 + (world::SCREEN_W as i32 - str_width_scaled(&msg, 1)) / 2;
+                draw_str_scaled(&mut buf, &msg, x, 20, renderer::Bgra::new(255, 80, 80), 1);
+            }
             // Game over overlay — use latched final_result so server's new-game reset can't clear it
             if let Some(ref fr) = final_result.clone() {
                 // Report ranked result on first tick, capture ELO delta via channel
@@ -866,6 +904,12 @@ fn main() {
                 let wa = if let Some(w) = winner { game.teams.get(w).map(|t| t.avatar_id).unwrap_or(0) } else { 0 };
                 let (kills, hp_left, memo) = game::loop_runner::match_end_stats(&game);
                 crate::renderer::hud::draw_game_over(&mut buf, winner, Some(my_team), cam.left_edge() as i32, wa, elo_delta, kills, hp_left, &memo);
+                if opponent_abandoned {
+                    use renderer::font::{draw_str_scaled, str_width_scaled};
+                    let msg = "OPPONENT LEFT - YOU WIN";
+                    let x = cam.left_edge() as i32 + (world::SCREEN_W as i32 - str_width_scaled(msg, 1)) / 2;
+                    draw_str_scaled(&mut buf, msg, x, 20, renderer::Bgra::new(255, 80, 80), 1);
+                }
                 // Countdown bar at bottom
                 {
                     use world::{SCREEN_W, SCREEN_H};

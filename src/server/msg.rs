@@ -109,6 +109,13 @@ pub struct StateMsg {
     /// Lets the live client draw the torch flame at the tip and suppress the
     /// per-tick crater-derived explosion flashes the torch's carving would spawn.
     pub torch_dir:          u8,
+    /// Some(seconds_remaining) while the match is paused waiting for the
+    /// opponent to reconnect; None during normal play.
+    pub paused_opponent:    Option<u32>,
+    /// True on the final StateMsg if the pause window expired without the
+    /// opponent reconnecting — client shows "opponent left" instead of a
+    /// normal result screen.
+    pub opponent_abandoned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
