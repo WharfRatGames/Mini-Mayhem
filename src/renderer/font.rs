@@ -81,6 +81,23 @@ pub fn str_width_scaled(s: &str, scale: i32) -> i32 {
     chars * 8 * scale + (chars - 1) * scale
 }
 
+/// Greedily word-wrap `s` so each line's scaled width fits within `max_w` pixels.
+pub fn wrap_text(s: &str, scale: i32, max_w: i32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in s.split_whitespace() {
+        let candidate = if line.is_empty() { word.to_string() } else { format!("{} {}", line, word) };
+        if !line.is_empty() && str_width_scaled(&candidate, scale) > max_w {
+            lines.push(line);
+            line = word.to_string();
+        } else {
+            line = candidate;
+        }
+    }
+    if !line.is_empty() { lines.push(line); }
+    lines
+}
+
 /// Return the glyph for a character.
 /// Unknown characters render as a small dot.
 fn glyph_for(ch: char) -> Glyph {

@@ -183,29 +183,25 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     // Per COSMETIC_STYLE_GUIDE.md the sprite's head-anchor pixel is (33,45)
     // of 66x60 -> 5px below sprite centre at this size's ~7px (1.45x);
     // shift the centred blit up so the anchor lands on the head centre.
-    const W: i32 = 32;
-    const H: i32 = 29;
-    const ANCHOR_DY: i32 = 7;
+    const W: i32 = 40;
+    const H: i32 = 36;
+    const ANCHOR_DY: i32 = 9;
     super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - ANCHOR_DY, W, H);
 
-    // Propeller Hat: animate spinning blades above the sprite, matching
-    // wind direction/speed (the static icon has no animation of its own).
+    // Propeller Hat: the sprite's static propeller bar (source rows 18-26) is
+    // skipped by cosmetic_sprites::draw_hat for hat_id 2; draw an animated
+    // spinning propeller in its place, matching wind direction/speed.
     if hat_id == 2 {
-        let blade = Bgra::new(220, 40, 40);
-        let top_x = cx;
-        let top_y = cy - ANCHOR_DY - H / 2 - 2;
-        let dir = if wind >= 0.0 { 1i32 } else { -1 };
-        let speed = 1 + (wind.abs() * 5.0) as i32;
-        let frame = (tick as i32 / 4 * dir * speed).rem_euclid(4);
-        let (ax, ay): (i32, i32) = match frame {
-            0 => (1, 0),
-            1 => (1, 1),
-            2 => (0, 1),
-            _ => (-1, 1),
-        };
-        for &s in &[1, 2, -1, -2] {
-            buf.fill_rect(top_x + ax * s - 1, top_y + ay * s - 1, 2, 2, blade);
-        }
+        let blade = Bgra::new(230, 230, 230); // sampled from hat_2.png propeller bar
+        let hub_x = cx as f32;
+        let hub_y = (cy - ANCHOR_DY - H / 2 + 13) as f32; // centre of skipped band, scaled to render space
+        let dir = if wind >= 0.0 { 1.0 } else { -1.0 };
+        let speed = 1.0 + wind.abs() * 5.0;
+        let frame = (tick as f32 / 4.0).floor() * dir * speed;
+        let angle = frame * std::f32::consts::FRAC_PI_4; // 45° steps
+        let half_len = 11.0;
+        let (dx, dy) = (angle.cos() * half_len, angle.sin() * half_len);
+        thick_line(buf, hub_x - dx, hub_y - dy, hub_x + dx, hub_y + dy, blade, 5);
     }
 }
 
@@ -239,6 +235,7 @@ pub fn draw_soldier_skeletal(
     gun_style_id:     u8,
     wind:             f32,
     tick:             u32,
+    on_fire_ticks:    u32,
 ) -> Option<(f32, f32)> {
     let team_col = if hp == 0 { TEAM_COLOURS_DEAD[team.min(3)] } else { TEAM_COLOURS[team.min(3)] };
     // body_col: uniform override for torso/arms/legs; helmet cap always keeps team_col
@@ -249,7 +246,7 @@ pub fn draw_soldier_skeletal(
     let f = facing as f32; // +1 right, -1 left
 
     // Hip = root; Walking gets lateral sway + body rise at passing phase
-    let root = match anim {
+    let mut root = match anim {
         SoldierAnim::Walking { tick } => {
             let sr = walk_swing_r(*tick);
             let bob = sr * sr; // 1 at contact, 0 at passing
@@ -258,6 +255,15 @@ pub fn draw_soldier_skeletal(
         }
         _ => (pos.x, pos.y - 11.0),
     };
+
+    // On fire: squirm with small fast jitter.
+    if on_fire_ticks > 0 {
+        let seed = tick.wrapping_add((pos.x as u32).wrapping_mul(17));
+        let jx = ((seed % 5) as f32 - 2.0) * 0.8;
+        let jy = (((seed / 5) % 3) as f32 - 1.0) * 0.8;
+        root.0 += jx;
+        root.1 += jy;
+    }
 
     let mut bones = default_bones();
 

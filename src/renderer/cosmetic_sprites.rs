@@ -94,6 +94,13 @@ pub fn draw_hat(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, 
     let sprites = hat_sprites();
     if idx >= sprites.len() { return; }
     let sp = match &sprites[idx] { Some(s) => s, None => return };
+    if id == 2 {
+        // Propeller Hat: the sprite's own propeller (source rows 18-26 of 60)
+        // is a static bar; skip it here so skeleton.rs can draw an animated
+        // spinning propeller in its place instead.
+        blit_scaled_skip_rows(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h, 18, 27);
+        return;
+    }
     blit_scaled(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h);
 }
 
@@ -148,6 +155,22 @@ pub fn draw_gun_oriented(
         }
     }
     (origin.0 + fwd.0 * length_px, origin.1 + fwd.1 * length_px)
+}
+
+/// Like blit_scaled, but skips source pixels whose row falls within [skip_y0, skip_y1).
+fn blit_scaled_skip_rows(buf: &mut WorldBuffer, sp: &Sprite, x0: i32, y0: i32, rw: i32, rh: i32, skip_y0: usize, skip_y1: usize) {
+    if rw <= 0 || rh <= 0 { return; }
+    for dy in 0..rh {
+        for dx in 0..rw {
+            let sx = (dx * sp.w as i32 / rw) as usize;
+            let sy = (dy * sp.h as i32 / rh) as usize;
+            if sx >= sp.w || sy >= sp.h { continue; }
+            if sy >= skip_y0 && sy < skip_y1 { continue; }
+            let [r, g, b, a] = sp.px[sy * sp.w + sx];
+            if a < 16 { continue; }
+            buf.set_pixel(x0 + dx, y0 + dy, super::fb::Bgra::new(r, g, b));
+        }
+    }
 }
 
 fn blit_scaled(buf: &mut WorldBuffer, sp: &Sprite, x0: i32, y0: i32, rw: i32, rh: i32) {

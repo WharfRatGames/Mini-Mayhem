@@ -1462,6 +1462,18 @@ impl GameState {
                     patch.pos.y = ny;
                 }
             } else {
+                // Squirm animation: any soldier standing in the fire visibly reacts,
+                // even between damage ticks.
+                for team in &mut self.teams {
+                    for s in &mut team.soldiers {
+                        if !s.is_alive() { continue; }
+                        let dx = s.pos.x - patch.pos.x;
+                        let dy = s.pos.y - patch.pos.y;
+                        if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
+                            s.on_fire_ticks = 10;
+                        }
+                    }
+                }
                 // DoT tick
                 if patch.lifetime % DOT_INTERVAL == 0 {
                     for team in &mut self.teams {
@@ -1491,6 +1503,12 @@ impl GameState {
 
         for i in to_remove.into_iter().rev() {
             self.fire_patches.remove(i);
+        }
+
+        for team in &mut self.teams {
+            for s in &mut team.soldiers {
+                if s.on_fire_ticks > 0 { s.on_fire_ticks -= 1; }
+            }
         }
 
         // If the active soldier took fire damage this tick, flag it so the turn ends.
