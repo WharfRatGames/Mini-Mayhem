@@ -1,3 +1,4 @@
+0.5.4.175  Quitting a live ranked match now warns you that it counts as a loss with an ELO penalty before confirming.
 0.5.4.174  Title screen now offers RECONNECT/ABANDON if you lose connection mid-match (not on a normal exit), letting you rejoin the same paused live match.
 0.5.4.173  Live ranked matches now pause (up to 3 min) if your opponent's connection drops, letting them reconnect and resume the same match instead of forfeiting.
 0.5.4.171  Redesigned hat/gun cosmetics with full pixel-art remakes, sprite-based boots and equip-screen icons, taller Wizard Hat, and 6 new cosmetics (Blue Party Hat, Cowboy Hat, Pirate Hat, Viking Helm, Revolver, Flamethrower, Rocket Launcher).
