@@ -715,6 +715,46 @@ pub fn load_saved_creds() -> Option<(String, String)> {
     Some((lines.next()?.to_string(), lines.next()?.to_string()))
 }
 
+// ── Pending reconnect persistence ──────────────────────────────────────────
+// Survives a full app restart (the common case after "LOST CONNECTION" on the
+// Miyoo, where players relaunch rather than waiting at the title screen).
+
+const RECONNECT_PATHS: [&str; 2] = ["/mnt/SDCARD/App/Arty/reconnect.txt", "/tmp/arty_reconnect.txt"];
+
+/// Save the session token, game port, and unix timestamp when the drop happened.
+pub fn save_pending_reconnect(session_token: &str, port: u16, since_unix: u64) {
+    let content = format!("{}\n{}\n{}\n", session_token, port, since_unix);
+    for path in &RECONNECT_PATHS {
+        if std::fs::write(path, &content).is_ok() { break; }
+    }
+}
+
+/// Load and clear any pending reconnect state. Returns None if absent, expired
+/// (>180s old), or unparseable.
+pub fn take_pending_reconnect() -> Option<(String, u16, u64)> {
+    let mut content = None;
+    for path in &RECONNECT_PATHS {
+        if let Ok(c) = std::fs::read_to_string(path) {
+            let _ = std::fs::remove_file(path);
+            content = Some(c);
+            break;
+        }
+    }
+    let content = content?;
+    let mut lines = content.lines();
+    let tok = lines.next()?.to_string();
+    let port: u16 = lines.next()?.parse().ok()?;
+    let since: u64 = lines.next()?.parse().ok()?;
+    if tok.is_empty() { return None; }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    if now.saturating_sub(since) >= 180 { return None; }
+    Some((tok, port, since))
+}
+
+pub fn clear_pending_reconnect() {
+    for path in &RECONNECT_PATHS { let _ = std::fs::remove_file(path); }
+}
+
 /// Persist the roster list locally so the next launch loads instantly.
 pub fn save_cached_rosters(rosters: &[Roster]) {
     let body = rosters.iter().map(|r| {
