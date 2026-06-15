@@ -1,9 +1,14 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.163
+## Version: 0.5.4.164
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.135–0.5.4.163)
+## Recent changes (0.5.4.135–0.5.4.164)
+- **Fix black borders on BG1-derived backgrounds (0.5.4.164)** — bg_0..3,
+  bg_extra_city, and bg_extra_pyramids (6 of the 15 pooled backgrounds) had a
+  ~3-9px near-black border baked in from BG1.png's contact-sheet grid lines,
+  visible as a black edge along the top/sides of the screen once scaled up.
+  Now cropped (10px margin) before scaling so the art stretches to fill.
 - **Merge bg+terrain viewport copy for cave columns (0.5.4.163)** — perf:
   the background cache now only paints the sky band above `sky_limit`; the
   terrain viewport copy's cave/chasm/overhang branch now fills the gaps

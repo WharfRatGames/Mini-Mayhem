@@ -72,8 +72,37 @@ fn decode(bytes: &[u8]) -> Option<Decoded> {
     Some(Decoded { w, h, pixels })
 }
 
+/// Slices 9-14 (the BG1.png-derived backgrounds: bg_0..3, bg_extra_city,
+/// bg_extra_pyramids) have a near-black border up to ~9px thick baked in from
+/// the source contact sheet's grid lines. Crop it off before scaling so the
+/// remaining art is stretched to fill the screen instead of showing a black
+/// edge. The bg2_* slices (0-8) are clean and need no crop.
+const BORDER_CROP: u32 = 10;
+
 fn decoded() -> &'static [Option<Decoded>; BG_COUNT] {
-    DECODED.get_or_init(|| std::array::from_fn(|i| decode(PNGS[i])))
+    DECODED.get_or_init(|| std::array::from_fn(|i| {
+        let img = decode(PNGS[i])?;
+        if i >= 9 && img.w > BORDER_CROP * 2 && img.h > BORDER_CROP * 2 {
+            Some(crop(&img, BORDER_CROP))
+        } else {
+            Some(img)
+        }
+    }))
+}
+
+/// Crop `margin` pixels off each edge of `img`.
+fn crop(img: &Decoded, margin: u32) -> Decoded {
+    let w = img.w - margin * 2;
+    let h = img.h - margin * 2;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for dy in 0..h {
+        let sy = dy + margin;
+        let src_off = ((sy * img.w + margin) * 4) as usize;
+        let dst_off = (dy * w * 4) as usize;
+        pixels[dst_off..dst_off + (w * 4) as usize]
+            .copy_from_slice(&img.pixels[src_off..src_off + (w * 4) as usize]);
+    }
+    Decoded { w, h, pixels }
 }
 
 static SCALED: OnceLock<[Option<Decoded>; BG_COUNT]> = OnceLock::new();
