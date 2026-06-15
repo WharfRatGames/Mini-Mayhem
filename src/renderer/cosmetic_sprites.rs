@@ -1,6 +1,7 @@
-/// Hat and gun cosmetic sprites embedded from deploy/assets/cosmetics/.
+/// Hat, gun, and boot cosmetic sprites embedded from deploy/assets/cosmetics/.
 /// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–9 are scrap-purchasable.
 /// Guns:  138×78 px RGBA (46×26 game px @ 3x). IDs 1–5 are scrap-purchasable.
+/// Boots: 36×27 px RGBA (12×9 game px @ 3x). IDs 1–4 are scrap-purchasable.
 use std::sync::OnceLock;
 use super::buffer::WorldBuffer;
 
@@ -31,10 +32,22 @@ static GUN_PNGS: [&[u8]; 8] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_7.png"),
 ];
 
+// ── Boot sprites (IDs 0–5) ───────────────────────────────────────────────────
+
+static BOOT_PNGS: [&[u8]; 6] = [
+    include_bytes!("../../deploy/assets/cosmetics/boot_0.png"),
+    include_bytes!("../../deploy/assets/cosmetics/boot_1.png"),
+    include_bytes!("../../deploy/assets/cosmetics/boot_2.png"),
+    include_bytes!("../../deploy/assets/cosmetics/boot_3.png"),
+    include_bytes!("../../deploy/assets/cosmetics/boot_4.png"),
+    include_bytes!("../../deploy/assets/cosmetics/boot_5.png"),
+];
+
 struct Sprite { pub w: usize, pub h: usize, pub px: Vec<[u8; 4]> }
 
-static HAT_SPRITES: OnceLock<[Option<Sprite>; 11]> = OnceLock::new();
-static GUN_SPRITES: OnceLock<[Option<Sprite>; 8]>  = OnceLock::new();
+static HAT_SPRITES:  OnceLock<[Option<Sprite>; 11]> = OnceLock::new();
+static GUN_SPRITES:  OnceLock<[Option<Sprite>; 8]>  = OnceLock::new();
+static BOOT_SPRITES: OnceLock<[Option<Sprite>; 6]>  = OnceLock::new();
 
 fn decode(bytes: &[u8]) -> Option<Sprite> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -60,6 +73,10 @@ fn gun_sprites() -> &'static [Option<Sprite>; 8] {
     GUN_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(GUN_PNGS[i])))
 }
 
+fn boot_sprites() -> &'static [Option<Sprite>; 6] {
+    BOOT_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(BOOT_PNGS[i])))
+}
+
 /// Draw hat sprite (id 1–11) centred at (cx, cy), scaled to render_w × render_h.
 pub fn draw_hat(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32) {
     let idx = (id as usize).wrapping_sub(1);
@@ -74,6 +91,15 @@ pub fn draw_hat(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, 
 pub fn draw_gun(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32) {
     let idx = id as usize;
     let sprites = gun_sprites();
+    if idx >= sprites.len() { return; }
+    let sp = match &sprites[idx] { Some(s) => s, None => return };
+    blit_scaled(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h);
+}
+
+/// Draw boot sprite (id 0–5) centred at (cx, cy), scaled to render_w × render_h.
+pub fn draw_boot(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32) {
+    let idx = id as usize;
+    let sprites = boot_sprites();
     if idx >= sprites.len() { return; }
     let sp = match &sprites[idx] { Some(s) => s, None => return };
     blit_scaled(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h);

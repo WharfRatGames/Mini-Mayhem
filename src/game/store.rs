@@ -207,12 +207,7 @@ impl StoreScreen {
                         buf.fill_rect(icon_cx + sw/2,     icon_cy - sh/2 - 1, 1, sh as u32 + 2, Bgra::new(60,70,100));
                     }
                     "boots" => {
-                        let col = boot_swatch(item.cosm_id);
-                        // Two boot shapes
-                        let bw = icon_w / 4;
-                        let bh = icon_h / 2;
-                        buf.fill_rect(icon_cx - bw * 2 - 1, icon_cy - bh/2, bw as u32, bh as u32, col);
-                        buf.fill_rect(icon_cx + 1,           icon_cy - bh/2, bw as u32, bh as u32, col);
+                        cosmetic_sprites::draw_boot(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h);
                     }
                     _ => {}
                 }
@@ -276,12 +271,3 @@ fn uniform_swatch(id: u8) -> Bgra {
     }
 }
 
-fn boot_swatch(id: u8) -> Bgra {
-    match id {
-        1 => Bgra::new(180, 40,  40),   // Red
-        2 => Bgra::new(220, 220, 220),  // White
-        3 => Bgra::new(180, 150, 20),   // Gold
-        4 => Bgra::new(50,  90,  40),   // Combat Green
-        _ => Bgra::new(80,  80,  80),
-    }
-}
