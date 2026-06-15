@@ -284,6 +284,46 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8) {
             rect(buf, -2,  -8, 5, 2, col);
             rect(buf, -3,  -6, 7, 1, dark);
         }
+        13 => { // Cowboy Hat
+            let col = Bgra::new(180, 130, 60);
+            rect(buf, -2, -10, 5, 4, col);   // crown
+            rect(buf, -4,  -6, 9, 2, col);   // brim
+            rect(buf, -4,  -4, 9, 1, dark);  // brim shadow
+        }
+        14 => { // Pirate Hat
+            let col = Bgra::new(25, 22, 22);
+            rect(buf, -4, -10, 9, 3, col);   // brim band
+            rect(buf, -2, -12, 5, 3, col);   // peak
+            dot(buf, 0, -11, Bgra::new(230, 230, 230)); // skull dot
+        }
+        15 => { // Viking Helm
+            let col = Bgra::new(150, 150, 160);
+            let horn = Bgra::new(230, 225, 210);
+            rect(buf, -3, -10, 7, 4, col);   // helm
+            rect(buf, -3,  -6, 7, 1, dark);  // brim
+            dot(buf, -4, -10, horn);         // left horn
+            dot(buf, -5, -11, horn);
+            dot(buf,  3, -10, horn);         // right horn
+            dot(buf,  4, -11, horn);
+        }
+        16 => { // Beanie
+            let col = Bgra::new(60, 100, 200);
+            let stripe = Bgra::new(235, 235, 235);
+            rect(buf, -3, -10, 7, 4, col);
+            rect(buf, -3,  -6, 7, 1, stripe);
+        }
+        17 => { // Bandana
+            let col = Bgra::new(200, 40, 40);
+            rect(buf, -3,  -8, 7, 3, col);
+            dot(buf, 4, -7, col);            // knot tail
+        }
+        18 => { // Angel Ring
+            let col = Bgra::new(255, 215, 80);
+            for dx in -3i32..=3 {
+                let dy = if dx.abs() <= 1 { -13 } else { -12 };
+                dot(buf, dx, dy, col);
+            }
+        }
         _ => {}
     }
 }
@@ -437,6 +477,57 @@ fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_styl
             let (pinx, piny) = px(1.0, -3.0);
             buf.set_pixel(pinx, piny, Bgra::new(160, 160, 165));
             let tip = px(4.0, 0.0);
+            (tip.0 as f32, tip.1 as f32)
+        }
+        9 => {
+            // Flamethrower: stubby red barrel with an orange nozzle tip
+            let body = Bgra::new(170, 40, 40);
+            let nozzle = Bgra::new(255, 160, 40);
+            for t in 0..=6i32 {
+                for p in -2i32..=2 {
+                    let c = if p.abs() == 2 { dark } else { body };
+                    let (x, y) = px(t as f32, p as f32);
+                    buf.set_pixel(x, y, c);
+                }
+            }
+            for t in 7..=9i32 {
+                for p in -1i32..=1 {
+                    let (x, y) = px(t as f32, p as f32);
+                    buf.set_pixel(x, y, nozzle);
+                }
+            }
+            let tip = px(9.0, 0.0);
+            (tip.0 as f32, tip.1 as f32)
+        }
+        10 => {
+            // Rocket Launcher: long olive tube, wider than the sniper barrel
+            let body = Bgra::new(90, 100, 60);
+            for t in 0..=13i32 {
+                for p in -2i32..=2 {
+                    let c = if p.abs() == 2 { dark } else { body };
+                    let (x, y) = px(t as f32, p as f32);
+                    buf.set_pixel(x, y, c);
+                }
+            }
+            let tip = px(13.0, 0.0);
+            (tip.0 as f32, tip.1 as f32)
+        }
+        11 => {
+            // SMG: short barrel with a stick magazine underneath
+            let gun = Bgra::new(80, 85, 90);
+            let mag = Bgra::new(50, 55, 60);
+            for t in 0..=8i32 {
+                let (x, y) = px(t as f32, 0.0);
+                buf.set_pixel(x, y - 1, dark);
+                buf.set_pixel(x, y,     gun);
+            }
+            for t in 1..=3i32 {
+                let (x, y) = px(t as f32, 1.0);
+                buf.set_pixel(x, y, mag);
+                let (x2, y2) = px(t as f32, 2.0);
+                buf.set_pixel(x2, y2, mag);
+            }
+            let tip = px(8.0, 0.0);
             (tip.0 as f32, tip.1 as f32)
         }
         _ => {
