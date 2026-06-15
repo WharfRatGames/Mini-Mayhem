@@ -375,7 +375,7 @@ fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_styl
         }
         1 => {
             // Pistol: short thick barrel, wider receiver block
-            let gun = Bgra::new(80, 80, 90);
+            let gun = Bgra::new(90, 65, 45);
             for t in 0..=6i32 {
                 for p in -1i32..=1 {
                     let c = if p == 0 { gun } else { dark };
@@ -406,7 +406,7 @@ fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_styl
         }
         3 => {
             // Sniper: long thin barrel + scope bump
-            let gun = Bgra::new(50, 50, 60);
+            let gun = Bgra::new(95, 70, 50);
             for t in 0..=14i32 {
                 let (x, y) = px(t as f32, 0.0);
                 buf.set_pixel(x, y - 1, dark);
@@ -420,7 +420,7 @@ fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_styl
         }
         4 => {
             // Minigun: 3 barrel stubs around center axis
-            let gun = Bgra::new(80, 80, 85);
+            let gun = Bgra::new(120, 115, 60);
             for t in 0..=8i32 {
                 let tf = t as f32;
                 for &p in &[-2.0f32, 0.0, 2.0] {
@@ -447,13 +447,19 @@ fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_styl
             (tip.0 as f32, tip.1 as f32)
         }
         6 => {
-            // Laser: thin single line, glowing cyan tip
-            let beam = Bgra::new(0, 220, 255);
-            let glow = Bgra::new(180, 245, 255);
-            for t in 0..=11i32 {
-                let c = if t >= 9 { glow } else { beam };
+            // Plasma Gun: boxy blue body with a glowing cyan emitter tip
+            let body = Bgra::new(60, 90, 180);
+            let glow = Bgra::new(120, 230, 255);
+            for t in 0..=8i32 {
+                for p in -1i32..=1 {
+                    let c = if p == 0 { body } else { dark };
+                    let (x, y) = px(t as f32, p as f32);
+                    buf.set_pixel(x, y, c);
+                }
+            }
+            for t in 9..=11i32 {
                 let (x, y) = px(t as f32, 0.0);
-                buf.set_pixel(x, y, c);
+                buf.set_pixel(x, y, glow);
             }
             let tip = px(11.0, 0.0);
             (tip.0 as f32, tip.1 as f32)
@@ -472,23 +478,23 @@ fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_styl
             (tip.0 as f32, tip.1 as f32)
         }
         8 => {
-            // Throwable: small oval held in hand (grenade/bomb shape)
-            let body = Bgra::new(55, 120, 45);
-            let hilit = Bgra::new(90, 160, 70);
-            for p in -2i32..=2 {
-                for t in 0i32..=4 {
-                    let c = if p.abs() == 2 || t == 0 || t == 4 { dark } else { body };
+            // Revolver: short barrel with a round cylinder bump (and doubles as
+            // the hand-held throwable shape for grenades/bombs).
+            let gun = Bgra::new(90, 90, 100);
+            let cyl = Bgra::new(60, 60, 70);
+            for t in 0..=6i32 {
+                let (x, y) = px(t as f32, 0.0);
+                buf.set_pixel(x, y - 1, dark);
+                buf.set_pixel(x, y,     gun);
+            }
+            // Cylinder bump under the barrel
+            for p in 1i32..=2 {
+                for t in 1..=3i32 {
                     let (x, y) = px(t as f32, p as f32);
-                    buf.set_pixel(x, y, c);
+                    buf.set_pixel(x, y, cyl);
                 }
             }
-            // Highlight
-            let (hx, hy) = px(1.0, -1.0);
-            buf.set_pixel(hx, hy, hilit);
-            // Pin
-            let (pinx, piny) = px(1.0, -3.0);
-            buf.set_pixel(pinx, piny, Bgra::new(160, 160, 165));
-            let tip = px(4.0, 0.0);
+            let tip = px(6.0, 0.0);
             (tip.0 as f32, tip.1 as f32)
         }
         9 => {
