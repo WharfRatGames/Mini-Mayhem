@@ -5,26 +5,6 @@ DB = os.path.expanduser("~/mayhem-server/arty.db")
 _key_file = os.path.expanduser("~/mayhem-server/admin_key.txt")
 ADMIN_KEY = open(_key_file).read().strip() if os.path.exists(_key_file) else os.environ.get("ARTY_ADMIN_KEY", "changeme")
 
-GAME_SERVER_BIN = os.path.expanduser("~/arty-server")
-RANKED_PORTS = list(range(7900, 7910))  # ports 7900-7909 for ranked matches
-ports_in_use = {}   # port -> subprocess.Popen
-ports_lock = threading.Lock()
-
-def pick_free_port():
-    with ports_lock:
-        dead = [p for p, proc in ports_in_use.items() if proc.poll() is not None]
-        for p in dead: del ports_in_use[p]
-        for port in RANKED_PORTS:
-            if port not in ports_in_use: return port
-    return None
-
-def spawn_game_server(port):
-    env = os.environ.copy()
-    env["ARTY_PORT"] = str(port)
-    proc = subprocess.Popen([GAME_SERVER_BIN], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    with ports_lock: ports_in_use[port] = proc
-    return port
-
 # ── DB init ────────────────────────────────────────────────────────────────────
 
 def init_db(c):
@@ -994,9 +974,7 @@ def handle(db, sock):
             wait_secs = now - opp_joined
             window = 200 + (wait_secs // 30) * 50
             if abs(my_elo - opp_elo) <= window:
-                port = pick_free_port()
-                if port is None: send_json(sock, 200, {"status":"no_servers"}); sock.close(); return
-                spawn_game_server(port)
+                port = 7777
                 my_row = db.execute("SELECT id FROM live_queue WHERE user_id=?", (uid2,)).fetchone()
                 db.execute("UPDATE live_queue SET paired_with=?,game_token=? WHERE id=?", (opp_uid, str(port), pool_id))
                 db.execute("UPDATE live_queue SET paired_with=?,game_token=? WHERE id=?", (uid2, str(port), my_row[0]))
@@ -1029,9 +1007,7 @@ def handle(db, sock):
             wait_secs = now - opp_joined
             window = 200 + (wait_secs // 30) * 50
             if abs(my_q_elo - opp_elo) <= window:
-                port = pick_free_port()
-                if port is None: send_json(sock, 200, {"status":"no_servers"}); sock.close(); return
-                spawn_game_server(port)
+                port = 7777
                 db.execute("UPDATE live_queue SET paired_with=?,game_token=? WHERE id=?", (opp_uid, str(port), pool_id))
                 db.execute("UPDATE live_queue SET paired_with=?,game_token=? WHERE id=?", (uid2, str(port), my_q_id))
                 db.commit()
