@@ -6,14 +6,19 @@
 
 ## Hats - in-game
 
-Anchor: (cx, cy) = head center.
-Helmet cap occupies dy = -5 to 0, so hat pixels start at cy - 6.
+In-game rendering blits the actual shop sprite (`cosmetic_sprites::draw_hat`),
+scaled to 32 x 29 game px (1.45x the shop sprite's native 22 x 20 gp), centred
+on (cx, cy - 7) where (cx, cy) = head center. The 7px upward shift accounts for
+the sprite's head-anchor pixel sitting 5px below sprite centre at native scale
+(5 x 1.45 ≈ 7).
+
+Propeller Hat (id 2) additionally draws an animated 2x2px blade overlay above
+the sprite (`top_y = cy - 7 - 29/2 - 2`), spinning direction/speed tied to wind.
 
 | Bound | Value |
 |---|---|
-| Tallest point | cy - 12 |
-| First safe row | cy - 6 |
-| Max width | cx - 5 to cx + 5 |
+| Render size | 32 x 29 gp |
+| Anchor offset from head centre | (0, -7) |
 
 ## Hats - shop sprite
 
@@ -29,12 +34,14 @@ Helmet cap occupies dy = -5 to 0, so hat pixels start at cy - 6.
 
 ## Guns - in-game
 
-Coordinate t = forward distance from arm end. p = perpendicular offset from barrel axis.
+In-game rendering blits the actual shop sprite (`cosmetic_sprites::draw_gun_oriented`),
+rotated to the aim angle with the barrel drawn at a fixed length of 17 game px
+(scale = 17 / 31, since the shop sprite's barrel is ~31 gp from origin to tip).
+The sprite's origin (game px 11, 10) maps to the arm-end (t=0, p=0).
 
 | Dimension | Range |
 |---|---|
-| Barrel length (t) | 6 - 14 |
-| Barrel half-width (p) | 0 - 3 |
+| Barrel length (t) | 0 - 17 |
 
 ## Guns - shop sprite
 

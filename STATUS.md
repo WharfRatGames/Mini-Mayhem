@@ -1,6 +1,6 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.192
+## Version: 0.5.4.194
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
 ## Recent changes (0.5.4.168–0.5.4.192)
@@ -27,6 +27,12 @@
   procedural shapes (which had drifted out of sync with several icons — e.g. the
   "Wizard Hat" cosmetic was rendered as a gold crown, "Revolver" as a grenade).
   Boots already used real sprites.
+- **Cosmetic sprite anchors fixed (0.5.4.193)** to match
+  `COSMETIC_STYLE_GUIDE.md`'s documented head/barrel anchor points, then
+  **sized up (0.5.4.194)** — hats 22x20 -> 32x29 game px, gun barrel length
+  12 -> 17 — for in-game readability. Propeller Hat's spinning blades
+  (lost when hats switched to static sprites) restored as an animated
+  overlay that still follows wind direction/speed.
 - TAT "opponent's move" screen confirmed at 5s (stale comment said 4s).
 
 ## Recent changes (0.5.4.135–0.5.4.167)
