@@ -3313,7 +3313,7 @@ fn draw_hud_world(
     team_alive:  &[u32; 4],
     total_hp:    &[u32; 4],
 ) {
-    use crate::renderer::font::{draw_str, draw_str_shadow, str_width};
+    use crate::renderer::font::{draw_str, str_width};
     use crate::renderer::draw_sprites::TEAM_COLOURS;
 
     let ox    = cam_x as i32;
@@ -3365,7 +3365,11 @@ fn draw_hud_world(
     } else {
         "0".to_string()
     };
-    draw_str_shadow(buf, &label, bar_x - str_width(&label) - 4, bar_y - 1, wcolour);
+    use crate::renderer::font::{draw_str_scaled, str_width_scaled};
+    let lx = bar_x - str_width_scaled(&label, 2) - 5;
+    let ly = bar_y - 4;
+    draw_str_scaled(buf, &label, lx + 1, ly + 1, Bgra::new(0, 0, 0), 2);
+    draw_str_scaled(buf, &label, lx, ly, wcolour, 2);
 
     // Team strips (left)
     for team in 0..4usize {
