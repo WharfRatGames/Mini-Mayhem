@@ -360,3 +360,13 @@ rendered to PNG via a throwaway `examples/*.rs` using `build_world_cache` +
 The on-screen update notes are fetched live from `/arty/changelog.txt` (via
 `updater::fetch_changelog`). Edit `deploy/changelog.txt` (one line per release,
 newest first); `deploy/update_server.sh` SCPs it to the host on deploy.
+
+### Cosmetic paper-doll preview tool
+`tools/paperdoll.py` (Python + Pillow) is an **offline design/preview tool
+only** — it does not affect the game, which still renders soldiers
+procedurally (`src/renderer/skeleton.rs`). It ports that file's bone math
+(lengths, joint angles, pose functions) so sprite-based cosmetic parts can be
+authored and previewed against every in-game pose (idle, walk cycle,
+airborne, spin/backflip, dead) with team/uniform/boot colours and existing
+hat/gun cosmetics. See `tools/paperdoll_parts/README.md` for the authoring
+spec (orientation, pivots, recolour placeholders).
