@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.174";
+const VERSION: &str = "0.5.4.175";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -807,7 +807,20 @@ fn main() {
                 if input.just_pressed(input::Button::Up)   { lstate.pause_cursor = if lstate.pause_cursor == 0 { 1 } else { 0 }; }
                 if input.just_pressed(input::Button::Down) { lstate.pause_cursor = if lstate.pause_cursor == 0 { 1 } else { 0 }; }
                 if input.just_pressed(input::Button::A) && lstate.pause_cursor == 0 { do_resume(&mut lstate, &mut game.aim); }
-                if input.just_pressed(input::Button::A) && lstate.pause_cursor == 1 { mp_quit = true; }
+                if input.just_pressed(input::Button::A) && lstate.pause_cursor == 1 {
+                    if live_ranked_match {
+                        let confirm = loop {
+                            input.poll();
+                            draw_msg(&mut buf, &mut fb, "QUIT NOW = LOSS + ELO PENALTY  A=QUIT  B=CANCEL");
+                            if input.just_pressed(input::Button::A) { break true; }
+                            if input.just_pressed(input::Button::B) { break false; }
+                            std::thread::sleep(TICK_DURATION);
+                        };
+                        if confirm { mp_quit = true; }
+                    } else {
+                        mp_quit = true;
+                    }
+                }
             }
             if mp_quit { continue 'game; }
             // ── Weapon menu + aim — only when it's our turn ───────────────────────
