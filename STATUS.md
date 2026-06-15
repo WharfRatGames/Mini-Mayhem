@@ -1,7 +1,33 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.167
+## Version: 0.5.4.192
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.168–0.5.4.192)
+- **HUD smear fix** — `fill_deep_water_band()` now runs before `draw_hud_world()`
+  each frame, so wind/timer/weapon HUD no longer leaves trails during camera
+  scroll/FPS changes.
+- **Live "lost connection" fix** — server read timeout raised 5s → 15s; version
+  handshake kept in sync (VERSION/REQUIRED_VERSION).
+- **Hand of Jerry (Garcia) cursor** now moves freely on both X and Y axes (single
+  crosshair, dpad up/down added); `NetGarcia` carries `cursor_y`/`render_y`.
+- **Live crater/terrain sync reverted** to full crater-log transmission + client-side
+  dedup-by-length (delta transmission from 831a23a was dropping packets under the
+  50ms write timeout and permanently desyncing terrain).
+- **Live crate-pickup messages** now sync to clients via `StateMsg.messages`
+  (`NetMessage`) — previously only generated server-side and never shown.
+- **Damage-focus camera** — after an explosion damages any soldier, the camera
+  briefly holds on that soldier during the retreat phase (so HP loss can be read),
+  cancelled immediately if the player pans/moves or after ~1s (`DAMAGE_FOCUS_TICKS`).
+- **Wind meter redesigned** — center-anchored deflection gauge (160px wide), no
+  numeric readout. Weapon-name HUD box width now sized to the weapon name.
+- **Cosmetics now render the real shop-icon sprites in-game** — hats and guns
+  (rotated to follow aim angle) use the same PNGs as the shop UI
+  (`cosmetic_sprites::draw_hat`/`draw_gun_oriented`), replacing the old hand-drawn
+  procedural shapes (which had drifted out of sync with several icons — e.g. the
+  "Wizard Hat" cosmetic was rendered as a gold crown, "Revolver" as a grenade).
+  Boots already used real sprites.
+- TAT "opponent's move" screen confirmed at 5s (stale comment said 4s).
 
 ## Recent changes (0.5.4.135–0.5.4.167)
 - **Fix background sky-band double-paint (0.5.4.167)** — `copy_bg_viewport`'s
