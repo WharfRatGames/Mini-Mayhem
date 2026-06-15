@@ -116,6 +116,36 @@ pub fn draw_boot(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32,
     blit_scaled(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h);
 }
 
+/// Draw gun sprite `id` rotated/scaled so its grip sits at `origin` and its
+/// barrel points along `fwd` (unit vector), with `prp` the perpendicular unit
+/// vector (rotated 90° from `fwd`). `length_px` is the desired barrel length
+/// in game pixels. Returns the world position of the barrel tip.
+pub fn draw_gun_oriented(
+    buf: &mut WorldBuffer, id: u8,
+    origin: (f32, f32), fwd: (f32, f32), prp: (f32, f32),
+    length_px: f32,
+) -> (f32, f32) {
+    let sprites = gun_sprites();
+    let idx = id as usize;
+    if idx >= sprites.len() { return origin; }
+    let sp = match &sprites[idx] { Some(s) => s, None => return origin };
+    let game_w = sp.w as f32 / 3.0;
+    let game_h = sp.h as f32 / 3.0;
+    let scale = length_px / game_w;
+    for sy in 0..sp.h {
+        for sx in 0..sp.w {
+            let [r, g, b, a] = sp.px[sy * sp.w + sx];
+            if a < 16 { continue; }
+            let t = (sx as f32 / 3.0) * scale;
+            let p = ((sy as f32 / 3.0) - game_h / 2.0) * scale;
+            let x = (origin.0 + fwd.0 * t + prp.0 * p).round() as i32;
+            let y = (origin.1 + fwd.1 * t + prp.1 * p).round() as i32;
+            buf.set_pixel(x, y, super::fb::Bgra::new(r, g, b));
+        }
+    }
+    (origin.0 + fwd.0 * length_px, origin.1 + fwd.1 * length_px)
+}
+
 fn blit_scaled(buf: &mut WorldBuffer, sp: &Sprite, x0: i32, y0: i32, rw: i32, rh: i32) {
     if rw <= 0 || rh <= 0 { return; }
     for dy in 0..rh {
