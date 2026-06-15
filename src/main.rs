@@ -915,7 +915,7 @@ fn main() {
                                 let pairs: Vec<String> = wk.iter().map(|(k,v)| format!(r#""{}":{}"#, k, v)).collect();
                                 format!("{{{}}}", pairs.join(","))
                             };
-                            let body = format!(r#"{{"token":"{}","winner_slot":{},"kills":{},"deaths":{},"weapon_kills":{},"seed":{}}}"#, tok, winner_slot, live_kills, live_deaths, wk_json, game_seed);
+                            let body = format!(r#"{{"token":"{}","winner_slot":{},"my_slot":{},"ranked":{},"session_token":"{}","kills":{},"deaths":{},"weapon_kills":{},"seed":{}}}"#, tok, winner_slot, my_team, live_ranked_match, session_token, live_kills, live_deaths, wk_json, game_seed);
                             let (dtx, drx) = std::sync::mpsc::channel::<i32>();
                             std::thread::spawn(move || {
                                 if let Ok(resp) = http_post("/api/match/live/result", &body) {
