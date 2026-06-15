@@ -28,6 +28,9 @@ static CATALOG: &[(&str, u8, &str, u32)] = &[
     ("hat",       9, "Devil Horns",   500),
     ("hat",       10, "Wizard Hat",   650),
     ("hat",       11, "Ninja Band",   450),
+    ("hat",       12, "Cowboy Hat",   350),
+    ("hat",       13, "Pirate Hat",   500),
+    ("hat",       14, "Viking Helm",  550),
     // Gun styles (scrap only)
     ("gun_style", 1, "Pistol",        200),
     ("gun_style", 2, "Shotgun",       300),
@@ -36,6 +39,9 @@ static CATALOG: &[(&str, u8, &str, u32)] = &[
     ("gun_style", 5, "Cannon",        500),
     ("gun_style", 6, "Plasma Gun",    600),
     ("gun_style", 7, "Golden Gun",    750),
+    ("gun_style", 8, "Revolver",      350),
+    ("gun_style", 9, "Flamethrower",  650),
+    ("gun_style", 10, "Rocket Launcher", 800),
     // Uniforms (scrap only)
     ("uniform",   1, "Camo Green",    200),
     ("uniform",   2, "Desert Tan",    200),

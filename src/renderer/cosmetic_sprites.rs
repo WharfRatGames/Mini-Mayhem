@@ -1,13 +1,13 @@
 /// Hat, gun, and boot cosmetic sprites embedded from deploy/assets/cosmetics/.
-/// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–9 are scrap-purchasable.
-/// Guns:  138×78 px RGBA (46×26 game px @ 3x). IDs 1–5 are scrap-purchasable.
+/// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–14 are scrap-purchasable.
+/// Guns:  138×78 px RGBA (46×26 game px @ 3x). IDs 1–10 are scrap-purchasable.
 /// Boots: 36×27 px RGBA (12×9 game px @ 3x). IDs 1–4 are scrap-purchasable.
 use std::sync::OnceLock;
 use super::buffer::WorldBuffer;
 
 // ── Hat sprites (IDs 1–11) ────────────────────────────────────────────────────
 
-static HAT_PNGS: [&[u8]; 11] = [
+static HAT_PNGS: [&[u8]; 14] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_2.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_3.png"),
@@ -19,9 +19,12 @@ static HAT_PNGS: [&[u8]; 11] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_9.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_10.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_11.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_12.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_13.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_14.png"),
 ];
 
-static GUN_PNGS: [&[u8]; 8] = [
+static GUN_PNGS: [&[u8]; 11] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_0.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_2.png"),
@@ -30,6 +33,9 @@ static GUN_PNGS: [&[u8]; 8] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_5.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_6.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_7.png"),
+    include_bytes!("../../deploy/assets/cosmetics/gun_8.png"),
+    include_bytes!("../../deploy/assets/cosmetics/gun_9.png"),
+    include_bytes!("../../deploy/assets/cosmetics/gun_10.png"),
 ];
 
 // ── Boot sprites (IDs 0–5) ───────────────────────────────────────────────────
@@ -45,8 +51,8 @@ static BOOT_PNGS: [&[u8]; 6] = [
 
 struct Sprite { pub w: usize, pub h: usize, pub px: Vec<[u8; 4]> }
 
-static HAT_SPRITES:  OnceLock<[Option<Sprite>; 11]> = OnceLock::new();
-static GUN_SPRITES:  OnceLock<[Option<Sprite>; 8]>  = OnceLock::new();
+static HAT_SPRITES:  OnceLock<[Option<Sprite>; 14]> = OnceLock::new();
+static GUN_SPRITES:  OnceLock<[Option<Sprite>; 11]>  = OnceLock::new();
 static BOOT_SPRITES: OnceLock<[Option<Sprite>; 6]>  = OnceLock::new();
 
 fn decode(bytes: &[u8]) -> Option<Sprite> {
@@ -65,11 +71,11 @@ fn decode(bytes: &[u8]) -> Option<Sprite> {
     Some(Sprite { w, h, px })
 }
 
-fn hat_sprites() -> &'static [Option<Sprite>; 11] {
+fn hat_sprites() -> &'static [Option<Sprite>; 14] {
     HAT_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(HAT_PNGS[i])))
 }
 
-fn gun_sprites() -> &'static [Option<Sprite>; 8] {
+fn gun_sprites() -> &'static [Option<Sprite>; 11] {
     GUN_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(GUN_PNGS[i])))
 }
 
@@ -77,7 +83,7 @@ fn boot_sprites() -> &'static [Option<Sprite>; 6] {
     BOOT_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(BOOT_PNGS[i])))
 }
 
-/// Draw hat sprite (id 1–11) centred at (cx, cy), scaled to render_w × render_h.
+/// Draw hat sprite (id 1–14) centred at (cx, cy), scaled to render_w × render_h.
 pub fn draw_hat(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32) {
     let idx = (id as usize).wrapping_sub(1);
     let sprites = hat_sprites();
@@ -86,7 +92,7 @@ pub fn draw_hat(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, 
     blit_scaled(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h);
 }
 
-/// Draw gun sprite (id 1–7) centred at (cx, cy), scaled to render_w × render_h.
+/// Draw gun sprite (id 1–10) centred at (cx, cy), scaled to render_w × render_h.
 /// id 0 = default gun (gun_0.png).
 pub fn draw_gun(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32) {
     let idx = id as usize;
