@@ -1,3 +1,4 @@
+0.5.4.177  Server-side: each live match now also logs to its own match-N.log file alongside the main server log (no client-visible change).
 0.5.4.176  Server-side: game server now logs to a text file for easier debugging (no client-visible change).
 0.5.4.175  Quitting a live ranked match now warns you that it counts as a loss with an ELO penalty before confirming.
 0.5.4.174  Title screen now offers RECONNECT/ABANDON if you lose connection mid-match (not on a normal exit), letting you rejoin the same paused live match.
