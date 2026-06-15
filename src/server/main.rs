@@ -24,8 +24,19 @@ const PORT_DEFAULT: u16 = 7777;
 const TICK_DURATION: Duration = Duration::from_millis(1000 / 30);
 
 fn main() {
+    // Log to a text file (in addition to terminal/journal when run attached).
+    // ARTY_LOG_PATH overrides the default location.
+    let log_path = std::env::var("ARTY_LOG_PATH")
+        .unwrap_or_else(|_| "arty-server.log".to_string());
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .expect("failed to open log file");
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
+        .target(env_logger::Target::Pipe(Box::new(log_file)))
+        .format_timestamp_secs()
         .init();
     // ARTY_PORT env var lets the API spawn instances on different ports
     let port: u16 = std::env::var("ARTY_PORT")
@@ -665,7 +676,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.175";
+const REQUIRED_VERSION: &str = "0.5.4.176";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
