@@ -3334,8 +3334,8 @@ fn draw_hud_world(
     let turn_str = format!("T{}", turn_number);
     draw_str(buf, &turn_str, timer_x - str_width(&turn_str) - 6, hud_y + 6,
         Bgra::new(220, 220, 220));
-    // Wind meter — centre-anchored deflection gauge with numeric strength readout
-    let bar_w = 80i32;
+    // Wind meter — centre-anchored deflection gauge
+    let bar_w = 160i32;
     let bar_h = 8u32;
     let bar_x = ox + sw / 2 - bar_w / 2;
     let bar_y = hud_y + 6;
@@ -3356,20 +3356,6 @@ fn draw_hud_world(
     }
     // Centre tick — zero-wind reference point
     buf.fill_rect(centre_x - 1, bar_y, 2, bar_h, Bgra::new(140, 140, 180));
-    // Numeric strength readout (e.g. "<7" / "7>" / "0")
-    let strength = (wind.value().abs() * 10.0).round() as u32;
-    let label = if wind.value() < -0.05 {
-        format!("<{}", strength)
-    } else if wind.value() > 0.05 {
-        format!("{}>", strength)
-    } else {
-        "0".to_string()
-    };
-    use crate::renderer::font::{draw_str_scaled, str_width_scaled};
-    let lx = bar_x - str_width_scaled(&label, 2) - 5;
-    let ly = bar_y - 4;
-    draw_str_scaled(buf, &label, lx + 1, ly + 1, Bgra::new(0, 0, 0), 2);
-    draw_str_scaled(buf, &label, lx, ly, wcolour, 2);
 
     // Team strips (left)
     for team in 0..4usize {
