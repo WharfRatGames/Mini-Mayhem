@@ -2614,12 +2614,10 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     let nx   = soldier.pos.x as i32 - nw / 2;
                     let hat_lift = if soldier.hat_id > 0 { 21 } else { 0 };
                     let ny   = soldier.pos.y as i32 - SOLDIER_H as i32 - 40 - hat_lift;
-                    // Shadow pass
+                    // Shadow pass + single bold pass (was 2 shadow + 2 bold;
+                    // halved to cut per-frame glyph draw calls).
                     draw_str(buf, &soldier.name, nx + 1, ny + 1, dark);
-                    draw_str(buf, &soldier.name, nx + 2, ny + 1, dark);
-                    // Bold: two horizontal passes
                     draw_str(buf, &soldier.name, nx,     ny,     col);
-                    draw_str(buf, &soldier.name, nx + 1, ny,     col);
                 }
 
                 // Active-soldier marker: downward triangle, raised above name
