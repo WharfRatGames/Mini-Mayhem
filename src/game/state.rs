@@ -1426,6 +1426,7 @@ impl GameState {
                 }
             }
             self.active_worm_hit = true;
+            self.emit_sound(crate::audio::Sfx::Mine);
             self.explosions.push(Explosion::new(pos, 25.0));
         }
     }
