@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.234";
+const VERSION: &str = "0.5.4.235";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -916,8 +916,28 @@ fn main() {
                         .unwrap_or(g.fall_y);
                     cam.follow(world::WorldPos::new(g.render_x, sy));
                 }
+            } else if let Some(ref air) = game.airstrike {
+                if !air.active {
+                    // Targeting phase: follow the cursor (mirrors update_camera Acting branch)
+                    cam.follow(world::WorldPos::new(air.render_x, air.render_y));
+                } else {
+                    // Plane live: bombs show as projectiles; fall back to active soldier
+                    let ti = game.turn.current_team();
+                    if let Some(team) = game.teams.get(ti) {
+                        if let Some(s) = team.soldiers.get(team.active) { cam.follow(s.pos); }
+                    }
+                }
             } else if let Some(p) = game.projectiles.first() {
                 cam.follow_always(p.pos);
+            } else if !game.explosions.is_empty() {
+                // Track nearest explosion to current camera center (mirrors Watching branch)
+                let cam_center = cam.left_edge_f32() + world::SCREEN_W as f32 / 2.0;
+                if let Some(e) = game.explosions.iter()
+                    .min_by(|a, b| (a.pos.x - cam_center).abs()
+                        .partial_cmp(&(b.pos.x - cam_center).abs()).unwrap())
+                {
+                    cam.follow_always(e.pos);
+                }
             } else {
                 // Follow the active soldier only. Following transient airborne
                 // soldiers (knockback victims) made the camera flicker back and
