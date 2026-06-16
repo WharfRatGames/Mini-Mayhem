@@ -130,6 +130,13 @@ pub struct StateMsg {
     /// opponent reconnecting — client shows "opponent left" instead of a
     /// normal result screen.
     pub opponent_abandoned: bool,
+    pub team_weapons:       Vec<NetTeamWeapons>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetTeamWeapons {
+    pub selected: usize,
+    pub weapons:  Vec<(u8, u32)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

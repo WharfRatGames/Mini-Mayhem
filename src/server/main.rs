@@ -1007,6 +1007,12 @@ fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMsg {
         },
         paused_opponent: None,
         opponent_abandoned: false,
+        team_weapons: game.teams.iter().map(|t| NetTeamWeapons {
+            selected: t.selected_weapon,
+            weapons: t.weapons.iter().map(|(k, a)| {
+                (k.to_net_u8(), a.map_or(0xFFFF, |n| n as u32))
+            }).collect(),
+        }).collect(),
     }
 }
 
@@ -1060,7 +1066,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.235";
+const REQUIRED_VERSION: &str = "0.5.4.236";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

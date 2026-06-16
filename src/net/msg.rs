@@ -130,6 +130,16 @@ pub struct StateMsg {
     /// opponent reconnecting — client shows "opponent left" instead of a
     /// normal result screen.
     pub opponent_abandoned: bool,
+    /// Weapon inventory per team: [(kind_u8, ammo_or_0xFFFF_for_infinite)].
+    /// Lets the live client show accurate ammo counts and weapon list.
+    pub team_weapons:       Vec<NetTeamWeapons>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetTeamWeapons {
+    pub selected: usize,
+    /// (kind_u8, ammo): ammo=0xFFFF means infinite.
+    pub weapons:  Vec<(u8, u32)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
