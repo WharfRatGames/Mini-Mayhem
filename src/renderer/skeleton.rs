@@ -186,7 +186,19 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     const W: i32 = 40;
     const H: i32 = 36;
     const ANCHOR_DY: i32 = 9;
-    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - ANCHOR_DY, W, H);
+    // Per-hat vertical nudge (positive = down) for sprites where the art sits
+    // higher or lower than the standard anchor row.
+    let hat_dy: i32 = match hat_id {
+        5 => 5,   // Fez: art sits in the top of sprite, nudge down
+        _ => 0,
+    };
+    // Per-hat size scale (default 1.0)
+    let scale: f32 = match hat_id {
+        22 => 0.75,  // Pirate Tricorn: rescaled sprite reads large, pull back
+        _  => 1.0,
+    };
+    let (w, h) = ((W as f32 * scale) as i32, (H as f32 * scale) as i32);
+    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - ANCHOR_DY + hat_dy, w, h);
 
     // Propeller Hat: the sprite's static propeller bar (source rows 18-26) is
     // skipped by cosmetic_sprites::draw_hat for hat_id 2; draw an animated

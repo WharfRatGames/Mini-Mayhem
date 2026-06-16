@@ -163,6 +163,7 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
     use super::turn::TurnPhase;
 
     game.sounds.clear(); // per-tick sound event buffer (shipped to live client)
+    game.fx_events.clear(); // per-tick fx-spawn event buffer (shipped to live client)
     // Advance client-only effect particles (explosion fallout / dust / sparks /
     // splashes) once per tick, before any phase early-returns. Visual only.
     crate::renderer::fx::step_fx(&mut game.fx, &game.terrain, game.wind.value());
@@ -693,8 +694,8 @@ fn process_movement(game: &mut GameState, input: &InputState) {
         // Footstep dust kicked up behind the trailing foot every few steps.
         let s = &game.teams[ti].soldiers[si];
         if s.walk_ticks % 6 == 0 {
-            let foot = crate::world::WorldPos::new(s.pos.x, s.pos.y + 3.0);
-            crate::renderer::fx::dust(&mut game.fx, foot, 2, 0.4, s.facing as f32);
+            let (fx, fy, facing) = (s.pos.x, s.pos.y + 3.0, s.facing as f32);
+            game.emit_fx(crate::renderer::fx::FxEvent::Dust { x: fx, y: fy, count: 2, kick: 0.4, dir: facing });
         }
     } else {
         game.teams[ti].soldiers[si].walk_ticks = 0;
@@ -1409,11 +1410,12 @@ fn step_plasma_torch(game: &mut GameState) {
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, tip_x, tip_y, TORCH_RADIUS);
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, sx, body_cy, BODY_RADIUS);
 
-    // Dirt chips spat back out of the bore (visual only).
+    // Dirt chips spat back out of the bore.
     if game.tick % 3 == 0 {
-        let tip = crate::world::WorldPos::new(tip_x, tip_y);
-        let dirt = crate::game::state::biome_dirt(game.terrain.archetype);
-        crate::renderer::fx::dig(&mut game.fx, tip, dx.signum(), dirt);
+        let d = crate::game::state::biome_dirt(game.terrain.archetype);
+        game.emit_fx(crate::renderer::fx::FxEvent::Dig {
+            x: tip_x, y: tip_y, dir: dx.signum(), col: [d.r, d.g, d.b],
+        });
     }
 
     // Trigger any barrel the torch tip touches
@@ -4055,8 +4057,9 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 // Landing dust puff — count scales with impact speed.
                                 if vel.y > 2.0 {
                                     let n = (2.0 + vel.y.min(8.0) * 0.6) as u32;
-                                    let foot = crate::world::WorldPos::new(cx, cy.max(0.0) + 3.0);
-                                    crate::renderer::fx::dust(&mut game.fx, foot, n, 0.8, 0.0);
+                                    game.emit_fx(crate::renderer::fx::FxEvent::Dust {
+                                        x: cx, y: cy.max(0.0) + 3.0, count: n, kick: 0.8, dir: 0.0,
+                                    });
                                 }
                                 // Don't overwrite Dead state set by take_damage
                                 if !game.teams[ti].soldiers[si].is_dead() {

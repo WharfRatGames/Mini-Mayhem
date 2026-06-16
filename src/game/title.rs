@@ -26,7 +26,6 @@ const SP_ITEMS:   &[&str] = &["VS CPU", "HOTSEAT", "TEST"];
 const MP_ITEMS:   &[&str] = &["LIVE GAME", "TAKE A TURN", "MISSIONS"];
 const LIVE_ITEMS: &[&str] = &["CASUAL", "RANKED", "LEADERBOARD", "STATS"];
 const TAT_ITEMS:  &[&str] = &["CASUAL", "RANKED", "LEADERBOARD", "STATS"];
-const MODE_ITEMS: &[&str] = &["PLAY", "LEADERBOARD"];
 
 // Max items visible in the panel before scrolling kicks in.
 const MAX_VISIBLE: usize = 4;
@@ -290,7 +289,7 @@ struct HelpPage {
 }
 
 #[derive(PartialEq)]
-enum Sub { None, SP, MP, Live, Tat, HowToPlay, LiveCasual, LiveRanked, TatCasual, TatRanked }
+enum Sub { None, SP, MP, Live, Tat, HowToPlay }
 
 pub struct TitleScreen {
     cursor:        usize,
@@ -354,8 +353,8 @@ impl TitleScreen {
                 if input.just_pressed(Button::B)    { self.sub = Sub::MP; self.sub_cursor = 0; self.scroll_offset = 0; }
                 if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
                     match self.sub_cursor {
-                        0 => { self.sub = Sub::LiveCasual; self.sub_cursor = 0; self.scroll_offset = 0; }
-                        1 => { self.sub = Sub::LiveRanked; self.sub_cursor = 0; self.scroll_offset = 0; }
+                        0 => return Some(CHOICE_LIVE),
+                        1 => return Some(CHOICE_LIVE_RANKED),
                         2 => return Some(CHOICE_LEADERBOARD_CASUAL),
                         3 => return Some(CHOICE_LIVE_STATS),
                         _ => { self.sub = Sub::MP; self.sub_cursor = 0; self.scroll_offset = 0; }
@@ -369,64 +368,12 @@ impl TitleScreen {
                 if input.just_pressed(Button::B)    { self.sub = Sub::MP; self.sub_cursor = 0; self.scroll_offset = 0; }
                 if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
                     match self.sub_cursor {
-                        0 => { self.sub = Sub::TatCasual; self.sub_cursor = 0; self.scroll_offset = 0; }
-                        1 => { self.sub = Sub::TatRanked; self.sub_cursor = 0; self.scroll_offset = 0; }
+                        0 => return Some(CHOICE_TAKE_A_TURN),
+                        1 => return Some(CHOICE_TAT_RANKED),
                         2 => return Some(CHOICE_LEADERBOARD_CASUAL),
                         3 => return Some(CHOICE_TAT_STATS),
                         _ => { self.sub = Sub::MP; self.sub_cursor = 0; self.scroll_offset = 0; }
                     }
-                }
-            }
-            Sub::LiveCasual => {
-                let n = MODE_ITEMS.len();
-                if input.just_pressed(Button::Up)   { self.nav_up(n); }
-                if input.just_pressed(Button::Down) { self.nav_down(n); }
-                if input.just_pressed(Button::B)    { self.sub = Sub::Live; self.sub_cursor = 0; self.scroll_offset = 0; }
-                if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
-                    return Some(match self.sub_cursor {
-                        0 => CHOICE_LIVE,
-                        1 => CHOICE_LEADERBOARD_CASUAL,
-                        _ => { self.sub = Sub::Live; self.sub_cursor = 0; self.scroll_offset = 0; return None; }
-                    });
-                }
-            }
-            Sub::LiveRanked => {
-                let n = MODE_ITEMS.len();
-                if input.just_pressed(Button::Up)   { self.nav_up(n); }
-                if input.just_pressed(Button::Down) { self.nav_down(n); }
-                if input.just_pressed(Button::B)    { self.sub = Sub::Live; self.sub_cursor = 0; self.scroll_offset = 0; }
-                if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
-                    return Some(match self.sub_cursor {
-                        0 => CHOICE_LIVE_RANKED,
-                        1 => CHOICE_LEADERBOARD_RANKED,
-                        _ => { self.sub = Sub::Live; self.sub_cursor = 0; self.scroll_offset = 0; return None; }
-                    });
-                }
-            }
-            Sub::TatCasual => {
-                let n = MODE_ITEMS.len();
-                if input.just_pressed(Button::Up)   { self.nav_up(n); }
-                if input.just_pressed(Button::Down) { self.nav_down(n); }
-                if input.just_pressed(Button::B)    { self.sub = Sub::Tat; self.sub_cursor = 0; self.scroll_offset = 0; }
-                if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
-                    return Some(match self.sub_cursor {
-                        0 => CHOICE_TAKE_A_TURN,
-                        1 => CHOICE_LEADERBOARD_CASUAL,
-                        _ => { self.sub = Sub::Tat; self.sub_cursor = 0; self.scroll_offset = 0; return None; }
-                    });
-                }
-            }
-            Sub::TatRanked => {
-                let n = MODE_ITEMS.len();
-                if input.just_pressed(Button::Up)   { self.nav_up(n); }
-                if input.just_pressed(Button::Down) { self.nav_down(n); }
-                if input.just_pressed(Button::B)    { self.sub = Sub::Tat; self.sub_cursor = 0; self.scroll_offset = 0; }
-                if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
-                    return Some(match self.sub_cursor {
-                        0 => CHOICE_TAT_RANKED,
-                        1 => CHOICE_LEADERBOARD_RANKED,
-                        _ => { self.sub = Sub::Tat; self.sub_cursor = 0; self.scroll_offset = 0; return None; }
-                    });
                 }
             }
             Sub::SP => {
@@ -487,8 +434,6 @@ impl TitleScreen {
             Sub::SP         => (SP_ITEMS   as &[&str], self.sub_cursor),
             Sub::Live       => (LIVE_ITEMS as &[&str], self.sub_cursor),
             Sub::Tat        => (TAT_ITEMS  as &[&str], self.sub_cursor),
-            Sub::LiveCasual | Sub::LiveRanked |
-            Sub::TatCasual  | Sub::TatRanked  => (MODE_ITEMS as &[&str], self.sub_cursor),
             _               => (ITEMS      as &[&str], self.cursor),
         };
 
@@ -505,8 +450,6 @@ impl TitleScreen {
                 Sub::MP                          => "MULTIPLAYER",
                 Sub::Live                        => "LIVE GAME",
                 Sub::Tat                         => "TAKE A TURN",
-                Sub::LiveCasual | Sub::TatCasual => "CASUAL",
-                Sub::LiveRanked | Sub::TatRanked => "RANKED",
                 _                                => "",
             };
             let lw = str_width_scaled(label, 2);

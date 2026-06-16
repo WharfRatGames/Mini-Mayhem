@@ -62,7 +62,7 @@ static BOOT_PNGS: [&[u8]; 6] = [
 
 struct Sprite { pub w: usize, pub h: usize, pub px: Vec<[u8; 4]> }
 
-static HAT_SPRITES:  OnceLock<[Option<Sprite>; 18]> = OnceLock::new();
+static HAT_SPRITES:  OnceLock<[Option<Sprite>; 24]> = OnceLock::new();
 static GUN_SPRITES:  OnceLock<[Option<Sprite>; 12]>  = OnceLock::new();
 static BOOT_SPRITES: OnceLock<[Option<Sprite>; 6]>  = OnceLock::new();
 
@@ -82,7 +82,7 @@ fn decode(bytes: &[u8]) -> Option<Sprite> {
     Some(Sprite { w, h, px })
 }
 
-fn hat_sprites() -> &'static [Option<Sprite>; 18] {
+fn hat_sprites() -> &'static [Option<Sprite>; 24] {
     HAT_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(HAT_PNGS[i])))
 }
 

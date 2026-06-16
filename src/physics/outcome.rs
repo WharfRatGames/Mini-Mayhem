@@ -263,7 +263,9 @@ mod tests {
 
     #[test]
     fn grenade_bounce_pushes_above_impact() {
-        let mut p = make(WeaponKind::Grenade);
+        // Vertical-dominant velocity so the impact is classified as a floor hit
+        // (the branch that repositions the grenade just above the impact point).
+        let mut p = Projectile::new(pos(), Vec2::new(2.0, 8.0), WeaponKind::Grenade);
         let hit = WorldPos::new(100.0, 300.0);
         resolve(&mut p, &CollisionResult::Terrain(hit));
         assert!(p.pos.y < 300.0, "grenade should be pushed above impact point");

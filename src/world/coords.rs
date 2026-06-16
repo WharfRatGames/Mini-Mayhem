@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn world_pos_in_bounds() {
         assert!(WorldPos::new(0.0, 0.0).in_bounds());
-        assert!(WorldPos::new(3199.0, 479.0).in_bounds());
+        assert!(WorldPos::new(WORLD_W as f32 - 1.0, WORLD_H as f32 - 1.0).in_bounds());
         assert!(!WorldPos::new(-1.0, 0.0).in_bounds());
         assert!(!WorldPos::new(0.0, -1.0).in_bounds());
         assert!(!WorldPos::new(3200.0, 0.0).in_bounds());
@@ -121,7 +121,7 @@ mod tests {
         assert!(WorldPos::new(-1.0, 100.0).at_wall());
         assert!(WorldPos::new(3200.0, 100.0).at_wall());
         assert!(!WorldPos::new(0.0, 100.0).at_wall());
-        assert!(!WorldPos::new(3199.0, 100.0).at_wall());
+        assert!(!WorldPos::new(WORLD_W as f32 - 1.0, 100.0).at_wall());
     }
 
     #[test]

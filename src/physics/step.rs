@@ -178,27 +178,8 @@ mod tests {
         assert!(StepResult::Drowned.should_despawn());
     }
 
-    // ── Wall ─────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn bazooka_hitting_right_wall_returns_explode() {
-        let mut p = bazooka(WORLD_W as f32 - 3.0, 100.0, 10.0, 0.0);
-        let result = step_projectile(&mut p, &empty(), 0.0);
-        assert!(
-            matches!(result, StepResult::Explode(_)),
-            "bazooka should explode on wall, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn grenade_hitting_wall_returns_bounced() {
-        let mut p = grenade(3.0, 100.0, -10.0, 0.0);
-        let result = step_projectile(&mut p, &empty(), 0.0);
-        assert!(
-            matches!(result, StepResult::Bounced),
-            "grenade should bounce off wall, got {result:?}"
-        );
-    }
+    // Side-wall step tests removed: open-sided maps mean projectiles at the map
+    // edge keep Flying (no hard wall to explode/bounce against).
 
     // ── Fuse expiry ───────────────────────────────────────────────────────────
 

@@ -106,11 +106,11 @@ struct DebrisStyle {
 /// caverns→dust+embers, canyon→dust.
 fn debris_style(archetype: u8) -> DebrisStyle {
     match archetype {
-        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 70, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow: flutters
-        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 40, big_chance: 10, glow_chance: 0,  sway_amp: 0.5, sway_speed: 0.05, spin: 0.04 }, // sea mist
-        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 52, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
-        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 46, big_chance: 12, glow_chance: 0,  sway_amp: 0.4, sway_speed: 0.07, spin: 0.10 }, // canyon dust
-        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 36, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen: drifts in arcs
+        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 350, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow
+        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 260, big_chance: 10, glow_chance: 0,  sway_amp: 0.5, sway_speed: 0.05, spin: 0.04 }, // sea mist
+        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 300, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
+        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 280, big_chance: 12, glow_chance: 0,  sway_amp: 0.4, sway_speed: 0.07, spin: 0.10 }, // canyon dust
+        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 220, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen
     }
 }
 
@@ -132,7 +132,10 @@ fn rand_f(state: &mut u32) -> f32 { (rng(state) >> 8) as f32 / (1u32 << 24) as f
 /// otherwise particles enter from just above the top edge.
 fn spawn(state: &mut u32, style: &DebrisStyle, wind: f32, spread: bool) -> BgParticle {
     let x = rand_f(state) * (SCREEN_W as f32 + 8.0) - 4.0;
-    let y = if spread { rand_f(state) * SCREEN_H as f32 } else { -rand_f(state) * 6.0 };
+    // Initial fill: scatter across full column so airspace is populated immediately.
+    // Replacements: enter from top so particles flow downward continuously and
+    // maintain even density throughout the column.
+    let y = if spread { rand_f(state) * WATER_Y as f32 } else { -(rand_f(state) * 20.0) };
     let vy = style.fall * (0.6 + rand_f(state) * 0.8);
     BgParticle {
         x, y,
@@ -161,13 +164,16 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
         p.rot += p.spin;
     }
     particles.retain(|p| {
-        p.y < SCREEN_H as f32 + 4.0 && p.x > -8.0 && p.x < SCREEN_W as f32 + 8.0
+        p.y < WATER_Y as f32 + 4.0 && p.x > -8.0 && p.x < SCREEN_W as f32 + 8.0
     });
 
     // A strong gust visibly throws more motes across the screen.
     let target = style.count + (wind.abs() * 22.0) as usize;
+    // First fill: spread=true scatters across full column for immediate density.
+    // Replacements: spread=false enters from top so particles flow downward evenly.
+    let is_first_fill = particles.is_empty();
     while particles.len() < target {
-        particles.push(spawn(&mut state, &style, wind, true));
+        particles.push(spawn(&mut state, &style, wind, is_first_fill));
     }
 }
 

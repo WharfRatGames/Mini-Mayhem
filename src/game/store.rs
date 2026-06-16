@@ -67,6 +67,13 @@ static CATALOG: &[(&str, u8, &str, u32)] = &[
     ("boots",     5, "Electric Blue", 150),
 ];
 
+/// Look up the display name for a cosmetic by type+id from the store catalog.
+pub fn catalog_name(cosm_type: &str, id: u8) -> Option<&'static str> {
+    CATALOG.iter()
+        .find(|&&(ct, cid, _, _)| ct == cosm_type && cid == id)
+        .map(|&(_, _, name, _)| name)
+}
+
 pub struct StoreScreen {
     token:      String,
     balance:    u32,

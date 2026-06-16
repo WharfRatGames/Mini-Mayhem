@@ -109,6 +109,9 @@ pub struct StateMsg {
     /// Sound events the server emitted this tick (`Sfx as u8`), so the live
     /// client — which runs no simulation — plays the same SFX as every other mode.
     pub sounds:             Vec<u8>,
+    /// Cosmetic FX-spawn events the server emitted this tick, so the live client
+    /// (which runs no sim) spawns the same particle bursts as every other mode.
+    pub fx_events:          Vec<crate::renderer::fx::FxEvent>,
     pub barrels:            Vec<NetBarrel>,
     pub black_holes:        Vec<NetBlackHole>,
     pub fire_patches:       Vec<NetFirePatch>,
@@ -219,6 +222,10 @@ pub struct NetSoldier {
     pub selected_weapon: usize,
     pub airborne:        bool,
     pub spinning:        bool,
+    /// Airborne velocity — lets the live client tilt the soldier's torso lean
+    /// during knockback flight, matching local modes.
+    pub vel_x:           f32,
+    pub vel_y:           f32,
     pub airtime:         u32,
     pub walk_ticks:      u32,
     pub walking:         bool,
@@ -313,14 +320,6 @@ pub enum LobbyServerMsg {
     State { players: Vec<LobbyPlayer>, your_index: usize },
     /// Match is starting — carries the usual welcome payload.
     Start(WelcomeMsg),
-}
-
-pub fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
-    let payload = bincode::serialize(msg).unwrap();
-    let mut buf = Vec::with_capacity(4 + payload.len());
-    buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    buf.extend_from_slice(&payload);
-    buf
 }
 
 pub fn decode_len(header: &[u8; 4]) -> usize {

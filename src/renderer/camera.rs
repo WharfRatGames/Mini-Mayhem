@@ -164,7 +164,6 @@ mod tests {
     #[test]
     fn max_cam_x_is_correct() {
         assert_eq!(max_cam_x(), WORLD_W - SCREEN_W);
-        assert_eq!(max_cam_x(), 2560);
     }
 
     // ── Follow ────────────────────────────────────────────────────────────────
@@ -246,7 +245,7 @@ mod tests {
 
     #[test]
     fn pan_moves_camera_immediately() {
-        let mut c = cam_at(1600.0);
+        let mut c = cam_at(100.0); // start well inside max_cam_x so there's room to pan right
         let x_before = c.x;
         c.pan(100.0);
         assert!(c.x > x_before, "pan should move camera immediately");

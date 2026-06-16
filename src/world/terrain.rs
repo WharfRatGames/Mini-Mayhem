@@ -543,68 +543,89 @@ impl Terrain {
                 }
             }
 
-            // B — Main winding horizontal corridor across the full map
-            let corridor_y = SKY_FLOOR + 100 + (lcg(&mut rng) % 40) as i32 - 20; // y≈210-250
+            // B — Two horizontal corridors at different depths for multi-level caves
+            let upper_y = SKY_FLOOR + 55 + (lcg(&mut rng) % 25) as i32;  // y≈185-210 (upper level)
+            let lower_y = SKY_FLOOR + 130 + (lcg(&mut rng) % 40) as i32; // y≈260-300 (lower level)
+            // Upper corridor: fewer, wider segments for a broad passage feel
             {
-                let n_seg = 48usize;
+                let n_seg = 24usize;
                 let seg_w = WORLD_W as i32 / n_seg as i32;
                 let mut prev_x = 0i32;
-                let mut prev_y = corridor_y;
+                let mut prev_y = upper_y;
                 for i in 1..=n_seg {
                     let nx = i as i32 * seg_w;
-                    let ny_off = (lcg(&mut rng) % 24) as i32 - 12;
-                    let ny = (corridor_y + ny_off).clamp(SKY_FLOOR + 40, CAVE_FLOOR - 40);
-                    let r = 22 + (lcg(&mut rng) % 12) as i32;
+                    let ny_off = (lcg(&mut rng) % 30) as i32 - 15;
+                    let ny = (upper_y + ny_off).clamp(SKY_FLOOR + 35, upper_y + 30);
+                    let r = 18 + (lcg(&mut rng) % 10) as i32;
+                    dig_tunnel(&mut terrain, prev_x, prev_y, nx, ny, r);
+                    prev_x = nx;
+                    prev_y = ny;
+                }
+            }
+            // Lower corridor: narrower, more winding for tight cave feel
+            {
+                let n_seg = 32usize;
+                let seg_w = WORLD_W as i32 / n_seg as i32;
+                let mut prev_x = 0i32;
+                let mut prev_y = lower_y;
+                for i in 1..=n_seg {
+                    let nx = i as i32 * seg_w;
+                    let ny_off = (lcg(&mut rng) % 40) as i32 - 20;
+                    let ny = (lower_y + ny_off).clamp(upper_y + 40, CAVE_FLOOR - 35);
+                    let r = 14 + (lcg(&mut rng) % 10) as i32;
                     dig_tunnel(&mut terrain, prev_x, prev_y, nx, ny, r);
                     prev_x = nx;
                     prev_y = ny;
                 }
             }
 
-            // C — Side chambers (large ellipses at random points along the corridor)
-            let n_chambers = 5 + (lcg(&mut rng) % 4) as usize;
+            // C — Large chambers: some off the upper corridor, some off the lower
+            let n_chambers = 6 + (lcg(&mut rng) % 4) as usize;
             let mut chamber_pts: Vec<(i32, i32)> = Vec::with_capacity(n_chambers);
-            for _ in 0..n_chambers {
+            for i in 0..n_chambers {
                 let cx = 120 + (lcg(&mut rng) % (WORLD_W as u64 - 240)) as i32;
-                let cy_off = (lcg(&mut rng) % 40) as i32 - 20;
-                let cy = (corridor_y + cy_off).clamp(SKY_FLOOR + 50, CAVE_FLOOR - 50);
-                let rx = 55 + (lcg(&mut rng) % 56) as i32;  // 55-110
-                let ry = 35 + (lcg(&mut rng) % 31) as i32;  // 35-65
+                // Alternate chambers between upper and lower levels
+                let base_y = if i % 2 == 0 { upper_y } else { lower_y };
+                let cy_off = (lcg(&mut rng) % 30) as i32 - 15;
+                let cy = (base_y + cy_off).clamp(SKY_FLOOR + 45, CAVE_FLOOR - 45);
+                let rx = 60 + (lcg(&mut rng) % 60) as i32;   // 60-120
+                let ry = 30 + (lcg(&mut rng) % 40) as i32;   // 30-70
                 carve_ellipse(&mut terrain, cx, cy, rx, ry);
-                // Connect to corridor if not already touching it
-                dig_tunnel(&mut terrain, cx, cy, cx, corridor_y, 10);
+                // Connect to nearest corridor level
+                dig_tunnel(&mut terrain, cx, cy, cx, base_y, 12);
                 chamber_pts.push((cx, cy));
             }
 
-            // D — Secondary branching tunnels for traversal variety
+            // D — Vertical connectors between upper and lower corridors
+            let n_connect = 3 + (lcg(&mut rng) % 3) as usize;
+            for _ in 0..n_connect {
+                let vx = 200 + (lcg(&mut rng) % (WORLD_W as u64 - 400)) as i32;
+                let drift = (lcg(&mut rng) % 40) as i32 - 20;
+                let r = 9 + (lcg(&mut rng) % 6) as i32;
+                dig_tunnel(&mut terrain, vx, upper_y, vx + drift, lower_y, r);
+            }
+
+            // E — Dead-end horizontal tunnels for exploration variety
             let n_branch = 4 + (lcg(&mut rng) % 4) as usize;
             for _ in 0..n_branch {
                 let sx = 80 + (lcg(&mut rng) % (WORLD_W as u64 - 160)) as i32;
-                let sy = corridor_y + (lcg(&mut rng) % 30) as i32 - 15;
-                let angle_raw = lcg(&mut rng) % 6; // 6 directions: up-left, up, up-right, down-left, down, down-right
-                let (dx, dy): (i32, i32) = match angle_raw {
-                    0 => (-200, -60),
-                    1 => (-150,  50),
-                    2 => ( 200, -60),
-                    3 => ( 150,  50),
-                    4 => (-250,  0),
-                    _ => ( 250,  0),
-                };
-                let len = 150 + (lcg(&mut rng) % 150) as i32;
-                let scale = len as f64 / ((dx*dx + dy*dy) as f64).sqrt().max(1.0);
-                let ex = (sx + (dx as f64 * scale) as i32).clamp(40, WORLD_W as i32 - 40);
-                let ey = (sy + (dy as f64 * scale) as i32).clamp(SKY_FLOOR + 20, CAVE_FLOOR - 20);
-                let r = 10 + (lcg(&mut rng) % 7) as i32;
+                let base_y = if lcg(&mut rng) % 2 == 0 { upper_y } else { lower_y };
+                let sy = base_y + (lcg(&mut rng) % 20) as i32 - 10;
+                let dir: i32 = if lcg(&mut rng) % 2 == 0 { 1 } else { -1 };
+                let len = 100 + (lcg(&mut rng) % 200) as i32;
+                let ex = (sx + dir * len).clamp(40, WORLD_W as i32 - 40);
+                let ey = (sy + (lcg(&mut rng) % 40) as i32 - 20).clamp(SKY_FLOOR + 20, CAVE_FLOOR - 20);
+                let r = 8 + (lcg(&mut rng) % 8) as i32;
                 dig_tunnel(&mut terrain, sx, sy, ex, ey, r);
             }
 
-            // E — Vertical entry shafts from sky to main corridor
-            let n_shafts = 3 + (lcg(&mut rng) % 3) as usize;
+            // F — Vertical entry shafts from sky down into upper corridor
+            let n_shafts = 4 + (lcg(&mut rng) % 3) as usize;
             for _ in 0..n_shafts {
-                let sx = 150 + (lcg(&mut rng) % (WORLD_W as u64 - 300)) as i32;
+                let sx = 100 + (lcg(&mut rng) % (WORLD_W as u64 - 200)) as i32;
                 let drift = (lcg(&mut rng) % 30) as i32 - 15;
                 let shaft_r = 8 + (lcg(&mut rng) % 5) as i32;
-                dig_tunnel(&mut terrain, sx, SKY_FLOOR, sx + drift, corridor_y, shaft_r);
+                dig_tunnel(&mut terrain, sx, SKY_FLOOR, sx + drift, upper_y, shaft_r);
             }
 
             // F — Noise edge erosion: textures cave walls organically
@@ -998,20 +1019,21 @@ impl Terrain {
         let mut spawns: Vec<WorldPos> = Vec::with_capacity(count);
         let mut used_x: Vec<i32> = Vec::with_capacity(count);
 
-        // On caverns maps, place half the team inside the cave system; the rest land
-        // on the surface below. If a half lacks cave footing, the surface scan + island
-        // fallback below still fill every slot, so a team always gets `count` soldiers.
-        let n_cave = if self.archetype == 3 { count / 2 } else { 0 };
-        if n_cave > 0 {
+        // On caverns maps, try to place ALL soldiers inside the cave system.
+        // The cave is designed with vertical shafts connecting to sky, so escape
+        // verification is skipped here — we use a lighter check (solid floor +
+        // body clearance + ceiling) and scan at 2px resolution for better coverage.
+        // Surface fallback below still fills any slots that can't be placed underground.
+        if self.archetype == 3 {
             let mut x = lo;
-            while x <= hi && spawns.len() < n_cave {
+            while x <= hi && spawns.len() < count {
                 if used_x.iter().all(|&ux| (ux - x).abs() >= MIN_SEP) {
-                    if let Some(foot_y) = self.standable_cave_foot_y(x) {
+                    if let Some(foot_y) = self.standable_cave_foot_simple(x) {
                         spawns.push(WorldPos::new(x as f32, foot_y as f32));
                         used_x.push(x);
                     }
                 }
-                x += 4;
+                x += 1;
             }
         }
 
@@ -1186,6 +1208,31 @@ impl Terrain {
     /// ceiling overhead (so it is genuinely underground, not the open surface).
     /// Scans bottom-up so soldiers land on the main void floor, not a shallow tunnel.
     /// None if no roofed standing spot exists.
+    /// Like standable_cave_foot_y but skips the escape-connectivity check.
+    /// Used for archetype-3 (cave) spawns where vertical shafts guarantee reachability.
+    fn standable_cave_foot_simple(&self, x: i32) -> Option<i32> {
+        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+        const HEAD_H: i32 = 26;
+        const CEIL_MAX: i32 = 220;
+        if x < 0 || x >= WORLD_W as i32 { return None; }
+        let x_l = x - (SOLDIER_HALF_W - 1);
+        let x_r = x + (SOLDIER_HALF_W - 1);
+        let ok = |foot_y: i32| -> bool {
+            if foot_y < HEAD_H || foot_y >= WATER_Y as i32 { return false; }
+            if !self.is_solid(x, foot_y + 1) { return false; }
+            let platform = (-4..=4).filter(|&dx| self.is_solid(x + dx, foot_y + 1)).count() >= 7;
+            if !platform { return false; }
+            if !(foot_y - HEAD_H + 1 ..= foot_y).all(|y| {
+                let y = y.max(0);
+                !self.is_solid(x_l, y) && !self.is_solid(x, y) && !self.is_solid(x_r, y)
+            }) { return false; }
+            // Must be underground (roofed), not on the open surface.
+            ((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y))
+        };
+        // Bottom-up: prefer deeper floors (main chambers) over high thin tunnels.
+        (HEAD_H..WATER_Y as i32).rev().find(|&foot_y| ok(foot_y))
+    }
+
     pub fn standable_cave_foot_y(&self, x: i32) -> Option<i32> {
         use crate::renderer::draw_sprites::SOLDIER_HALF_W;
         const HEAD_H: i32 = 26;   // body + small clearance above the foot
