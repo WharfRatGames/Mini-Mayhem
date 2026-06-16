@@ -7,7 +7,7 @@ use super::buffer::WorldBuffer;
 
 // ── Hat sprites (IDs 1–11) ────────────────────────────────────────────────────
 
-static HAT_PNGS: [&[u8]; 18] = [
+static HAT_PNGS: [&[u8]; 24] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_2.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_3.png"),
@@ -26,6 +26,12 @@ static HAT_PNGS: [&[u8]; 18] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_16.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_17.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_18.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_19.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_20.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_21.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_22.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_23.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_24.png"),
 ];
 
 static GUN_PNGS: [&[u8]; 12] = [
