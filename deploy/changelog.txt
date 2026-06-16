@@ -1,4 +1,5 @@
-0.5.4.220  Update screen smaller font; terrain top 40% sky clear on hills/canyon maps; cliff/cave/island maps unchanged.
+0.5.4.221  Cave maps redesigned: start fully solid, carve horizontal corridors+chambers+shafts from rock (Worms Armageddon style).
+0.5.4.220  Update screen smaller font; terrain sky clear on hills/canyon maps.
 0.5.4.219  Garcia damage 45/hit; A release required before weapon charge.
 0.5.4.197  Fix opponent name showing as your own in live matches; Propeller Hat blade scaled correctly.
 0.5.4.196  Black Hole renders as swirling void; Plasma Torch fires in mid-air; CPU uses full weapon set; soldiers squirm in fire.

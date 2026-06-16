@@ -471,17 +471,10 @@ impl Terrain {
                 warp_amp = 0.16;
                 blob = true;
             }
-            3 => { // Caverns: mostly solid with hollow chamber + cave punch + entrances
-                fade = rnd(&mut rng, 0.68, 0.10);
-                threshold = rnd(&mut rng, 0.36, 0.07);
-                scale_x = rnd(&mut rng, 2.0, 1.5);
-                contrast = 1.5;
-                warp_amp = 0.08;
-                big_void = true;
-                cave = true;
-                cave_thresh = 0.12;                 // light tunnels; void is the main chamber
-                surface_caves = true;               // caves reach daylight
-                void_shafts = 2 + (lcg(&mut rng) % 3) as usize; // 2–4 entrance shafts
+            3 => { // Caverns: fill+carve in Phase 2 below; density-field is skipped
+                // These values are unused (archetype 3 skips the density field phase entirely),
+                // but the compiler requires all branches initialize them.
+                fade = 0.0; threshold = 0.5; scale_x = 1.0; contrast = 1.0;
             }
             _ => { // Canyon / mesa: terraced + vertical trenches
                 fade = rnd(&mut rng, 0.46, 0.10);
@@ -534,7 +527,148 @@ impl Terrain {
         const HILL_AMP: f64 = 0.24;                // strong relief: frequent jump-height ledges
         const SKY_BAND: f64 = 0.30;                // top ~135px+ tapers off → guaranteed headroom (all archetypes)
 
-        // ── Phase 2: Density field ────────────────────────────────────────────────
+        // ── Phase 2: Density field (skipped for cave maps — they use fill+carve) ──
+        if archetype == 3 {
+            // Cave maps start from a completely solid rock band and carve air out.
+            // This gives the Worms Armageddon signature look: enclosed chambers,
+            // textured rock walls, vertical shafts from sky to cave system.
+
+            const SKY_FLOOR: i32 = 130; // rock ceiling starts here; sky above
+            const CAVE_FLOOR: i32 = 345; // thin solid base above water
+
+            // A — Fill solid rock band
+            for y in SKY_FLOOR..CAVE_FLOOR {
+                for x in 0..WORLD_W as i32 {
+                    terrain.set_solid(x, y, true);
+                }
+            }
+
+            // B — Main winding horizontal corridor across the full map
+            let corridor_y = SKY_FLOOR + 100 + (lcg(&mut rng) % 40) as i32 - 20; // y≈210-250
+            {
+                let n_seg = 48usize;
+                let seg_w = WORLD_W as i32 / n_seg as i32;
+                let mut prev_x = 0i32;
+                let mut prev_y = corridor_y;
+                for i in 1..=n_seg {
+                    let nx = i as i32 * seg_w;
+                    let ny_off = (lcg(&mut rng) % 24) as i32 - 12;
+                    let ny = (corridor_y + ny_off).clamp(SKY_FLOOR + 40, CAVE_FLOOR - 40);
+                    let r = 22 + (lcg(&mut rng) % 12) as i32;
+                    dig_tunnel(&mut terrain, prev_x, prev_y, nx, ny, r);
+                    prev_x = nx;
+                    prev_y = ny;
+                }
+            }
+
+            // C — Side chambers (large ellipses at random points along the corridor)
+            let n_chambers = 5 + (lcg(&mut rng) % 4) as usize;
+            let mut chamber_pts: Vec<(i32, i32)> = Vec::with_capacity(n_chambers);
+            for _ in 0..n_chambers {
+                let cx = 120 + (lcg(&mut rng) % (WORLD_W as u64 - 240)) as i32;
+                let cy_off = (lcg(&mut rng) % 40) as i32 - 20;
+                let cy = (corridor_y + cy_off).clamp(SKY_FLOOR + 50, CAVE_FLOOR - 50);
+                let rx = 55 + (lcg(&mut rng) % 56) as i32;  // 55-110
+                let ry = 35 + (lcg(&mut rng) % 31) as i32;  // 35-65
+                carve_ellipse(&mut terrain, cx, cy, rx, ry);
+                // Connect to corridor if not already touching it
+                dig_tunnel(&mut terrain, cx, cy, cx, corridor_y, 10);
+                chamber_pts.push((cx, cy));
+            }
+
+            // D — Secondary branching tunnels for traversal variety
+            let n_branch = 4 + (lcg(&mut rng) % 4) as usize;
+            for _ in 0..n_branch {
+                let sx = 80 + (lcg(&mut rng) % (WORLD_W as u64 - 160)) as i32;
+                let sy = corridor_y + (lcg(&mut rng) % 30) as i32 - 15;
+                let angle_raw = lcg(&mut rng) % 6; // 6 directions: up-left, up, up-right, down-left, down, down-right
+                let (dx, dy): (i32, i32) = match angle_raw {
+                    0 => (-200, -60),
+                    1 => (-150,  50),
+                    2 => ( 200, -60),
+                    3 => ( 150,  50),
+                    4 => (-250,  0),
+                    _ => ( 250,  0),
+                };
+                let len = 150 + (lcg(&mut rng) % 150) as i32;
+                let scale = len as f64 / ((dx*dx + dy*dy) as f64).sqrt().max(1.0);
+                let ex = (sx + (dx as f64 * scale) as i32).clamp(40, WORLD_W as i32 - 40);
+                let ey = (sy + (dy as f64 * scale) as i32).clamp(SKY_FLOOR + 20, CAVE_FLOOR - 20);
+                let r = 10 + (lcg(&mut rng) % 7) as i32;
+                dig_tunnel(&mut terrain, sx, sy, ex, ey, r);
+            }
+
+            // E — Vertical entry shafts from sky to main corridor
+            let n_shafts = 3 + (lcg(&mut rng) % 3) as usize;
+            for _ in 0..n_shafts {
+                let sx = 150 + (lcg(&mut rng) % (WORLD_W as u64 - 300)) as i32;
+                let drift = (lcg(&mut rng) % 30) as i32 - 15;
+                let shaft_r = 8 + (lcg(&mut rng) % 5) as i32;
+                dig_tunnel(&mut terrain, sx, SKY_FLOOR, sx + drift, corridor_y, shaft_r);
+            }
+
+            // F — Noise edge erosion: textures cave walls organically
+            {
+                let snap = terrain.solid.clone();
+                for y in SKY_FLOOR as u32..CAVE_FLOOR as u32 {
+                    let ny = y as f64 / WORLD_H as f64;
+                    for x in 0..WORLD_W {
+                        let idx = world_index(x, y);
+                        if !snap[idx] { continue; } // already air
+                        let nx = x as f64 / WORLD_W as f64;
+                        // Count air neighbors
+                        let air_neighbors = [(0i32,-1),(0,1),(-1,0),(1,0)].iter()
+                            .filter(|(dx,dy)| {
+                                let nx2 = x as i32 + dx;
+                                let ny2 = y as i32 + dy;
+                                nx2 >= 0 && nx2 < WORLD_W as i32 && ny2 >= 0 && ny2 < WATER_Y as i32
+                                && !snap[world_index(nx2 as u32, ny2 as u32)]
+                            })
+                            .count();
+                        if air_neighbors >= 1 {
+                            let c = cave_a.get([nx * 9.0, ny * 8.0]);
+                            if c.abs() < 0.20 {
+                                terrain.set_solid(x as i32, y as i32, false);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // G — Cellular automata: 2 passes to round jagged noise-carved edges
+            for _ in 0..2 {
+                let snap = terrain.solid.clone();
+                for y in SKY_FLOOR as u32 + 1..CAVE_FLOOR as u32 - 1 {
+                    for x in 1..WORLD_W - 1 {
+                        let idx = world_index(x, y);
+                        if !snap[idx] { continue; } // skip air
+                        let solid_neighbors = [(0i32,-1),(0,1),(-1,0),(1,0)].iter()
+                            .filter(|(dx,dy)| snap[world_index((x as i32+dx) as u32, (y as i32+dy) as u32)])
+                            .count();
+                        if solid_neighbors <= 1 {
+                            terrain.set_solid(x as i32, y as i32, false);
+                        }
+                    }
+                }
+            }
+
+            // Water-margin erosion (same as other archetypes): taper rock near world edges
+            let water_end_px_cave: f64 = 120.0 + (lcg(&mut rng) & 0xFF) as f64 / 255.0 * 80.0;
+            for y in SKY_FLOOR as u32..CAVE_FLOOR as u32 {
+                for x in 0..WORLD_W {
+                    let edge_dist = (x as f64).min(WORLD_W as f64 - 1.0 - x as f64);
+                    if edge_dist < water_end_px_cave {
+                        let t = (edge_dist / water_end_px_cave) as f64;
+                        let smooth_t = t * t * (3.0 - 2.0 * t);
+                        if smooth_t < 0.55 {
+                            terrain.set_solid(x as i32, y as i32, false);
+                        }
+                    }
+                }
+            }
+        }
+
+        if archetype != 3 {
         for y in TERRAIN_MIN_Y as usize..WATER_Y as usize {
             let ny = y as f64 / WORLD_H as f64;
             let ty = (y as f64 - TERRAIN_MIN_Y as f64) / terrain_range_f;
@@ -619,6 +753,7 @@ impl Terrain {
                 terrain.set_solid(x as i32, y as i32, density >= threshold);
             }
         }
+        } // end if archetype != 3
 
         // ── Phase 2a: Sky clearance (hills + canyon only) ────────────────────────
         // Keep the top 40% of the screen (y < 192) free of terrain on flat maps.
