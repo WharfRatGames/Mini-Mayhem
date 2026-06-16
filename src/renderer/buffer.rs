@@ -605,6 +605,5 @@ mod tests {
         // Just verify the clamp arithmetic is correct
         let max_cam_x = WORLD_W.saturating_sub(SCREEN_W);
         assert_eq!(max_cam_x, WORLD_W - SCREEN_W);
-        assert_eq!(max_cam_x, 2560); // 3200 - 640
     }
 }

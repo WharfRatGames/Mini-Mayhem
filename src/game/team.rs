@@ -8,8 +8,13 @@ pub const SOLDIERS_PER_TEAM: usize = 4;
 /// One team of up to 4 soldiers.
 #[derive(Debug, Clone)]
 pub struct Team {
-    /// Slot index 0-3.
+    /// Compact team index 0..team_count. Used for turn rotation and as the
+    /// authoritative team identity on the wire (NetSoldier.team). NOT the colour.
     pub slot: usize,
+    /// Colour identity 0-3 (Red/Blue/Green/Yellow) used by the renderer. Defaults
+    /// to `slot` but in casual lobbies each player picks their colour, so it is
+    /// decoupled from the compact index. See `set_color`.
+    pub color_id: u8,
     /// Display name — set from the player's active roster.
     pub name: String,
     /// Avatar index 0–3 (wraps from the roster). u8::MAX = default.
@@ -43,9 +48,18 @@ impl Team {
             .collect();
         let name = ["Red", "Blue", "Green", "Yellow"][slot.min(3)].to_string();
         let avatar_id = slot as u8 % crate::renderer::avatar::AVATAR_COUNT as u8;
-        Self { slot, name, avatar_id, elo: 0, is_cpu, difficulty, soldiers, active: 0,
+        Self { slot, color_id: slot.min(3) as u8, name, avatar_id, elo: 0, is_cpu, difficulty, soldiers, active: 0,
                weapons: team_loadout(), selected_weapon: 0,
                headstone_id: slot as u8 % crate::renderer::draw_sprites::HEADSTONE_COUNT }
+    }
+
+    /// Override this team's colour identity (casual lobby colour pick). Also
+    /// resets the default display name to match the colour; callers that have a
+    /// real roster name should set `name` afterwards.
+    pub fn set_color(&mut self, color_id: u8) {
+        let c = color_id.min(3);
+        self.color_id = c;
+        self.name = ["Red", "Blue", "Green", "Yellow"][c as usize].to_string();
     }
 
     /// Currently selected weapon kind.
@@ -238,5 +252,70 @@ mod tests {
         assert_eq!(t.slot, 2);
         assert!(t.is_cpu);
         assert_eq!(t.difficulty, Difficulty::Hard);
+    }
+
+    // ── Weapons (moved here from soldier.rs when the loadout became per-team) ──
+
+    #[test]
+    fn default_loadout_matches_team_loadout() {
+        let t = team();
+        assert_eq!(t.weapons[0], (WeaponKind::Bazooka, None));   // infinite
+        assert_eq!(t.weapons[1], (WeaponKind::Grenade, None));   // infinite
+        assert_eq!(t.weapons[2], (WeaponKind::Shotgun, Some(2)));
+        assert_eq!(t.weapons.len(), 8);
+        assert_eq!(t.selected_weapon, 0);
+        assert_eq!(t.current_weapon(), WeaponKind::Bazooka);
+    }
+
+    #[test]
+    fn consume_infinite_weapon_always_succeeds() {
+        let mut t = team();
+        t.selected_weapon = 0; // Bazooka, infinite
+        for _ in 0..100 { assert!(t.consume_weapon()); }
+    }
+
+    #[test]
+    fn consume_limited_weapon_decrements_then_fails() {
+        let mut t = team();
+        t.selected_weapon = 2; // Shotgun x2
+        assert!(t.consume_weapon());
+        assert_eq!(t.weapons[2].1, Some(1));
+        assert!(t.consume_weapon());
+        assert_eq!(t.weapons[2].1, Some(0));
+        assert!(!t.consume_weapon()); // out of ammo
+    }
+
+    #[test]
+    fn add_weapon_new_kind_appends() {
+        let mut t = team();
+        let before = t.weapons.len();
+        t.add_weapon(WeaponKind::Revolver, Some(1));
+        assert_eq!(t.weapons.len(), before + 1);
+    }
+
+    #[test]
+    fn add_weapon_existing_tops_up_ammo() {
+        let mut t = team();
+        t.add_weapon(WeaponKind::Shotgun, Some(3)); // starts at 2
+        assert_eq!(t.weapons[2].1, Some(5));
+    }
+
+    #[test]
+    fn add_weapon_upgrades_to_infinite() {
+        let mut t = team();
+        t.add_weapon(WeaponKind::Shotgun, None);
+        assert_eq!(t.weapons[2].1, None);
+    }
+
+    #[test]
+    fn prune_empty_weapons_drops_zero_ammo() {
+        let mut t = team();
+        t.selected_weapon = 2; // Shotgun x2
+        t.consume_weapon();
+        t.consume_weapon(); // now Some(0)
+        let before = t.weapons.len();
+        t.prune_empty_weapons();
+        assert_eq!(t.weapons.len(), before - 1);
+        assert!(t.selected_weapon < t.weapons.len());
     }
 }

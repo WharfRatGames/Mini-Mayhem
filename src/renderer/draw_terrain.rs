@@ -349,7 +349,7 @@ mod tests {
         let t = empty();
         let mut buf = WorldBuffer::new();
         draw_terrain(&mut buf, &t);
-        for x in [0, 100, 640, 1600, 3199] {
+        for x in [0, 100, 640, 1600, WORLD_W as i32 - 1] {
             for y in WATER_Y as i32..WORLD_H as i32 {
                 assert_eq!(
                     buf.get_pixel(x, y), WATER,

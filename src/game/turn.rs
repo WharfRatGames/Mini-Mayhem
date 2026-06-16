@@ -294,8 +294,8 @@ mod tests {
     }
 
     #[test]
-    fn turn_ticks_is_900() {
-        assert_eq!(TURN_TICKS, 900);
+    fn turn_ticks_is_1350() {
+        assert_eq!(TURN_TICKS, 1350);
     }
 
     #[test]

@@ -153,7 +153,7 @@ mod tests {
     fn valid_position_is_not_out_of_bounds() {
         assert!(!World::out_of_bounds(WorldPos::new(0.0, 0.0)));
         assert!(!World::out_of_bounds(WorldPos::new(1600.0, 240.0)));
-        assert!(!World::out_of_bounds(WorldPos::new(3199.0, 479.0)));
+        assert!(!World::out_of_bounds(WorldPos::new(WORLD_W as f32 - 1.0, WORLD_H as f32 - 1.0)));
     }
 
     #[test]

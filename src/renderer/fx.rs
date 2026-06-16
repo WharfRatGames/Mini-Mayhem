@@ -11,6 +11,7 @@
 use crate::world::{Terrain, WorldPos, Vec2, WATER_Y, WORLD_W, SCREEN_W};
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
+use serde::{Serialize, Deserialize};
 
 /// Hard cap on live effect particles — bounds cost on the Miyoo when several big
 /// explosions overlap.
@@ -136,6 +137,36 @@ pub fn dig(fx: &mut Vec<FxParticle>, pos: WorldPos, dir: f32, dirt: Bgra) {
             kind: FxKind::DirtChunk,
             col: dirt,
         });
+    }
+}
+
+// ── Networked spawn events ───────────────────────────────────────────────────
+
+/// A request to spawn one of the bursts above. Recorded by `GameState::emit_fx`
+/// during `simulate()` and shipped to live clients in `StateMsg.fx_events`, so
+/// effects spawned in the shared sim appear in every mode — mirroring the
+/// `Sfx`/`sounds` channel. Route ALL gameplay-event fx through `emit_fx`; the
+/// live client never runs `simulate()`, so direct `fx::` spawns are invisible to it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum FxEvent {
+    Explosion { x: f32, y: f32, radius: f32, col: [u8; 3] },
+    Splash    { x: f32, y: f32 },
+    Dust      { x: f32, y: f32, count: u32, kick: f32, dir: f32 },
+    Dig       { x: f32, y: f32, dir: f32, col: [u8; 3] },
+}
+
+/// Spawn the particles described by `ev` into `fx` (used both at the local
+/// emit site and when a live client replays a received event).
+pub fn apply_event(fx: &mut Vec<FxParticle>, ev: &FxEvent) {
+    match *ev {
+        FxEvent::Explosion { x, y, radius, col } =>
+            explosion(fx, WorldPos::new(x, y), radius, Bgra::new(col[0], col[1], col[2])),
+        FxEvent::Splash { x, y } =>
+            splash(fx, WorldPos::new(x, y)),
+        FxEvent::Dust { x, y, count, kick, dir } =>
+            dust(fx, WorldPos::new(x, y), count, kick, dir),
+        FxEvent::Dig { x, y, dir, col } =>
+            dig(fx, WorldPos::new(x, y), dir, Bgra::new(col[0], col[1], col[2])),
     }
 }
 

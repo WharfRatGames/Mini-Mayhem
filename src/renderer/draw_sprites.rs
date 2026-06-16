@@ -559,8 +559,8 @@ pub fn draw_aim_arrow(
             let base_x = ox as f32 + ca * col as f32;
             let base_y = oy as f32 - sa * col as f32;
             let is_cap = col == 0 || col == right_cap;
-            // Taper: half-width grows from 1 at muzzle to 4 at end of current charge
-            let half = (1 + col * 3 / fill_px.max(1)).min(4) as i32;
+            // Taper: half-width grows from 2 at muzzle to 8 at end of current charge
+            let half = (2 + col * 6 / fill_px.max(1)).min(8) as i32;
             for row_off in -half..=half {
                 let px = (base_x + sa * row_off as f32).round() as i32;
                 let py = (base_y + ca * row_off as f32).round() as i32;
@@ -1003,14 +1003,9 @@ mod tests {
         draw_aim_arrow(&mut b, (500.0, 290.0), 0.785, 0.5);
     }
 
-    #[test]
-    fn aim_arrow_at_zero_angle_goes_right() {
-        let mut b = buf();
-        // origin is the muzzle tip passed directly
-        draw_aim_arrow(&mut b, (209.0, 288.0), 0.0, 1.0);
-        let tip_x = 209 + AIM_ARROW_MAX_LEN as i32;
-        assert_eq!(b.get_pixel(tip_x, 288), Bgra::yellow());
-    }
+    // aim_arrow_at_zero_angle_goes_right removed: the aim indicator was redesigned
+    // from a straight power-scaled arrow (tip at origin + AIM_ARROW_MAX_LEN) into a
+    // fixed-distance reticle + rotating charge bar, so there's no arrow tip pixel.
 
     #[test]
     fn aim_arrow_min_power_is_shorter_than_max() {
@@ -1073,15 +1068,20 @@ mod tests {
     fn water_surface_draws_near_water_y() {
         let mut b = buf();
         draw_water_surface(&mut b, 0, 0);
-        // Some pixel near WATER_Y should be the ripple colour
-        let water_colour = Bgra::new(80, 160, 255);
+        // Some pixel near WATER_Y should be one of the animated water band colours
+        // (mid / surface / crest / foam — see draw_water_surface).
+        let water_cols = [
+            Bgra::new(45, 115, 210),
+            Bgra::new(70, 160, 235),
+            Bgra::new(110, 195, 250),
+            Bgra::new(215, 235, 252),
+        ];
         let mut found = false;
-        for y in WATER_Y as i32 - 3..=WATER_Y as i32 + 3 {
-            if b.get_pixel(0, y) == water_colour {
-                found = true;
-                break;
+        'scan: for x in 0..64 {
+            for y in WATER_Y as i32 - 3..=WATER_Y as i32 + 5 {
+                if water_cols.contains(&b.get_pixel(x, y)) { found = true; break 'scan; }
             }
         }
-        assert!(found, "water ripple should appear near WATER_Y");
+        assert!(found, "water surface should appear near WATER_Y");
     }
 }

@@ -47,7 +47,7 @@ impl WeaponKind {
             Self::Landmine       => 25.0,
             Self::Tnt            => 75.0,   // 2.5× grenade
             Self::HolyHandGrenade => 80.0,
-            Self::AirStrike      => 28.0,
+            Self::AirStrike      => 38.0,
             Self::Minigun        => 8.0,
             Self::BaseballBat    => 0.0,    // knockback only, no blast
             Self::FreezeGrenade  => 35.0,
@@ -78,7 +78,7 @@ impl WeaponKind {
             Self::Landmine       => 50,
             Self::Tnt            => 112,  // ~2.5× grenade
             Self::HolyHandGrenade => 150,
-            Self::AirStrike      => 40,
+            Self::AirStrike      => 75,
             Self::Minigun        => 12,   // per bullet
             Self::BaseballBat    => 25,
             Self::FreezeGrenade  => 10,
@@ -187,6 +187,7 @@ impl WeaponKind {
             Self::BlackHoleBomb => 11,
             Self::PlasmaTorch   => 12,
             Self::Garcia        => 13,
+            Self::AirStrike     => 14,
             _                   => 0,
         }
     }
@@ -205,6 +206,7 @@ impl WeaponKind {
             11 => Self::BlackHoleBomb,
             12 => Self::PlasmaTorch,
             13 => Self::Garcia,
+            14 => Self::AirStrike,
             _  => Self::Bazooka,
         }
     }
@@ -216,7 +218,6 @@ impl WeaponKind {
         matches!(
             self,
             Self::Bazooka
-                | Self::AirStrike
                 | Self::HomingMissile
                 | Self::SuperSheep
         )
@@ -381,7 +382,7 @@ mod tests {
         assert!(WeaponKind::Tnt.has_fuse());
         assert!(WeaponKind::HolyHandGrenade.has_fuse());
         assert!(WeaponKind::ClusterBomb.has_fuse());
-        assert!(WeaponKind::BananaBomb.has_fuse());
+        // BananaBomb (Meteor) no longer has a fuse — it explodes on terrain contact.
     }
 
     #[test]

@@ -1,7 +1,25 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.197
+## Version: 0.5.4.237
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.237) — live-mode parity infrastructure
+- **`emit_fx` FX channel** — cosmetic particle bursts (explosion fallout, footstep/
+  landing dust, torch chips) now spawn via `game.emit_fx(FxEvent)`, recorded into
+  `StateMsg.fx_events` and replayed on live clients — mirroring the `emit_sound`
+  channel. Spawn-once-works-in-all-modes. Also fixed live airborne lean (networked
+  soldier velocity) and game-over headline parity.
+- **Unified network structs** — `src/server/msg.rs` deleted; `src/net/msg.rs` is the
+  single source of truth, exposed via `pub mod net` in the lib. Both bins use
+  `arty::net::{msg::*, encode}`.
+- **`net_sync` module** — `build_state` + `apply_server_state` moved to
+  `src/game/net_sync.rs` (lib), making the server→client round-trip testable.
+- **Parity test** — `tests/parity.rs` round-trips a perturbed game and fails if a
+  synced field is dropped (`cargo test --test parity`).
+- **Compile-time field guard** — adding a field to `GameState`/`InputMsg` breaks the
+  exhaustiveness checklists in `net_sync.rs` until it's classified; default is SYNCED.
+- **Test suite restored** — the stale lib test suite (frozen since weapons moved off
+  `Soldier`) was fixed/retired: 441 pass, 0 fail.
 
 ## Recent changes (0.5.4.195–0.5.4.197)
 - **Live opponent-name sync fix** — `StateMsg.opp_team_name` (computed relative

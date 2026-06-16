@@ -27,7 +27,7 @@ impl Tile {
 /// A pixel counts as atlas background (the near-black gaps / label backdrop).
 #[inline]
 fn is_bg(p: [u8; 4]) -> bool {
-    p[3] < 10 || (p[0] < 24 && p[1] < 24 && p[2] < 24)
+    p[3] < 10 || (p[0] < 40 && p[1] < 40 && p[2] < 40)
 }
 
 static TILES: OnceLock<Vec<Tile>> = OnceLock::new();

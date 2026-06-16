@@ -56,32 +56,30 @@ pub fn draw_hud(
 /// Draw the wind indicator in the centre of the HUD.
 fn draw_wind_indicator(buf: &mut WorldBuffer, wind: &Wind) {
     let centre_x = SCREEN_W as i32 / 2;
-    let y = HUD_Y + 6;
-    let bar_w = 80i32;
-    let bar_h = 6u32;
+    let y = HUD_Y + 8;
+    let bar_w = 60i32;
+    let bar_h = 4u32;
     let bar_x = centre_x - bar_w / 2;
-    // Background with quarter-marks
-    buf.fill_rect(bar_x, y, bar_w as u32, bar_h, Bgra::new(40, 40, 60));
-    buf.fill_rect(bar_x + bar_w/4 - 1, y, 1, bar_h, Bgra::new(70, 70, 100));
-    buf.fill_rect(bar_x + 3*bar_w/4,   y, 1, bar_h, Bgra::new(70, 70, 100));
-    // Centre tick
-    buf.fill_rect(centre_x - 1, y, 2, bar_h, Bgra::new(140, 140, 180));
-    // Coloured fill from centre toward direction
-    let colour = if wind.value() >= 0.0 { Bgra::new(80, 180, 255) } else { Bgra::new(255, 140, 60) };
-    let fill = (wind.value().abs() * (bar_w / 2) as f32) as i32;
-    if wind.value() >= 0.0 {
-        buf.fill_rect(centre_x, y, fill as u32, bar_h, colour);
-    } else {
-        buf.fill_rect(centre_x - fill, y, fill as u32, bar_h, colour);
-    }
-    // Direction arrow + strength number next to bar (e.g. "← 7" or "3 →")
+
     let strength = (wind.value().abs() * 10.0).round() as u32;
+    let colour = if wind.value() >= 0.0 { Bgra::new(80, 180, 255) } else { Bgra::new(255, 140, 60) };
+
+    // Empty background track
+    buf.fill_rect(bar_x, y, bar_w as u32, bar_h, Bgra::new(40, 40, 60));
+
+    // Fill from left edge — length proportional to magnitude, no empty gap on either side
+    let fill = (wind.value().abs() * bar_w as f32) as i32;
+    if fill > 0 {
+        buf.fill_rect(bar_x, y, fill as u32, bar_h, colour);
+    }
+
+    // Direction label left or right of bar (e.g. "<7" or "7>")
     let label = if wind.value() < -0.05 {
         format!("<{}", strength)
     } else if wind.value() > 0.05 {
-        format!("{}>" , strength)
+        format!("{}>", strength)
     } else {
-        "0".to_string()
+        "~".to_string()
     };
     let lw = str_width(&label);
     draw_str(buf, &label, centre_x - lw / 2, HUD_Y + 4, colour);
@@ -141,6 +139,7 @@ pub fn draw_game_over(
     kills:        [u32; 2],  // [team0_kills, team1_kills]
     hp_left:      [u32; 2],  // [team0_hp, team1_hp]
     memo_line:    &str,
+    winner_color: u8,        // colour identity (0-3) of the winning team
 ) {
     let sw  = SCREEN_W as i32;
     let sh  = SCREEN_H as i32;
@@ -174,8 +173,8 @@ pub fn draw_game_over(
             draw_str(buf, hint, mid - str_width(hint)/2, y_hint, Bgra::new(100,100,140));
         }
         Some(winner) => {
-            let team_col  = TEAM_COLOURS[winner.min(3)];
-            let team_name = match winner { 0 => "RED", 1 => "BLUE", 2 => "GREEN", _ => "YELLOW" };
+            let team_col  = TEAM_COLOURS[winner_color.min(3) as usize];
+            let team_name = match winner_color { 0 => "RED", 1 => "BLUE", 2 => "GREEN", _ => "YELLOW" };
 
             // Avatar
             {
@@ -188,7 +187,7 @@ pub fn draw_game_over(
                 Some(me) if me == winner => ("YOU'RE A WINNER!", Bgra::new(255, 230, 50)),
                 Some(_)                  => ("YOU'RE A LOSER!",  Bgra::new(220, 70, 70)),
                 None => {
-                    let s: &'static str = match winner {
+                    let s: &'static str = match winner_color {
                         0 => "RED TEAM WINS!",
                         1 => "BLUE TEAM WINS!",
                         2 => "GREEN TEAM WINS!",
@@ -353,15 +352,15 @@ mod tests {
     #[test]
     fn game_over_winner_draws_without_panic() {
         let mut b = buf();
-        draw_game_over(&mut b, Some(0), Some(0), 0, 0, 0); // winner sees win message
-        draw_game_over(&mut b, Some(3), Some(0), 0, 3, 0); // loser sees lose message
-        draw_game_over(&mut b, Some(1), None,    0, 1, 0); // hotseat — team name
+        draw_game_over(&mut b, Some(0), Some(0), 0, 0, 0, [0,0], [0,0], "", 0); // winner sees win message
+        draw_game_over(&mut b, Some(3), Some(0), 0, 3, 0, [0,0], [0,0], "", 3); // loser sees lose message
+        draw_game_over(&mut b, Some(1), None,    0, 1, 0, [0,0], [0,0], "", 1); // hotseat — team name
     }
 
     #[test]
     fn game_over_draw_draws_without_panic() {
         let mut b = buf();
-        draw_game_over(&mut b, None, None, 0, 0, 0);
+        draw_game_over(&mut b, None, None, 0, 0, 0, [0,0], [0,0], "", 0);
     }
 
     // ── Countdown ────────────────────────────────────────────────────────────

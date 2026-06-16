@@ -1,5 +1,3 @@
-mod msg;
-
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -8,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use msg::*;
+use arty::net::{msg::*, encode};
+use arty::game::net_sync::build_state;
 use log::info;
 
 // Pull in the real game modules
@@ -876,145 +875,6 @@ fn too_close_to_soldiers_srv(game: &GameState, pos: WorldPos) -> bool {
     })
 }
 
-fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMsg {
-    let phase = match game.turn.phase {
-        TurnPhase::Acting       => NetPhase::Acting,
-        TurnPhase::Watching     => NetPhase::Watching,
-        TurnPhase::Retreating{..}=> NetPhase::Retreating,
-        TurnPhase::Ending       => NetPhase::Ending,
-    };
-    StateMsg {
-        tick,
-        soldiers: game.teams.iter().enumerate().flat_map(|(ti, t)| t.soldiers.iter().map(move |s| {
-            use arty::game::soldier::SoldierState;
-            let (airborne, spinning) = match s.state {
-                SoldierState::Airborne { spinning, .. } => (true, spinning),
-                _ => (false, false),
-            };
-            NetSoldier {
-                team: ti, color_id: t.color_id, index: s.index,
-                x: s.pos.x, y: s.pos.y,
-                hp: s.hp, facing: s.facing, dead: s.is_dead(), has_fired: s.has_fired,
-                selected_weapon: t.selected_weapon,
-                airborne, spinning, airtime: s.airtime, walk_ticks: s.walk_ticks,
-                walking: matches!(s.state, arty::game::soldier::SoldierState::Walking { .. }),
-                hat_id: s.hat_id, uniform_color_id: s.uniform_color_id,
-                boot_color_id: s.boot_color_id, gun_style_id: s.gun_style_id,
-                name: s.name.clone(),
-                death_cause_u8: {
-                    use arty::game::soldier::DeathCause;
-                    match s.death_cause {
-                        DeathCause::Generic => 0, DeathCause::Explosion => 1,
-                        DeathCause::Fall => 2, DeathCause::Water => 3,
-                    }
-                },
-            }
-        })).collect(),
-        projectiles: game.projectiles.iter().map(|p| {
-            use arty::physics::projectile::FuseState;
-            NetProjectile {
-                x: p.pos.x, y: p.pos.y,
-                vel_x: p.vel.x, vel_y: p.vel.y,
-                kind_u8: p.kind.to_net_u8(),
-                fuse_ticks: match p.fuse { FuseState::Burning(n) => n, _ => 0 },
-                is_fragment: p.is_fragment,
-            }
-        }).collect(),
-        wind: game.wind.value(),
-        turn_team: game.active_team(),
-
-        turn_secs: game.turn.secs_remaining(),
-        active_soldier: game.teams[game.active_team()].active,
-        phase,
-        aim_angle: game.aim.angle,
-        aim_power: game.aim.power,
-        result: match game.result {
-            arty::game::state::GameResult::Ongoing   => NetResult::Ongoing,
-            arty::game::state::GameResult::Winner(t) => NetResult::Winner(t),
-            arty::game::state::GameResult::Draw      => NetResult::Draw,
-        },
-        // Send the full crater log every tick — a StateMsg can be silently
-        // dropped (write_team! ignores write errors under the 50ms write
-        // timeout), and a dropped delta would permanently desync the
-        // client's terrain. The client dedupes by length (see apply_server_state).
-        craters: game.crater_log.iter()
-            .map(|e| NetCrater { cx: e.0, cy: e.1, radius: e.2 }).collect(),
-        messages: game.messages.iter()
-            .map(|m| NetMessage { text: m.text.clone(), team: m.team.map(|t| t as i8).unwrap_or(-1), ticks: m.ticks })
-            .collect(),
-        graves: game.graves.iter().map(|g| NetGrave {
-            x: g.pos.x, y: g.pos.y, team: g.team, headstone_id: g.headstone_id,
-        }).collect(),
-        blood_splats: game.blood_splats.iter().map(|(p, t)| NetBloodSplat {
-            x: p.x, y: p.y, ticks: *t,
-        }).collect(),
-        weapon_menu_open:   game.weapon_menu_open,
-        weapon_menu_cursor: game.weapon_menu_cursor,
-        aim_fuse_ticks:     game.aim.fuse_ticks,
-        crates: game.crates.iter().map(|c| {
-            use arty::game::state::CrateKind;
-            NetCrate {
-                x: c.pos.x, y: c.pos.y, landed: c.landed,
-                kind_u8: match c.kind { CrateKind::Health => 0, CrateKind::Weapon(_) => 1, CrateKind::Scrap(_) => 2 },
-            }
-        }).collect(),
-        mines: game.mines.iter().map(|m| {
-            use arty::game::state::MineState;
-            NetMine {
-                x: m.pos.x, y: m.pos.y,
-                state_u8: match m.state { MineState::Arming => 0, MineState::Armed => 1, MineState::Triggered => 2 },
-                arm_ticks: m.arm_ticks,
-                trigger_ticks: m.trigger_ticks,
-            }
-        }).collect(),
-        sounds: game.sounds.clone(),
-        barrels: game.barrels.iter().map(|b| NetBarrel {
-            x: b.pos.x, y: b.pos.y, hp: b.hp,
-        }).collect(),
-        black_holes: game.black_holes.iter().map(|h| NetBlackHole {
-            x: h.pos.x, y: h.pos.y, ticks_left: h.lifetime,
-        }).collect(),
-        fire_patches: game.fire_patches.iter().map(|f| NetFirePatch {
-            x: f.pos.x, y: f.pos.y, lifetime: f.lifetime,
-            landed: f.landed, vel_x: f.vel.x, vel_y: f.vel.y,
-        }).collect(),
-        rope: game.rope.as_ref().map(|r| NetRope {
-            anchor_x: r.anchor.x, anchor_y: r.anchor.y,
-            hook_x: r.hook.x, hook_y: r.hook.y,
-            flying: r.flying, length: r.length,
-        }),
-        team_names: game.teams.iter().map(|t| t.name.clone()).collect(),
-        team_colors: game.teams.iter().map(|t| t.color_id).collect(),
-        garcia: game.garcia.as_ref().map(|g| NetGarcia {
-            cursor_x: g.cursor_x, render_x: g.render_x, cursor_y: g.cursor_y, render_y: g.render_y,
-            blink_timer: g.blink_timer,
-            falling: g.falling, fall_y: g.fall_y, vel_y: g.vel_y, bounce_count: g.bounce_count,
-        }),
-        airstrike: game.airstrike.as_ref().map(|a| NetAirstrike {
-            cursor_x: a.cursor_x, render_x: a.render_x, cursor_y: a.cursor_y, render_y: a.render_y,
-            blink_timer: a.blink_timer, active: a.active,
-            plane_x: a.plane_x, plane_vx: a.plane_vx,
-            bombs_dropped: a.bombs_dropped, direction_right: a.direction_right,
-        }),
-        torch_dir: {
-            use arty::game::state::TorchDir;
-            match game.plasma_torch.as_ref().map(|t| t.dir) {
-                Some(TorchDir::UpForward)   => 1,
-                Some(TorchDir::Forward)     => 2,
-                Some(TorchDir::DownForward) => 3,
-                None                        => 0,
-            }
-        },
-        paused_opponent: None,
-        opponent_abandoned: false,
-        team_weapons: game.teams.iter().map(|t| NetTeamWeapons {
-            selected: t.selected_weapon,
-            weapons: t.weapons.iter().map(|(k, a)| {
-                (k.to_net_u8(), a.map_or(0xFFFF, |n| n as u32))
-            }).collect(),
-        }).collect(),
-    }
-}
 
 fn read_loop(mut s: TcpStream, inbox: Arc<Mutex<Option<InputMsg>>>) {
     loop {
@@ -1066,7 +926,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.236";
+const REQUIRED_VERSION: &str = "0.5.4.237";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

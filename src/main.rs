@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.236";
+const VERSION: &str = "0.5.4.237";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -760,9 +760,11 @@ fn main() {
             let mut latest_state: Option<net::msg::StateMsg> = None;
             let mut first_projectiles: Option<Vec<net::msg::NetProjectile>> = None;
             let mut pending_sounds: Vec<u8> = Vec::new();
+            let mut pending_fx: Vec<crate::renderer::fx::FxEvent> = Vec::new();
             while let Some(state) = conn.try_recv::<net::msg::StateMsg>() {
                 if state.tick != last_sound_tick {
                     pending_sounds.extend_from_slice(&state.sounds);
+                    pending_fx.extend_from_slice(&state.fx_events);
                     last_sound_tick = state.tick;
                 }
                 if first_projectiles.is_none() {
@@ -770,10 +772,15 @@ fn main() {
                 }
                 latest_state = Some(state);
             }
-            // Play the server's recorded SFX (skip while the game-over overlay is up).
+            // Play the server's recorded SFX + spawn its recorded FX (skip while
+            // the game-over overlay is up). Mirrors the sounds channel so effects
+            // spawned in the sim appear on the live client without bespoke replay.
             if final_result.is_none() {
                 for id in &pending_sounds {
                     if let Some(s) = crate::audio::Sfx::from_u8(*id) { crate::audio::play(s); }
+                }
+                for ev in &pending_fx {
+                    crate::renderer::fx::apply_event(&mut game.fx, ev);
                 }
             }
             let got_state = latest_state.is_some();
@@ -785,7 +792,7 @@ fn main() {
                 // While showing the 10-second game-over overlay, don't let a new-game
                 // StateMsg (result=Ongoing) from the server clear our final result.
                 if final_result.is_none() {
-                    apply_server_state(&mut game, &mut cam, &state, my_team);
+                    game::net_sync::apply_server_state(&mut game, &mut cam, &state, my_team);
                     // Restore projectile positions from the FIRST state received this
                     // frame so multi-state frames don't cause a 2-tick position jump.
                     if let Some(projs) = first_projectiles {
@@ -1015,7 +1022,10 @@ fn main() {
                 let wa = if let Some(w) = winner { game.teams.get(w).map(|t| t.avatar_id).unwrap_or(0) } else { 0 };
                 let (kills, hp_left, memo) = game::loop_runner::match_end_stats(&game);
                 let wc = winner.and_then(|w| game.teams.get(w)).map(|t| t.color_id).unwrap_or(0);
-                crate::renderer::hud::draw_game_over(&mut buf, winner, Some(my_team), cam.left_edge() as i32, wa, elo_delta, kills, hp_left, &memo, wc);
+                // Pass None (not Some(my_team)) so the headline reads
+                // "RED/BLUE TEAM WINS!" identically to local modes. The ELO line
+                // is gated on elo_delta != 0, so ranked still shows it.
+                crate::renderer::hud::draw_game_over(&mut buf, winner, None, cam.left_edge() as i32, wa, elo_delta, kills, hp_left, &memo, wc);
                 if opponent_abandoned {
                     use renderer::font::{draw_str_scaled, str_width_scaled};
                     let msg = "OPPONENT LEFT - YOU WIN";
@@ -1852,299 +1862,6 @@ fn draw_msg(buf: &mut WorldBuffer, fb: &mut Framebuffer, msg: &str) {
 }
 
 
-fn apply_server_state(
-    game:    &mut game::state::GameState,
-    _cam:    &mut renderer::Camera,
-    state:   &net::msg::StateMsg,
-    my_team: usize,
-) {
-    // Soldiers that newly died this state update — death messages are generated
-    // client-side (server only has default names; the client uses the names it
-    // actually displays). Death SFX still come from StateMsg.sounds.
-    let mut new_deaths: Vec<(String, usize, usize, u8)> = Vec::new();
-    for ns in &state.soldiers {
-        if let Some(team) = game.teams.get_mut(ns.team) {
-            if let Some(soldier) = team.soldiers.get_mut(ns.index) {
-                let was_alive = soldier.hp > 0;
-                if ns.dead && was_alive {
-                    new_deaths.push((soldier.name.clone(), ns.team, ns.index, ns.death_cause_u8));
-                }
-                if ns.hp < soldier.hp { soldier.hp_display_ticks = 150; }
-                soldier.pos.x           = ns.x;
-                soldier.pos.y           = ns.y;
-                soldier.hp              = ns.hp;
-                soldier.facing          = ns.facing;
-                soldier.has_fired       = ns.has_fired;
-                soldier.airtime         = ns.airtime;
-                soldier.walk_ticks      = ns.walk_ticks;
-                // Sync opponent cosmetics and names (local player's own are set from roster at game start)
-                if ns.team != my_team {
-                    soldier.hat_id           = ns.hat_id;
-                    soldier.uniform_color_id = ns.uniform_color_id;
-                    soldier.boot_color_id    = ns.boot_color_id;
-                    soldier.gun_style_id     = ns.gun_style_id;
-                    soldier.name             = ns.name.clone();
-                }
-                use game::soldier::SoldierState;
-                soldier.state = if ns.dead {
-                    SoldierState::Dead
-                } else if ns.airborne {
-                    SoldierState::Airborne { vel: world::Vec2::new(0.0, 0.0), spinning: ns.spinning }
-                } else if ns.walking {
-                    SoldierState::Walking { dir: ns.facing as f32 }
-                } else {
-                    SoldierState::Idle
-                };
-            }
-        }
-        // Sync opponent team's selected weapon for correct gun visual
-        if ns.team != my_team {
-            if let Some(team) = game.teams.get_mut(ns.team) {
-                team.selected_weapon = ns.selected_weapon;
-            }
-        }
-    }
-    // Push client-side death messages for soldiers that just died (parity with
-    // local modes; uses the names the client displays + the networked cause).
-    for (name, team, idx, cause_u8) in new_deaths {
-        use game::soldier::DeathCause;
-        let cause = match cause_u8 {
-            1 => DeathCause::Explosion, 2 => DeathCause::Fall,
-            3 => DeathCause::Water, _ => DeathCause::Generic,
-        };
-        let seed = game.tick.wrapping_mul(1664525)
-            .wrapping_add(team as u32 * 7).wrapping_add(idx as u32 * 13);
-        let phrase = game::loop_runner::death_phrase(cause, seed);
-        game.messages.push(game::state::GameMessage {
-            text: format!("{} {}", name, phrase), team: Some(team), ticks: 120,
-        });
-    }
-    game.projectiles.clear();
-    for np in &state.projectiles {
-        use crate::physics::projectile::{Projectile, WeaponKind, FuseState};
-        use crate::world::{Vec2, WorldPos};
-        let kind = WeaponKind::from_net_u8(np.kind_u8);
-        let mut proj = Projectile::new(WorldPos::new(np.x, np.y), Vec2::new(np.vel_x, np.vel_y), kind);
-        if np.fuse_ticks > 0 {
-            proj.fuse = FuseState::Burning(np.fuse_ticks);
-        }
-        proj.is_fragment = np.is_fragment;
-        game.projectiles.push(proj);
-    }
-    // On opponent's turn, apply their aim angle from server state for display.
-    // On our turn, keep local angle (managed by process_aim() for smooth no-RTT aiming).
-    if state.turn_team != my_team {
-        game.aim.angle = state.aim_angle;
-    }
-    game.aim.power          = state.aim_power;
-    // aim_fuse_ticks, weapon_menu_open/cursor, selected_weapon managed locally.
-    // Detect turn change for message queue
-    let prev_team   = game.turn.current_team;
-    let prev_active = game.teams.get(prev_team).map(|t| t.active).unwrap_or(0);
-
-    game.wind               = crate::physics::Wind::new(state.wind);
-    game.turn.ticks_left = state.turn_secs * 30;
-    game.turn.current_team = state.turn_team;
-
-    if state.turn_team != prev_team || state.active_soldier != prev_active {
-        game::loop_runner::push_turn_message(game);
-    }
-    if let Some(t) = game.teams.get_mut(state.turn_team) { t.active = state.active_soldier; }
-    // Snap the camera to the new active soldier on a turn change so it doesn't
-    // lerp/shake across the map from the previous turn's framing.
-    if state.turn_team != prev_team || state.active_soldier != prev_active {
-        if let Some(s) = game.teams.get(state.turn_team).and_then(|t| t.soldiers.get(state.active_soldier)) {
-            _cam.snap_to(s.pos);
-        }
-    }
-    game.turn.phase = match state.phase {
-        net::msg::NetPhase::Acting       => crate::game::turn::TurnPhase::Acting,
-        net::msg::NetPhase::Watching     => crate::game::turn::TurnPhase::Watching,
-        net::msg::NetPhase::Retreating   => crate::game::turn::TurnPhase::Retreating { ticks_left: 30 },
-        net::msg::NetPhase::Ending       => crate::game::turn::TurnPhase::Ending,
-    };
-    // Sync game result from server
-    game.result = match state.result {
-        net::msg::NetResult::Ongoing   => crate::game::state::GameResult::Ongoing,
-        net::msg::NetResult::Winner(t) => crate::game::state::GameResult::Winner(t),
-        net::msg::NetResult::Draw      => crate::game::state::GameResult::Draw,
-    };
-    // Sync crate positions from server (server is authoritative on drops/collection)
-    game.crates = state.crates.iter().map(|nc| {
-        use crate::game::state::CrateKind;
-        use crate::physics::projectile::WeaponKind;
-        crate::game::state::DroppedCrate {
-            pos:        crate::world::WorldPos::new(nc.x, nc.y),
-            // Variant only drives the rendered colour/symbol; payload is a
-            // placeholder (server owns the real contents on collection).
-            kind:       match nc.kind_u8 {
-                1 => CrateKind::Weapon(WeaponKind::Bazooka),
-                2 => CrateKind::Scrap(0),
-                _ => CrateKind::Health,
-            },
-            landed:     nc.landed,
-            descent_vy: 1.5,
-            damage_this_turn: 0,
-            fall_ticks: 0,
-        }
-    }).collect();
-
-    // Sync mines (server-authoritative: positions, states, countdowns)
-    game.mines = state.mines.iter().map(|nm| {
-        use crate::game::state::{PlacedMine, MineState};
-        use crate::world::WorldPos;
-        PlacedMine {
-            pos: WorldPos::new(nm.x, nm.y),
-            state: match nm.state_u8 {
-                2 => MineState::Triggered,
-                1 => MineState::Armed,
-                _ => MineState::Arming,
-            },
-            arm_ticks: nm.arm_ticks,
-            trigger_ticks: nm.trigger_ticks,
-        }
-    }).collect();
-
-    // Plasma torch: reconstruct the active torch state from the networked direction
-    // so the live client draws the flame at the tip (5c in render). While the torch
-    // is active, its terrain carving produces a stream of craters every tick — DON'T
-    // spawn explosion flashes for those (they'd flash over the soldier/body carve).
-    use crate::game::state::{PlasmaTorchState, TorchDir};
-    let torch_active = state.torch_dir != 0;
-    game.plasma_torch = match state.torch_dir {
-        1 => Some(PlasmaTorchState { dir: TorchDir::UpForward,   fuel_ticks: 1 }),
-        2 => Some(PlasmaTorchState { dir: TorchDir::Forward,     fuel_ticks: 1 }),
-        3 => Some(PlasmaTorchState { dir: TorchDir::DownForward, fuel_ticks: 1 }),
-        _ => None,
-    };
-
-    // `state.craters` is the full match history every tick; only apply the
-    // tail we haven't seen yet.
-    let known = game.crater_log.len();
-    for nc in state.craters.iter().skip(known) {
-        use crate::world::{Crater, WorldPos};
-        Crater::new(nc.cx, nc.cy, nc.radius).carve(&mut game.terrain);
-        game.crater_log.push((nc.cx, nc.cy, nc.radius));
-        if !torch_active {
-            game.explosions.push(crate::game::state::Explosion::new(
-                WorldPos::new(nc.cx, nc.cy), nc.radius,
-            ));
-        }
-    }
-
-    // Sync event messages (crate pickups etc.) — server is authoritative for
-    // both content and remaining-tick countdown.
-    game.messages = state.messages.iter().map(|m| crate::game::state::GameMessage {
-        text: m.text.clone(),
-        team: if m.team < 0 { None } else { Some(m.team as usize) },
-        ticks: m.ticks,
-    }).collect();
-
-    // Sync headstones (server-authoritative; settled server-side). Rendering only
-    // uses pos/team/headstone_id, so the other fields are placeholders.
-    game.graves = state.graves.iter().map(|ng| crate::game::state::Grave {
-        pos:          crate::world::WorldPos::new(ng.x, ng.y),
-        team:         ng.team,
-        soldier_idx:  0,
-        died_tick:    0,
-        vel_y:        0.0,
-        settled:      true,
-        headstone_id: ng.headstone_id,
-    }).collect();
-
-    // Sync blood splats (server-authoritative; decayed server-side).
-    game.blood_splats = state.blood_splats.iter()
-        .map(|nb| (crate::world::WorldPos::new(nb.x, nb.y), nb.ticks))
-        .collect();
-
-    // Sync barrels (positions + hp from server)
-    {
-        use crate::game::state::{Barrel, BarrelState};
-        use crate::world::{Vec2, WorldPos};
-        game.barrels = state.barrels.iter().map(|nb| Barrel {
-            pos: WorldPos::new(nb.x, nb.y),
-            vel: Vec2::new(0.0, 0.0),
-            hp: nb.hp,
-            state: BarrelState::Normal,
-        }).collect();
-    }
-
-    // Sync black holes
-    {
-        use crate::game::state::BlackHole;
-        use crate::world::WorldPos;
-        game.black_holes = state.black_holes.iter().map(|nb| BlackHole {
-            pos: WorldPos::new(nb.x, nb.y),
-            lifetime: nb.ticks_left,
-        }).collect();
-    }
-
-    // Sync fire patches
-    {
-        use crate::game::state::FirePatch;
-        use crate::world::{Vec2, WorldPos};
-        game.fire_patches = state.fire_patches.iter().map(|nf| FirePatch {
-            pos: WorldPos::new(nf.x, nf.y),
-            vel: Vec2::new(nf.vel_x, nf.vel_y),
-            landed: nf.landed,
-            lifetime: nf.lifetime,
-        }).collect();
-    }
-
-    // Sync rope (rendering only — physics runs on server)
-    {
-        use crate::game::state::RopeState;
-        use crate::world::WorldPos;
-        game.rope = state.rope.as_ref().map(|nr| RopeState {
-            anchor:   WorldPos::new(nr.anchor_x, nr.anchor_y),
-            hook:     WorldPos::new(nr.hook_x,   nr.hook_y),
-            flying:   nr.flying,
-            length:   nr.length,
-            hook_vel: crate::world::Vec2::new(0.0, 0.0),
-        });
-    }
-
-    // Sync every team's display name and colour identity from the server
-    // (supports 2-4 teams with player-picked colours in casual lobbies).
-    for (i, team) in game.teams.iter_mut().enumerate() {
-        if let Some(name) = state.team_names.get(i) {
-            if !name.is_empty() { team.name = name.clone(); }
-        }
-        if let Some(&c) = state.team_colors.get(i) {
-            team.color_id = c.min(3);
-        }
-    }
-
-    // Sync Garcia (Hand of Jerry)
-    {
-        use crate::game::state::GarciaState;
-        game.garcia = state.garcia.as_ref().map(|ng| GarciaState {
-            cursor_x: ng.cursor_x, render_x: ng.render_x, cursor_y: ng.cursor_y, render_y: ng.render_y,
-            blink_timer: ng.blink_timer,
-            falling: ng.falling, fall_y: ng.fall_y, vel_y: ng.vel_y, bounce_count: ng.bounce_count,
-        });
-    }
-    // Sync Airstrike
-    {
-        use crate::game::state::AirstrikeState;
-        game.airstrike = state.airstrike.as_ref().map(|na| AirstrikeState {
-            cursor_x: na.cursor_x, render_x: na.render_x, cursor_y: na.cursor_y, render_y: na.render_y,
-            blink_timer: na.blink_timer, active: na.active,
-            plane_x: na.plane_x, plane_vx: na.plane_vx,
-            bombs_dropped: na.bombs_dropped, direction_right: na.direction_right,
-        });
-    }
-    // Sync weapon inventories so ammo counts and selection stay accurate
-    for (i, tw) in state.team_weapons.iter().enumerate() {
-        if let Some(team) = game.teams.get_mut(i) {
-            use physics::projectile::WeaponKind;
-            team.weapons = tw.weapons.iter()
-                .map(|&(k, a)| (WeaponKind::from_net_u8(k), if a == 0xFFFF { None } else { Some(a) }))
-                .collect();
-            team.selected_weapon = tw.selected.min(team.weapons.len().saturating_sub(1));
-        }
-    }
-}
 
 
 

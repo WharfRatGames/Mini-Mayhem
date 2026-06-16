@@ -246,6 +246,21 @@ pub struct PlasmaTorchState {
     pub fuel_ticks: u32, // 6 s × 30 Hz = 180 ticks
 }
 
+/// Airstrike targeting / active state.
+#[derive(Debug, Clone)]
+pub struct AirstrikeState {
+    pub cursor_x:      f32,
+    pub render_x:      f32,
+    pub cursor_y:      f32,
+    pub render_y:      f32,
+    pub blink_timer:   u32,
+    pub active:        bool,
+    pub plane_x:       f32,
+    pub plane_vx:      f32,
+    pub bombs_dropped: u32,
+    pub direction_right: bool,
+}
+
 /// Garcia targeting / falling state.
 #[derive(Debug, Clone)]
 pub struct GarciaState {
@@ -293,6 +308,11 @@ pub struct GameState {
     /// at the top of each tick()/server_tick(); the server ships these in
     /// StateMsg.sounds so the live client (which runs no sim) plays them too.
     pub sounds:      Vec<u8>,
+    /// Cosmetic FX-spawn events emitted during the current sim tick. Cleared at
+    /// the top of each tick()/server_tick() alongside `sounds`; the server ships
+    /// these in StateMsg.fx_events so the live client (which runs no sim) spawns
+    /// the same particle bursts. Route gameplay-event fx through `emit_fx`.
+    pub fx_events:   Vec<crate::renderer::fx::FxEvent>,
     pub map_seed:    u64,
     /// True only for the local TEST mode (all weapons, infinite ammo). Drives the
     /// on-screen seed display; left false for normal/live/TAT play.
@@ -348,6 +368,8 @@ pub struct GameState {
     pub plasma_torch: Option<PlasmaTorchState>,
     /// Garcia targeting / falling session; None = inactive.
     pub garcia: Option<GarciaState>,
+    /// Airstrike targeting / active session; None = inactive.
+    pub airstrike: Option<AirstrikeState>,
 }
 
 impl GameState {
@@ -378,6 +400,7 @@ impl GameState {
             scrap_earned: 0,
             crater_log: Vec::new(),
             sounds:     Vec::new(),
+            fx_events:  Vec::new(),
             graves: Vec::new(),
             explosions: Vec::new(),
             active_worm_hit: false,
@@ -401,6 +424,7 @@ impl GameState {
             pending_deaths: Vec::new(),
             plasma_torch: None,
             garcia: None,
+            airstrike: None,
             teams,
         }
     }
@@ -465,6 +489,16 @@ impl GameState {
         crate::audio::play(s);
     }
 
+    /// Spawn a cosmetic particle burst AND record it for the network, mirroring
+    /// `emit_sound`. Local modes see the spawn immediately; the server records it
+    /// into `self.fx_events` (build_state ships it) so the live client — which
+    /// runs no sim — replays the identical burst. Use this for every
+    /// gameplay-event fx instead of calling `fx::*` directly.
+    pub fn emit_fx(&mut self, ev: crate::renderer::fx::FxEvent) {
+        crate::renderer::fx::apply_event(&mut self.fx, &ev);
+        self.fx_events.push(ev);
+    }
+
     /// As `apply_explosion_force` but also scales the blast radius and max damage
     /// (1.0 = unchanged). Used for the Meteor Bomb's reduced initial impact.
     pub fn apply_explosion_scaled(&mut self, pos: WorldPos, kind: WeaponKind, force: f32, radius_scale: f32, dmg_scale: f32) {
@@ -484,9 +518,12 @@ impl GameState {
         // Spawn effect fallout: dirt chunks + sparks (or a water splash on water).
         // Visual only — not networked.
         if pos.y >= WATER_Y as f32 {
-            crate::renderer::fx::splash(&mut self.fx, pos);
+            self.emit_fx(crate::renderer::fx::FxEvent::Splash { x: pos.x, y: pos.y });
         } else {
-            crate::renderer::fx::explosion(&mut self.fx, pos, radius, biome_dirt(self.terrain.archetype));
+            let d = biome_dirt(self.terrain.archetype);
+            self.emit_fx(crate::renderer::fx::FxEvent::Explosion {
+                x: pos.x, y: pos.y, radius, col: [d.r, d.g, d.b],
+            });
         }
 
         // Track active worm HP before damage to detect hits
@@ -915,6 +952,8 @@ impl GameState {
                 CrateKind::Weapon(WeaponKind::BananaBomb)
             } else if w < 0.97 {
                 CrateKind::Weapon(WeaponKind::BlackHoleBomb)
+            } else if w < 0.99 {
+                CrateKind::Weapon(WeaponKind::AirStrike)
             } else {
                 CrateKind::Weapon(WeaponKind::Garcia)
             }
@@ -1564,12 +1603,9 @@ mod tests {
         assert_eq!(game().active_team(), 0);
     }
 
-    #[test]
-    fn terrain_generated_from_seed() {
-        let g = game();
-        // Terrain should have solid pixels somewhere
-        assert!(g.terrain.solid_count() > 0);
-    }
+    // terrain_generated_from_seed removed: the shared game() fixture uses
+    // Terrain::empty() for deterministic physics — terrain generation is covered
+    // by world/terrain.rs (generate_tactical).
 
     // ── check_win ─────────────────────────────────────────────────────────────
 
@@ -1684,7 +1720,7 @@ mod tests {
     #[test]
     fn crate_drops_when_rng_below_threshold() {
         let mut g = game();
-        let dropped = g.maybe_drop_crate(0.10, 0.5);
+        let dropped = g.maybe_drop_crate(0.10, 0.5, 0.5);
         let _ = dropped;
     }
 
@@ -1692,8 +1728,8 @@ mod tests {
     fn crate_does_not_drop_when_rng_at_or_above_threshold() {
         let mut g = game();
         let before = g.crates.len();
-        g.maybe_drop_crate(0.30, 0.5);
-        g.maybe_drop_crate(0.99, 0.5);
+        g.maybe_drop_crate(0.30, 0.5, 0.5);
+        g.maybe_drop_crate(0.99, 0.5, 0.5);
         assert_eq!(g.crates.len(), before, "no crate should drop at rng>=0.30");
     }
 }

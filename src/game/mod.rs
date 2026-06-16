@@ -7,6 +7,7 @@ pub mod team;
 pub mod turn;
 pub mod state;
 pub mod loop_runner;
+pub mod net_sync;
 
 pub use soldier::{Soldier, SoldierState};
 pub use team::Team;

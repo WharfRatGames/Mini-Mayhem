@@ -141,8 +141,8 @@ mod tests {
     fn land_beyond_safe_distance_deals_damage() {
         let mut t = FallTracker::new();
         t.begin_fall(100.0);
-        let dmg = t.land(100.0 + SAFE_FALL_PX + 20.0); // 20px excess → 20*0.25 = 5
-        assert_eq!(dmg, 5);
+        let dmg = t.land(100.0 + SAFE_FALL_PX + 20.0); // 20px excess → 20*0.15 = 3
+        assert_eq!(dmg, 3);
     }
 
     #[test]
@@ -213,19 +213,19 @@ mod tests {
     fn multiple_falls_work_independently() {
         let mut t = FallTracker::new();
 
-        // First fall: 50px excess → 50*0.25 = 12.5 → rounds to 13
+        // First fall: 50px excess → 50*0.15 = 7.5 → rounds to 8
         t.begin_fall(100.0);
         let dmg1 = t.land(100.0 + SAFE_FALL_PX + 50.0);
-        assert_eq!(dmg1, 13);
+        assert_eq!(dmg1, 8);
 
-        // Second fall: 10px excess → 10*0.25 = 2.5 → rounds to 3
+        // Second fall: 10px excess → 10*0.15 = 1.5 → rounds to 2
         t.begin_fall(200.0);
         let dmg2 = t.land(200.0 + SAFE_FALL_PX + 10.0);
-        assert_eq!(dmg2, 3);
+        assert_eq!(dmg2, 2);
     }
 
     #[test]
-    fn safe_fall_constant_is_40_pixels() {
-        assert_eq!(SAFE_FALL_PX, 40.0);
+    fn safe_fall_constant_is_80_pixels() {
+        assert_eq!(SAFE_FALL_PX, 80.0);
     }
 }

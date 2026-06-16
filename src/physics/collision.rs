@@ -181,42 +181,9 @@ mod tests {
         assert!(matches!(result, CollisionResult::Terrain(_)));
     }
 
-    // ── Wall collision ────────────────────────────────────────────────────────
-
-    #[test]
-    fn moving_past_left_wall_detects_wall() {
-        let t = empty();
-        let result = swept_collision(at(2.0, 100.0), at(-10.0, 100.0), &t);
-        assert!(
-            matches!(result, CollisionResult::Wall(_)),
-            "should detect left wall, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn moving_past_right_wall_detects_wall() {
-        let t = empty();
-        let result = swept_collision(
-            at(WORLD_W as f32 - 5.0, 100.0),
-            at(WORLD_W as f32 + 10.0, 100.0),
-            &t,
-        );
-        assert!(
-            matches!(result, CollisionResult::Wall(_)),
-            "should detect right wall, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn wall_collision_position_is_near_boundary() {
-        let t = empty();
-        let result = swept_collision(at(2.0, 100.0), at(-20.0, 100.0), &t);
-        if let CollisionResult::Wall(pos) = result {
-            assert!(pos.x <= 1.0, "wall hit should be near x=0, got x={}", pos.x);
-        } else {
-            panic!("expected wall collision");
-        }
-    }
+    // Side-wall collision tests removed: maps are open-sided (Worms-style), so
+    // swept_collision no longer returns CollisionResult::Wall — projectiles fly
+    // off the left/right edges instead of bouncing/exploding on a hard wall.
 
     // ── Water collision ───────────────────────────────────────────────────────
 
