@@ -20,7 +20,7 @@ use std::sync::OnceLock;
 /// Number of backgrounds in the pool (BG2.png is a 3×3 contact sheet, BG1.png
 /// is a 2×3 sheet contributing 6 more slices, bg3.png is another 3×3 sheet
 /// contributing 9 more).
-const BG_COUNT: usize = 24;
+const BG_COUNT: usize = 45;
 
 struct Decoded {
     w: u32,
@@ -53,6 +53,27 @@ static PNGS: [&[u8]; BG_COUNT] = [
     include_bytes!("../../deploy/assets/backgrounds/bg3_6.png"),
     include_bytes!("../../deploy/assets/backgrounds/bg3_7.png"),
     include_bytes!("../../deploy/assets/backgrounds/bg3_8.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_0.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_1.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_2.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_3.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_4.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_5.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_6.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_7.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg4_8.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_0.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_1.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_2.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_3.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_4.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_5.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_6.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_7.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_8.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_9.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_10.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg5_11.png"),
 ];
 
 /// Pick which background to use for a map. Deterministic from the seed so client
@@ -93,7 +114,7 @@ const BORDER_CROP: u32 = 10;
 fn decoded() -> &'static [Option<Decoded>; BG_COUNT] {
     DECODED.get_or_init(|| std::array::from_fn(|i| {
         let img = decode(PNGS[i])?;
-        if i >= 9 && img.w > BORDER_CROP * 2 && img.h > BORDER_CROP * 2 {
+        if i >= 9 && i < 33 && img.w > BORDER_CROP * 2 && img.h > BORDER_CROP * 2 {
             Some(crop(&img, BORDER_CROP))
         } else {
             Some(img)
