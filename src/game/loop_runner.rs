@@ -2434,17 +2434,12 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain, &lstate.bg_cache, game.map_seed);
     mark!("terrain+bg");
 
-    // 2. Water ripple — cached strip, regenerated every 3 ticks or on camera move.
+    // 2. Water ripple — cached strip, regenerated every tick (30 Hz).
     {
         use crate::renderer::draw_sprites::{render_water_strip, WATER_STRIP_H};
-        let phase = game.tick / 3;
-        if phase != lstate.water_strip_tick || cam_x != lstate.water_strip_cam {
-            render_water_strip(&mut lstate.water_strip, game.tick, cam_x);
-            lstate.water_strip_tick = phase;
-            lstate.water_strip_cam  = cam_x;
-        }
+        render_water_strip(&mut lstate.water_strip, game.tick, cam_x);
         buf.blit_water_strip(&lstate.water_strip, cam_x);
-        let _ = WATER_STRIP_H; // suppress unused import warning
+        let _ = WATER_STRIP_H;
     }
     mark!("water");
 
