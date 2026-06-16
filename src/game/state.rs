@@ -54,6 +54,9 @@ pub struct AimState {
     pub charge_ticks: u32,
     /// Selected fuse length in ticks (for grenade-type weapons).
     pub fuse_ticks: u32,
+    /// A must be released at least once before charging is allowed (prevents
+    /// menu-confirm A press from firing immediately at turn start).
+    pub charge_armed: bool,
 }
 
 impl AimState {
@@ -63,6 +66,7 @@ impl AimState {
             power: 0.0,
             charge_ticks: 0,
             fuse_ticks: 90, // default 3 s at 30 Hz
+            charge_armed: false,
         }
     }
 
@@ -76,6 +80,7 @@ impl AimState {
     pub fn reset(&mut self) {
         self.power = 0.0;
         self.charge_ticks = 0;
+        self.charge_armed = false;
     }
 }
 

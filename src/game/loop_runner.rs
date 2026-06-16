@@ -10,7 +10,7 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{
     WorldBuffer, Bgra,
-    draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_water_surface, draw_headstone, draw_explosion, draw_garcia_sprite},
+    draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_headstone, draw_explosion, draw_garcia_sprite},
     skeleton::{draw_soldier_skeletal, SoldierAnim},
     draw_terrain,
     hud::{draw_game_over, draw_pause_menu},
@@ -112,10 +112,17 @@ pub struct LoopState {
     /// Per-section pixel-write counts from the most recent frame's render
     /// (TEST mode profiling overlay — see `render_my_team`'s `mark!` calls).
     pub pixel_stats:              Vec<(&'static str, u64)>,
+    /// Cached water surface strip (SCREEN_W × WATER_STRIP_H × 4 BGRA bytes).
+    /// Regenerated every 3 ticks or when cam_x changes; blitted each frame.
+    pub water_strip:      Vec<u8>,
+    pub water_strip_tick: u32,  // last tick/3 bucket when strip was built
+    pub water_strip_cam:  u32,  // cam_x used when strip was built
 }
 
 impl LoopState {
     pub fn new() -> Self {
+        use crate::renderer::draw_sprites::{WATER_STRIP_H};
+        use crate::world::SCREEN_W;
         Self {
             paused: false, pause_open_tick: 0, tick: 0, pause_cursor: 0,
             weapon_menu_open: false, weapon_menu_cursor: 0, fire_grace: 0,
@@ -127,6 +134,9 @@ impl LoopState {
             bg_debris: Vec::new(),
             display_fps: 0,
             pixel_stats: Vec::new(),
+            water_strip: vec![0u8; (SCREEN_W * WATER_STRIP_H * 4) as usize],
+            water_strip_tick: u32::MAX,
+            water_strip_cam: u32::MAX,
         }
     }
 }
@@ -346,6 +356,7 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
             game.teams[ti].selected_weapon = 0;
             game.aim.angle = std::f32::consts::FRAC_PI_4;
             game.aim.power = 0.0;
+            game.aim.charge_armed = false;
             push_turn_message(game);
             } // end airborne-guard else
         }
@@ -512,6 +523,7 @@ pub fn tick(
             lstate.pause_open_tick = lstate.tick;
             lstate.fire_grace      = 10; // block fire for 10 ticks after resume
             game.aim.power         = 0.0;
+            game.aim.charge_armed  = false;
         };
         if input.just_pressed(Button::Start) && settle { resume(lstate, game); }
         if input.just_pressed(Button::B)               { resume(lstate, game); }
@@ -1263,12 +1275,20 @@ fn process_fire(game: &mut GameState, input: &InputState) {
     }
 
     // All other weapons: hold A to charge, release to fire (Worms-style one-way).
-    const CHARGE_RATE:     f32 = 0.02;  // 0.6/s at 30 Hz; full charge ~50 ticks
-    const MIN_FIRE_POWER:  f32 = 0.06; // ~3 ticks — prevents menu-confirm from firing
+    // charge_armed prevents the menu-confirm A press from firing: A must be released
+    // at least once before charging begins.
+    const CHARGE_RATE: f32 = 0.02;  // 0.6/s at 30 Hz; full charge ~50 ticks
 
     let is_bazooka = weapon == WeaponKind::Bazooka;
 
-    if input.held(Button::A) {
+    if !input.held(Button::A) {
+        if !game.aim.charge_armed {
+            game.aim.charge_armed = true;
+        } else if game.aim.power > 0.0 {
+            fire_weapon(game);
+            game.aim.power = 0.0;
+        }
+    } else if game.aim.charge_armed {
         // Longer charge meter for every weapon: charge can build up to MAX_CHARGE.
         // power=1.0 still maps to the same velocity as before (feel unchanged for a
         // normal full charge); the extra band 1.0..MAX_CHARGE is bonus range.
@@ -1277,11 +1297,6 @@ fn process_fire(game: &mut GameState, input: &InputState) {
             fire_weapon(game);
             game.aim.power = 0.0;
         }
-    } else if game.aim.power > 0.0 {
-        if game.aim.power >= MIN_FIRE_POWER {
-            fire_weapon(game);
-        }
-        game.aim.power = 0.0;
     }
 }
 
@@ -2419,8 +2434,18 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain, &lstate.bg_cache, game.map_seed);
     mark!("terrain+bg");
 
-    // 2. Water ripple (dynamic — not cached)
-    draw_water_surface(buf, game.tick, cam_x);
+    // 2. Water ripple — cached strip, regenerated every 3 ticks or on camera move.
+    {
+        use crate::renderer::draw_sprites::{render_water_strip, WATER_STRIP_H};
+        let phase = game.tick / 3;
+        if phase != lstate.water_strip_tick || cam_x != lstate.water_strip_cam {
+            render_water_strip(&mut lstate.water_strip, game.tick, cam_x);
+            lstate.water_strip_tick = phase;
+            lstate.water_strip_cam  = cam_x;
+        }
+        buf.blit_water_strip(&lstate.water_strip, cam_x);
+        let _ = WATER_STRIP_H; // suppress unused import warning
+    }
     mark!("water");
 
     // Viewport bounds for culling
@@ -2747,8 +2772,6 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             // Falling: draw scaled GARCIA sprite (~5× worm height, close to classic Worms Donkey scale)
             let fy = garcia.fall_y as i32;
             draw_garcia_sprite(buf, rx, fy, 80, 107);
-            // Redraw water surface on top so the falling hand sinks behind it.
-            draw_water_surface(buf, game.tick, cam_x);
         }
     }
 

@@ -697,6 +697,113 @@ pub fn draw_think_indicator(buf: &mut WorldBuffer, pos: WorldPos, tick: u32) {
 
 /// Draw Worms-style water: animated wave crests with gradient depth and foam highlights.
 ///
+/// Y coordinate in world space where the water strip cache starts (12px above WATER_Y
+/// to cover the highest possible wave crest sky-restoration region).
+pub const WATER_STRIP_TOP: u32 = crate::world::WATER_Y - 12;
+/// Height of the water strip cache in pixels. Covers WATER_STRIP_TOP..WATER_STRIP_TOP+WATER_STRIP_H.
+pub const WATER_STRIP_H: u32 = 32;
+
+/// Render the water surface into a flat BGRA byte strip (`SCREEN_W × WATER_STRIP_H × 4` bytes).
+/// The strip covers world-y rows [WATER_STRIP_TOP, WATER_STRIP_TOP+WATER_STRIP_H).
+/// Call this every 3 ticks (or when cam_x changes) and blit the result each frame.
+pub fn render_water_strip(strip: &mut [u8], tick: u32, cam_x: u32) {
+    use crate::world::{WORLD_W, WORLD_H, SCREEN_W, WATER_Y};
+    let base_y  = WATER_Y as i32;
+    let world_h = WORLD_H as i32;
+    let strip_top = WATER_STRIP_TOP as i32;
+    let strip_h   = WATER_STRIP_H as i32;
+
+    let body    = Bgra::water();
+    let mid     = Bgra::new(45, 115, 210);
+    let surface = Bgra::new(70, 160, 235);
+    let crest   = Bgra::new(110, 195, 250);
+    let foam    = Bgra::new(215, 235, 252);
+
+    // Zero the strip first — positions we don't fill will be transparent (alpha=0)
+    // which we treat as "skip" when blitting.
+    strip.fill(0);
+
+    let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W)) as i32;
+    let end_x = cam_x + SCREEN_W as i32;
+    let mut x = cam_x;
+    while x < end_x {
+        let xf = x as f32;
+        let tf = tick as f32;
+        let w0 = (xf * 0.038 + tf * 0.10).sin() * 5.5;
+        let w1 = (xf * 0.080 - tf * 0.16).sin() * 3.0;
+        let w2 = (xf * 0.160 + tf * 0.22).sin() * 1.5;
+        let wave = (w0 + w1 + w2) as i32;
+        let top  = base_y + wave;
+        let foam_phase = (xf * 0.11 + tf * 0.08).sin();
+
+        let x2 = (x + 1).min(end_x - 1);
+        for &xi in &[x, x2] {
+            let sx = (xi - cam_x) as usize; // screen-relative x
+
+            // Sky restoration: in troughs (top > base_y+2) the band [base_y, top-2]
+            // was filled with water body by the world cache but should show sky.
+            if top - 2 > base_y {
+                for wy in base_y..(top - 2) {
+                    if wy < strip_top || wy >= strip_top + strip_h { continue; }
+                    let sy = (wy - strip_top) as usize;
+                    let sky = crate::renderer::draw_terrain::sky_colour(xi, wy, 0);
+                    let off = (sy * SCREEN_W as usize + sx) * 4;
+                    strip[off]     = sky.b;
+                    strip[off + 1] = sky.g;
+                    strip[off + 2] = sky.r;
+                    strip[off + 3] = 0xFF;
+                }
+            }
+
+            let fill_start = (top - 2).max(0);
+            let fill_end   = (top + 8).min(world_h);
+            for wy in fill_start..fill_end {
+                if wy < strip_top || wy >= strip_top + strip_h { continue; }
+                let depth = wy - top;
+                let colour = match depth {
+                    d if d < 0 => body,
+                    0 | 1      => crest,
+                    2 | 3      => surface,
+                    4 | 5      => mid,
+                    6 | 7      => Bgra::new(38, 98, 195),
+                    _          => body,
+                };
+                let sy = (wy - strip_top) as usize;
+                let off = (sy * SCREEN_W as usize + sx) * 4;
+                strip[off]     = colour.b;
+                strip[off + 1] = colour.g;
+                strip[off + 2] = colour.r;
+                strip[off + 3] = 0xFF;
+            }
+
+            if foam_phase > 0.30 {
+                for wy in [top, top + 1] {
+                    if wy >= strip_top && wy < strip_top + strip_h {
+                        let sy = (wy - strip_top) as usize;
+                        let off = (sy * SCREEN_W as usize + sx) * 4;
+                        strip[off]     = foam.b;
+                        strip[off + 1] = foam.g;
+                        strip[off + 2] = foam.r;
+                        strip[off + 3] = 0xFF;
+                    }
+                }
+            }
+            if foam_phase > 0.60 {
+                let wy = top - 1;
+                if wy >= strip_top && wy < strip_top + strip_h {
+                    let sy = (wy - strip_top) as usize;
+                    let off = (sy * SCREEN_W as usize + sx) * 4;
+                    strip[off]     = foam.b;
+                    strip[off + 1] = foam.g;
+                    strip[off + 2] = foam.r;
+                    strip[off + 3] = 0xFF;
+                }
+            }
+        }
+        x += 2;
+    }
+}
+
 /// The terrain renderer already fills the water body (WATER_Y..WORLD_H) with Bgra::water().
 /// This function overpaints the surface zone with brighter colours + animated foam.
 pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {

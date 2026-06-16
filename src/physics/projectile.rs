@@ -95,7 +95,7 @@ impl WeaponKind {
             Self::Blasthive        => 5,     // per bee sting
             Self::BlackHoleBomb    => 35,    // collapse burst damage
             Self::PlasmaTorch      => 0,     // no explosion
-            Self::Garcia           => 85,
+            Self::Garcia           => 45,
         }
     }
 
