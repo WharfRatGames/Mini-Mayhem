@@ -229,7 +229,7 @@ impl StoreScreen {
                         buf.fill_rect(icon_cx + sw/2,     icon_cy - sh/2 - 1, 1, sh as u32 + 2, Bgra::new(60,70,100));
                     }
                     "boots" => {
-                        cosmetic_sprites::draw_boot(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h);
+                        cosmetic_sprites::draw_boot(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h, false);
                     }
                     _ => {}
                 }

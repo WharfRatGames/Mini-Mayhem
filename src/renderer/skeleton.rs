@@ -360,7 +360,7 @@ pub fn draw_soldier_skeletal(
     thick_line(buf, hip.0, hip.1, back_knee.0, back_knee.1, body_col, 5);
     thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, dark_col, 7);
     thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, body_col, 5);
-    draw_boot(buf, boot_color_id, back_foot.0 as i32, back_foot.1 as i32, 5, 4);
+    draw_boot(buf, boot_color_id, back_foot.0 as i32, back_foot.1 as i32, 5, 4, f < 0.0);
 
     // ── Back arm ──────────────────────────────────────────────────────────────
     let (back_arm, fwd_arm) = if f >= 0.0 { (arm_l_vis, arm_r_vis) } else { (arm_r_vis, arm_l_vis) };
@@ -405,7 +405,7 @@ pub fn draw_soldier_skeletal(
     thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, body_col, 5);
     thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, dark_col, 7);
     thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, body_col, 5);
-    draw_boot(buf, boot_color_id, front_foot.0 as i32, front_foot.1 as i32, 5, 4);
+    draw_boot(buf, boot_color_id, front_foot.0 as i32, front_foot.1 as i32, 5, 4, f < 0.0);
 
     // ── Front arm ─────────────────────────────────────────────────────────────
     thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, dark_col, 5);

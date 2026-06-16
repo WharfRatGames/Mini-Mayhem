@@ -121,12 +121,30 @@ pub fn draw_gun(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, 
 }
 
 /// Draw boot sprite (id 0–5) centred at (cx, cy), scaled to render_w × render_h.
-pub fn draw_boot(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32) {
+/// `flip` mirrors horizontally for left-facing soldiers so the toe points forward.
+pub fn draw_boot(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32, flip: bool) {
     let idx = id as usize;
     let sprites = boot_sprites();
     if idx >= sprites.len() { return; }
     let sp = match &sprites[idx] { Some(s) => s, None => return };
-    blit_scaled(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h);
+    let x0 = cx - render_w / 2;
+    let y0 = cy - render_h / 2;
+    if !flip {
+        blit_scaled(buf, sp, x0, y0, render_w, render_h);
+    } else {
+        // Horizontal flip: sample from mirrored x position
+        if render_w <= 0 || render_h <= 0 { return; }
+        for dy in 0..render_h {
+            for dx in 0..render_w {
+                let sx = ((render_w - 1 - dx) * sp.w as i32 / render_w) as usize;
+                let sy = (dy * sp.h as i32 / render_h) as usize;
+                if sx >= sp.w || sy >= sp.h { continue; }
+                let [r, g, b, a] = sp.px[sy * sp.w + sx];
+                if a < 16 { continue; }
+                buf.set_pixel(x0 + dx, y0 + dy, super::fb::Bgra::new(r, g, b));
+            }
+        }
+    }
 }
 
 /// Draw gun sprite `id` rotated/scaled so its grip sits at `origin` and its
