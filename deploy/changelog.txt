@@ -1,3 +1,4 @@
+0.5.4.235  Live camera: tracks airstrike cursor during targeting phase; follows nearest explosion when projectiles land.
 0.5.4.234  Live mode parity fixes: wind particles now drift across full screen; explosion FX animate; soldiers interleaved across map (not side-locked); airstrike plane/bombs now visible to opponent.
 0.5.4.233  Equip screen: press A to enter cycling mode for selected cosmetic, dpad left/right to cycle, A to confirm, B to cancel. START saves all changes.
 0.5.4.232  Casual live mode now uses a 4-player lobby: up to 4 players join, pick a team colour (red/blue/green/yellow) and ready up; match starts when all (2+) are ready. Lobby shows each player's name, avatar and colour. In-game names and health bars use each team's chosen colour.
