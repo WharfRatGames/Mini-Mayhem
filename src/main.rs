@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.235";
+const VERSION: &str = "0.5.4.236";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -939,16 +939,20 @@ fn main() {
                     cam.follow_always(e.pos);
                 }
             } else {
-                // Follow the active soldier only. Following transient airborne
-                // soldiers (knockback victims) made the camera flicker back and
-                // forth between them and the active soldier as their state toggled
-                // across network updates — keep it locked on the active soldier.
+                // Airborne soldiers from knockback — use nearest-to-center heuristic
+                // (same as update_camera Watching branch) to avoid flip-flopping.
+                let cam_center = cam.left_edge_f32() + world::SCREEN_W as f32 / 2.0;
+                use game::soldier::SoldierState;
+                let airborne = game.teams.iter().flat_map(|t| t.soldiers.iter())
+                    .filter(|s| matches!(s.state, SoldierState::Airborne { .. }))
+                    .map(|s| s.pos)
+                    .min_by(|a, b| (a.x - cam_center).abs()
+                        .partial_cmp(&(b.x - cam_center).abs()).unwrap());
                 let ti = game.turn.current_team();
-                if let Some(team) = game.teams.get(ti) {
-                    if let Some(s) = team.soldiers.get(team.active) {
-                        cam.follow(s.pos);
-                    }
-                }
+                let active_pos = game.teams.get(ti)
+                    .and_then(|t| t.soldiers.get(t.active))
+                    .map(|s| s.pos);
+                if let Some(pos) = airborne.or(active_pos) { cam.follow(pos); }
             }
             if input.just_released(input::Button::R1) { cam.release_pan(); }
             game::loop_runner::update_visuals(&mut game);
@@ -2129,6 +2133,16 @@ fn apply_server_state(
             plane_x: na.plane_x, plane_vx: na.plane_vx,
             bombs_dropped: na.bombs_dropped, direction_right: na.direction_right,
         });
+    }
+    // Sync weapon inventories so ammo counts and selection stay accurate
+    for (i, tw) in state.team_weapons.iter().enumerate() {
+        if let Some(team) = game.teams.get_mut(i) {
+            use physics::projectile::WeaponKind;
+            team.weapons = tw.weapons.iter()
+                .map(|&(k, a)| (WeaponKind::from_net_u8(k), if a == 0xFFFF { None } else { Some(a) }))
+                .collect();
+            team.selected_weapon = tw.selected.min(team.weapons.len().saturating_sub(1));
+        }
     }
 }
 
