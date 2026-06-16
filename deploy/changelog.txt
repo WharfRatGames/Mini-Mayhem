@@ -1,6 +1,7 @@
-0.5.4.217  Garcia hand damage reduced to 45 per hit (was 85); water surface rendering cached to cut per-frame work; weapon charging now requires A to be released once before firing (prevents menu-confirm accidental shots).
-0.5.4.197  Fix opponent name showing your own name on the non-active player's screen in live matches (server now sends both team names instead of one computed relative to whose turn it is); Propeller Hat's spinning blade is now scaled down to match the hat.
-0.5.4.196  Propeller Hat's spinning propeller now matches its hub on the hat icon; Plasma Torch can now be fired and used as a weapon in mid-air with no terrain nearby; Black Hole projectile now renders as a swirling void with orbiting glow; update screen changelog text now wraps instead of running off-screen; Garcia airdrop cursor now starts near your soldier instead of off-screen in the sky; soldiers now squirm while standing in fire; CPU opponents now use their full weapon loadout (Grenade, Shotgun, Tnt, Meteor Bomb, Blasthive, Black Hole), not just Bazooka.
+0.5.4.220  Update screen smaller font; terrain top 40% sky clear on hills/canyon maps; cliff/cave/island maps unchanged.
+0.5.4.219  Garcia damage 45/hit; A release required before weapon charge.
+0.5.4.197  Fix opponent name showing as your own in live matches; Propeller Hat blade scaled correctly.
+0.5.4.196  Black Hole renders as swirling void; Plasma Torch fires in mid-air; CPU uses full weapon set; soldiers squirm in fire.
 0.5.4.182  Propeller Hat blades now spin, with direction and speed following the current wind.
 0.5.4.181  Cowboy Hat, Pirate Hat, Viking Helm, Beanie, Bandana, Angel Ring, Flamethrower, Rocket Launcher, and SMG cosmetics now all draw correctly on your soldier in-game (previously shop-icon only).
 0.5.4.180  New cosmetics: Beanie, Bandana, and Angel Ring hats, plus an SMG gun style. Boot cosmetics (all colors) now use a redesigned sprite shape in-game.

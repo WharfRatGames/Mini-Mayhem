@@ -620,6 +620,19 @@ impl Terrain {
             }
         }
 
+        // ── Phase 2a: Sky clearance (hills + canyon only) ────────────────────────
+        // Keep the top 40% of the screen (y < 192) free of terrain on flat maps.
+        // Overhangs (1), islands (2), and caverns (3) are exempt — they intentionally
+        // use the upper screen area.
+        if matches!(archetype, 0 | 4) {
+            const SKY_FLOOR: u32 = 192; // 40% of SCREEN_H=480
+            for y in TERRAIN_MIN_Y..SKY_FLOOR.min(WATER_Y) {
+                for x in 0..WORLD_W as i32 {
+                    terrain.set_solid(x, y as i32, false);
+                }
+            }
+        }
+
         // ── Phase 2b: Overhang shelves (cliffs archetype) ─────────────────────────
         // A monotonic density field can't fold over itself, so genuine overhangs are
         // stamped explicitly: a horizontal slab floats above the local surface with an
@@ -746,7 +759,8 @@ impl Terrain {
                 let surf = terrain.surface_y_at(cx as u32).unwrap_or(TERRAIN_MAX_Y) as i32;
                 (surf + rnd(&mut rng, 60.0, 35.0) as i32).min(WATER_Y as i32 - 6)
             };
-            carve_chasm(&mut terrain, cx, half_w, TERRAIN_MIN_Y as i32, bottom_y, drift);
+            let chasm_top = if matches!(archetype, 0 | 4) { 192i32 } else { TERRAIN_MIN_Y as i32 };
+            carve_chasm(&mut terrain, cx, half_w, chasm_top, bottom_y, drift);
         }
 
         // ── Phase 6a: Isolated-pixel removal (remove 1-pixel spikes) ──────────────
