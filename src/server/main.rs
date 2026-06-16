@@ -800,18 +800,11 @@ fn build_game(seed: u64) -> GameState {
 fn build_game_n(seed: u64, colors: &[u8]) -> GameState {
     let mut terrain = arty::world::Terrain::generate_tactical(seed);
     let n = colors.len().clamp(2, 4);
+    let all_spawns = terrain.find_team_spawns(0, WORLD_W, n * 4);
     let mut teams = Vec::with_capacity(n);
     for i in 0..n {
-        let (lo, hi) = if n == 2 {
-            // Preserve the historical split exactly.
-            if i == 0 { (0, WORLD_W / 2 - 40) } else { (WORLD_W / 2 + 40, WORLD_W) }
-        } else {
-            let band = WORLD_W / n as u32;
-            let lo = band * i as u32 + 20;
-            let hi = band * (i as u32 + 1) - 20;
-            (lo, hi.min(WORLD_W))
-        };
-        let spawns = terrain.find_team_spawns(lo, hi, 4);
+        let spawns: Vec<_> = all_spawns.iter().cloned()
+            .enumerate().filter(|(k, _)| k % n == i).map(|(_, s)| s).collect();
         let mut team = Team::new(i, false, Difficulty::Medium, &spawns);
         team.set_color(colors[i]);
         teams.push(team);
@@ -997,6 +990,12 @@ fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMsg {
             blink_timer: g.blink_timer,
             falling: g.falling, fall_y: g.fall_y, vel_y: g.vel_y, bounce_count: g.bounce_count,
         }),
+        airstrike: game.airstrike.as_ref().map(|a| NetAirstrike {
+            cursor_x: a.cursor_x, render_x: a.render_x, cursor_y: a.cursor_y, render_y: a.render_y,
+            blink_timer: a.blink_timer, active: a.active,
+            plane_x: a.plane_x, plane_vx: a.plane_vx,
+            bombs_dropped: a.bombs_dropped, direction_right: a.direction_right,
+        }),
         torch_dir: {
             use arty::game::state::TorchDir;
             match game.plasma_torch.as_ref().map(|t| t.dir) {
@@ -1061,7 +1060,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.233";
+const REQUIRED_VERSION: &str = "0.5.4.234";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
