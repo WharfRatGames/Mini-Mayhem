@@ -204,6 +204,28 @@ impl WorldBuffer {
         self.pixel_writes += SCREEN_W as u64 * (y1.saturating_sub(y0)) as u64;
     }
 
+    /// Blit a pre-rendered water strip (SCREEN_W × WATER_STRIP_H × 4 BGRA bytes) into
+    /// the world buffer. Only pixels with alpha=0xFF are written; alpha=0 means "skip"
+    /// (used to leave deep-water/terrain pixels from the world cache untouched).
+    pub fn blit_water_strip(&mut self, strip: &[u8], cam_x: u32) {
+        use crate::renderer::draw_sprites::{WATER_STRIP_TOP, WATER_STRIP_H};
+        let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+        let row_bytes = SCREEN_W as usize * 4;
+        for sy in 0..WATER_STRIP_H as usize {
+            let wy = WATER_STRIP_TOP as usize + sy;
+            if wy >= WORLD_H as usize { break; }
+            let strip_row = &strip[sy * row_bytes..(sy + 1) * row_bytes];
+            let dst_off = (wy as u32 * WORLD_W + cam_x) as usize * 4;
+            let dst_row = &mut self.data[dst_off..dst_off + row_bytes];
+            for (src, dst) in strip_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
+                if src[3] == 0xFF {
+                    dst.copy_from_slice(src);
+                }
+            }
+            self.pixel_writes += SCREEN_W as u64;
+        }
+    }
+
     /// Like copy_viewport_from, but for rows above the waterline only copies
     /// pixels where the terrain is solid — sky pixels are left untouched so
     /// atmospheric background layers drawn earlier remain visible.
