@@ -1022,7 +1022,7 @@ impl CosmeticsScreen {
                         let sh = (icon_h / 2) as u32;
                         buf.fill_rect(center_x - sw as i32 / 2, icon_cy - sh as i32 / 2, sw, sh, col);
                     },
-                    2 => cosmetic_sprites::draw_boot(buf, id, center_x, icon_cy, icon_w, icon_h),
+                    2 => cosmetic_sprites::draw_boot(buf, id, center_x, icon_cy, icon_w, icon_h, false),
                     3 => cosmetic_sprites::draw_gun(buf, id, center_x, icon_cy, icon_w, icon_h),
                     _ => {}
                 }
