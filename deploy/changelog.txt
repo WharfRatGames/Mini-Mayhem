@@ -1,4 +1,15 @@
-0.5.4.221  Cave maps redesigned: start fully solid, carve horizontal corridors+chambers+shafts from rock (Worms Armageddon style).
+0.5.4.233  Equip screen: press A to enter cycling mode for selected cosmetic, dpad left/right to cycle, A to confirm, B to cancel. START saves all changes.
+0.5.4.232  Casual live mode now uses a 4-player lobby: up to 4 players join, pick a team colour (red/blue/green/yellow) and ready up; match starts when all (2+) are ready. Lobby shows each player's name, avatar and colour. In-game names and health bars use each team's chosen colour.
+0.5.4.231  Wind particles fixed: no longer disappear when camera scrolls; fill full airspace to waterline. Airstrike direction label centered at top of screen.
+0.5.4.230  Plasma torch: longer flame with visible beam; no longer propels soldier through air; damages enemy soldiers in beam path.
+0.5.4.229  Wind particles now fill full airspace down to waterline; particle counts increased across all biomes.
+0.5.4.228  Air Strike: more damage (75, radius 38); cursor moves on Y axis; no sound until bombs drop.
+0.5.4.227  Air Strike: bombs now drop as plane passes over target; yellow crosshair cursor; direction label top-center; tighter bomb spread.
+0.5.4.226  Air Strike weapon: crate-only, unlocks after 7 turn cycles; cursor targeting with 5 drop markers; plane flies in from left dropping 5 bombs in sequence.
+0.5.4.225  Bat launches soldier before damage; hat icons bigger in equip screen; wind particles fill full airspace to waterline with more density; Halo redrawn as profile-view ring; barrel placement fixed (no longer clips into terrain); wind meter redesigned (magnitude bar, no empty gap); black terrain seam fix.
+0.5.4.224  Worms-style spawning: both teams scatter across full map (no fixed sides); cave soldiers spawn underground; more wind particles throughout full screen height; Pirate Tricorn hat now readable in-game; equip screen hat icons correct proportions; charge meter thinner at start.
+0.5.4.223  Cave maps now have two corridor levels (upper+lower) with connecting shafts and dead-end tunnels; all soldiers spawn underground on cave maps; hats 19-24 now show in equip screen; Fez no longer floats; MP menu condensed (CASUAL launches directly, no extra PLAY screen).
+0.5.4.222  Cave maps redesigned: start fully solid, carve horizontal corridors+chambers+shafts from rock (Worms Armageddon style).
 0.5.4.220  Update screen smaller font; terrain sky clear on hills/canyon maps.
 0.5.4.219  Garcia damage 45/hit; A release required before weapon charge.
 0.5.4.197  Fix opponent name showing as your own in live matches; Propeller Hat blade scaled correctly.
