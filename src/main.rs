@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.221";
+const VERSION: &str = "0.5.4.233";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -525,26 +525,44 @@ fn main() {
     }
     let mut my_team: usize = 0;
     let mut server_seed: Option<u64> = None;
+    let mut team_count: usize = 2;
+    let mut my_color: u8 = 0;
+    // Final lobby roster (casual) — index = compact team index. Used to seed
+    // each team's colour/name before the first StateMsg arrives.
+    let mut lobby_players: Vec<net::msg::LobbyPlayer> = Vec::new();
     if let Some(ref mut conn) = net_conn {
-        // Short read timeout so recv_blocking returns quickly and B can be polled
-        conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(200))).ok();
-        let mut settle = 0u32;
-        let welcome = loop {
-            settle += 1;
-            input.poll();
-            if input.just_pressed(input::Button::Start) || input.just_pressed(input::Button::B) {
-                break None;
+        let welcome = if is_live && !is_live_ranked {
+            // Casual: run the lobby (ready-up + pick colour).
+            match run_casual_lobby(&mut fb, &mut buf, &mut input, conn, live_roster.as_ref()) {
+                Some((w, players)) => { lobby_players = players; Some(w) }
+                None => None,
             }
-            draw_msg(&mut buf, &mut fb, "WAITING FOR OPPONENT... B=CANCEL");
-            if let Some(w) = conn.recv_blocking::<net::msg::WelcomeMsg>() { break Some(w); }
+        } else {
+            // Ranked: wait for the opponent the server pairs us with.
+            conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(200))).ok();
+            loop {
+                input.poll();
+                if input.just_pressed(input::Button::Start) || input.just_pressed(input::Button::B) {
+                    break None;
+                }
+                draw_msg(&mut buf, &mut fb, "WAITING FOR OPPONENT... B=CANCEL");
+                if let Some(w) = conn.recv_blocking::<net::msg::WelcomeMsg>() { break Some(w); }
+            }
         };
         if let Some(w) = welcome {
             conn.stream.set_read_timeout(None).ok(); // clear timeout for gameplay
-            my_team = w.your_team;
+            my_team     = w.your_team;
             server_seed = Some(w.seed);
+            team_count  = w.team_count.clamp(2, 4);
+            my_color    = w.your_color.min(3);
             conn.start_reader();
-            let msg = if my_team == 0 { "YOU ARE RED  -  YOUR TURN FIRST" } else { "YOU ARE BLUE  -  OPPONENT GOES FIRST" };
-            draw_msg(&mut buf, &mut fb, msg);
+            let colour_name = ["RED", "BLUE", "GREEN", "YELLOW"][my_color as usize];
+            let msg = if my_team == 0 {
+                format!("YOU ARE {}  -  YOUR TURN FIRST", colour_name)
+            } else {
+                format!("YOU ARE {}", colour_name)
+            };
+            draw_msg(&mut buf, &mut fb, &msg);
             std::thread::sleep(std::time::Duration::from_millis(800));
         } else {
             // B pressed — drop connection and return to title
@@ -554,7 +572,17 @@ fn main() {
     }
     if is_tat { run_take_a_turn(&mut fb, &mut input, &mut buf); continue 'game; }
     let game_seed = server_seed.unwrap_or_else(current_time_seed);
-    let mut game    = build_default_game(game_seed);
+    let mut game    = build_default_game_n(game_seed, team_count);
+    // Seed colours from the welcome / lobby so the intro screen and first frames
+    // render in the right team colours (the first StateMsg then keeps them synced).
+    if let Some(t) = game.teams.get_mut(my_team) { t.set_color(my_color); }
+    for (i, p) in lobby_players.iter().enumerate() {
+        if let Some(t) = game.teams.get_mut(i) {
+            if let Some(c) = p.color_id { t.set_color(c); }
+            if !p.name.is_empty() { t.name = p.name.clone(); }
+            t.avatar_id = p.avatar_id;
+        }
+    }
     // Test mode: give every team the full weapon set with infinite ammo.
     if is_test {
         use physics::projectile::WeaponKind;
@@ -572,6 +600,7 @@ fn main() {
             (WeaponKind::BlackHoleBomb, None),
             (WeaponKind::PlasmaTorch,   None),
             (WeaponKind::Garcia,        None),
+            (WeaponKind::AirStrike,     None),
         ];
         for team in &mut game.teams {
             team.weapons = all_weapons.clone();
@@ -956,7 +985,8 @@ fn main() {
                 let winner = if let game::state::GameResult::Winner(t) = fr { Some(*t) } else { None };
                 let wa = if let Some(w) = winner { game.teams.get(w).map(|t| t.avatar_id).unwrap_or(0) } else { 0 };
                 let (kills, hp_left, memo) = game::loop_runner::match_end_stats(&game);
-                crate::renderer::hud::draw_game_over(&mut buf, winner, Some(my_team), cam.left_edge() as i32, wa, elo_delta, kills, hp_left, &memo);
+                let wc = winner.and_then(|w| game.teams.get(w)).map(|t| t.color_id).unwrap_or(0);
+                crate::renderer::hud::draw_game_over(&mut buf, winner, Some(my_team), cam.left_edge() as i32, wa, elo_delta, kills, hp_left, &memo, wc);
                 if opponent_abandoned {
                     use renderer::font::{draw_str_scaled, str_width_scaled};
                     let msg = "OPPONENT LEFT - YOU WIN";
@@ -1068,13 +1098,210 @@ fn build_default_game(seed: u64) -> GameState {
     build_default_game_opts(seed, true, true)
 }
 
+/// Build a client-side game with `team_count` teams (2-4). Soldier positions are
+/// server-authoritative in live play (synced every StateMsg), so spawn placement
+/// here only needs to be valid, not match the server exactly. The 2-team case
+/// defers to the original full-map interleave for parity with local/ranked play.
+fn build_default_game_n(seed: u64, team_count: usize) -> GameState {
+    let n = team_count.clamp(2, 4);
+    if n == 2 { return build_default_game(seed); }
+    let mut terrain = Terrain::generate_tactical(seed);
+    let mut teams = Vec::with_capacity(n);
+    for i in 0..n {
+        let band = WORLD_W / n as u32;
+        let lo = band * i as u32 + 20;
+        let hi = (band * (i as u32 + 1)).saturating_sub(20).min(WORLD_W);
+        let spawns = terrain.find_team_spawns(lo, hi, 4);
+        teams.push(Team::new(i, false, Difficulty::Medium, &spawns));
+    }
+    let mut game = GameState::new(seed, terrain, teams, n);
+    place_map_mines(&mut game);
+    place_map_barrels(&mut game);
+    game
+}
+
+/// Casual lobby screen: announce our roster, let the player pick a colour and
+/// ready up, and render everyone in the lobby until the server starts the match.
+/// Returns the WelcomeMsg + final roster on start, or None if the player backs out.
+fn run_casual_lobby(
+    fb:     &mut Framebuffer,
+    buf:    &mut WorldBuffer,
+    input:  &mut input::InputState,
+    conn:   &mut net::ServerConn,
+    roster: Option<&game::account::Roster>,
+) -> Option<(net::msg::WelcomeMsg, Vec<net::msg::LobbyPlayer>)> {
+    use net::msg::{LobbyClientMsg, LobbyServerMsg, LobbyJoin};
+
+    // Announce our roster.
+    let join = match roster {
+        Some(r) => LobbyJoin {
+            name: r.name.clone(), avatar_id: r.avatar_id, headstone_id: r.headstone_id,
+            worm_names: r.worm_names.clone(), hat_ids: r.hat_ids,
+            uniform_color_ids: r.uniform_color_ids, boot_color_ids: r.boot_color_ids,
+            gun_style_ids: r.gun_style_ids,
+        },
+        None => LobbyJoin {
+            name: "PLAYER".to_string(), avatar_id: 0, headstone_id: 0,
+            worm_names: [String::new(), String::new(), String::new(), String::new()],
+            hat_ids: [0;4], uniform_color_ids: [0;4], boot_color_ids: [0;4], gun_style_ids: [0;4],
+        },
+    };
+    conn.send(&LobbyClientMsg::Join(join));
+    conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(60))).ok();
+
+    let mut players: Vec<net::msg::LobbyPlayer> = Vec::new();
+    let mut your_index: usize = 0;
+    let mut my_color: u8 = 0;
+    let mut picked = false;   // whether we've sent an initial colour pick
+    let mut ready = false;
+
+    loop {
+        input.poll();
+        if input.just_pressed(input::Button::B) {
+            conn.send(&LobbyClientMsg::Leave);
+            return None;
+        }
+        // Cycle colour (skip colours already taken by other players).
+        let cycle = |dir: i32, cur: u8, players: &[net::msg::LobbyPlayer], me: usize| -> u8 {
+            let taken: Vec<u8> = players.iter().enumerate()
+                .filter(|(i, _)| *i != me)
+                .filter_map(|(_, p)| p.color_id).collect();
+            let mut c = cur as i32;
+            for _ in 0..4 {
+                c = (c + dir).rem_euclid(4);
+                if !taken.contains(&(c as u8)) { break; }
+            }
+            c as u8
+        };
+        if !ready {
+            let mut changed = false;
+            if input.just_pressed(input::Button::Left)  { my_color = cycle(-1, my_color, &players, your_index); changed = true; }
+            if input.just_pressed(input::Button::Right) { my_color = cycle( 1, my_color, &players, your_index); changed = true; }
+            if changed || !picked {
+                conn.send(&LobbyClientMsg::PickColor { color_id: my_color });
+                picked = true;
+            }
+        }
+        if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
+            ready = !ready;
+            conn.send(&LobbyClientMsg::SetReady { ready });
+        }
+
+        // Drain server messages.
+        while let Some(m) = conn.recv_blocking::<LobbyServerMsg>() {
+            match m {
+                LobbyServerMsg::State { players: ps, your_index: yi } => {
+                    players = ps; your_index = yi;
+                    // Adopt the server's view of our colour if it assigned/rejected one.
+                    if let Some(c) = players.get(your_index).and_then(|p| p.color_id) { my_color = c; }
+                    if let Some(p) = players.get(your_index) { ready = p.ready; }
+                }
+                LobbyServerMsg::Start(w) => {
+                    return Some((w, players));
+                }
+            }
+        }
+
+        draw_casual_lobby(buf, &players, your_index, ready);
+        buf.blit_to_fb(fb, 0);
+        std::thread::sleep(std::time::Duration::from_millis(33));
+    }
+}
+
+/// Render the casual lobby: a row per player with avatar, name (in team colour),
+/// chosen colour and ready state, plus the controls hint.
+fn draw_casual_lobby(
+    buf:        &mut WorldBuffer,
+    players:    &[net::msg::LobbyPlayer],
+    your_index: usize,
+    ready:      bool,
+) {
+    use renderer::Bgra;
+    use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+    use renderer::avatar::draw_avatar;
+    use renderer::draw_sprites::TEAM_COLOURS;
+    use world::{SCREEN_W, SCREEN_H};
+
+    let sw = SCREEN_W as i32;
+    let sh = SCREEN_H as i32;
+
+    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(8, 10, 22));
+    // Header
+    buf.fill_rect(0, 0, SCREEN_W, 40, Bgra::new(18, 22, 48));
+    let title = "CASUAL LOBBY";
+    let tw = str_width_scaled(title, 2);
+    draw_str_scaled(buf, title, sw / 2 - tw / 2, 12, Bgra::new(255, 210, 50), 2);
+
+    let colour_name = |c: Option<u8>| -> &'static str {
+        match c { Some(0) => "RED", Some(1) => "BLUE", Some(2) => "GREEN", Some(3) => "YELLOW", _ => "PICK COLOUR" }
+    };
+
+    // Player rows
+    const AV: u32 = 52;
+    let row_h = 64i32;
+    let top = 56i32;
+    for slot in 0..4usize {
+        let ry = top + slot as i32 * row_h;
+        let occupied = slot < players.len();
+        // Row panel
+        let panel = if occupied { Bgra::new(20, 24, 44) } else { Bgra::new(14, 16, 30) };
+        buf.fill_rect(20, ry, (sw - 40) as u32, (row_h - 8) as u32, panel);
+        if slot == your_index && occupied {
+            buf.fill_rect(20, ry, 4, (row_h - 8) as u32, Bgra::new(255, 210, 50));
+        }
+
+        if !occupied {
+            let waiting = "WAITING FOR PLAYER...";
+            draw_str(buf, waiting, 40, ry + row_h / 2 - 12, Bgra::new(70, 75, 95));
+            continue;
+        }
+
+        let p = &players[slot];
+        let col = p.color_id.map(|c| TEAM_COLOURS[c.min(3) as usize]).unwrap_or(Bgra::new(150, 150, 170));
+
+        // Avatar
+        draw_avatar(buf, 28, ry + 2, AV, p.avatar_id);
+        // Colour swatch under avatar
+        buf.fill_rect(28, ry + 2 + AV as i32, AV, 3, col);
+
+        // Name (in team colour, 2x)
+        let name = if p.name.is_empty() { "PLAYER".to_string() } else { p.name.to_uppercase() };
+        draw_str_scaled(buf, &name, 92, ry + 8, col, 2);
+        // Colour label
+        draw_str(buf, colour_name(p.color_id), 92, ry + 30, col);
+
+        // Ready indicator (right side)
+        let label = if p.ready { "READY" } else { "NOT READY" };
+        let lcol  = if p.ready { Bgra::new(80, 220, 120) } else { Bgra::new(180, 90, 90) };
+        let lw = str_width_scaled(label, 2);
+        draw_str_scaled(buf, label, sw - 40 - lw, ry + 18, lcol, 2);
+    }
+
+    // Footer / controls
+    let ready_players = players.iter().filter(|p| p.ready).count();
+    let status = if players.len() < 2 {
+        "NEED 2+ PLAYERS TO START".to_string()
+    } else if ready_players == players.len() {
+        "ALL READY - STARTING...".to_string()
+    } else {
+        format!("{}/{} READY", ready_players, players.len())
+    };
+    let stw = str_width(&status);
+    draw_str(buf, &status, sw / 2 - stw / 2, sh - 40, Bgra::new(200, 210, 240));
+
+    let hint = if ready { "A: UNREADY   B: LEAVE" } else { "L/R: COLOUR   A: READY   B: LEAVE" };
+    let hw = str_width(hint);
+    draw_str(buf, hint, sw / 2 - hw / 2, sh - 24, Bgra::new(110, 115, 145));
+}
+
 fn build_default_game_opts(seed: u64, with_mines: bool, with_barrels: bool) -> GameState {
     let mut terrain = Terrain::generate_tactical(seed);
 
-    // Team 0 spawns in the left interior, team 1 in the right interior. The finder
-    // keeps both teams ≥ SPAWN_EDGE_MARGIN from the world edges.
-    let team0_spawns = terrain.find_team_spawns(0, WORLD_W / 2 - 40, 4);
-    let team1_spawns = terrain.find_team_spawns(WORLD_W / 2 + 40, WORLD_W, 4);
+    // Worms-style: find 8 spawn points across the full map, then interleave between
+    // teams so both can appear anywhere (no fixed left/right sides).
+    let all_spawns = terrain.find_team_spawns(0, WORLD_W, 8);
+    let team0_spawns: Vec<_> = all_spawns.iter().cloned().enumerate().filter(|(i,_)| i%2==0).map(|(_,s)|s).collect();
+    let team1_spawns: Vec<_> = all_spawns.iter().cloned().enumerate().filter(|(i,_)| i%2==1).map(|(_,s)|s).collect();
 
     let teams = vec![
         Team::new(0, false, Difficulty::Medium, &team0_spawns),
@@ -1131,9 +1358,9 @@ fn place_map_barrels(game: &mut game::state::GameState) {
         let offset = (rng % spread as u64) as u32;
         let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
         if let Some(surf_y) = game.terrain.surface_y_at(x) {
-            // Barrel footprint: 10px above and below pos (half-height = 10).
-            // Place pos so the bottom edge (pos.y + 10) sits 1px above the surface.
-            let pos = WorldPos::new(x as f32, surf_y as f32 - 11.0);
+            // Barrel body bottom is at pos.y+10; place 4px above surface so the
+            // 3px drop-shadow also clears the terrain.
+            let pos = WorldPos::new(x as f32, surf_y as f32 - 14.0);
             if (surf_y as f32) < crate::world::WATER_Y as f32 - 10.0
                 && !too_close_to_soldiers(game, pos)
             {
@@ -1534,9 +1761,9 @@ fn show_match_intro(
         let tw = str_width_scaled(title, 2);
         draw_str_scaled(buf, title, mid - tw/2, 12, Bgra::new(255, 210, 50), 2);
 
-        for ti in 0..2usize {
+        for ti in 0..game.teams.len().min(2) {
             let t   = &game.teams[ti];
-            let col = TEAM_COLOURS[ti.min(3)];
+            let col = TEAM_COLOURS[t.color_id as usize];
             let hx  = if ti == 0 { mid / 2 } else { mid + mid / 2 };
 
             // Avatar
@@ -1849,12 +2076,14 @@ fn apply_server_state(
         });
     }
 
-    // Sync opponent team name
-    let opp_slot = 1 - my_team;
-    if let Some(opp_team) = game.teams.get_mut(opp_slot) {
-        let opp_name = &state.team_names[opp_slot];
-        if !opp_name.is_empty() {
-            opp_team.name = opp_name.clone();
+    // Sync every team's display name and colour identity from the server
+    // (supports 2-4 teams with player-picked colours in casual lobbies).
+    for (i, team) in game.teams.iter_mut().enumerate() {
+        if let Some(name) = state.team_names.get(i) {
+            if !name.is_empty() { team.name = name.clone(); }
+        }
+        if let Some(&c) = state.team_colors.get(i) {
+            team.color_id = c.min(3);
         }
     }
 

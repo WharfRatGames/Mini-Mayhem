@@ -880,6 +880,8 @@ pub struct CosmeticsScreen {
     owned_guns:     Vec<u8>,
     soldier:        usize, // 0-3
     col:            usize, // 0=hat 1=uniform 2=boots 3=gun
+    cycling:        bool,  // true = A was pressed, dpad cycles; A confirms, B cancels
+    cycle_backup:   u8,    // value before entering cycling mode (for B-cancel)
 }
 
 impl CosmeticsScreen {
@@ -890,21 +892,42 @@ impl CosmeticsScreen {
         owned_uniforms: Vec<u8>,
         owned_boots:    Vec<u8>,
     ) -> Self {
-        Self { roster, owned_hats, owned_uniforms, owned_boots, owned_guns, soldier: 0, col: 0 }
+        Self { roster, owned_hats, owned_uniforms, owned_boots, owned_guns,
+               soldier: 0, col: 0, cycling: false, cycle_backup: 0 }
     }
 
     pub fn update(&mut self, input: &InputState, buf: &mut WorldBuffer) -> Option<CosmeticsAction> {
-        if input.just_pressed(Button::B) { return Some(CosmeticsAction::Back); }
-        if input.just_pressed(Button::A) { return Some(CosmeticsAction::Saved(self.roster.clone())); }
-
-        if input.just_pressed(Button::Up)    { self.soldier = self.soldier.saturating_sub(1); }
-        if input.just_pressed(Button::Down)  { if self.soldier < 3 { self.soldier += 1; } }
-        if input.just_pressed(Button::Left)  { self.col = self.col.saturating_sub(1); }
-        if input.just_pressed(Button::Right) { if self.col < 3 { self.col += 1; } }
-
-        let si = self.soldier;
-        if input.just_pressed(Button::L1) { self.cycle(-1, si); }
-        if input.just_pressed(Button::R1) { self.cycle( 1, si); }
+        if self.cycling {
+            if input.just_pressed(Button::A) {
+                // Confirm selection
+                self.cycling = false;
+            } else if input.just_pressed(Button::B) {
+                // Cancel — restore backup
+                let si = self.soldier;
+                let col = self.col;
+                self.set_id(col, si, self.cycle_backup);
+                self.cycling = false;
+            } else {
+                let si = self.soldier;
+                if input.just_pressed(Button::Left)  { self.cycle(-1, si); }
+                if input.just_pressed(Button::Right) { self.cycle( 1, si); }
+            }
+        } else {
+            if input.just_pressed(Button::B) { return Some(CosmeticsAction::Back); }
+            if input.just_pressed(Button::Up)    { self.soldier = self.soldier.saturating_sub(1); }
+            if input.just_pressed(Button::Down)  { if self.soldier < 3 { self.soldier += 1; } }
+            if input.just_pressed(Button::Left)  { self.col = self.col.saturating_sub(1); }
+            if input.just_pressed(Button::Right) { if self.col < 3 { self.col += 1; } }
+            if input.just_pressed(Button::A) {
+                // Enter cycling mode if this slot has owned items
+                let owned = self.owned_for_col(self.col);
+                if !owned.is_empty() {
+                    self.cycle_backup = self.current_id(self.col, self.soldier);
+                    self.cycling = true;
+                }
+            }
+            if input.just_pressed(Button::Start) { return Some(CosmeticsAction::Saved(self.roster.clone())); }
+        }
 
         self.draw(buf);
         None
@@ -1015,14 +1038,19 @@ impl CosmeticsScreen {
 
                 // Cosmetic icon (sprite for hat/boots/gun, swatch for uniform)
                 match c {
-                    0 => if id > 0 { cosmetic_sprites::draw_hat(buf, id, center_x, icon_cy, icon_w, icon_h); },
+                    0 => if id > 0 {
+                        // Fixed aspect ratio matching in-game (40×36 ≈ 1.1:1); don't stretch to fill cell
+                        let hat_icon_h = row_h - 4;  // use nearly full cell height
+                        let hat_icon_w = hat_icon_h * 40 / 36;
+                        cosmetic_sprites::draw_hat(buf, id, center_x, icon_cy, hat_icon_w, hat_icon_h);
+                    },
                     1 => if id > 0 {
                         let col = uniform_swatch_color(id);
                         let sw = (icon_w / 2) as u32;
                         let sh = (icon_h / 2) as u32;
                         buf.fill_rect(center_x - sw as i32 / 2, icon_cy - sh as i32 / 2, sw, sh, col);
                     },
-                    2 => cosmetic_sprites::draw_boot(buf, id, center_x, icon_cy, icon_w, icon_h, false),
+                    2 => cosmetic_sprites::draw_boot(buf, id, center_x, icon_cy, icon_w / 2, icon_h / 2, false),
                     3 => cosmetic_sprites::draw_gun(buf, id, center_x, icon_cy, icon_w, icon_h),
                     _ => {}
                 }
@@ -1033,17 +1061,39 @@ impl CosmeticsScreen {
                 }
 
                 let text_y = ry + row_h - 12;
-                // L1/R1 arrows on selected cell
-                if cell_selected && !owned.is_empty() {
-                    draw_str(buf, "<", cx + 3, text_y, Bgra::new(140, 160, 255));
-                    draw_str(buf, ">", cx + col_w - 10, text_y, Bgra::new(140, 160, 255));
+
+                // Cosmetic name label under the icon
+                {
+                    let cosm_type = match c { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
+                    let label = if id == 0 {
+                        if c == 0 { "NONE" } else { "" }
+                    } else {
+                        crate::game::store::catalog_name(cosm_type, id).unwrap_or("")
+                    };
+                    if !label.is_empty() {
+                        let lw = str_width(label) as i32;
+                        let label_y = text_y - 2;
+                        draw_str(buf, label, center_x - lw / 2, label_y, Bgra::new(160, 170, 200));
+                    }
+                }
+
+                // Cycle arrows on selected cell when in cycling mode
+                let cycling_this = cell_selected && self.cycling;
+                if cycling_this && !owned.is_empty() {
+                    let arrow_col = Bgra::new(255, 220, 50);
+                    draw_str(buf, "<", cx + 3, text_y, arrow_col);
+                    draw_str(buf, ">", cx + col_w - 10, text_y, arrow_col);
                 }
             }
         }
 
         // Hint bar
         buf.fill_rect(0, sh - 22, SCREEN_W, 22, Bgra::new(12, 14, 35));
-        let hint = "L1/R1=CYCLE  ARROWS=NAVIGATE  A=SAVE  B=CANCEL";
+        let hint = if self.cycling {
+            "DPAD=CYCLE  A=CONFIRM  B=CANCEL"
+        } else {
+            "ARROWS=NAVIGATE  A=SELECT  START=SAVE  B=BACK"
+        };
         draw_str(buf, hint, sw/2 - str_width(hint)/2, sh - 16, Bgra::new(60, 70, 110));
     }
 }
