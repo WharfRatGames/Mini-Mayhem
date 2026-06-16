@@ -116,20 +116,17 @@ fn crop(img: &Decoded, margin: u32) -> Decoded {
     Decoded { w, h, pixels }
 }
 
-static SCALED: OnceLock<[Option<Decoded>; BG_COUNT]> = OnceLock::new();
+/// Per-slot lazy OnceLock: only the background needed for the current map is
+/// bilinear-scaled at load time instead of all 24 at once (~8s on Miyoo ARM).
+static SCALED: [OnceLock<Option<Decoded>>; BG_COUNT] = [const { OnceLock::new() }; BG_COUNT];
 
-/// Pre-scale each archetype's image to SCREEN_H once, so the per-frame draw
-/// is a plain integer index/modulo instead of a float rescale per pixel.
-fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
-    SCALED.get_or_init(|| std::array::from_fn(|i| {
+fn scaled_slot(i: usize) -> &'static Option<Decoded> {
+    SCALED[i].get_or_init(|| {
         let img = decoded()[i].as_ref()?;
         let scale = SCREEN_H as f32 / img.h as f32;
         let dst_w = ((img.w as f32) * scale).round().max(1.0) as u32;
         let dst_h = SCREEN_H;
         let mut pixels = vec![0u8; (dst_w * dst_h * 4) as usize];
-        // Bilinear sample so upscaling (typically ~1.5x from source art to
-        // SCREEN_H) doesn't look blocky/pixelated — this is a one-time
-        // precompute, so the extra cost per pixel is free at runtime.
         for dy in 0..dst_h {
             let sy_f = ((dy as f32 + 0.5) / scale - 0.5).clamp(0.0, (img.h - 1) as f32);
             let sy0 = sy_f as u32;
@@ -140,12 +137,10 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
                 let sx0 = sx_f as u32;
                 let sx1 = (sx0 + 1).min(img.w - 1);
                 let fx = sx_f - sx0 as f32;
-
                 let p00 = ((sy0 * img.w + sx0) * 4) as usize;
                 let p10 = ((sy0 * img.w + sx1) * 4) as usize;
                 let p01 = ((sy1 * img.w + sx0) * 4) as usize;
                 let p11 = ((sy1 * img.w + sx1) * 4) as usize;
-
                 let dst = ((dy * dst_w + dx) * 4) as usize;
                 for c in 0..4 {
                     let top = img.pixels[p00 + c] as f32 * (1.0 - fx) + img.pixels[p10 + c] as f32 * fx;
@@ -155,7 +150,7 @@ fn scaled() -> &'static [Option<Decoded>; BG_COUNT] {
             }
         }
         Some(Decoded { w: dst_w, h: dst_h, pixels })
-    }))
+    })
 }
 
 /// Parallax factor: this layer scrolls at this fraction of camera movement
@@ -169,7 +164,7 @@ const PAR_BG: f32 = 0.10;
 /// Returns `None` if there's no background image for this seed.
 pub(crate) fn par_x_and_dst_w(seed: u64, cam_x: u32) -> Option<(u32, u32)> {
     let slot = bg_index_for_seed(seed);
-    let dst_w = match scaled()[slot].as_ref() {
+    let dst_w = match scaled_slot(slot).as_ref() {
         Some(img) => img.w.min(WORLD_W),
         None => return None,
     };
@@ -187,7 +182,7 @@ pub(crate) fn par_x_and_dst_w(seed: u64, cam_x: u32) -> Option<(u32, u32)> {
 pub fn build_bg_cache(seed: u64) -> WorldBuffer {
     let mut cache = WorldBuffer::new();
     let slot = bg_index_for_seed(seed);
-    let img = match scaled()[slot].as_ref() {
+    let img = match scaled_slot(slot).as_ref() {
         Some(img) => img,
         None => return cache,
     };
