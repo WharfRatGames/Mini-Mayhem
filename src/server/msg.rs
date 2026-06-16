@@ -113,8 +113,12 @@ pub struct StateMsg {
     pub black_holes:        Vec<NetBlackHole>,
     pub fire_patches:       Vec<NetFirePatch>,
     pub rope:               Option<NetRope>,
-    pub team_names:         [String; 2],
+    /// Display name per compact team index.
+    pub team_names:         Vec<String>,
+    /// Colour identity (0-3) per compact team index.
+    pub team_colors:        Vec<u8>,
     pub garcia:             Option<NetGarcia>,
+    pub airstrike:          Option<NetAirstrike>,
     /// Active plasma-torch direction: 0=none, 1=UpForward, 2=Forward, 3=DownForward.
     /// Lets the live client draw the torch flame at the tip and suppress the
     /// per-tick crater-derived explosion flashes the torch's carving would spawn.
@@ -163,6 +167,20 @@ pub struct NetRope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetAirstrike {
+    pub cursor_x:        f32,
+    pub render_x:        f32,
+    pub cursor_y:        f32,
+    pub render_y:        f32,
+    pub blink_timer:     u32,
+    pub active:          bool,
+    pub plane_x:         f32,
+    pub plane_vx:        f32,
+    pub bombs_dropped:   u32,
+    pub direction_right: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetGarcia {
     pub cursor_x:    f32,
     pub render_x:    f32,
@@ -177,7 +195,10 @@ pub struct NetGarcia {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetSoldier {
+    /// Compact team index (0..team_count) — used to look up the local team.
     pub team:            usize,
+    /// Colour identity 0-3 (Red/Blue/Green/Yellow) for rendering.
+    pub color_id:        u8,
     pub index:           usize,
     pub x:               f32,
     pub y:               f32,
@@ -230,8 +251,51 @@ pub enum NetPhase {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WelcomeMsg {
-    pub your_team: usize,
-    pub seed:      u64,
+    /// This client's compact team index (0..team_count).
+    pub your_team:  usize,
+    pub seed:       u64,
+    /// Number of teams in this match (2-4).
+    pub team_count: usize,
+    /// This client's chosen colour identity (0-3).
+    pub your_color: u8,
+}
+
+// ── Casual lobby protocol ───────────────────────────────────────────────────
+// Exchanged only during the pre-match casual lobby phase. Kept struct-identical
+// to src/net/msg.rs.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LobbyJoin {
+    pub name:              String,
+    pub avatar_id:         u8,
+    pub headstone_id:      u8,
+    pub worm_names:        [String; 4],
+    pub hat_ids:           [u8; 4],
+    pub uniform_color_ids: [u8; 4],
+    pub boot_color_ids:    [u8; 4],
+    pub gun_style_ids:     [u8; 4],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LobbyPlayer {
+    pub name:      String,
+    pub avatar_id: u8,
+    pub color_id:  Option<u8>,
+    pub ready:     bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LobbyClientMsg {
+    Join(LobbyJoin),
+    PickColor { color_id: u8 },
+    SetReady  { ready: bool },
+    Leave,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LobbyServerMsg {
+    State { players: Vec<LobbyPlayer>, your_index: usize },
+    Start(WelcomeMsg),
 }
 
 // NOTE: the server's encode() returns Option (graceful on serialize failure) —

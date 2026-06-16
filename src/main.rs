@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.233";
+const VERSION: &str = "0.5.4.234";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -932,6 +932,11 @@ fn main() {
             }
             if input.just_released(input::Button::R1) { cam.release_pan(); }
             game::loop_runner::update_visuals(&mut game);
+            {
+                use renderer::background;
+                let gw = background::gust_wind(game.wind.value(), lstate.tick);
+                background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
+            }
             cam.tick();
             game::loop_runner::render_live(&game, &mut buf, &mut cam, &mut lstate, my_team);
             // draw_weapon_menu_overlay uses game.weapon_menu_open — same source as tick()
@@ -1106,12 +1111,11 @@ fn build_default_game_n(seed: u64, team_count: usize) -> GameState {
     let n = team_count.clamp(2, 4);
     if n == 2 { return build_default_game(seed); }
     let mut terrain = Terrain::generate_tactical(seed);
+    let all_spawns = terrain.find_team_spawns(0, WORLD_W, n * 4);
     let mut teams = Vec::with_capacity(n);
     for i in 0..n {
-        let band = WORLD_W / n as u32;
-        let lo = band * i as u32 + 20;
-        let hi = (band * (i as u32 + 1)).saturating_sub(20).min(WORLD_W);
-        let spawns = terrain.find_team_spawns(lo, hi, 4);
+        let spawns: Vec<_> = all_spawns.iter().cloned()
+            .enumerate().filter(|(k, _)| k % n == i).map(|(_, s)| s).collect();
         teams.push(Team::new(i, false, Difficulty::Medium, &spawns));
     }
     let mut game = GameState::new(seed, terrain, teams, n);
@@ -2094,6 +2098,16 @@ fn apply_server_state(
             cursor_x: ng.cursor_x, render_x: ng.render_x, cursor_y: ng.cursor_y, render_y: ng.render_y,
             blink_timer: ng.blink_timer,
             falling: ng.falling, fall_y: ng.fall_y, vel_y: ng.vel_y, bounce_count: ng.bounce_count,
+        });
+    }
+    // Sync Airstrike
+    {
+        use crate::game::state::AirstrikeState;
+        game.airstrike = state.airstrike.as_ref().map(|na| AirstrikeState {
+            cursor_x: na.cursor_x, render_x: na.render_x, cursor_y: na.cursor_y, render_y: na.render_y,
+            blink_timer: na.blink_timer, active: na.active,
+            plane_x: na.plane_x, plane_vx: na.plane_vx,
+            bombs_dropped: na.bombs_dropped, direction_right: na.direction_right,
         });
     }
 }

@@ -243,6 +243,10 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
             if game.garcia.is_some() {
                 step_garcia(game, &crate::input::InputState::new());
             }
+            // Airstrike active: tick plane + bomb drops during Watching.
+            if game.airstrike.is_some() {
+                step_airstrike(game, &crate::input::InputState::new());
+            }
             // TNT burn: player moves to escape; gravity + movement with live input.
             if game.tnt_placed {
                 process_movement(game, input);
@@ -258,7 +262,7 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
             // Transition only when: projectiles gone + explosion done + all landed.
             let all_grounded = game.teams.iter().flat_map(|t| t.soldiers.iter())
                 .all(|s| !matches!(s.state, SoldierState::Airborne { .. }));
-            if game.projectiles.is_empty() && game.explosions.is_empty() && game.pending_deaths.is_empty() && game.black_holes.is_empty() && game.garcia.is_none() && all_grounded {
+            if game.projectiles.is_empty() && game.explosions.is_empty() && game.pending_deaths.is_empty() && game.black_holes.is_empty() && game.garcia.is_none() && game.airstrike.is_none() && all_grounded {
                 let hit = game.active_worm_hit;
                 game.active_worm_hit = false;
                 game.retreat_locked  = hit;
@@ -300,6 +304,7 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
             game.tnt_placed          = false;
             game.plasma_torch        = None;
             game.garcia              = None;
+            game.airstrike           = None;
             // Force-explode any mines still counting down so they don't bleed into next turn
             {
                 use crate::game::state::MineState;
@@ -428,6 +433,12 @@ fn update_camera(game: &GameState, cam: &mut Camera, input: &InputState, step: S
                         let gx = game.garcia.as_ref().unwrap().render_x;
                         let soldier_y = game.teams[ti].soldiers[si].pos.y;
                         cam.follow(crate::world::WorldPos::new(gx, soldier_y));
+                    } else if let Some(ref air) = game.airstrike {
+                        if !air.active {
+                            cam.follow(crate::world::WorldPos::new(air.render_x, air.render_y));
+                        } else {
+                            cam.follow(game.teams[ti].soldiers[si].pos);
+                        }
                     } else {
                         cam.follow(game.teams[ti].soldiers[si].pos);
                     }
@@ -558,7 +569,8 @@ pub fn tick(
         let winner = if let GameResult::Winner(t) = game.result { Some(t) } else { None };
         let wa = winner.and_then(|w| game.teams.get(w)).map(|t| t.avatar_id).unwrap_or(0);
         let (kills, hp_left, memo) = match_end_stats(game);
-        draw_game_over(buf, winner, my_team, cam.left_edge() as i32, wa, 0, kills, hp_left, &memo);
+        let wc = winner.and_then(|w| game.teams.get(w)).map(|t| t.color_id).unwrap_or(0);
+        draw_game_over(buf, winner, my_team, cam.left_edge() as i32, wa, 0, kills, hp_left, &memo, wc);
         if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
             return false;
         }
@@ -601,16 +613,19 @@ fn process_acting_sim(game: &mut GameState, input: &InputState) {
         snap_to_surface(game, ti, si);
     }
 
-    let in_revolver = game.revolver_shots_left > 0;
-    let in_rope     = game.rope_session;
-    let in_torch    = game.plasma_torch.is_some();
-    let in_garcia   = game.garcia.is_some();
-    if !has_fired || in_revolver || in_rope || in_torch || in_garcia {
+    let in_revolver  = game.revolver_shots_left > 0;
+    let in_rope      = game.rope_session;
+    let in_torch     = game.plasma_torch.is_some();
+    let in_garcia    = game.garcia.is_some();
+    let in_airstrike = game.airstrike.is_some();
+    if !has_fired || in_revolver || in_rope || in_torch || in_garcia || in_airstrike {
         if in_torch {
             process_fire(game, input); // direction changes only while torching
             step_plasma_torch(game);
         } else if in_garcia {
             step_garcia(game, input);
+        } else if in_airstrike {
+            step_airstrike(game, input);
         } else {
             process_movement(game, input);
             process_aim(game, input);
@@ -1274,6 +1289,29 @@ fn process_fire(game: &mut GameState, input: &InputState) {
         return;
     }
 
+    // Airstrike: cursor targeting, A to confirm, B to cancel. Locked until turn 7.
+    if weapon == WeaponKind::AirStrike {
+        if game.turn.turn_number < 7 * game.teams.len() as u32 { return; }
+        if game.airstrike.is_none() {
+            let ti = game.active_team();
+            let sx = game.teams[ti].soldiers[game.teams[ti].active].pos.x;
+            let sy = (game.teams[ti].soldiers[game.teams[ti].active].pos.y - 40.0).max(12.0);
+            game.airstrike = Some(crate::game::state::AirstrikeState {
+                cursor_x:     sx,
+                render_x:     sx,
+                cursor_y:     sy,
+                render_y:     sy,
+                blink_timer:  0,
+                active:       false,
+                plane_x:      0.0,
+                plane_vx:     6.0,
+                bombs_dropped: 0,
+                direction_right: true,
+            });
+        }
+        return;
+    }
+
     // All other weapons: hold A to charge, release to fire (Worms-style one-way).
     // charge_armed prevents the menu-confirm A press from firing: A must be released
     // at least once before charging begins.
@@ -1320,7 +1358,7 @@ fn step_plasma_torch(game: &mut GameState) {
     use crate::game::state::PlasmaTorchState;
 
     const TORCH_SPEED:    f32 = 2.0;  // px/tick forward
-    const TORCH_TIP_DIST: f32 = 12.0; // px ahead where carving leads
+    const TORCH_TIP_DIST: f32 = 18.0; // px ahead where carving leads
     const TORCH_RADIUS:   f32 = 10.0; // carving circle radius at tip
     const BODY_RADIUS:    f32 = 14.0; // carving circle at soldier midpoint — SOLDIER_H=20, tunnel ~28px tall
 
@@ -1346,6 +1384,27 @@ fn step_plasma_torch(game: &mut GameState) {
     let tip_x = sx + dx * TORCH_TIP_DIST;
     let tip_y = body_cy + dy * TORCH_TIP_DIST;
 
+    // Only advance (and carve) if there's actually solid terrain to dig through.
+    // Prevents the torch from propelling the soldier through open air.
+    let has_solid = (0..=4).any(|i| {
+        let t = i as f32 / 4.0;
+        let cx = sx + dx * TORCH_TIP_DIST * t;
+        let cy = body_cy + dy * TORCH_TIP_DIST * t;
+        game.terrain.is_solid(cx as i32, cy as i32)
+    });
+    if !has_solid {
+        // Nothing to carve — don't move, but still burn fuel and keep state ticking.
+        if fuel == 0 {
+            game.plasma_torch = None;
+            game.teams[ti].soldiers[si].has_fired = true;
+            game.teams[ti].soldiers[si].state = SoldierState::Idle;
+            game.turn.on_fired();
+        } else {
+            game.plasma_torch.as_mut().unwrap().fuel_ticks -= 1;
+        }
+        return;
+    }
+
     // Carve ahead (tip) then at body so soldier fits in the tunnel
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, tip_x, tip_y, TORCH_RADIUS);
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, sx, body_cy, BODY_RADIUS);
@@ -1368,23 +1427,35 @@ fn step_plasma_torch(game: &mut GameState) {
         }
     }
 
-    // Continuous contact damage: ~7 HP/s = 0.233 HP/tick, max ~30 cumulative
-    // Applied to any enemy soldier whose foot is within DAMAGE_RADIUS of the torch tip.
-    const DAMAGE_RADIUS: f32 = 12.0;
-    const DMG_PER_TICK: f32  = 7.0 / 30.0; // ≈ 0.233 per tick
-    let dmg_accum: u32 = DMG_PER_TICK.ceil() as u32; // 1 HP per tick for simplicity
+    // Continuous contact damage along the full beam (tip + body circles).
+    // Check whether any enemy soldier's center is within DAMAGE_RADIUS of any point
+    // along the beam from soldier body-center to tip.
+    const DAMAGE_RADIUS: f32 = 14.0;
+    const DMG_PER_TICK:  u32 = 1;
     for eti in 0..game.teams.len() {
         if eti == ti { continue; }
         for esi in 0..game.teams[eti].soldiers.len() {
             if !game.teams[eti].soldiers[esi].is_alive() { continue; }
             let ex = game.teams[eti].soldiers[esi].pos.x;
-            let ey = game.teams[eti].soldiers[esi].pos.y;
-            let ddx = ex - tip_x;
-            let ddy = ey - tip_y;
-            if ddx * ddx + ddy * ddy < DAMAGE_RADIUS * DAMAGE_RADIUS {
+            let ey = game.teams[eti].soldiers[esi].pos.y - 10.0; // enemy mid-body
+            // Point-to-segment distance: segment from (sx, body_cy) to (tip_x, tip_y)
+            let seg_dx = tip_x - sx;
+            let seg_dy = tip_y - body_cy;
+            let seg_len2 = seg_dx * seg_dx + seg_dy * seg_dy;
+            let dist2 = if seg_len2 < 0.001 {
+                let d = (ex - sx) * (ex - sx) + (ey - body_cy) * (ey - body_cy);
+                d
+            } else {
+                let t = ((ex - sx) * seg_dx + (ey - body_cy) * seg_dy) / seg_len2;
+                let t = t.clamp(0.0, 1.0);
+                let closest_x = sx + t * seg_dx;
+                let closest_y = body_cy + t * seg_dy;
+                (ex - closest_x) * (ex - closest_x) + (ey - closest_y) * (ey - closest_y)
+            };
+            if dist2 < DAMAGE_RADIUS * DAMAGE_RADIUS {
                 game.teams[eti].soldiers[esi].kill_weapon =
                     Some(crate::physics::projectile::WeaponKind::PlasmaTorch);
-                game.teams[eti].soldiers[esi].take_damage(dmg_accum);
+                game.teams[eti].soldiers[esi].take_damage(DMG_PER_TICK);
                 game.teams[eti].soldiers[esi].hp_display_ticks = 60;
             }
         }
@@ -1527,6 +1598,91 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
     } else if input.just_pressed(Button::B) {
         // Cancel targeting
         game.garcia = None;
+    }
+}
+
+fn step_airstrike(game: &mut GameState, input: &InputState) {
+    use crate::physics::projectile::{Projectile, WeaponKind};
+    use crate::world::{Vec2, WorldPos, WORLD_W};
+
+    const BOMB_COUNT:   u32 = 5;
+    const BOMB_SPACING: f32 = 20.0;
+    const PLANE_SPEED:  f32 = 6.0;
+    const CURSOR_SPEED: f32 = 14.0;
+
+    // Returns the world X where bomb index `i` (0..5, left-to-right) should drop.
+    fn bomb_x(cursor_x: f32, i: u32) -> f32 {
+        let half = (BOMB_COUNT as f32 - 1.0) / 2.0;
+        (cursor_x + (i as f32 - half) * BOMB_SPACING).clamp(0.0, WORLD_W as f32 - 1.0)
+    }
+    // Next undroped bomb index in drop order (left-to-right for right-flying plane).
+    fn next_drop_idx(dropped: u32, dir_right: bool) -> u32 {
+        if dir_right { dropped } else { BOMB_COUNT - 1 - dropped }
+    }
+
+    let s = match game.airstrike.as_mut() { Some(s) => s, None => return };
+
+    if !s.active {
+        if input.held(Button::Left)  { s.cursor_x = (s.cursor_x - CURSOR_SPEED).max(0.0); }
+        if input.held(Button::Right) { s.cursor_x = (s.cursor_x + CURSOR_SPEED).min(WORLD_W as f32 - 1.0); }
+        if input.held(Button::Up)    { s.cursor_y = (s.cursor_y - CURSOR_SPEED).max(12.0); }
+        if input.held(Button::Down)  { s.cursor_y = (s.cursor_y + CURSOR_SPEED).min(400.0); }
+        if input.just_pressed(Button::L1) { s.direction_right = false; }
+        if input.just_pressed(Button::R1) { s.direction_right = true;  }
+        s.render_x += (s.cursor_x - s.render_x) * 0.25;
+        s.render_y += (s.cursor_y - s.render_y) * 0.25;
+        s.blink_timer = s.blink_timer.wrapping_add(1);
+
+        if input.just_pressed(Button::A) {
+            let dir_right = s.direction_right;
+            drop(s);
+            let ti = game.active_team();
+            if !game.teams[ti].consume_weapon() { game.airstrike = None; return; }
+            game.teams[ti].prune_empty_weapons();
+            let si = game.teams[ti].active;
+            game.teams[ti].soldiers[si].has_fired = true;
+            game.turn.on_fired();
+            let s = game.airstrike.as_mut().unwrap();
+            s.active        = true;
+            s.plane_x       = if dir_right { -120.0 } else { WORLD_W as f32 + 120.0 };
+            s.plane_vx      = if dir_right { PLANE_SPEED } else { -PLANE_SPEED };
+            s.bombs_dropped = 0;
+        } else if input.just_pressed(Button::B) {
+            game.airstrike = None;
+        }
+        return;
+    }
+
+    // Active phase: advance plane, drop bomb when plane crosses each bomb's X
+    let s = game.airstrike.as_mut().unwrap();
+    s.plane_x += s.plane_vx;
+
+    if s.bombs_dropped < BOMB_COUNT {
+        let cursor_x  = s.cursor_x;
+        let dropped   = s.bombs_dropped;
+        let dir_right = s.direction_right;
+        let idx       = next_drop_idx(dropped, dir_right);
+        let bx        = bomb_x(cursor_x, idx);
+        let passed    = if dir_right { s.plane_x >= bx } else { s.plane_x <= bx };
+        if passed {
+            game.projectiles.push(Projectile::new(
+                WorldPos::new(bx, 10.0),
+                Vec2::new(0.0, 3.0),
+                WeaponKind::AirStrike,
+            ));
+            game.emit_sound(crate::audio::Sfx::Grenade);
+            game.airstrike.as_mut().unwrap().bombs_dropped += 1;
+        }
+    }
+
+    let s = game.airstrike.as_ref().unwrap();
+    let plane_gone = if s.direction_right {
+        s.plane_x > WORLD_W as f32 + 120.0
+    } else {
+        s.plane_x < -120.0
+    };
+    if s.bombs_dropped >= BOMB_COUNT && plane_gone {
+        game.airstrike = None;
     }
 }
 
@@ -1803,20 +1959,22 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
     }
     for (target_ti, target_si) in hits {
         let target = &mut game.teams[target_ti].soldiers[target_si];
+        // Launch first so the soldier flies before taking damage (visual read).
+        let grounded = matches!(target.state, SoldierState::Idle | SoldierState::Walking { .. });
+        if grounded { target.fall.begin_fall(target.pos.y); }
+        target.state = SoldierState::Airborne {
+            vel: Vec2::new(BAT_POWER * angle.cos() * fm, -BAT_POWER * angle.sin()),
+            spinning: true,
+        };
         target.death_cause = DeathCause::Explosion;
         target.kill_weapon = Some(crate::physics::WeaponKind::BaseballBat);
         target.take_damage(BAT_DAMAGE);
-        // Only knock living soldiers airborne. take_damage() sets state to Dead on a
-        // kill; overwriting that with Airborne leaves the corpse stuck in the air
-        // (gravity skips dead soldiers), so the Watching phase never sees all
-        // soldiers grounded and the turn freezes.
+        // If the hit killed them, clear the airborne state so gravity doesn't
+        // skip the corpse and freeze the turn.
+        if !target.is_alive() {
+            target.state = SoldierState::Dead;
+        }
         if target.is_alive() {
-            let grounded = matches!(target.state, SoldierState::Idle | SoldierState::Walking { .. });
-            if grounded { target.fall.begin_fall(target.pos.y); }
-            target.state = SoldierState::Airborne {
-                vel: Vec2::new(BAT_POWER * angle.cos() * fm, -BAT_POWER * angle.sin()),
-                spinning: true,
-            };
             // Fresh air clock so the knockback spin animates in full (a stale
             // airtime >= 20 would cancel `spinning` on the first airborne tick).
             target.airtime = 0;
@@ -1843,9 +2001,11 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize) {
     let step_x = angle.cos() * fm * STEP;
     let step_y = -angle.sin() * STEP;
 
-    // Start ray from muzzle — ahead and above the soldier center
-    let mut rx = game.teams[ti].soldiers[si].pos.x + fm * 12.0;
-    let mut ry = game.teams[ti].soldiers[si].pos.y - 6.0 - angle.sin() * 10.0;
+    // Start ray from the gun muzzle — shoulder height + gun length along aim direction.
+    // Shoulder is ~24px above foot; gun tip is ~26px further along aim from shoulder.
+    let shoulder_y = game.teams[ti].soldiers[si].pos.y - 24.0;
+    let mut rx = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 26.0;
+    let mut ry = shoulder_y - angle.sin() * 26.0;
     let steps = (MAX_RANGE / STEP) as u32;
     let mut hit_ti: Option<usize> = None;
     let mut hit_si_idx: Option<usize> = None;
@@ -2271,6 +2431,29 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 4, icon_cy - 3,  5, 5, wht);
                 buf.fill_rect(icon_cx - 1, icon_cy + 2,  5, 6, wht);
             }
+            WeaponKind::AirStrike => {
+                // Side-view plane: fuselage, cockpit, wings, tail
+                let steel = if selected { Bgra::new(180, 195, 215) } else { Bgra::new(110, 120, 135) };
+                let wing  = if selected { Bgra::new(140, 155, 175) } else { Bgra::new(85,  95, 110)  };
+                let cock  = if selected { Bgra::new(80, 160, 240)  } else { Bgra::new(50, 100, 160)  };
+                let exhaust = Bgra::new(255, 160, 50);
+                // Fuselage (horizontal body)
+                buf.fill_rect(icon_cx - 16, icon_cy - 2, 32, 5, dark);
+                buf.fill_rect(icon_cx - 15, icon_cy - 1, 30, 3, steel);
+                // Nose cone (tapered front right)
+                buf.fill_rect(icon_cx + 15, icon_cy,     2, 1, steel);
+                // Cockpit bump (top, slightly left of center)
+                buf.fill_rect(icon_cx - 4, icon_cy - 6, 9, 5, dark);
+                buf.fill_rect(icon_cx - 3, icon_cy - 5, 7, 4, cock);
+                // Main wings (wide, below fuselage center)
+                buf.fill_rect(icon_cx - 10, icon_cy + 3, 20, 4, dark);
+                buf.fill_rect(icon_cx - 9,  icon_cy + 4, 18, 2, wing);
+                // Tail fin (vertical, rear left)
+                buf.fill_rect(icon_cx - 16, icon_cy - 7, 4, 6, dark);
+                buf.fill_rect(icon_cx - 15, icon_cy - 6, 2, 4, wing);
+                // Engine exhaust glow
+                buf.fill_rect(icon_cx - 17, icon_cy,     2, 1, exhaust);
+            }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
                 buf.fill_rect(icon_cx - 5, icon_cy - 3, 10, 6, icol);
@@ -2315,6 +2498,25 @@ pub fn draw_weapon_menu(
             draw_str(buf, &cdown, cx + cell_w - str_width(&cdown) - 6, cy + cell_h - 18, Bgra::new(220, 200, 60));
         }
 
+        // Airstrike lock overlay: locked until 7 full turn cycles
+        let air_unlock = 7 * num_teams as u32;
+        if *kind == WeaponKind::AirStrike && turn_number < air_unlock {
+            let team_count = (num_teams as u32).max(1);
+            let rotations_left = 7u32.saturating_sub(turn_number / team_count);
+            let lk  = Bgra::new(180, 180, 60);
+            let lkd = Bgra::new(100, 100, 30);
+            buf.fill_rect(icon_cx - 5, icon_cy - 12,  3,  8, lk);
+            buf.fill_rect(icon_cx + 2, icon_cy - 12,  3,  8, lk);
+            buf.fill_rect(icon_cx - 5, icon_cy - 14, 10,  3, lk);
+            buf.fill_rect(icon_cx - 4, icon_cy - 13,  8,  2, lkd);
+            buf.fill_rect(icon_cx - 7, icon_cy - 5,  14, 10, lk);
+            buf.fill_rect(icon_cx - 6, icon_cy - 4,  12,  8, lkd);
+            buf.fill_rect(icon_cx - 1, icon_cy - 3,   2,  2, Bgra::new(30, 30, 20));
+            buf.fill_rect(icon_cx - 1, icon_cy - 1,   2,  4, Bgra::new(30, 30, 20));
+            let cdown = format!("T-{}", rotations_left);
+            draw_str(buf, &cdown, cx + cell_w - str_width(&cdown) - 6, cy + cell_h - 18, Bgra::new(220, 200, 60));
+        }
+
         // Ammo counter: pixel-art ∞ for infinite, "xN" for limited
         match ammo {
             None => {
@@ -2353,6 +2555,7 @@ pub fn draw_weapon_menu(
             WeaponKind::BlackHoleBomb  => "BLACK HOLE",
             WeaponKind::PlasmaTorch    => "TORCH",
             WeaponKind::Garcia         => "HAND OF JERRY",
+            WeaponKind::AirStrike      => "AIR STRIKE",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };
@@ -2429,9 +2632,9 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     let gw = background::gust_wind(game.wind.value(), lstate.tick);
     background::draw_backdrop(buf, &game.terrain, cam_x);
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
-    background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
 
     buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain, &lstate.bg_cache, game.map_seed);
+    background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
     mark!("terrain+bg");
 
     // 2. Water ripple — cached strip, regenerated every tick (30 Hz).
@@ -2452,7 +2655,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let wx = grave.pos.x;
         let wy = grave.pos.y;
         if wx >= vx0 - 8.0 && wx < vx1 + 8.0 && wy >= 0.0 && wy < sh as f32 {
-            draw_headstone(buf, grave.pos, grave.team, grave.headstone_id);
+            let gcolor = game.teams.get(grave.team).map(|t| t.color_id as usize).unwrap_or(grave.team.min(3));
+            draw_headstone(buf, grave.pos, gcolor, grave.headstone_id);
         }
     }
 
@@ -2619,7 +2823,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 } else {
                     soldier.gun_style_id
                 };
-                let muzzle = draw_soldier_skeletal(buf, soldier.pos, team.slot, soldier.facing, soldier.hp, &anim, aim_angle, soldier.hp > 0,
+                let muzzle = draw_soldier_skeletal(buf, soldier.pos, team.color_id as usize, soldier.facing, soldier.hp, &anim, aim_angle, soldier.hp > 0,
                     soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style,
                     game.wind.value(), game.tick, soldier.on_fire_ticks);
                 if ti == active_ti && si == active_si { active_muzzle = muzzle; }
@@ -2628,7 +2832,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 {
                     use crate::renderer::font::{draw_str, str_width};
                     use crate::renderer::draw_sprites::{SOLDIER_H, TEAM_COLOURS};
-                    let col  = TEAM_COLOURS[team.slot.min(3)];
+                    let col  = TEAM_COLOURS[team.color_id as usize];
                     let dark = Bgra::new(0, 0, 0);
                     let nw   = str_width(&soldier.name) + 1; // +1 for bold shift
                     let nx   = soldier.pos.x as i32 - nw / 2;
@@ -2645,7 +2849,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     let cx  = soldier.pos.x as i32;
                     let hat_lift = if soldier.hat_id > 0 { 21 } else { 0 };
                     let ty  = soldier.pos.y as i32 - crate::renderer::draw_sprites::SOLDIER_H - 52 - hat_lift;
-                    let col = crate::renderer::draw_sprites::TEAM_COLOURS[team.slot.min(3)];
+                    let col = crate::renderer::draw_sprites::TEAM_COLOURS[team.color_id as usize];
                     buf.fill_rect(cx - 6, ty,     13, 2, col);
                     buf.fill_rect(cx - 5, ty + 2, 11, 2, col);
                     buf.fill_rect(cx - 4, ty + 4,  9, 2, col);
@@ -2729,11 +2933,22 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             let (dx, dy) = torch.dir.to_vec(facing);
             let sx = game.teams[ti].soldiers[si].pos.x;
             let sy = game.teams[ti].soldiers[si].pos.y - 8.0;
-            let tip_x = (sx + dx * 12.0) as i32;
-            let tip_y = (sy + dy * 12.0) as i32;
+            let tip_x = (sx + dx * 18.0) as i32;
+            let tip_y = (sy + dy * 18.0) as i32;
+            let phase = game.tick as f32 * 0.6;
+            // Beam: draw segments from nozzle to tip
+            for s in 2..=16i32 {
+                let bx = (sx + dx * s as f32) as i32;
+                let by = (sy + dy * s as f32) as i32;
+                let t = s as f32 / 16.0;
+                let col = if t < 0.4 { Bgra::new(255, 240, 120) }
+                          else if t < 0.7 { Bgra::new(255, 150, 30) }
+                          else { Bgra::new(220, 60, 10) };
+                buf.set_pixel(bx, by, col);
+                buf.set_pixel(bx + 1, by, col);
+            }
             if tip_x >= cam_x as i32 && tip_x < cam_x as i32 + sw {
-                let phase = game.tick as f32 * 0.6;
-                // Three concentric flicker rings: outer dark-orange → inner bright yellow
+                // Three concentric flicker rings at tip
                 let r1 = if phase.sin() > 0.0 { 7 } else { 6 };
                 let r2 = if phase.cos() > 0.0 { 5 } else { 4 };
                 buf.fill_circle(tip_x, tip_y, r1, Bgra::new(220, 60, 10));
@@ -2771,6 +2986,52 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     }
 
     mark!("garcia");
+
+    // 5e-2. Airstrike: crosshair during targeting; plane silhouette during active
+    if let Some(ref air) = game.airstrike {
+        let cl = cam_x as i32;
+        use crate::renderer::font::{draw_str, str_width};
+
+        // Direction label at top-center of screen (shown during targeting and active)
+        {
+            let label = if air.direction_right { "RIGHT >" } else { "< LEFT" };
+            let lw = str_width(label);
+            let lx = cl + (crate::world::SCREEN_W as i32 - lw) / 2;
+            let ly = 4i32;
+            buf.fill_rect(lx - 4, ly - 2, (lw + 8) as u32, 11, Bgra::new(0, 0, 0));
+            draw_str(buf, label, lx, ly, Bgra::new(255, 240, 60));
+        }
+
+        if !air.active {
+            // Yellow crosshair — same style as Garcia
+            let cross_col = Bgra::new(255, 240, 60);
+            let cx = air.render_x as i32;
+            let cy = air.render_y as i32;
+            buf.fill_rect(cx - 6, cy - 1, 13, 3, cross_col);
+            buf.fill_rect(cx - 1, cy - 6,  3, 13, cross_col);
+        } else {
+            // Flying plane silhouette
+            let px = air.plane_x as i32 - cl;
+            let py = 14i32;
+            if px > -60 && px < crate::world::SCREEN_W as i32 + 60 {
+                let wx = cl + px;
+                let body    = Bgra::new(170, 185, 200);
+                let wing    = Bgra::new(130, 145, 160);
+                let glass   = Bgra::new(80, 160, 240);
+                let exhaust = Bgra::new(255, 160, 50);
+                let f: i32 = if air.direction_right { 1 } else { -1 };
+                buf.fill_rect(wx - 22, py + 1, 44, 5, Bgra::new(80, 90, 100));
+                buf.fill_rect(wx - 21, py + 2, 42, 3, body);
+                buf.fill_rect(wx + f * 4 - 5, py - 4, 11, 5, Bgra::new(50, 60, 70));
+                buf.fill_rect(wx + f * 4 - 4, py - 3,  9, 4, glass);
+                buf.fill_rect(wx - 14, py + 5, 28, 5, Bgra::new(60, 70, 80));
+                buf.fill_rect(wx - 13, py + 6, 26, 3, wing);
+                buf.fill_rect(wx - f * 19 - 2, py - 5, 5, 7, Bgra::new(60, 70, 80));
+                buf.fill_rect(wx - f * 19 - 1, py - 4, 3, 5, wing);
+                buf.fill_rect(wx - f * 22, py + 2, 3, 2, exhaust);
+            }
+        }
+    }
 
     // 5e. Black holes — drawn after fire patches, before projectiles
     for hole in &game.black_holes {
@@ -3117,7 +3378,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             buf.fill_rect(av_x, bar_y, bar_w as u32, BAR_H as u32, Bgra::new(20, 20, 30));
             if cur_hp > 0 {
                 let filled = ((cur_hp as i64 * bar_w as i64) / max_hp as i64).max(1) as u32;
-                buf.fill_rect(av_x, bar_y, filled, BAR_H as u32, TEAM_COLOURS[ti.min(3)]);
+                buf.fill_rect(av_x, bar_y, filled, BAR_H as u32, TEAM_COLOURS[t.color_id as usize]);
             }
 
             // ELO — shown below HP bar for ranked matches
@@ -3127,7 +3388,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 let ew = str_width(&elo_str);
                 let ex = av_x + bar_w / 2 - ew / 2;
                 let ey = bar_y + BAR_H + 2;
-                draw_str(buf, &elo_str, ex, ey, TEAM_COLOURS[ti.min(3)]);
+                draw_str(buf, &elo_str, ex, ey, TEAM_COLOURS[t.color_id as usize]);
             }
         }
     }
@@ -3205,21 +3466,21 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             }
         }).collect();
 
-        if let Some(msg) = visible_msgs.first() {
-            let col = match msg.team {
-                Some(t) => TEAM_COLOURS[t.min(3)],
+        let msg_colour = |t: Option<usize>| -> Bgra {
+            match t {
+                Some(t) => TEAM_COLOURS[game.teams.get(t).map(|tm| tm.color_id as usize).unwrap_or(t.min(3))],
                 None    => Bgra::new(255, 210, 50),
-            };
+            }
+        };
+        if let Some(msg) = visible_msgs.first() {
+            let col = msg_colour(msg.team);
             let h = draw_top_msg(buf, &msg.text, col, top_y);
             top_y += h;
         }
 
         let mut extra_rows = 0;
         for msg in visible_msgs.iter().skip(1) {
-            let col = match msg.team {
-                Some(t) => TEAM_COLOURS[t.min(3)],
-                None    => Bgra::new(255, 210, 50),
-            };
+            let col = msg_colour(msg.team);
             let h = draw_top_msg(buf, &msg.text, col, top_y);
             top_y += h;
             extra_rows += 1;
@@ -3230,18 +3491,23 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     mark!("messages");
 
     // 8b. HUD — drawn at cam_x offset so it stays screen-anchored
+    // HUD strips are keyed by colour identity (0-3 = Red/Blue/Green/Yellow), so
+    // each player's strip shows in the colour they picked, regardless of their
+    // compact team index.
+    let find_team = |color: usize| game.teams.iter().find(|t| t.color_id as usize == color);
     let team_alive: [u32; 4] = std::array::from_fn(|i| {
-        game.teams.get(i).map(|t| t.alive_count()).unwrap_or(0)
+        find_team(i).map(|t| t.alive_count()).unwrap_or(0)
     });
     let team_hp: [u32; 4] = std::array::from_fn(|i| {
-        game.teams.get(i).map(|t| t.total_hp()).unwrap_or(0)
+        find_team(i).map(|t| t.total_hp()).unwrap_or(0)
     });
+    let active_color = game.teams.get(game.active_team()).map(|t| t.color_id as usize).unwrap_or(0);
     // Clear stale HUD pixels (wind meter / weapon name / FPS) left over from a
     // previous frame's camera position before redrawing the HUD this frame.
     buf.fill_deep_water_band();
 
     draw_hud_world(buf, cam_x, &game.wind, game.turn.secs_remaining(),
-        game.turn.turn_number, game.active_team(), &team_alive, &team_hp);
+        game.turn.turn_number, active_color, &team_alive, &team_hp);
 
     mark!("hud");
 
@@ -3855,6 +4121,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
 /// TAT replay no longer calls this: its server_tick() runs the full shared core.
 pub fn update_visuals(game: &mut GameState) {
     game.step_explosions();
+    crate::renderer::fx::step_fx(&mut game.fx, &game.terrain, game.wind.value());
     for team in &mut game.teams {
         for s in &mut team.soldiers {
             if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
@@ -4026,7 +4293,7 @@ fn record_deaths(game: &mut GameState) {
                 if soldier.death_cause != DeathCause::Water {
                     new_pending.push(PendingDeathExplosion {
                         pos:   soldier.pos,
-                        timer: 30, // 1s at 30Hz
+                        timer: 60, // 2s at 30Hz
                         team:  ti,
                         si:    soldier.index,
                         cause: soldier.death_cause,
