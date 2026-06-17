@@ -128,14 +128,12 @@ fn rng(state: &mut u32) -> u32 {
 #[inline]
 fn rand_f(state: &mut u32) -> f32 { (rng(state) >> 8) as f32 / (1u32 << 24) as f32 }
 
-/// Spawn one particle. `spread` (first fill) scatters across the whole screen;
-/// otherwise particles enter from just above the top edge.
-fn spawn(state: &mut u32, style: &DebrisStyle, wind: f32, spread: bool) -> BgParticle {
+/// Spawn one particle at a random position across the full column (0..WATER_Y).
+/// Always scattering maintains even vertical density — entering from the top only
+/// caused the population to congregate near the top as bottom particles fell out.
+fn spawn(state: &mut u32, style: &DebrisStyle, wind: f32) -> BgParticle {
     let x = rand_f(state) * (SCREEN_W as f32 + 8.0) - 4.0;
-    // Initial fill: scatter across full column so airspace is populated immediately.
-    // Replacements: enter from top so particles flow downward continuously and
-    // maintain even density throughout the column.
-    let y = if spread { rand_f(state) * WATER_Y as f32 } else { -(rand_f(state) * 20.0) };
+    let y = rand_f(state) * WATER_Y as f32;
     let vy = style.fall * (0.6 + rand_f(state) * 0.8);
     BgParticle {
         x, y,
@@ -169,11 +167,8 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
 
     // A strong gust visibly throws more motes across the screen.
     let target = style.count + (wind.abs() * 22.0) as usize;
-    // First fill: spread=true scatters across full column for immediate density.
-    // Replacements: spread=false enters from top so particles flow downward evenly.
-    let is_first_fill = particles.is_empty();
     while particles.len() < target {
-        particles.push(spawn(&mut state, &style, wind, is_first_fill));
+        particles.push(spawn(&mut state, &style, wind));
     }
 }
 
