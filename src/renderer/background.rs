@@ -181,7 +181,7 @@ pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgPart
     for p in particles {
         let sx = p.x as i32;
         let sy = p.y as i32;
-        if sy < 0 || sy >= SCREEN_H as i32 { continue; }
+        if sy < 0 || sy >= WATER_Y as i32 { continue; }
 
         let colour = if p.glow {
             // Flickering ember: warm orange that pulses with tick + position.
@@ -196,7 +196,7 @@ pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgPart
         let mut put = |ox: i32, oy: i32| {
             let px = sx + ox;
             let py = sy + oy;
-            if py < 0 || py >= SCREEN_H as i32 || px < 0 || px >= SCREEN_W as i32 { return; }
+            if py < 0 || py >= WATER_Y as i32 || px < 0 || px >= SCREEN_W as i32 { return; }
             let wx = cam_x as i32 + px;
             if terrain.is_solid(wx, py) { return; }
             buf.set_pixel(wx, py, colour);
