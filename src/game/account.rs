@@ -913,7 +913,7 @@ impl CosmeticsScreen {
                 if input.just_pressed(Button::Right) { self.cycle( 1, si); }
             }
         } else {
-            if input.just_pressed(Button::B) { return Some(CosmeticsAction::Back); }
+            if input.just_pressed(Button::B) { return Some(CosmeticsAction::Saved(self.roster.clone())); }
             if input.just_pressed(Button::Up)    { self.soldier = self.soldier.saturating_sub(1); }
             if input.just_pressed(Button::Down)  { if self.soldier < 3 { self.soldier += 1; } }
             if input.just_pressed(Button::Left)  { self.col = self.col.saturating_sub(1); }
