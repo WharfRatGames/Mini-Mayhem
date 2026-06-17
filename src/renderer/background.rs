@@ -128,12 +128,12 @@ fn rng(state: &mut u32) -> u32 {
 #[inline]
 fn rand_f(state: &mut u32) -> f32 { (rng(state) >> 8) as f32 / (1u32 << 24) as f32 }
 
-/// Spawn one particle at a random position across the full column (0..WATER_Y).
+/// Spawn one particle at a random position across the full screen height (0..SCREEN_H).
 /// Always scattering maintains even vertical density — entering from the top only
 /// caused the population to congregate near the top as bottom particles fell out.
 fn spawn(state: &mut u32, style: &DebrisStyle, wind: f32) -> BgParticle {
     let x = rand_f(state) * (SCREEN_W as f32 + 8.0) - 4.0;
-    let y = rand_f(state) * WATER_Y as f32;
+    let y = rand_f(state) * SCREEN_H as f32;
     let vy = style.fall * (0.6 + rand_f(state) * 0.8);
     BgParticle {
         x, y,
@@ -162,7 +162,7 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
         p.rot += p.spin;
     }
     particles.retain(|p| {
-        p.y < WATER_Y as f32 + 4.0 && p.x > -8.0 && p.x < SCREEN_W as f32 + 8.0
+        p.y < SCREEN_H as f32 + 4.0 && p.x > -8.0 && p.x < SCREEN_W as f32 + 8.0
     });
 
     // A strong gust visibly throws more motes across the screen.
@@ -176,13 +176,12 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
 /// below the waterline so motes vanish behind the landscape.
 pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgParticle], cam_x: u32, tick: u32) {
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
-    let water_y = WATER_Y as i32;
     let style = debris_style(terrain.archetype);
 
     for p in particles {
         let sx = p.x as i32;
         let sy = p.y as i32;
-        if sy < 0 || sy >= water_y { continue; }
+        if sy < 0 || sy >= SCREEN_H as i32 { continue; }
 
         let colour = if p.glow {
             // Flickering ember: warm orange that pulses with tick + position.
@@ -197,7 +196,7 @@ pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgPart
         let mut put = |ox: i32, oy: i32| {
             let px = sx + ox;
             let py = sy + oy;
-            if py < 0 || py >= water_y || px < 0 || px >= SCREEN_W as i32 { return; }
+            if py < 0 || py >= SCREEN_H as i32 || px < 0 || px >= SCREEN_W as i32 { return; }
             let wx = cam_x as i32 + px;
             if terrain.is_solid(wx, py) { return; }
             buf.set_pixel(wx, py, colour);
