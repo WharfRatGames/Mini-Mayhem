@@ -152,6 +152,27 @@ fn hhg_fuse_state_net_roundtrip() {
     assert_eq!(client.projectiles[1].fuse, FuseState::Detonating(5), "Detonating(5) round-trip failed");
 }
 
+/// Muzzle fields on InputMsg must survive the bincode wire round-trip intact.
+/// If they were accidentally dropped, live-mode hitscan would silently fall back
+/// to the approximation formula instead of the exact rendered barrel tip.
+#[test]
+fn inputmsg_muzzle_roundtrip() {
+    use arty::net::msg::InputMsg;
+    use arty::net::encode;
+    let msg = InputMsg {
+        tick: 1, held: vec![], pressed: vec![], released: vec![],
+        aim_angle: 0.5, selected_weapon_kind: 0,
+        hat_ids: [0; 4], uniform_color_ids: [0; 4],
+        boot_color_ids: [0; 4], gun_style_ids: [0; 4],
+        worm_names: Default::default(),
+        muzzle_x: 123.45, muzzle_y: 67.89,
+    };
+    let bytes = encode(&msg).expect("encode failed");
+    let decoded: InputMsg = bincode::deserialize(&bytes[4..]).expect("decode failed");
+    assert_eq!(decoded.muzzle_x, 123.45, "muzzle_x lost in wire round-trip");
+    assert_eq!(decoded.muzzle_y, 67.89, "muzzle_y lost in wire round-trip");
+}
+
 /// The shared sim must be deterministic: two games from the same seed fed the
 /// same inputs stay identical. Guards against time-based RNG / map iteration
 /// order creeping in (which would desync server vs client).
@@ -168,8 +189,8 @@ fn sim_is_deterministic() {
 
     let input = InputState::new();
     for _ in 0..30 {
-        server_tick(&mut a, &input);
-        server_tick(&mut b, &input);
+        server_tick(&mut a, &input, None);
+        server_tick(&mut b, &input, None);
     }
 
     assert_eq!(a.crater_log, b.crater_log, "crater log diverged");

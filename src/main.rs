@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.255";
+const VERSION: &str = "0.5.4.256";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -150,7 +150,9 @@ fn main() {
                 let v = format!("VERSION {}", VERSION);
                 draw_str_scaled(&mut buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
                 for (i, line) in changelog.iter().enumerate() {
-                    draw_str(&mut buf, line, 18, 54 + i as i32 * 12, Bgra::new(110, 130, 160));
+                    let y = 54 + i as i32 * 13;
+                    if i > 0 { buf.fill_rect(12, y - 2, SCREEN_W - 24, 1, Bgra::new(40, 45, 70)); }
+                    draw_str(&mut buf, line, 18, y, Bgra::new(110, 130, 160));
                 }
                 draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
                 draw_str_scaled(&mut buf, "B = SKIP", sw/2 - str_width_scaled("B = SKIP",2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
@@ -509,11 +511,25 @@ fn main() {
                     c.send_raw(b"\n");
                     c.send_raw(session_token.as_bytes());
                     c.send_raw(b"\n");
+                    // Read server response: "OK\n" or "REJECTED:VERSION\n"
+                    let mut resp = String::new();
+                    if let Ok(cloned) = c.stream.try_clone() {
+                        use std::io::BufRead;
+                        let _ = std::io::BufReader::new(cloned).read_line(&mut resp);
+                    }
+                    if resp.trim() == "REJECTED:VERSION" {
+                        loop {
+                            draw_msg(&mut buf, &mut fb, "VERSION MISMATCH - UPDATE CLIENT  (B=BACK)");
+                            input.poll();
+                            if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::A) { break; }
+                            std::thread::sleep(std::time::Duration::from_millis(33));
+                        }
+                        break None;
+                    }
                     break Some(c);
                 }
                 Ok(Err(_)) => {
                     draw_msg(&mut buf, &mut fb, "CONNECT FAILED  (B=BACK)");
-                    // Wait a moment so user can see the message, then let them cancel
                     loop {
                         input.poll();
                         if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::A) { break; }
@@ -656,7 +672,7 @@ fn main() {
                 intro_usernames[i] = p.username.clone();
             }
         }
-        show_match_intro(&mut fb, &mut buf, &mut input, &game, my_team, &intro_usernames);
+        show_match_intro(&mut fb, &mut buf, &mut input, &game, my_team, &intro_usernames, false);
     }
 
     // VS CPU: player picks their team; selecting immediately starts the game
@@ -776,7 +792,7 @@ fn main() {
                 }
                 (h, u, b, g, w)
             };
-            if !lstate.paused { conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names }); }
+            if !lstate.paused { conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names, muzzle_x: lstate.last_muzzle.map(|(x,_)| x).unwrap_or(0.0), muzzle_y: lstate.last_muzzle.map(|(_,y)| y).unwrap_or(0.0) }); }
             // Drain ALL pending state messages:
             //   - sounds collected from every state so no SFX tick is skipped
             //   - first received state's projectiles used for position (avoids the
@@ -1224,6 +1240,7 @@ fn run_casual_lobby(
     let mut picked = false;   // whether we've sent an initial colour pick
     let mut ready = false;
     let mut frame: u32 = 0;
+    let mut player_left_ticks: u32 = 0; // countdown for "player left" notice
 
     loop {
         frame = frame.wrapping_add(1);
@@ -1273,6 +1290,7 @@ fn run_casual_lobby(
         while let Some(m) = conn.recv_blocking::<LobbyServerMsg>() {
             match m {
                 LobbyServerMsg::State { players: ps, your_index: yi } => {
+                    if ps.len() < players.len() { player_left_ticks = 150; } // ~5s at 30fps
                     players = ps; your_index = yi;
                     // Adopt the server's view of our colour if it assigned/rejected one.
                     if let Some(c) = players.get(your_index).and_then(|p| p.color_id) { my_color = c; }
@@ -1290,6 +1308,17 @@ fn run_casual_lobby(
         conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(60))).ok();
 
         draw_casual_lobby(buf, &players, your_index, ready);
+        if player_left_ticks > 0 {
+            player_left_ticks -= 1;
+            use renderer::font::{draw_str_scaled, str_width_scaled};
+            use renderer::Bgra;
+            let msg = "A PLAYER LEFT THE LOBBY";
+            let mw = str_width_scaled(msg, 1);
+            let mx = world::SCREEN_W as i32 / 2 - mw / 2;
+            let alpha = (player_left_ticks.min(30) as f32 / 30.0 * 255.0) as u8;
+            buf.fill_rect(mx - 6, world::SCREEN_H as i32 - 56, (mw + 12) as u32, 18, Bgra::new(40, 10, 10));
+            draw_str_scaled(buf, msg, mx, world::SCREEN_H as i32 - 53, Bgra::new(255, alpha / 2 + 80, alpha / 2 + 80), 1);
+        }
         buf.blit_to_fb(fb, 0);
         std::thread::sleep(std::time::Duration::from_millis(33));
     }
@@ -1829,6 +1858,7 @@ fn show_match_intro(
     game:      &game::state::GameState,
     my_team:   usize,
     usernames: &[String; 2],
+    skippable: bool,
 ) {
     use renderer::Bgra;
     use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
@@ -1841,9 +1871,9 @@ fn show_match_intro(
     let mid = sw / 2;
     const AV: u32 = 80;
 
-    for tick in 0u32..90 {
+    for tick in 0u32..150 {
         input.poll();
-        if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) { break; }
+        if skippable && (input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start)) { break; }
 
         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(8, 10, 22));
 
@@ -2314,7 +2344,7 @@ fn run_tat_game(
     // first turn), never again after each subsequent turn.
     let is_first_turn = moves.len() == my_slot; // 0 for p0, 1 for p1
     if (my_elo > 0 || opp_elo > 0) && is_first_turn {
-        show_match_intro(fb, buf, input, &game, my_slot, &[String::new(), String::new()]);
+        show_match_intro(fb, buf, input, &game, my_slot, &[String::new(), String::new()], true);
     }
     // Snap all soldiers to surface to prevent fall damage on first tick
     for ti in 0..game.teams.len() {
@@ -2380,7 +2410,7 @@ fn run_tat_game(
                 prev_bits = bits;
                 // server_tick now emits detonation SFX itself (game.emit_sound),
                 // which plays locally on this device — no external diff needed.
-                game::loop_runner::server_tick(&mut game, &tick_input);
+                game::loop_runner::server_tick(&mut game, &tick_input, None);
                 game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
                 replay_tick += 1;
                 if let Some(p) = game.projectiles.first() {
@@ -2407,7 +2437,7 @@ fn run_tat_game(
             for _ in 0..600 {
                 let frame_start = std::time::Instant::now();
                 // server_tick emits detonation SFX itself (plays locally here).
-                game::loop_runner::server_tick(&mut game, &empty);
+                game::loop_runner::server_tick(&mut game, &empty, None);
                 game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
                 if let Some(p) = game.projectiles.first() {
                     replay_cam.follow_always(p.pos);
@@ -2443,7 +2473,7 @@ fn run_tat_game(
             for &bits in &mv.inputs {
                 let tick_input = input::InputState::from_bits(prev_bits, bits);
                 prev_bits = bits;
-                game::loop_runner::server_tick(&mut game, &tick_input);
+                game::loop_runner::server_tick(&mut game, &tick_input, None);
                 game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
                 if game.teams[team].soldiers[game.teams[team].active].has_fired { break; }
             }
@@ -2452,7 +2482,7 @@ fn run_tat_game(
             }
             // 800 < TURN_TICKS(1350): prevents double-advance if break misses
             for _ in 0..800 {
-                game::loop_runner::server_tick(&mut game, &empty);
+                game::loop_runner::server_tick(&mut game, &empty, None);
                 if matches!(game.turn.phase, TurnPhase::Acting) && game.projectiles.is_empty() && game.turn.current_team() != team { break; }
             }
             crate::audio::set_muted(false);

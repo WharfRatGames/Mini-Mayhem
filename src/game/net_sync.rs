@@ -504,5 +504,6 @@ fn _inputmsg_parity_checklist(m: &InputMsg) {
         tick: _, held: _, pressed: _, released: _, aim_angle: _,
         selected_weapon_kind: _, hat_ids: _, uniform_color_ids: _,
         boot_color_ids: _, gun_style_ids: _, worm_names: _,
+        muzzle_x: _, muzzle_y: _, // not synced: client-side rendered position, travels in InputMsg
     } = m;
 }

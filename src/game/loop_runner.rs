@@ -1195,11 +1195,9 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
-    // Baseball bat: melee swing, locked for 3 full turn cycles.
+    // Baseball bat: melee swing.
     if weapon == WeaponKind::BaseballBat {
-        if input.just_pressed(Button::A) && game.server_fire_grace == 0
-           && game.turn.turn_number >= 3 * game.teams.len() as u32
-        {
+        if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
             if !game.teams[ti].consume_weapon() { return; }
@@ -2508,24 +2506,6 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
                 buf.fill_rect(icon_cx - 5, icon_cy - 3, 10, 6, icol);
             }
-        }
-
-        // Baseball Bat lock overlay: same padlock style, 3 full cycles
-        let bat_unlock = 3 * num_teams as u32;
-        if *kind == WeaponKind::BaseballBat && turn_number < bat_unlock {
-            let rotations_left = 3u32.saturating_sub(turn_number / (num_teams as u32).max(1));
-            let lk = Bgra::new(180, 180, 60);
-            let lkd = Bgra::new(100, 100, 30);
-            buf.fill_rect(icon_cx - 5, icon_cy - 12, 3, 8, lk);
-            buf.fill_rect(icon_cx + 2, icon_cy - 12, 3, 8, lk);
-            buf.fill_rect(icon_cx - 5, icon_cy - 14, 10, 3, lk);
-            buf.fill_rect(icon_cx - 4, icon_cy - 13,  8, 2, lkd);
-            buf.fill_rect(icon_cx - 7, icon_cy - 5,  14, 10, lk);
-            buf.fill_rect(icon_cx - 6, icon_cy - 4,  12,  8, lkd);
-            buf.fill_rect(icon_cx - 1, icon_cy - 3,   2,  2, Bgra::new(30, 30, 20));
-            buf.fill_rect(icon_cx - 1, icon_cy - 1,   2,  4, Bgra::new(30, 30, 20));
-            let cdown = format!("T-{}", rotations_left);
-            draw_str(buf, &cdown, cx + cell_w - str_width(&cdown) - 6, cy + cell_h - 18, Bgra::new(220, 200, 60));
         }
 
         // TNT lock overlay: padlock icon + rotation countdown (5 complete rotations)
@@ -4449,9 +4429,9 @@ fn update_graves(game: &mut GameState) {
 /// rendering. Thin wrapper over the shared `simulate()` core so live and TAT
 /// play byte-for-byte identically to the local modes. Death explosions, the
 /// crate-watch input hold, and all SFX now come from the same place.
-pub fn server_tick(game: &mut GameState, input: &crate::input::InputState) {
+pub fn server_tick(game: &mut GameState, input: &crate::input::InputState, muzzle: Option<(f32, f32)>) {
     game.tick = game.tick.wrapping_add(1);
-    let _ = simulate(game, input);
+    let _ = simulate_with_muzzle(game, input, muzzle);
 }
 
 pub fn push_active_soldier_out(game: &mut GameState) {
