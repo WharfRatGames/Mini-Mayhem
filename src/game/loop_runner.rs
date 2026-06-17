@@ -3195,20 +3195,13 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 // Gray fuse
                 buf.fill_rect(px,     py - 9,  1,  3, Bgra::new(160, 160, 160));
                 buf.fill_rect(px + 1, py - 11, 1,  2, Bgra::new(160, 160, 160));
-                // Fuse bar above stick (shrinks every tick — always visually active)
+                // Countdown label above stick
                 if let FuseState::Burning(ticks) = proj.fuse {
                     use crate::renderer::font::{draw_str_scaled, str_width_scaled};
-                    let bar_full: i32 = 30;
-                    let bar_filled = ((ticks as i32 * bar_full) / 150).min(bar_full);
-                    buf.fill_rect(px - bar_full/2, py - 16, bar_full as u32, 3, Bgra::new(50, 20, 20));
-                    if bar_filled > 0 {
-                        buf.fill_rect(px - bar_full/2, py - 16, bar_filled as u32, 3, Bgra::new(220, 60, 30));
-                    }
-                    // Tenths-of-a-second label (updates 3× per second — clearly alive)
                     let secs = ticks / 30;
-                    let label = format!("{}s", secs);
+                    let label = format!("{}", secs);
                     let lx = px - str_width_scaled(&label, 2) / 2;
-                    let ly = py - 26;
+                    let ly = py - 20;
                     draw_str_scaled(buf, &label, lx + 1, ly + 1, Bgra::new(0, 0, 0), 2);
                     draw_str_scaled(buf, &label, lx,     ly,     Bgra::new(255, 100, 50), 2);
                 }
