@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.259";
+const VERSION: &str = "0.5.4.260";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -2441,12 +2441,8 @@ fn run_tat_game(
             while replay_tick < input_len {
                 let frame_start = std::time::Instant::now();
                 let bits = mv.inputs[replay_tick];
-                let tick_input = input::InputState::from_bits(prev_bits, bits);
+                game::loop_runner::replay_tick(&mut game, prev_bits, bits);
                 prev_bits = bits;
-                // server_tick now emits detonation SFX itself (game.emit_sound),
-                // which plays locally on this device — no external diff needed.
-                game::loop_runner::server_tick(&mut game, &tick_input, None);
-                game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
                 replay_tick += 1;
                 if let Some(p) = game.projectiles.first() {
                     replay_cam.follow_always(p.pos);
@@ -2506,11 +2502,9 @@ fn run_tat_game(
             }
             let mut prev_bits: u16 = 0;
             for &bits in &mv.inputs {
-                let tick_input = input::InputState::from_bits(prev_bits, bits);
+                let menu_open = game::loop_runner::replay_tick(&mut game, prev_bits, bits);
                 prev_bits = bits;
-                game::loop_runner::server_tick(&mut game, &tick_input, None);
-                game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
-                if game.teams[team].soldiers[game.teams[team].active].has_fired { break; }
+                if !menu_open && game.teams[team].soldiers[game.teams[team].active].has_fired { break; }
             }
             if !game.teams[team].soldiers[game.teams[team].active].has_fired {
                 game::loop_runner::fire_bazooka_tat(&mut game);

@@ -1898,6 +1898,25 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
 /// Fire the active soldier's selected weapon (used by TAT mode).
 pub fn fire_bazooka_tat(game: &mut GameState) { fire_weapon(game); }
 
+/// One tick of TAT replay: process the weapon menu first, then run server_tick
+/// only if the menu is not open. Mirrors what tick() does during recording so
+/// weapon switches, fire-grace suppression, and sim-skip-while-menu-open all
+/// behave identically. Returns true if the menu was open (server_tick skipped).
+///
+/// Both TAT replay paths in src/main.rs call this. The parity test
+/// `tat_replay_applies_weapon_switch` calls it too — so the test actually
+/// exercises the same code that runs in production.
+pub fn replay_tick(game: &mut GameState, prev_bits: u16, curr_bits: u16) -> bool {
+    use crate::input::InputState;
+    let input = InputState::from_bits(prev_bits, curr_bits);
+    let menu_open = process_weapon_menu(game, &input);
+    if !menu_open {
+        server_tick(game, &input, None);
+        game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
+    }
+    menu_open
+}
+
 /// Place a TNT stick in front of the active soldier with a 5-second fuse (150 ticks at 30 Hz).
 /// Enters Watching immediately so the fuse burns the same proven path as a grenade.
 /// Retreat phase follows the explosion.
@@ -3369,7 +3388,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         if let Some(tnt) = game.projectiles.iter().find(|p| p.kind == WeaponKind::Tnt) {
             if let FuseState::Burning(ticks) = tnt.fuse {
                 let secs   = ticks / 30;
-                let msg    = format!("TNT  {}s", secs);
+                let msg    = format!("TNT  {}", secs);
                 let mw     = str_width_scaled(&msg, 2);
                 let mx     = cam_x as i32 + sw / 2 - mw / 2;
                 let my     = 24i32;
@@ -3410,20 +3429,6 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             buf.fill_rect(mx - 4, my + 15, (mw + 8) as u32, 1, Bgra::new(80, 80, 100));
             draw_str_scaled(buf, &msg, mx + 1, my + 1, Bgra::new(0, 0, 0), 2);
             draw_str_scaled(buf, &msg, mx,     my,     Bgra::new(255, 220, 80), 2);
-        }
-        let cur_weapon = game.active_team_ref().current_weapon();
-        let turn_msg_showing = game.messages.first().map_or(false, |m| m.text.contains("'s turn"));
-        if !active.has_fired && !turn_msg_showing && cur_weapon == WeaponKind::Grenade {
-            let secs = game.aim.fuse_ticks / 30;
-            let msg = format!("FUSE: {}s  L1/R1", secs);
-            let mw = str_width_scaled(&msg, 2);
-            let mx = cam_x as i32 + sw / 2 - mw / 2;
-            let my = 4;
-            buf.fill_rect(mx - 4, my - 3, (mw + 8) as u32, 19, Bgra::new(0, 0, 0));
-            buf.fill_rect(mx - 4, my - 3, (mw + 8) as u32, 1, Bgra::new(80, 80, 100));
-            buf.fill_rect(mx - 4, my + 15, (mw + 8) as u32, 1, Bgra::new(80, 80, 100));
-            draw_str_scaled(buf, &msg, mx + 1, my + 1, Bgra::new(0, 0, 0), 2);
-            draw_str_scaled(buf, &msg, mx,     my,     Bgra::new(80, 220, 255), 2);
         }
     }
 
