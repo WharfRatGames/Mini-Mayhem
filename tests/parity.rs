@@ -174,6 +174,59 @@ fn inputmsg_muzzle_roundtrip() {
     assert_eq!(decoded.muzzle_y, 67.89, "muzzle_y lost in wire round-trip");
 }
 
+/// TAT replay must call process_weapon_menu before server_tick, and skip
+/// server_tick while the menu is open — exactly mirroring what tick() does
+/// during recording. Without this, weapon switches are lost (wrong weapon fires)
+/// and the A-confirm tick causes a phantom shot (server_fire_grace not set).
+///
+/// Regression guard: if process_weapon_menu is ever removed from the TAT replay
+/// paths in src/main.rs, this test will fail with "fired Bazooka instead of Grenade".
+#[test]
+fn tat_replay_applies_weapon_switch() {
+    use arty::game::loop_runner::replay_tick;
+    use arty::physics::projectile::WeaponKind;
+
+    let mut game = build_game(42);
+    // Force a predictable 2-weapon loadout: Bazooka at index 0, Grenade at index 1.
+    // The menu is 2 columns wide so pressing Right moves from Bazooka to Grenade.
+    game.teams[0].weapons = vec![
+        (WeaponKind::Bazooka, None),
+        (WeaponKind::Grenade, None),
+    ];
+    game.teams[0].selected_weapon = 0;
+
+    // Button bit positions from Button::ALL order:
+    //   0=Up 1=Down 2=Left 3=Right 4=A 5=B 6=X 7=Y 8=L1 9=R1 10=L2 11=R2 12=Start 13=Select
+    const SELECT: u16 = 1 << 13;
+    const RIGHT:  u16 = 1 << 3;
+    const A_BTN:  u16 = 1 << 4;
+
+    // Bitmask sequence that switches to Grenade and fires:
+    //   SELECT  → open weapon menu
+    //   RIGHT   → cursor moves from Bazooka (col 0) to Grenade (col 1)
+    //   A_BTN   → confirm selection (menu closes, server_fire_grace=30)
+    //   0×30    → fire grace countdown; first tick arms charge_armed, rest idle
+    //   A_BTN   → hold A: power charges
+    //   0       → release A: power > 0 → fire_weapon() fires the selected weapon
+    let bitmasks: Vec<u16> = [SELECT, RIGHT, A_BTN]
+        .into_iter()
+        .chain(std::iter::repeat(0u16).take(30))
+        .chain([A_BTN, 0])
+        .collect();
+
+    let mut prev: u16 = 0;
+    for &bits in &bitmasks {
+        replay_tick(&mut game, prev, bits);
+        prev = bits;
+    }
+
+    assert!(!game.projectiles.is_empty(),
+        "TAT replay: expected a projectile to be fired after weapon-switch sequence");
+    assert_eq!(game.projectiles[0].kind, WeaponKind::Grenade,
+        "TAT replay fired {:?} instead of Grenade — weapon switch was not applied",
+        game.projectiles[0].kind);
+}
+
 /// The shared sim must be deterministic: two games from the same seed fed the
 /// same inputs stay identical. Guards against time-based RNG / map iteration
 /// order creeping in (which would desync server vs client).
