@@ -274,8 +274,8 @@ pub fn draw_soldier_skeletal(
     // On fire: squirm with small fast jitter.
     if on_fire_ticks > 0 {
         let seed = tick.wrapping_add((pos.x as u32).wrapping_mul(17));
-        let jx = ((seed % 5) as f32 - 2.0) * 0.8;
-        let jy = (((seed / 5) % 3) as f32 - 1.0) * 0.8;
+        let jx = ((seed % 7) as f32 - 3.0) * 1.2;
+        let jy = (((seed / 7) % 5) as f32 - 2.0) * 1.0;
         root.0 += jx;
         root.1 += jy;
     }

@@ -1521,17 +1521,20 @@ impl GameState {
                 }
             } else {
                 // Squirm animation: any soldier standing in the fire visibly reacts,
-                // even between damage ticks.
-                for team in &mut self.teams {
-                    for s in &mut team.soldiers {
+                // even between damage ticks. Active soldier immediately loses control.
+                let mut active_in_fire = false;
+                for (ti, team) in self.teams.iter_mut().enumerate() {
+                    for (si, s) in team.soldiers.iter_mut().enumerate() {
                         if !s.is_alive() { continue; }
                         let dx = s.pos.x - patch.pos.x;
                         let dy = s.pos.y - patch.pos.y;
                         if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
                             s.on_fire_ticks = 10;
+                            if ti == ati && si == asi { active_in_fire = true; }
                         }
                     }
                 }
+                if active_in_fire { self.active_worm_hit = true; }
                 // DoT tick
                 if patch.lifetime % DOT_INTERVAL == 0 {
                     for team in &mut self.teams {
