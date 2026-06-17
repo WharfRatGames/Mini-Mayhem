@@ -1,0 +1,49 @@
+ARTY — CRATE DROP RATES (v0.5.4.244+)
+======================================
+
+Every turn has a 30% chance of dropping a crate.
+
+CRATE TYPE SPLIT
+  75% Weapon crate
+  25% Health crate (+25 HP)
+
+WEAPON CRATE POOL — RARITY TIERS
+
+  COMMON (~10% each)
+    Mine (Landmine)       10%
+    Shotgun               10%
+    TNT                   10%
+    Grapple (Ninja Rope)  10%
+    Baseball Bat          10%
+    Plasma Torch          10%
+
+  UNCOMMON (~8% each)
+    Blasthive              8%
+    Meteor Bomb            8%
+    Sacred Ordnance        8%
+    Air Strike             8%
+
+  RARE (~3% each)
+    Black Hole             3%
+    Revolver               3%
+
+  ULTRA RARE
+    Hand of Jerry          2%
+    ─────────────────────────
+    Total                100%
+
+EFFECTIVE RATES (% of ALL crates)
+  Mine                   7.50%
+  Shotgun                7.50%
+  TNT                    7.50%
+  Grapple                7.50%
+  Baseball Bat           7.50%
+  Plasma Torch           7.50%
+  Blasthive              6.00%
+  Meteor Bomb            6.00%
+  Sacred Ordnance        6.00%
+  Air Strike             6.00%
+  Black Hole             2.25%
+  Revolver               2.25%
+  Hand of Jerry          1.50%
+  Health                25.00%

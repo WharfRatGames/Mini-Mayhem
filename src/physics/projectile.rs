@@ -78,7 +78,7 @@ impl WeaponKind {
             Self::Landmine       => 50,
             Self::Tnt            => 112,  // ~2.5× grenade
             Self::HolyHandGrenade => 150,
-            Self::AirStrike      => 75,
+            Self::AirStrike      => 50,
             Self::Minigun        => 12,   // per bullet
             Self::BaseballBat    => 25,
             Self::FreezeGrenade  => 10,
