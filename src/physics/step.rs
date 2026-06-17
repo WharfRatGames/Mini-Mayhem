@@ -105,7 +105,7 @@ pub fn step_projectile(
     if proj.fuse == FuseState::Armed {
         let speed = (proj.vel.x * proj.vel.x + proj.vel.y * proj.vel.y).sqrt();
         if speed < 1.0 && proj.vel.y.abs() < 0.5 {
-            proj.fuse = FuseState::Detonating(15); // 0.5 s at 30 Hz
+            proj.fuse = FuseState::Detonating(90); // 3 s at 30 Hz (hallelujah.wav is ~2.85 s)
             return StepResult::HHGArmed;
         }
     }
