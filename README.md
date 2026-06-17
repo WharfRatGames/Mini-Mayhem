@@ -44,11 +44,6 @@ PATH="$ZIG:$PATH" cargo zigbuild --target armv7-unknown-linux-gnueabihf --profil
 ```
 Output: `target/armv7-unknown-linux-gnueabihf/miyoo/arty`
 
-### Server (aarch64, e.g. Raspberry Pi)
-```bash
-PATH="$ZIG:$PATH" cargo zigbuild --target aarch64-unknown-linux-gnu --release --bin server
-```
-
 ## Status
 
 See [STATUS.md](STATUS.md) for the current version, detailed changelog, and known issues.
