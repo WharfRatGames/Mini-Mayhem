@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.238";
+const VERSION: &str = "0.5.4.239";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -349,6 +349,7 @@ fn main() {
     let mut live_ranked_match = false;
     let mut live_elo_my:  i32 = 0;
     let mut live_elo_opp: i32 = 0;
+    let mut live_opp_username = String::new();
     let mut live_game_port: u16 = 7777; // port of the spawned game server instance
     let mut session_token = String::new(); // empty for casual/non-ranked — server treats as non-reconnectable
     if is_reconnect_resume {
@@ -426,12 +427,13 @@ fn main() {
                     live_elo_my      = json_field(&resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
                     live_game_port   = json_field(&resp, "port").and_then(|s| s.parse().ok()).unwrap_or(7777);
                     session_token    = json_field(&resp, "session_token").unwrap_or_default();
+                    live_opp_username = json_field(&resp, "opponent_username").unwrap_or_default();
                 }
             }
             Ok(ref wait_resp) => {
                 // Waiting — capture our ELO from the waiting response before the poll loop
                 live_elo_my = json_field(wait_resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(0);
-                let (tx, rx) = std::sync::mpsc::channel::<Option<(u16,i32,i32,String)>>();
+                let (tx, rx) = std::sync::mpsc::channel::<Option<(u16,i32,i32,String,String)>>();
                 let token2 = token.clone();
                 std::thread::spawn(move || {
                     for _ in 0..60 { // poll up to 60 times (max 30 seconds)
@@ -443,7 +445,8 @@ fn main() {
                                 let opp: i32  = json_field(&resp, "opponent_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
                                 let my: i32   = json_field(&resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
                                 let tok = json_field(&resp, "session_token").unwrap_or_default();
-                                let _ = tx.send(Some((port, my, opp, tok)));
+                                let opp_uname = json_field(&resp, "opponent_username").unwrap_or_default();
+                                let _ = tx.send(Some((port, my, opp, tok, opp_uname)));
                                 return;
                             }
                         }
@@ -468,7 +471,7 @@ fn main() {
                     std::thread::sleep(std::time::Duration::from_millis(33));
                 };
                 match matched {
-                    Some((port, my, opp, tok)) => { live_ranked_match = true; live_game_port = port; live_elo_my = my; live_elo_opp = opp; session_token = tok; }
+                    Some((port, my, opp, tok, opp_uname)) => { live_ranked_match = true; live_game_port = port; live_elo_my = my; live_elo_opp = opp; session_token = tok; live_opp_username = opp_uname; }
                     None => { draw_msg(&mut buf, &mut fb, "NO MATCH FOUND"); std::thread::sleep(std::time::Duration::from_secs(2)); continue 'game; }
                 }
             }
@@ -634,7 +637,16 @@ fn main() {
     }
     // Match intro screen for all live matches
     if is_live || live_ranked_match {
-        show_match_intro(&mut fb, &mut buf, &mut input, &game, my_team);
+        let mut intro_usernames = [String::new(), String::new()];
+        if live_ranked_match {
+            intro_usernames[my_team]     = live_username.clone();
+            intro_usernames[1 - my_team] = live_opp_username.clone();
+        } else {
+            for (i, p) in lobby_players.iter().enumerate().take(2) {
+                intro_usernames[i] = p.username.clone();
+            }
+        }
+        show_match_intro(&mut fb, &mut buf, &mut input, &game, my_team, &intro_usernames);
     }
 
     // VS CPU: player picks their team; selecting immediately starts the game
@@ -1779,11 +1791,12 @@ fn show_login_bonus(
 /// Full-screen match intro: shows both teams side-by-side with avatars and ELO.
 /// Dismisses on A/Start or after 3 seconds.
 fn show_match_intro(
-    fb:      &mut Framebuffer,
-    buf:     &mut WorldBuffer,
-    input:   &mut input::InputState,
-    game:    &game::state::GameState,
-    my_team: usize,
+    fb:        &mut Framebuffer,
+    buf:       &mut WorldBuffer,
+    input:     &mut input::InputState,
+    game:      &game::state::GameState,
+    my_team:   usize,
+    usernames: &[String; 2],
 ) {
     use renderer::Bgra;
     use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
@@ -1826,11 +1839,19 @@ fn show_match_intro(
             let nw = str_width_scaled(&name, 2);
             draw_str_scaled(buf, &name, hx - nw/2, av_y + AV as i32 + 12, col, 2);
 
+            // Account username
+            let uname = &usernames[ti];
+            if !uname.is_empty() {
+                let uw = str_width(uname);
+                draw_str(buf, uname, hx - uw/2, av_y + AV as i32 + 30, Bgra::new(140, 140, 180));
+            }
+
             // ELO (ranked only)
             if t.elo > 0 {
                 let elo_str = format!("ELO  {}", t.elo);
                 let ew = str_width(&elo_str);
-                draw_str(buf, &elo_str, hx - ew/2, av_y + AV as i32 + 30, Bgra::new(180, 180, 100));
+                let elo_y = av_y + AV as i32 + if uname.is_empty() { 30 } else { 42 };
+                draw_str(buf, &elo_str, hx - ew/2, elo_y, Bgra::new(180, 180, 100));
             }
 
             // YOU indicator
@@ -2158,7 +2179,7 @@ fn run_tat_game(
     // first turn), never again after each subsequent turn.
     let is_first_turn = moves.len() == my_slot; // 0 for p0, 1 for p1
     if (my_elo > 0 || opp_elo > 0) && is_first_turn {
-        show_match_intro(fb, buf, input, &game, my_slot);
+        show_match_intro(fb, buf, input, &game, my_slot, &[String::new(), String::new()]);
     }
     // Snap all soldiers to surface to prevent fall damage on first tick
     for ti in 0..game.teams.len() {
