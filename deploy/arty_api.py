@@ -272,7 +272,7 @@ def check_pw(pw, stored):
     # Legacy: unsalted sha256 — still works, hash upgraded on next login
     return secrets.compare_digest(stored, hashlib.sha256(pw.encode()).hexdigest())
 
-def gen_token(u): return hashlib.sha256(f"{u}{time.time_ns()}".encode()).hexdigest()
+def gen_token(u=None): return secrets.token_hex(32)
 def gen_code(): return ''.join(random.choices(string.ascii_uppercase, k=6))
 def gen_game_token(): return ''.join(random.choices(string.ascii_letters + string.digits, k=24))
 
