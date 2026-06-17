@@ -42,7 +42,7 @@ If you lose connection mid-match:
 
 Async multiplayer — each player takes their turn when they have time. The match state lives on the server between turns.
 
-- **48-hour turn timer** — miss your turn and your opponent wins
+- **14-day turn timer** — miss your turn and your opponent wins
 - **Casual** and **Ranked** queues available
 - Your opponent's last move is replayed when you load the match so you can see what happened
 
@@ -56,8 +56,3 @@ Accessible from the multiplayer menu. Shows:
 - **Top Kills** — ranked by total kills across all matches
 - Your own position is highlighted in gold even if you're outside the top 50
 
----
-
-## Server Info
-
-The game server runs on a **Raspberry Pi 4** and is available at `crumbonium.duckdns.org`. Matches use a direct TCP connection on port 7777. The REST API (accounts, shop, leaderboard) runs on port 80/443.

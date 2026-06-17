@@ -8,22 +8,23 @@
 | **Up / Down** | Aim up / down |
 | **A** | Fire / confirm |
 | **B** | Jump / cancel / back |
-| **X** | Open weapon menu |
 | **Y** | Toggle camera follow |
-| **L1** | Decrease fuse timer (Grenade / TNT) |
-| **R1** | Increase fuse timer / Camera pan hold |
-| **R1 + D-pad** | Free camera pan |
-| **Start** | Pause / end turn early |
-| **Select** | Open weapon menu (alternate) |
+| **L1** | Decrease fuse timer (Grenade) / Camera pan left |
+| **R1** | Increase fuse timer (Grenade) / Camera pan right |
+| **L1 + D-pad** | Free camera pan (no snap) |
+
+> **Note:** START does not end your turn early. Pausing is not available mid-turn.
 
 ## Weapon Menu
 
 | Button | Action |
 |---|---|
+| **Select** | Open weapon menu |
 | **Up / Down / Left / Right** | Navigate weapons |
 | **A** | Select weapon |
-| **B / Select** | Close menu |
-| **L1 / R1** | Adjust fuse (Grenade only — TNT fuse is automatic) |
+| **B** | Close menu |
+
+> **Fuse timer:** With a Grenade selected, **L1** decreases and **R1** increases the fuse countdown. Adjust before throwing.
 
 ## Ninja Rope
 
@@ -41,7 +42,7 @@
 | **Up** | Torch up-forward |
 | **Right/Left** | Torch forward (facing direction) |
 | **Down** | Torch down-forward |
-| **B** | Stop torching |
+| **Hold A** | Keep torching (release A to stop) |
 
 ## Title Screen / Menus
 
