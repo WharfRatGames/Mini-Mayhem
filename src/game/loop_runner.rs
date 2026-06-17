@@ -1747,9 +1747,10 @@ fn fire_shotgun(game: &mut GameState) {
     let fm = game.teams[ti].soldiers[si].facing as f32;
     let base_angle = game.aim.angle;
 
-    // Muzzle position: ahead and slightly above the soldier's center
-    let muzzle_x = game.teams[ti].soldiers[si].pos.x + fm * 14.0;
-    let muzzle_y = game.teams[ti].soldiers[si].pos.y - 6.0;
+    // Muzzle position: arm origin (70% up 13px torso from hip at pos.y-11 = pos.y-20)
+    // plus arm (9px) + barrel (17px) = 26px along the aim direction.
+    let muzzle_x = game.teams[ti].soldiers[si].pos.x + base_angle.cos() * fm * 26.0;
+    let muzzle_y = game.teams[ti].soldiers[si].pos.y - 20.0 - base_angle.sin() * 26.0;
 
     // LCG seeded from tick + shot number for deterministic but varied spread
     let seed = game.tick.wrapping_mul(1664525).wrapping_add(1013904223);
@@ -2005,11 +2006,12 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize) {
     let step_x = angle.cos() * fm * STEP;
     let step_y = -angle.sin() * STEP;
 
-    // Start ray from the gun muzzle — shoulder height + gun length along aim direction.
-    // Shoulder is ~24px above foot; gun tip is ~26px further along aim from shoulder.
-    let shoulder_y = game.teams[ti].soldiers[si].pos.y - 24.0;
+    // Start ray from the gun muzzle. Arm origin is at 70% up the 13px torso from
+    // hip (pos.y - 11), giving arm_orig.y = pos.y - 20. Gun tip is arm (9px) +
+    // barrel (17px) = 26px forward from arm_orig along the aim direction.
+    let arm_orig_y = game.teams[ti].soldiers[si].pos.y - 20.0;
     let mut rx = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 26.0;
-    let mut ry = shoulder_y - angle.sin() * 26.0;
+    let mut ry = arm_orig_y - angle.sin() * 26.0;
     let steps = (MAX_RANGE / STEP) as u32;
     let mut hit_ti: Option<usize> = None;
     let mut hit_si_idx: Option<usize> = None;
