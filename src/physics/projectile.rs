@@ -76,8 +76,8 @@ impl WeaponKind {
             Self::Shotgun        => 20,   // per pellet
             Self::ClusterBomb    => 30,   // per cluster
             Self::Landmine       => 50,
-            Self::Tnt            => 112,  // ~2.5× grenade
-            Self::HolyHandGrenade => 150,
+            Self::Tnt            => 75,
+            Self::HolyHandGrenade => 100,
             Self::AirStrike      => 50,
             Self::Minigun        => 12,   // per bullet
             Self::BaseballBat    => 25,
