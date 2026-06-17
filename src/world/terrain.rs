@@ -1019,22 +1019,32 @@ impl Terrain {
         let mut spawns: Vec<WorldPos> = Vec::with_capacity(count);
         let mut used_x: Vec<i32> = Vec::with_capacity(count);
 
-        // On caverns maps, try to place ALL soldiers inside the cave system.
-        // The cave is designed with vertical shafts connecting to sky, so escape
-        // verification is skipped here — we use a lighter check (solid floor +
-        // body clearance + ceiling) and scan at 2px resolution for better coverage.
-        // Surface fallback below still fills any slots that can't be placed underground.
+        // Cave maps: ALL soldiers must spawn underground. Never fall through to
+        // surface spawns. Three passes with progressively relaxed separation so we
+        // always fill the roster without touching the surface layer.
         if self.archetype == 3 {
-            let mut x = lo;
-            while x <= hi && spawns.len() < count {
-                if used_x.iter().all(|&ux| (ux - x).abs() >= MIN_SEP) {
-                    if let Some(foot_y) = self.standable_cave_foot_simple(x) {
-                        spawns.push(WorldPos::new(x as f32, foot_y as f32));
-                        used_x.push(x);
+            // Pass 1: team half at full MIN_SEP.
+            // Pass 2: full map width at full MIN_SEP (other team's half has cave space too).
+            // Pass 3: full map width at half MIN_SEP (crowded cave — pack them tighter).
+            let ranges: &[(i32, i32, i32)] = &[
+                (lo, hi,                 MIN_SEP),
+                (SPAWN_EDGE_MARGIN as i32, WORLD_W as i32 - SPAWN_EDGE_MARGIN as i32, MIN_SEP),
+                (SPAWN_EDGE_MARGIN as i32, WORLD_W as i32 - SPAWN_EDGE_MARGIN as i32, MIN_SEP / 2),
+            ];
+            'outer: for &(scan_lo, scan_hi, sep) in ranges {
+                let mut x = scan_lo;
+                while x <= scan_hi {
+                    if spawns.len() >= count { break 'outer; }
+                    if used_x.iter().all(|&ux| (ux - x).abs() >= sep) {
+                        if let Some(foot_y) = self.standable_cave_foot_simple(x) {
+                            spawns.push(WorldPos::new(x as f32, foot_y as f32));
+                            used_x.push(x);
+                        }
                     }
+                    x += 1;
                 }
-                x += 1;
             }
+            return spawns;
         }
 
         // ── Surface spawns on substantial landforms of similar size ───────────────

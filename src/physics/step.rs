@@ -93,7 +93,7 @@ pub fn step_projectile(
     let collision = swept_collision(pos_before, proj.pos, terrain);
 
     // Resolve what happens
-    let step = match resolve(proj, &collision) {
+    let step = match resolve(proj, &collision, terrain) {
         Outcome::Continue  => StepResult::Flying,
         Outcome::Bounced   => StepResult::Bounced,
         Outcome::Drowned   => StepResult::Drowned,

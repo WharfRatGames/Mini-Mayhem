@@ -987,14 +987,13 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
                     next_row * COLS
                 };
             }
-            // Up/Down scroll the list — stop at top/bottom, no wrap
-            if input.just_pressed(Button::Up) && row > 0 {
-                let target_row = row - 1;
+            if input.just_pressed(Button::Up) {
+                let target_row = if row == 0 { rows - 1 } else { row - 1 };
                 let target = target_row * COLS + col;
                 game.weapon_menu_cursor = if target < n { target } else { target_row * COLS };
             }
-            if input.just_pressed(Button::Down) && row + 1 < rows {
-                let target_row = row + 1;
+            if input.just_pressed(Button::Down) {
+                let target_row = (row + 1) % rows;
                 let target = target_row * COLS + col;
                 game.weapon_menu_cursor = if target < n { target } else { target_row * COLS };
             }
