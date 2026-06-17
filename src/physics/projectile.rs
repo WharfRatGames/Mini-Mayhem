@@ -108,7 +108,7 @@ impl WeaponKind {
             Self::ClusterBomb    => 6.0,
             Self::Landmine       => 9.0,
             Self::Tnt            => 18.0,
-            Self::HolyHandGrenade => 20.0,
+            Self::HolyHandGrenade => 10.0,
             Self::AirStrike      => 8.0,
             Self::Minigun        => 2.0,
             Self::BaseballBat    => 12.0,
