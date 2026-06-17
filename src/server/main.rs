@@ -563,6 +563,7 @@ fn broadcast_lobby(lobby: &SharedLobby) {
     let lb = lobby.lock().unwrap_or_else(|e| e.into_inner());
     let players: Vec<LobbyPlayer> = lb.members.iter().map(|m| LobbyPlayer {
         name:      m.join.as_ref().map(|j| j.name.clone()).unwrap_or_default(),
+        username:  m.join.as_ref().map(|j| j.username.clone()).unwrap_or_default(),
         avatar_id: m.join.as_ref().map(|j| j.avatar_id).unwrap_or(0),
         color_id:  m.color_id,
         ready:     m.ready,
@@ -926,7 +927,7 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.237";
+const REQUIRED_VERSION: &str = "0.5.4.238";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
