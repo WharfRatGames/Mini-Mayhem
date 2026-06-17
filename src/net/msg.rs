@@ -9,6 +9,11 @@ pub struct InputMsg {
     pub released:  Vec<NetButton>,
     /// Client's authoritative aim angle — server applies directly to avoid drift.
     pub aim_angle: f32,
+    /// Rendered barrel-tip position from the skeleton renderer. Server uses this
+    /// as the hitscan ray origin for Revolver/Shotgun so all modes fire identically.
+    /// (0.0, 0.0) means "not available this tick" — server falls back to approximation.
+    pub muzzle_x: f32,
+    pub muzzle_y: f32,
     /// Client's authoritative selected-weapon KIND (net id). The server selects by
     /// kind, not index, so a pruned/diverged loadout can't make the wrong weapon fire.
     pub selected_weapon_kind: u8,

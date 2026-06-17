@@ -387,6 +387,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
 
         // Apply client's authoritative aim angle directly; strip Up/Down so
         // process_aim doesn't double-apply them on top of the received angle.
+        let muzzle_override: Option<(f32, f32)>;
         if let Some(ref msg) = inp {
             if msg.aim_angle.is_finite() {
                 game.aim.angle = msg.aim_angle.clamp(-std::f32::consts::PI, std::f32::consts::PI);
@@ -404,6 +405,13 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             if let Some(idx) = game.teams[ti].weapons.iter().position(|(w, _)| *w == kind) {
                 game.teams[ti].selected_weapon = idx;
             }
+            muzzle_override = if msg.muzzle_x != 0.0 || msg.muzzle_y != 0.0 {
+                Some((msg.muzzle_x, msg.muzzle_y))
+            } else {
+                None
+            };
+        } else {
+            muzzle_override = None;
         }
         // Clear one-shot events so pressed/released dont repeat
         if active == 0 { if let Some(ref mut i) = *inp0.lock().unwrap_or_else(|e| e.into_inner()) { i.pressed.clear(); i.released.clear(); } }
@@ -416,7 +424,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             .map(|t| t.soldiers.iter().map(|s| (s.hp, s.is_alive())).collect())
             .collect();
 
-        arty::game::loop_runner::server_tick(&mut game, &input_state);
+        arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override);
 
         // Log per-soldier damage/kills caused by this tick, with the weapon
         // responsible (kill_weapon is set on every damaging hit, not just kills).
@@ -888,6 +896,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
         let active = game.active_team();
         let inp = inputs.get(active).cloned().flatten();
         let mut input_state = inp.as_ref().map(msg_to_input).unwrap_or_else(arty::input::InputState::new);
+        let muzzle_override2: Option<(f32, f32)>;
         if let Some(ref msg) = inp {
             if msg.aim_angle.is_finite() {
                 game.aim.angle = msg.aim_angle.clamp(-std::f32::consts::PI, std::f32::consts::PI);
@@ -900,12 +909,19 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
             if let Some(idx) = game.teams[active].weapons.iter().position(|(w, _)| *w == kind) {
                 game.teams[active].selected_weapon = idx;
             }
+            muzzle_override2 = if msg.muzzle_x != 0.0 || msg.muzzle_y != 0.0 {
+                Some((msg.muzzle_x, msg.muzzle_y))
+            } else {
+                None
+            };
+        } else {
+            muzzle_override2 = None;
         }
         if let Some(m) = members.get(active) {
             if let Some(ref mut i) = *m.input.lock().unwrap_or_else(|e| e.into_inner()) { i.pressed.clear(); i.released.clear(); }
         }
 
-        arty::game::loop_runner::server_tick(&mut game, &input_state);
+        arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override2);
 
         if !matches!(game.result, arty::game::state::GameResult::Ongoing) {
             if let Some(final_bytes) = encode(&build_state(&game, tick, 0)) {
@@ -1125,8 +1141,10 @@ fn accept_one(listener: &TcpListener) -> (TcpStream, std::net::SocketAddr, Strin
                 };
                 if ver != REQUIRED_VERSION {
                     info!("Rejected wrong version {}: {}", ver, addr);
+                    let _ = stream.write_all(b"REJECTED:VERSION\n");
                     continue;
                 }
+                let _ = stream.write_all(b"OK\n");
                 let token = match read_line(&mut stream, 70) {
                     Some(t) => t,
                     None => { info!("Handshake read failed: {}", addr); continue; }
