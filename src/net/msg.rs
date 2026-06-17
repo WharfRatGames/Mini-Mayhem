@@ -17,6 +17,11 @@ pub struct InputMsg {
     /// Client's authoritative selected-weapon KIND (net id). The server selects by
     /// kind, not index, so a pruned/diverged loadout can't make the wrong weapon fire.
     pub selected_weapon_kind: u8,
+    /// Set to true on the final InputMsg before a voluntary quit (forfeit).
+    /// Server immediately awards the win to the remaining player and skips the
+    /// reconnect window — this is not a disconnection, it is an explicit forfeit.
+    #[serde(default)]
+    pub quit: bool,
     /// Per-soldier cosmetics and names sent by the client so the server can
     /// broadcast them to the opponent. Applied whenever received (idempotent).
     pub hat_ids:           [u8; 4],

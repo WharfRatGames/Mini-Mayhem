@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.258";
+const VERSION: &str = "0.5.4.259";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -727,6 +727,7 @@ fn main() {
     let mut fps_window_start = Instant::now();
     let mut fps_frame_count: u32 = 0;
     let mut paused_secs: Option<u32> = None;
+    let mut opponent_left_ticks: u32 = 0; // banner: "OPPONENT DISCONNECTED"
     let mut opponent_abandoned = false;
     let mut opponent_quit_acked = false; // true after player dismisses the quit dialog
     loop {
@@ -748,6 +749,22 @@ fn main() {
                 continue 'game;
             }
             use net::msg::{InputMsg, NetButton};
+            // Process the weapon menu before building the InputMsg so that an A press
+            // used to confirm a weapon selection is not forwarded to the server as a
+            // fire input (server has no menu and would fire a phantom shot).
+            let my_turn_now = game.turn.current_team == my_team;
+            let menu_consumed_a = if !lstate.paused && my_turn_now {
+                let was_open = game.weapon_menu_open;
+                let menu_active = game::loop_runner::process_weapon_menu(&mut game, &input);
+                game::loop_runner::tick_fire_grace(&mut game);
+                if lstate.fire_grace > 0 { lstate.fire_grace -= 1; game.aim.power = 0.0; }
+                if !menu_active { game::loop_runner::process_aim(&mut game, &input); }
+                // A was consumed by the menu if the menu was open (or just opened) and A was pressed
+                was_open && input.just_pressed(input::Button::A)
+            } else {
+                if !my_turn_now { game.weapon_menu_open = false; }
+                false
+            };
             // Suppress A-HELD when server_fire_grace active (same state used in tick/server_tick).
             let suppress_a_held = game.server_fire_grace > 0;
             let held: Vec<NetButton> = [
@@ -775,7 +792,7 @@ fn main() {
                 (input::Button::Select, NetButton::Select),
                 (input::Button::L1,     NetButton::L1),
                 (input::Button::R1,     NetButton::R1),
-            ].iter().filter(|(b,_)| input.just_pressed(*b)).map(|(_,n)| *n).collect();
+            ].iter().filter(|(b,_)| input.just_pressed(*b) && !(menu_consumed_a && *b == input::Button::A)).map(|(_,n)| *n).collect();
             let released: Vec<NetButton> = [
                 (input::Button::A, NetButton::A),
             ].iter().filter(|(b,_)| input.just_released(*b)).map(|(_,n)| *n).collect();
@@ -792,7 +809,7 @@ fn main() {
                 }
                 (h, u, b, g, w)
             };
-            if !lstate.paused { conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names, muzzle_x: lstate.last_muzzle.map(|(x,_)| x).unwrap_or(0.0), muzzle_y: lstate.last_muzzle.map(|(_,y)| y).unwrap_or(0.0) }); }
+            if !lstate.paused { conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names, muzzle_x: lstate.last_muzzle.map(|(x,_)| x).unwrap_or(0.0), muzzle_y: lstate.last_muzzle.map(|(_,y)| y).unwrap_or(0.0), quit: false }); }
             // Drain ALL pending state messages:
             //   - sounds collected from every state so no SFX tick is skipped
             //   - first received state's projectiles used for position (avoids the
@@ -826,8 +843,10 @@ fn main() {
             }
             let got_state = latest_state.is_some();
             if let Some(state) = &latest_state {
-                if state.opponent_abandoned { opponent_abandoned = true; }
+                if state.opponent_abandoned { opponent_abandoned = true; opponent_left_ticks = opponent_left_ticks.max(150); }
+                let prev_paused = paused_secs;
                 paused_secs = state.paused_opponent;
+                if prev_paused.is_none() && paused_secs.is_some() { opponent_left_ticks = 150; }
             }
             if let Some(state) = latest_state {
                 // While showing the 10-second game-over overlay, don't let a new-game
@@ -914,34 +933,38 @@ fn main() {
                 if input.just_pressed(input::Button::Down) { lstate.pause_cursor = if lstate.pause_cursor == 0 { 1 } else { 0 }; }
                 if input.just_pressed(input::Button::A) && lstate.pause_cursor == 0 { do_resume(&mut lstate, &mut game.aim); }
                 if input.just_pressed(input::Button::A) && lstate.pause_cursor == 1 {
-                    if live_ranked_match {
-                        let confirm = loop {
-                            input.poll();
-                            draw_msg(&mut buf, &mut fb, "QUIT NOW = LOSS + ELO PENALTY  A=QUIT  B=CANCEL");
-                            if input.just_pressed(input::Button::A) { break true; }
-                            if input.just_pressed(input::Button::B) { break false; }
-                            std::thread::sleep(TICK_DURATION);
-                        };
-                        if confirm { mp_quit = true; }
+                    let msg = if live_ranked_match {
+                        "QUIT = FORFEIT + ELO LOSS  A=CONFIRM  B=CANCEL"
                     } else {
-                        mp_quit = true;
-                    }
+                        "QUIT = FORFEIT (OPPONENT WINS)  A=CONFIRM  B=CANCEL"
+                    };
+                    let confirm = loop {
+                        input.poll();
+                        draw_msg(&mut buf, &mut fb, msg);
+                        if input.just_pressed(input::Button::A) { break true; }
+                        if input.just_pressed(input::Button::B) { break false; }
+                        std::thread::sleep(TICK_DURATION);
+                    };
+                    if confirm { mp_quit = true; }
                 }
             }
-            if mp_quit { continue 'game; }
-            // ── Weapon menu + aim — only when it's our turn ───────────────────────
-            let my_turn = game.turn.current_team == my_team;
-            if !lstate.paused && my_turn {
-                let menu_active = game::loop_runner::process_weapon_menu(&mut game, &input);
-                if !menu_active {
-                    game::loop_runner::process_aim(&mut game, &input);
+            if mp_quit {
+                // Notify the server this is a voluntary forfeit before disconnecting.
+                // The server awards the win to the opponent immediately and skips the
+                // reconnect window, so the remaining player sees "you win" right away.
+                if let Some(ref mut conn) = net_conn {
+                    conn.send(&net::msg::InputMsg {
+                        tick: lstate.tick, held: vec![], pressed: vec![], released: vec![],
+                        aim_angle: game.aim.angle, selected_weapon_kind: 0,
+                        hat_ids: [0;4], uniform_color_ids: [0;4], boot_color_ids: [0;4],
+                        gun_style_ids: [0;4], worm_names: Default::default(),
+                        muzzle_x: 0.0, muzzle_y: 0.0, quit: true,
+                    });
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
-                game::loop_runner::tick_fire_grace(&mut game);
-                if lstate.fire_grace > 0 { lstate.fire_grace -= 1; game.aim.power = 0.0; }
-            } else if !my_turn {
-                // Not our turn — block weapon menu; aim.power comes from server state.
-                game.weapon_menu_open = false;
+                continue 'game;
             }
+            // Weapon menu + aim already processed above (before InputMsg send).
             // Camera pan or follow active soldier
             let cam_speed = 20.0f32;
             if input.held(input::Button::L1) {
@@ -1015,6 +1038,18 @@ fn main() {
             game::loop_runner::draw_weapon_menu_overlay(&game, &mut buf, cam.left_edge() as i32);
             if let Some(secs) = paused_secs {
                 draw_disconnect_overlay(&mut buf, cam.left_edge() as i32, secs);
+            }
+            if opponent_left_ticks > 0 && paused_secs.is_none() {
+                opponent_left_ticks -= 1;
+                use renderer::font::{draw_str_scaled, str_width_scaled};
+                let msg = "OPPONENT DISCONNECTED";
+                let mw = str_width_scaled(msg, 1);
+                let mx = cam.left_edge() as i32 + world::SCREEN_W as i32 / 2 - mw / 2;
+                let alpha = (opponent_left_ticks.min(30) as f32 / 30.0 * 255.0) as u8;
+                buf.fill_rect(mx - 6, 10, (mw + 12) as u32, 18, renderer::Bgra::new(40, 10, 10));
+                draw_str_scaled(&mut buf, msg, mx, 13, renderer::Bgra::new(255, alpha / 2 + 80, alpha / 2 + 80), 1);
+            } else if opponent_left_ticks > 0 {
+                opponent_left_ticks -= 1;
             }
             // Opponent-quit blocking dialog — shown before the game-over screen.
             // The player must acknowledge before we exit.
