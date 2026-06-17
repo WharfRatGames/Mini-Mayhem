@@ -147,3 +147,17 @@ if [ -f "$ZIP" ]; then
 else
     echo "WARNING: $ZIP not found — builds upload skipped"
 fi
+
+# Publish to GitHub Releases
+if [ -f "$ZIP" ]; then
+    NOTES=$(tail -1 deploy/changelog.txt 2>/dev/null || echo "v$VERSION")
+    if gh release create "v$VERSION" "$ZIP" \
+        --repo WharfRatGames/Mini-Mayhem \
+        --title "v$VERSION" \
+        --notes "$NOTES" \
+        --latest 2>&1; then
+        echo "GitHub release: https://github.com/WharfRatGames/Mini-Mayhem/releases/tag/v$VERSION"
+    else
+        echo "WARNING: GitHub release failed (non-fatal)"
+    fi
+fi

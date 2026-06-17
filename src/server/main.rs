@@ -395,10 +395,6 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             use arty::input::Button;
             input_state.clear_button(Button::Up);
             input_state.clear_button(Button::Down);
-            // Apply the client's authoritative weapon selection BY KIND. The client's
-            // loadout indices can diverge from the server's (the server prunes spent
-            // weapons; the client doesn't simulate), so selecting by index fired the
-            // wrong weapon. Selecting by kind is index-independent.
             use arty::physics::projectile::WeaponKind;
             let kind = WeaponKind::from_net_u8(msg.selected_weapon_kind);
             let ti = game.active_team();
@@ -1092,7 +1088,7 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.257";
+const REQUIRED_VERSION: &str = "0.5.4.258";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

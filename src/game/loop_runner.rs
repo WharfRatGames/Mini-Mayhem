@@ -159,9 +159,10 @@ pub enum SimStep {
 }
 
 /// Single source of truth for one logic tick — no camera, no rendering, no
-/// pause / game-over UI. Both `tick()` (local hotseat / vs-cpu / test) and
-/// `server_tick()` (live network + TAT replay) call this, so every mode plays
-/// identically. Camera follow and visual-only grave settling live in the
+/// pause / game-over UI, no weapon menu. Both `tick()` (local hotseat / vs-cpu
+/// / test) and `server_tick()` (live network + TAT replay) call this, so every
+/// mode plays identically. The weapon menu is client-only and runs in `tick()`
+/// before this call. Camera follow and visual-only grave settling live in the
 /// client wrapper (`tick()` / `update_camera()`).
 pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
     simulate_with_muzzle(game, input, None)
@@ -178,15 +179,12 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     // Object mask: re-stamp barrels + armed mines so collision sees them as solid.
     stamp_objects(game);
 
-    // ── Weapon menu — one source: process_weapon_menu() ──────────────────────
-    let menu_open = process_weapon_menu(game, input);
     tick_fire_grace(game); // weapon-confirm suppression — one source
     // Timer pauses while the player is charging a power shot (A held). It still
     // ticks while the weapon menu is open so pressure stays on.
     if game.aim.power <= 0.0 {
         game.turn.tick();
     }
-    if menu_open { return SimStep::MenuOpen; }
 
     // ── Crate pre-turn phase: block player input (timer already ran above) ────
     if game.crate_watch_ticks > 0 {
@@ -591,21 +589,21 @@ pub fn tick(
     // Post-pause fire suppression (client-only, not part of the shared core).
     if lstate.fire_grace > 0 { lstate.fire_grace -= 1; game.aim.power = 0.0; }
 
+    // ── Weapon menu (client-only; never runs on server) ──────────────────────
+    let menu_open = process_weapon_menu(game, input);
+
     // ── Shared gameplay simulation ────────────────────────────────────────────
     let prev_turn = lstate.prev_turn_number;
-    let step = simulate_with_muzzle(game, input, lstate.last_muzzle);
-    lstate.prev_turn_number = game.turn.turn_number;
-
-    match step {
-        SimStep::MenuOpen => {
-            render(game, buf, cam, lstate);
-            let ti = game.active_team();
-            draw_weapon_menu(buf, &game.teams[ti].weapons, game.weapon_menu_cursor, cam.left_edge() as i32, game.aim.fuse_ticks, game.turn.turn_number, game.teams.len());
-        }
-        _ => {
-            update_camera(game, cam, input, step, prev_turn);
-            render(game, buf, cam, lstate);
-        }
+    if menu_open {
+        // Menu is open: skip the sim tick, just render + overlay.
+        render(game, buf, cam, lstate);
+        let ti = game.active_team();
+        draw_weapon_menu(buf, &game.teams[ti].weapons, game.weapon_menu_cursor, cam.left_edge() as i32, game.aim.fuse_ticks, game.turn.turn_number, game.teams.len());
+    } else {
+        let step = simulate_with_muzzle(game, input, lstate.last_muzzle);
+        lstate.prev_turn_number = game.turn.turn_number;
+        update_camera(game, cam, input, step, prev_turn);
+        render(game, buf, cam, lstate);
     }
     true
 }
