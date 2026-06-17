@@ -113,13 +113,43 @@ fn sfx_net_roundtrip() {
         Sfx::BlackHole, Sfx::Mine, Sfx::MineArm, Sfx::Barrel,
         Sfx::Revolver, Sfx::Shotgun, Sfx::Bat, Sfx::CrateDrop,
         Sfx::PlasmaTorch, Sfx::Garcia, Sfx::Smash, Sfx::Death,
-        Sfx::DeathWater,
+        Sfx::DeathWater, Sfx::HolyHandGrenade,
     ];
     for &sfx in all {
         let encoded = sfx as u8;
         let decoded = Sfx::from_u8(encoded);
         assert_eq!(decoded, Some(sfx), "{sfx:?} did not survive u8 round-trip");
     }
+}
+
+/// HHG FuseState variants (Armed, Detonating) must survive the net encoding round-trip.
+#[test]
+fn hhg_fuse_state_net_roundtrip() {
+    use arty::physics::projectile::{FuseState, WeaponKind};
+    use arty::world::{WorldPos, Vec2};
+    use arty::physics::projectile::Projectile;
+
+    let mut server = build_game(42);
+    let mut client = build_game(42);
+    let mut cam = arty::renderer::Camera::new(0.0);
+
+    // Spawn an HHG projectile in Armed state
+    let pos = WorldPos::new(500.0, 100.0);
+    let mut proj = Projectile::new(pos, Vec2::new(0.0, 0.0), WeaponKind::HolyHandGrenade);
+    proj.fuse = FuseState::Armed;
+    server.projectiles.push(proj.clone());
+
+    // Spawn one in Detonating state
+    let mut proj2 = Projectile::new(pos, Vec2::new(0.0, 0.0), WeaponKind::HolyHandGrenade);
+    proj2.fuse = FuseState::Detonating(5);
+    server.projectiles.push(proj2.clone());
+
+    let state = build_state(&server, 1, 0);
+    apply_server_state(&mut client, &mut cam, &state, 0);
+
+    assert_eq!(client.projectiles.len(), 2, "both HHG projectiles should survive round-trip");
+    assert_eq!(client.projectiles[0].fuse, FuseState::Armed, "Armed state round-trip failed");
+    assert_eq!(client.projectiles[1].fuse, FuseState::Detonating(5), "Detonating(5) round-trip failed");
 }
 
 /// The shared sim must be deterministic: two games from the same seed fed the
