@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.237";
+const VERSION: &str = "0.5.4.238";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -345,6 +345,7 @@ fn main() {
 
     // ── Account + roster (live mode, casual or ranked) ─────────────────────
     let mut live_roster: Option<game::account::Roster> = None;
+    let mut live_username = String::new();
     let mut live_ranked_match = false;
     let mut live_elo_my:  i32 = 0;
     let mut live_elo_opp: i32 = 0;
@@ -360,6 +361,7 @@ fn main() {
                              load_saved_creds};
         // Login — load teams from local cache instantly (no network call)
         let (token, mut rosters) = if let Some((u, t)) = load_saved_creds() {
+            live_username = u;
             let r = game::account::load_cached_rosters();
             (t, r)
         } else {
@@ -374,7 +376,7 @@ fn main() {
                 let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
             };
             match result {
-                AccountAction::LoggedIn { token, rosters, .. } => (token, rosters),
+                AccountAction::LoggedIn { token, username, rosters, .. } => { live_username = username; (token, rosters) }
                 AccountAction::Back => { continue 'game; }
             }
         };
@@ -533,7 +535,7 @@ fn main() {
     if let Some(ref mut conn) = net_conn {
         let welcome = if is_live && !is_live_ranked {
             // Casual: run the lobby (ready-up + pick colour).
-            match run_casual_lobby(&mut fb, &mut buf, &mut input, conn, live_roster.as_ref()) {
+            match run_casual_lobby(&mut fb, &mut buf, &mut input, conn, live_roster.as_ref(), &live_username) {
                 Some((w, players)) => { lobby_players = players; Some(w) }
                 None => None,
             }
@@ -1162,24 +1164,27 @@ fn build_default_game_n(seed: u64, team_count: usize) -> GameState {
 /// ready up, and render everyone in the lobby until the server starts the match.
 /// Returns the WelcomeMsg + final roster on start, or None if the player backs out.
 fn run_casual_lobby(
-    fb:     &mut Framebuffer,
-    buf:    &mut WorldBuffer,
-    input:  &mut input::InputState,
-    conn:   &mut net::ServerConn,
-    roster: Option<&game::account::Roster>,
+    fb:       &mut Framebuffer,
+    buf:      &mut WorldBuffer,
+    input:    &mut input::InputState,
+    conn:     &mut net::ServerConn,
+    roster:   Option<&game::account::Roster>,
+    username: &str,
 ) -> Option<(net::msg::WelcomeMsg, Vec<net::msg::LobbyPlayer>)> {
     use net::msg::{LobbyClientMsg, LobbyServerMsg, LobbyJoin};
 
     // Announce our roster.
     let join = match roster {
         Some(r) => LobbyJoin {
-            name: r.name.clone(), avatar_id: r.avatar_id, headstone_id: r.headstone_id,
+            name: r.name.clone(), username: username.to_string(),
+            avatar_id: r.avatar_id, headstone_id: r.headstone_id,
             worm_names: r.worm_names.clone(), hat_ids: r.hat_ids,
             uniform_color_ids: r.uniform_color_ids, boot_color_ids: r.boot_color_ids,
             gun_style_ids: r.gun_style_ids,
         },
         None => LobbyJoin {
-            name: "PLAYER".to_string(), avatar_id: 0, headstone_id: 0,
+            name: "PLAYER".to_string(), username: username.to_string(),
+            avatar_id: 0, headstone_id: 0,
             worm_names: [String::new(), String::new(), String::new(), String::new()],
             hat_ids: [0;4], uniform_color_ids: [0;4], boot_color_ids: [0;4], gun_style_ids: [0;4],
         },
@@ -1307,6 +1312,10 @@ fn draw_casual_lobby(
         draw_str_scaled(buf, &name, 92, ry + 8, col, 2);
         // Colour label
         draw_str(buf, colour_name(p.color_id), 92, ry + 30, col);
+        // Account username
+        if !p.username.is_empty() {
+            draw_str(buf, &p.username, 92, ry + 42, Bgra::new(110, 115, 145));
+        }
 
         // Ready indicator (right side)
         let label = if p.ready { "READY" } else { "NOT READY" };

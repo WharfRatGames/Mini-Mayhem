@@ -285,6 +285,7 @@ pub struct WelcomeMsg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LobbyJoin {
     pub name:              String,
+    pub username:          String,
     pub avatar_id:         u8,
     pub headstone_id:      u8,
     pub worm_names:        [String; 4],
@@ -298,6 +299,7 @@ pub struct LobbyJoin {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LobbyPlayer {
     pub name:      String,
+    pub username:  String,
     pub avatar_id: u8,
     /// None until the player picks a colour.
     pub color_id:  Option<u8>,
