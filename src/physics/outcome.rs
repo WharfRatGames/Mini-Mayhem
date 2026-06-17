@@ -78,7 +78,7 @@ fn worms_bounce(proj: &mut Projectile, pos: WorldPos, terrain: &Terrain) {
     let v_n_y = -dot * ny;
     let v_t_x = rx - v_n_x;
     let v_t_y = ry - v_n_y;
-    const RESTITUTION: f32 = 0.50;
+    const RESTITUTION: f32 = 0.30;
     const FRICTION: f32    = 0.80;
     proj.vel.x = v_n_x * RESTITUTION + v_t_x * FRICTION;
     proj.vel.y = v_n_y * RESTITUTION + v_t_y * FRICTION;
