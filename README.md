@@ -49,10 +49,6 @@ Output: `target/armv7-unknown-linux-gnueabihf/miyoo/arty`
 PATH="$ZIG:$PATH" cargo zigbuild --target aarch64-unknown-linux-gnu --release --bin server
 ```
 
-## Deployment
-
-Build the Miyoo client and run `deploy/update_server.sh <version>` to refresh the OTA update server (binary, changelog, version manifest) and push to connected devices. See `STATUS.md` for full infrastructure details and manual deploy steps.
-
 ## Status
 
 See [STATUS.md](STATUS.md) for the current version, detailed changelog, and known issues.
