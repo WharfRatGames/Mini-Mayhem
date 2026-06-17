@@ -56,6 +56,7 @@ pub fn play_crate_drop()        {}
 pub fn play_death()             { _play_death(); }
 pub fn play_wet_death()         { _play("wet.wav"); }
 pub fn play_death_water()       { _play_death_water(); }
+pub fn play_holy_hand_grenade() { _play_once("hallelujah.wav"); } // deploy/assets/sfx/hallelujah.wav required
 
 /// Identifies a sound effect so it can be recorded during simulation and
 /// shipped to the live client (which runs no simulation of its own and would
@@ -81,6 +82,7 @@ pub enum Sfx {
     Smash       = 14,
     Death       = 15,
     DeathWater  = 16,
+    HolyHandGrenade = 17,
 }
 
 impl Sfx {
@@ -94,6 +96,7 @@ impl Sfx {
             14 => Sfx::Smash,
             15 => Sfx::Death,
             16 => Sfx::DeathWater,
+            17 => Sfx::HolyHandGrenade,
             _ => return None,
         })
     }
@@ -109,7 +112,7 @@ impl Sfx {
             Sfx::BlackHole | Sfx::Mine | Sfx::MineArm | Sfx::Barrel |
             Sfx::Revolver | Sfx::Shotgun | Sfx::Bat | Sfx::CrateDrop |
             Sfx::PlasmaTorch | Sfx::Garcia | Sfx::Smash | Sfx::Death |
-            Sfx::DeathWater => {}
+            Sfx::DeathWater | Sfx::HolyHandGrenade => {}
         }
     }
 }
@@ -135,6 +138,7 @@ pub fn play(s: Sfx) {
         Sfx::Smash       => play_smash(),
         Sfx::Death       => play_death(),
         Sfx::DeathWater  => play_death_water(),
+        Sfx::HolyHandGrenade => play_holy_hand_grenade(),
     }
 }
 

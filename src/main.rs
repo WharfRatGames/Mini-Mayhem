@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.242";
+const VERSION: &str = "0.5.4.243";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -613,8 +613,9 @@ fn main() {
             (WeaponKind::Blasthive,     None),
             (WeaponKind::BlackHoleBomb, None),
             (WeaponKind::PlasmaTorch,   None),
-            (WeaponKind::Garcia,        None),
-            (WeaponKind::AirStrike,     None),
+            (WeaponKind::Garcia,          None),
+            (WeaponKind::AirStrike,       None),
+            (WeaponKind::HolyHandGrenade, Some(3)),
         ];
         for team in &mut game.teams {
             team.weapons = all_weapons.clone();

@@ -51,7 +51,12 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                 x: p.pos.x, y: p.pos.y,
                 vel_x: p.vel.x, vel_y: p.vel.y,
                 kind_u8: p.kind.to_net_u8(),
-                fuse_ticks: match p.fuse { FuseState::Burning(n) => n, _ => 0 },
+                fuse_ticks: match p.fuse {
+                    FuseState::Burning(n)    => n,
+                    FuseState::Armed         => 0xFFFF_FFFE,
+                    FuseState::Detonating(n) => 0x8000_0000 | n,
+                    _                        => 0,
+                },
                 is_fragment: p.is_fragment,
             }
         }).collect(),
@@ -230,9 +235,12 @@ pub fn apply_server_state(
         use crate::world::{Vec2, WorldPos};
         let kind = WeaponKind::from_net_u8(np.kind_u8);
         let mut proj = Projectile::new(WorldPos::new(np.x, np.y), Vec2::new(np.vel_x, np.vel_y), kind);
-        if np.fuse_ticks > 0 {
-            proj.fuse = FuseState::Burning(np.fuse_ticks);
-        }
+        proj.fuse = match np.fuse_ticks {
+            0xFFFF_FFFE       => FuseState::Armed,
+            n if n & 0x8000_0000 != 0 => FuseState::Detonating(n & !0x8000_0000),
+            0                 => FuseState::None,
+            n                 => FuseState::Burning(n),
+        };
         proj.is_fragment = np.is_fragment;
         game.projectiles.push(proj);
     }

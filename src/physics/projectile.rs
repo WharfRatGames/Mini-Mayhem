@@ -135,14 +135,20 @@ impl WeaponKind {
         )
     }
 
-    /// Default fuse duration in physics ticks (20 ticks = 1 second).
+    /// Returns true if the player can adjust the fuse before throwing (L1/R1).
+    /// HHG has a fixed 3-second fuse; only Grenade/ClusterBomb/Tnt are adjustable.
+    pub fn has_adjustable_fuse(self) -> bool {
+        matches!(self, Self::Grenade | Self::ClusterBomb | Self::Tnt)
+    }
+
+    /// Default fuse duration in physics ticks (30 ticks = 1 second).
     /// Returns None for weapons with no fuse.
     pub fn default_fuse_ticks(self) -> Option<u32> {
         match self {
             Self::Grenade         => Some(60),  // 3 s
             Self::ClusterBomb     => Some(60),  // 3 s
             Self::Tnt             => None,      // fuse is random 4-5 s, set on spawn
-            Self::HolyHandGrenade => Some(60),  // 3 s (classic)
+            Self::HolyHandGrenade => Some(90),  // 3 s at 30 Hz
             Self::BananaBomb      => None,       // no fuse — explodes on terrain contact
             Self::BlackHoleBomb   => None,
             _                     => None,
@@ -158,7 +164,7 @@ impl WeaponKind {
             Self::ClusterBomb    => "CLUSTER BOMB",
             Self::Landmine       => "MINE",
             Self::Tnt            => "TNT",
-            Self::HolyHandGrenade => "HOLY HAND GRENADE",
+            Self::HolyHandGrenade => "SACRED ORDNANCE",
             Self::BananaBomb     => "METEOR BOMB",
             Self::AirStrike      => "AIR STRIKE",
             Self::Revolver       => "REVOLVER",
@@ -277,16 +283,23 @@ pub enum FuseState {
     Burning(u32),
     /// Fuse has reached zero — detonate this tick.
     Expired,
+    /// HHG only: fuse gone, waiting for projectile to stop moving.
+    Armed,
+    /// HHG only: stopped, counting down to detonation.
+    Detonating(u32),
 }
 
 impl FuseState {
     /// Advance the fuse by one tick. Returns the new state.
     pub fn tick(self) -> Self {
         match self {
-            Self::None           => Self::None,
-            Self::Burning(0)     => Self::Expired,
-            Self::Burning(n)     => Self::Burning(n - 1),
-            Self::Expired        => Self::Expired,
+            Self::None              => Self::None,
+            Self::Burning(0)        => Self::Expired,
+            Self::Burning(n)        => Self::Burning(n - 1),
+            Self::Expired           => Self::Expired,
+            Self::Armed             => Self::Armed,
+            Self::Detonating(0)     => Self::Expired,
+            Self::Detonating(n)     => Self::Detonating(n - 1),
         }
     }
 

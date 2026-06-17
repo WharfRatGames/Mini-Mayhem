@@ -217,6 +217,7 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
         TurnPhase::Watching => {
             let exp_before = game.explosions.len();
             let tnt_before = game.projectiles.iter().filter(|p| p.kind == crate::physics::projectile::WeaponKind::Tnt).count();
+            let hhg_before = game.projectiles.iter().filter(|p| p.kind == crate::physics::projectile::WeaponKind::HolyHandGrenade).count();
             game.step_projectiles();
             {
                 use crate::physics::projectile::WeaponKind;
@@ -238,7 +239,8 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
             }
             if game.explosions.len() > exp_before {
                 let tnt_after = game.projectiles.iter().filter(|p| p.kind == crate::physics::projectile::WeaponKind::Tnt).count();
-                if tnt_after < tnt_before { game.emit_sound(crate::audio::Sfx::Tnt); } else { game.emit_sound(crate::audio::Sfx::Explosion); }
+                let hhg_after = game.projectiles.iter().filter(|p| p.kind == crate::physics::projectile::WeaponKind::HolyHandGrenade).count();
+                if tnt_after < tnt_before || hhg_after < hhg_before { game.emit_sound(crate::audio::Sfx::Tnt); } else { game.emit_sound(crate::audio::Sfx::Explosion); }
             }
             // Garcia falling: tick it during Watching (camera follow is client-side).
             if game.garcia.is_some() {
@@ -1717,6 +1719,7 @@ fn fire_weapon(game: &mut GameState) {
     if kind == WeaponKind::Grenade {
         proj.fuse = FuseState::Burning(game.aim.fuse_ticks);
     }
+    // HHG uses a fixed 3-second fuse (already set by Projectile::new via default_fuse_ticks)
     match kind {
         WeaponKind::Grenade       => {}
         WeaponKind::BananaBomb    => {} // silent on throw; explosion fires play_explosion() naturally
@@ -2456,6 +2459,40 @@ pub fn draw_weapon_menu(
                 // Engine exhaust glow
                 buf.fill_rect(icon_cx - 17, icon_cy,     2, 1, exhaust);
             }
+            WeaponKind::HolyHandGrenade => {
+                // ── Sacred Ordnance: grenade oval with gold cross on top ──────
+                let gbody = Bgra::new(55, 120, 45);
+                let ghi2  = Bgra::new(90, 170, 70);
+                let gdark = Bgra::new(25, 60, 20);
+                let gold  = Bgra::new(255, 210, 40);
+                let goldhi = Bgra::new(255, 240, 120);
+                // Oval outline
+                buf.fill_rect(icon_cx - 5,  icon_cy - 5,  10, 2, dark);
+                buf.fill_rect(icon_cx - 8,  icon_cy - 3,  16, 2, dark);
+                buf.fill_rect(icon_cx - 9,  icon_cy - 1,  18, 8, dark);
+                buf.fill_rect(icon_cx - 8,  icon_cy + 7,  16, 2, dark);
+                buf.fill_rect(icon_cx - 5,  icon_cy + 9,  10, 2, dark);
+                // Oval body fill
+                buf.fill_rect(icon_cx - 4,  icon_cy - 4,   8, 2, gbody);
+                buf.fill_rect(icon_cx - 7,  icon_cy - 2,  14, 2, gbody);
+                buf.fill_rect(icon_cx - 8,  icon_cy,      16, 7, gbody);
+                buf.fill_rect(icon_cx - 7,  icon_cy + 7,  14, 2, gbody);
+                buf.fill_rect(icon_cx - 4,  icon_cy + 9,   8, 2, gbody);
+                // Highlight
+                buf.fill_rect(icon_cx - 6,  icon_cy - 2,   5, 2, ghi2);
+                buf.fill_rect(icon_cx - 7,  icon_cy,        3, 3, ghi2);
+                // Horizontal seam
+                buf.fill_rect(icon_cx - 8,  icon_cy + 3,  16, 2, gdark);
+                // Gold cross (vertical bar: 3px wide, 10px tall; horizontal bar: 10px wide, 3px tall, centered)
+                buf.fill_rect(icon_cx - 1,  icon_cy - 16,  3, 10, gold);
+                buf.fill_rect(icon_cx - 5,  icon_cy - 12,  11, 3, gold);
+                // Cross highlight
+                buf.fill_rect(icon_cx,      icon_cy - 15,  1, 8, goldhi);
+                buf.fill_rect(icon_cx - 4,  icon_cy - 11,  9, 1, goldhi);
+                // Collar ring connecting cross to body
+                buf.fill_rect(icon_cx - 3,  icon_cy - 6,   6, 3, gray);
+                buf.fill_rect(icon_cx - 2,  icon_cy - 5,   4, 1, icol);
+            }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
                 buf.fill_rect(icon_cx - 5, icon_cy - 3, 10, 6, icol);
@@ -2558,10 +2595,16 @@ pub fn draw_weapon_menu(
             WeaponKind::PlasmaTorch    => "TORCH",
             WeaponKind::Garcia         => "HAND OF JERRY",
             WeaponKind::AirStrike      => "AIR STRIKE",
+            WeaponKind::HolyHandGrenade => "SACRED ORD.",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };
-        if *kind == WeaponKind::Grenade {
+        if *kind == WeaponKind::HolyHandGrenade {
+            // Fixed 3-second fuse, no adjustment
+            draw_str(buf, name, cx + cell_w/2 - str_width(name)/2, cy + cell_h - 26, nc);
+            let fuse_col = if selected { Bgra::new(255, 210, 40) } else { Bgra::new(140, 120, 40) };
+            draw_str(buf, "3s FIXED", cx + cell_w/2 - str_width("3s FIXED")/2, cy + cell_h - 15, fuse_col);
+        } else if *kind == WeaponKind::Grenade {
             // Fuse weapons: name + fuse selector at bottom
             draw_str(buf, name, cx + cell_w/2 - str_width(name)/2, cy + cell_h - 26, nc);
             let fuse_secs = fuse_ticks / 30;
@@ -2818,7 +2861,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         WeaponKind::Revolver                 => 1, // pistol
                         WeaponKind::PlasmaTorch              => 6, // laser
                         WeaponKind::Grenade | WeaponKind::BananaBomb |
-                        WeaponKind::Blasthive | WeaponKind::BlackHoleBomb => 8, // throwable oval in hand
+                        WeaponKind::Blasthive | WeaponKind::BlackHoleBomb |
+                        WeaponKind::HolyHandGrenade => 8, // throwable oval in hand
                         WeaponKind::Garcia => soldier.gun_style_id, // soldier holds cosmetic gun, no aim arm
                         _ => soldier.gun_style_id, // NinjaRope/Tnt/Landmine/Bat etc — keep cosmetic
                     }
@@ -3090,6 +3134,45 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     let ly = proj.pos.y as i32 - 20;
                     draw_str_scaled(buf, &label, lx + 1, ly + 1, Bgra::new(0, 0, 0), 2);
                     draw_str_scaled(buf, &label, lx,     ly,     Bgra::yellow(), 2);
+                }
+            } else if proj.kind == WeaponKind::HolyHandGrenade {
+                // Sacred Ordnance: grenade body with gold cross on top
+                let gx = proj.pos.x as i32;
+                let gy = proj.pos.y as i32;
+                let gbody = Bgra::new(55, 120, 45);
+                let gdark = Bgra::new(25, 60, 20);
+                let ghi   = Bgra::new(90, 170, 70);
+                let gray  = Bgra::new(160, 160, 165);
+                let gold  = Bgra::new(255, 210, 40);
+                // Oval body (same as draw_grenade_projectile)
+                buf.fill_rect(gx - 1, gy - 4, 2, 1, gdark);
+                buf.fill_rect(gx - 2, gy - 3, 4, 5, gdark);
+                buf.fill_rect(gx - 1, gy + 2, 2, 1, gdark);
+                buf.fill_rect(gx - 1, gy - 3, 2, 1, gbody);
+                buf.fill_rect(gx - 1, gy - 2, 2, 4, gbody);
+                buf.fill_rect(gx - 1, gy + 1, 2, 1, gbody);
+                buf.set_pixel(gx - 1, gy - 2, ghi);
+                buf.fill_rect(gx - 2, gy - 1, 4, 1, gdark);
+                // Gold cross above body (vertical 1×5, horizontal 3×1, centered)
+                buf.fill_rect(gx,     gy - 9, 1, 5, gold);
+                buf.fill_rect(gx - 1, gy - 7, 3, 1, gold);
+                // Collar connecting cross to body
+                buf.fill_rect(gx - 1, gy - 5, 2, 2, gray);
+                // Fuse countdown while burning
+                if let FuseState::Burning(ticks) = proj.fuse {
+                    use crate::renderer::font::{draw_str_scaled, str_width_scaled};
+                    let secs = ((ticks + 29) / 30).min(9);
+                    let label = format!("{}", secs);
+                    let lx = gx - str_width_scaled(&label, 2) / 2;
+                    let ly = gy - 22;
+                    draw_str_scaled(buf, &label, lx + 1, ly + 1, Bgra::new(0, 0, 0), 2);
+                    draw_str_scaled(buf, &label, lx,     ly,     Bgra::new(255, 210, 40), 2);
+                }
+                // Gold glow when armed (stopped, about to detonate)
+                if matches!(proj.fuse, FuseState::Armed | FuseState::Detonating(_)) {
+                    buf.set_pixel(gx - 2, gy - 1, gold);
+                    buf.set_pixel(gx + 2, gy - 1, gold);
+                    buf.set_pixel(gx,     gy - 5, gold);
                 }
             } else if proj.kind == WeaponKind::Tnt {
                 let px = proj.pos.x as i32;

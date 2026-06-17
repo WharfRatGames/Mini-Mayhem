@@ -1,5 +1,5 @@
 use crate::world::{Terrain, WorldPos};
-use super::projectile::Projectile;
+use super::projectile::{Projectile, FuseState, WeaponKind};
 use super::tick::tick;
 use super::collision::swept_collision;
 use super::outcome::{resolve, Outcome};
@@ -19,6 +19,8 @@ pub enum StepResult {
     Drowned,
     /// Projectile exceeded maximum age. Despawn silently.
     Expired,
+    /// HHG just came to rest — emit hallelujah sound. Projectile stays alive.
+    HHGArmed,
 }
 
 impl StepResult {
@@ -59,18 +61,31 @@ pub fn step_projectile(
         return StepResult::Expired;
     }
 
-    let pos_before = proj.pos;
+    let pos_before  = proj.pos;
+    let fuse_before = proj.fuse;
 
     // Apply physics (updates pos, vel, age, fuse)
     tick(proj, wind);
 
-    // Check if fuse just expired this tick — explode at current pos
+    // Check if fuse just expired this tick
     if proj.fuse.is_expired() {
-        return StepResult::FuseExplode(proj.pos);
+        // Only redirect to Armed if the fuse burned down normally (Burning → Expired).
+        // If Detonating counted down to Expired, that's the actual detonation.
+        if proj.kind == WeaponKind::HolyHandGrenade
+            && !matches!(fuse_before, FuseState::Detonating(_))
+        {
+            proj.fuse = FuseState::Armed;
+        } else {
+            return StepResult::FuseExplode(proj.pos);
+        }
     }
 
     // Check if age limit hit this tick
     if proj.age_ticks >= Projectile::MAX_AGE_TICKS {
+        // Armed HHG that timed out still explodes
+        if proj.fuse == FuseState::Armed {
+            return StepResult::FuseExplode(proj.pos);
+        }
         return StepResult::Expired;
     }
 
@@ -78,13 +93,24 @@ pub fn step_projectile(
     let collision = swept_collision(pos_before, proj.pos, terrain);
 
     // Resolve what happens
-    match resolve(proj, &collision) {
+    let step = match resolve(proj, &collision) {
         Outcome::Continue  => StepResult::Flying,
         Outcome::Bounced   => StepResult::Bounced,
         Outcome::Drowned   => StepResult::Drowned,
         Outcome::Explode(p)      => StepResult::Explode(p),
         Outcome::FuseExplode(p) => StepResult::FuseExplode(p),
+    };
+
+    // HHG armed: check if it has come to rest (vel.y ≈ 0 = on ground, speed < 1)
+    if proj.fuse == FuseState::Armed {
+        let speed = (proj.vel.x * proj.vel.x + proj.vel.y * proj.vel.y).sqrt();
+        if speed < 1.0 && proj.vel.y.abs() < 0.5 {
+            proj.fuse = FuseState::Detonating(15); // 0.5 s at 30 Hz
+            return StepResult::HHGArmed;
+        }
     }
+
+    step
 }
 
 #[cfg(test)]

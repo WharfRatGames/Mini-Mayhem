@@ -753,6 +753,12 @@ impl GameState {
             let kind = proj.kind;
             let effective_wind = if !kind.affected_by_wind() { 0.0 } else { wind_val };
             match step_projectile(proj, &self.terrain, effective_wind) {
+                StepResult::HHGArmed => {
+                    // Projectile just stopped — play hallelujah, then Detonating fuse ticks down
+                    self.sounds.push(crate::audio::Sfx::HolyHandGrenade as u8);
+                    crate::audio::play(crate::audio::Sfx::HolyHandGrenade);
+                    true
+                }
                 StepResult::Flying | StepResult::Bounced => {
                     let mut hit_soldier = false;
                     let is_bee = kind == WeaponKind::Blasthive && proj.is_fragment;
@@ -848,6 +854,7 @@ impl GameState {
                 }
                 StepResult::Drowned => {
                     // Fused weapons (grenades) explode even in water — fuse was burning
+                    // Armed HHG also explodes on water contact
                     if kind.has_fuse() {
                         explosions.push((proj.pos, kind));
                     }
@@ -954,8 +961,10 @@ impl GameState {
                 CrateKind::Weapon(WeaponKind::BlackHoleBomb)
             } else if w < 0.99 {
                 CrateKind::Weapon(WeaponKind::AirStrike)
-            } else {
+            } else if w < 0.995 {
                 CrateKind::Weapon(WeaponKind::Garcia)
+            } else {
+                CrateKind::Weapon(WeaponKind::HolyHandGrenade)
             }
         };
         self.crates.push(DroppedCrate {
