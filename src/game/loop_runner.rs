@@ -2634,9 +2634,9 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     let gw = background::gust_wind(game.wind.value(), lstate.tick);
     background::draw_backdrop(buf, &game.terrain, cam_x);
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
+    background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
 
     buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain, &lstate.bg_cache, game.map_seed);
-    background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
     mark!("terrain+bg");
 
     // 2. Water ripple — cached strip, regenerated every tick (30 Hz).

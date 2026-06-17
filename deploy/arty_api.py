@@ -985,11 +985,13 @@ def handle(db, sock):
             if abs(my_elo - opp_elo) <= window:
                 port = 7777
                 tok = gen_game_token()
+                opp_uname = db.execute("SELECT username FROM users WHERE id=?", (opp_uid,)).fetchone()
+                opp_uname = opp_uname[0] if opp_uname else ""
                 my_row = db.execute("SELECT id FROM live_queue WHERE user_id=?", (uid2,)).fetchone()
                 db.execute("UPDATE live_queue SET paired_with=?,game_token=?,session_token=? WHERE id=?", (opp_uid, str(port), tok, pool_id))
                 db.execute("UPDATE live_queue SET paired_with=?,game_token=?,session_token=? WHERE id=?", (uid2, str(port), tok, my_row[0]))
                 db.commit()
-                send_json(sock, 200, {"status":"matched","port":port,"opponent_elo":opp_elo,"my_elo":my_elo,"session_token":tok})
+                send_json(sock, 200, {"status":"matched","port":port,"opponent_elo":opp_elo,"my_elo":my_elo,"session_token":tok,"opponent_username":opp_uname})
                 sock.close(); return
         send_json(sock, 200, {"status":"waiting","my_elo":my_elo})
 
@@ -1004,8 +1006,10 @@ def handle(db, sock):
         if not row: send_json(sock, 200, {"status":"not_in_queue"}); return
         my_q_id, paired_with, game_token, my_q_elo, session_token = row
         if paired_with:
-            opp_elo = db.execute("SELECT elo FROM live_queue WHERE user_id=?", (paired_with,)).fetchone()
-            send_json(sock, 200, {"status":"matched","port":int(game_token) if game_token and game_token.isdigit() else 7777,"opponent_elo":opp_elo[0] if opp_elo else my_q_elo,"my_elo":my_elo,"session_token":session_token or ""})
+            opp_row = db.execute("SELECT lq.elo, u.username FROM live_queue lq JOIN users u ON u.id=lq.user_id WHERE lq.user_id=?", (paired_with,)).fetchone()
+            opp_elo_val = opp_row[0] if opp_row else my_q_elo
+            opp_uname_val = opp_row[1] if opp_row else ""
+            send_json(sock, 200, {"status":"matched","port":int(game_token) if game_token and game_token.isdigit() else 7777,"opponent_elo":opp_elo_val,"my_elo":my_elo,"session_token":session_token or "","opponent_username":opp_uname_val})
             sock.close(); return
         # Try to pair now
         opponent = db.execute(
@@ -1019,10 +1023,12 @@ def handle(db, sock):
             if abs(my_q_elo - opp_elo) <= window:
                 port = 7777
                 tok = gen_game_token()
+                opp_uname2 = db.execute("SELECT username FROM users WHERE id=?", (opp_uid,)).fetchone()
+                opp_uname2 = opp_uname2[0] if opp_uname2 else ""
                 db.execute("UPDATE live_queue SET paired_with=?,game_token=?,session_token=? WHERE id=?", (opp_uid, str(port), tok, pool_id))
                 db.execute("UPDATE live_queue SET paired_with=?,game_token=?,session_token=? WHERE id=?", (uid2, str(port), tok, my_q_id))
                 db.commit()
-                send_json(sock, 200, {"status":"matched","port":port,"opponent_elo":opp_elo,"my_elo":my_elo,"session_token":tok})
+                send_json(sock, 200, {"status":"matched","port":port,"opponent_elo":opp_elo,"my_elo":my_elo,"session_token":tok,"opponent_username":opp_uname2})
                 sock.close(); return
         send_json(sock, 200, {"status":"waiting","my_elo":my_elo})
 
