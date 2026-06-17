@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.249";
+const VERSION: &str = "0.5.4.250";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1214,16 +1214,29 @@ fn run_casual_lobby(
         },
     };
     conn.send(&LobbyClientMsg::Join(join));
-    conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(60))).ok();
+    // 500ms timeout: gives the server time to process Join and reply with State before
+    // the drain loop times out. After the first State arrives we switch to 60ms per-frame.
+    conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(500))).ok();
 
     let mut players: Vec<net::msg::LobbyPlayer> = Vec::new();
     let mut your_index: usize = 0;
     let mut my_color: u8 = 0;
     let mut picked = false;   // whether we've sent an initial colour pick
     let mut ready = false;
+    let mut frame: u32 = 0;
 
     loop {
+        frame = frame.wrapping_add(1);
         input.poll();
+        if conn.is_disconnected() {
+            draw_msg(buf, fb, "DISCONNECTED FROM SERVER  (B=BACK)");
+            loop {
+                input.poll();
+                if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::A) { break; }
+                std::thread::sleep(std::time::Duration::from_millis(33));
+            }
+            return None;
+        }
         if input.just_pressed(input::Button::B) {
             conn.send(&LobbyClientMsg::Leave);
             return None;
@@ -1244,7 +1257,9 @@ fn run_casual_lobby(
             let mut changed = false;
             if input.just_pressed(input::Button::Left)  { my_color = cycle(-1, my_color, &players, your_index); changed = true; }
             if input.just_pressed(input::Button::Right) { my_color = cycle( 1, my_color, &players, your_index); changed = true; }
-            if changed || !picked {
+            // Resend PickColor every 2s while players is empty — keeps connection alive and
+            // triggers a new State from the server in case the initial one was missed.
+            if changed || !picked || (players.is_empty() && frame % 60 == 0) {
                 conn.send(&LobbyClientMsg::PickColor { color_id: my_color });
                 picked = true;
             }
@@ -1264,10 +1279,15 @@ fn run_casual_lobby(
                     if let Some(p) = players.get(your_index) { ready = p.ready; }
                 }
                 LobbyServerMsg::Start(w) => {
+                    conn.stream.set_read_timeout(None).ok();
                     return Some((w, players));
                 }
             }
+            // After each message, switch to a short poll for any additional buffered messages.
+            conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(10))).ok();
         }
+        // Back to normal drain timeout for next frame.
+        conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(60))).ok();
 
         draw_casual_lobby(buf, &players, your_index, ready);
         buf.blit_to_fb(fb, 0);

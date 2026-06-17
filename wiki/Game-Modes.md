@@ -9,7 +9,7 @@ Solo play against one or more AI-controlled teams. Good for learning the weapons
 ## Take a Turn (TAT)
 Async online multiplayer — each player takes their turn whenever they have time, like chess by mail. Matches are stored server-side and can span hours or days. Requires an account.
 
-- Turns expire after **48 hours** (opponent is awarded the win on timeout)
+- Turns expire after **14 days** (opponent is awarded the win on timeout)
 - Supports **Casual** and **Ranked** (ELO-rated) queues
 - Scrap is awarded on match completion
 
