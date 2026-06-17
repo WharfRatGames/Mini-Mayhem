@@ -170,8 +170,9 @@ mod imp {
     static HUM:       OnceLock<Vec<i16>> = OnceLock::new();
     static TORCH:     OnceLock<Vec<i16>> = OnceLock::new();
     static GARCIA:    OnceLock<Vec<i16>> = OnceLock::new();
-    static SMASH:     OnceLock<Vec<i16>> = OnceLock::new();
-    static DEATHS:    OnceLock<Vec<Vec<i16>>> = OnceLock::new();
+    static SMASH:       OnceLock<Vec<i16>> = OnceLock::new();
+    static HALLELUJAH:  OnceLock<Vec<i16>> = OnceLock::new();
+    static DEATHS:      OnceLock<Vec<Vec<i16>>> = OnceLock::new();
 
     // ── WAV → 48kHz mono i16 ─────────────────────────────────────────────────
 
@@ -256,7 +257,8 @@ mod imp {
                 try_load(&HUM,       &dir, "hum.wav");
                 try_load(&TORCH,     &dir, "torch.wav");
                 try_load(&GARCIA,    &dir, "garcia.wav");
-                try_load(&SMASH,     &dir, "smash.wav");
+                try_load(&SMASH,       &dir, "smash.wav");
+                try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
                 let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
                     .into_iter().flatten().flatten()
                     .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
@@ -472,6 +474,7 @@ mod imp {
             "torch.wav"             => TORCH.get().cloned(),
             "garcia.wav"            => GARCIA.get().cloned(),
             "smash.wav"             => SMASH.get().cloned(),
+            "hallelujah.wav"        => HALLELUJAH.get().cloned(),
             _ => None,
         }
     }
