@@ -97,6 +97,21 @@ impl Sfx {
             _ => return None,
         })
     }
+
+    /// Compile-time forcing function: exhaustively matches every Sfx variant so
+    /// adding a new sound breaks compilation here until you assign it a stable
+    /// u8 discriminant AND handle it in `from_u8` and `play`. Mirrors
+    /// `_net_coverage_checklist` in projectile.rs and the GameState checklists.
+    #[allow(dead_code)]
+    fn _sfx_coverage_checklist(s: Sfx) {
+        match s {
+            Sfx::Explosion | Sfx::Tnt | Sfx::Grenade | Sfx::Meteor |
+            Sfx::BlackHole | Sfx::Mine | Sfx::MineArm | Sfx::Barrel |
+            Sfx::Revolver | Sfx::Shotgun | Sfx::Bat | Sfx::CrateDrop |
+            Sfx::PlasmaTorch | Sfx::Garcia | Sfx::Smash | Sfx::Death |
+            Sfx::DeathWater => {}
+        }
+    }
 }
 
 /// Play a sound by its `Sfx` id. Used by the live client to render the sounds

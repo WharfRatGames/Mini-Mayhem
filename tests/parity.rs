@@ -102,6 +102,26 @@ fn round_trip_preserves_synced_state() {
     assert_eq!(state.fx_events, server.fx_events, "fx_events channel dropped by build_state");
 }
 
+/// Every Sfx variant must survive the u8 wire encoding round-trip intact.
+/// Forgetting to add a new sound to `from_u8` would silently drop it on live
+/// clients; this test catches that before it ships.
+#[test]
+fn sfx_net_roundtrip() {
+    use arty::audio::Sfx;
+    let all: &[Sfx] = &[
+        Sfx::Explosion, Sfx::Tnt, Sfx::Grenade, Sfx::Meteor,
+        Sfx::BlackHole, Sfx::Mine, Sfx::MineArm, Sfx::Barrel,
+        Sfx::Revolver, Sfx::Shotgun, Sfx::Bat, Sfx::CrateDrop,
+        Sfx::PlasmaTorch, Sfx::Garcia, Sfx::Smash, Sfx::Death,
+        Sfx::DeathWater,
+    ];
+    for &sfx in all {
+        let encoded = sfx as u8;
+        let decoded = Sfx::from_u8(encoded);
+        assert_eq!(decoded, Some(sfx), "{sfx:?} did not survive u8 round-trip");
+    }
+}
+
 /// The shared sim must be deterministic: two games from the same seed fed the
 /// same inputs stay identical. Guards against time-based RNG / map iteration
 /// order creeping in (which would desync server vs client).

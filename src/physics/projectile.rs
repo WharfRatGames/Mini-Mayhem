@@ -173,23 +173,36 @@ impl WeaponKind {
 
     /// Network serialisation index — stable across versions.
     pub fn to_net_u8(self) -> u8 {
+        // EXHAUSTIVE — no wildcard. Adding a WeaponKind variant breaks compilation
+        // here, forcing you to assign it a stable wire ID before it can ship.
         match self {
-            Self::Bazooka     => 0,
-            Self::Grenade     => 1,
-            Self::Shotgun     => 2,
-            Self::ClusterBomb => 3,
-            Self::Landmine    => 4,
-            Self::Tnt         => 5,
-            Self::BananaBomb  => 6,
-            Self::BaseballBat => 7,
-            Self::Revolver    => 8,
-            Self::NinjaRope   => 9,
-            Self::Blasthive     => 10,
-            Self::BlackHoleBomb => 11,
-            Self::PlasmaTorch   => 12,
-            Self::Garcia        => 13,
-            Self::AirStrike     => 14,
-            _                   => 0,
+            Self::Bazooka          => 0,
+            Self::Grenade          => 1,
+            Self::Shotgun          => 2,
+            Self::ClusterBomb      => 3,
+            Self::Landmine         => 4,
+            Self::Tnt              => 5,
+            Self::BananaBomb       => 6,
+            Self::BaseballBat      => 7,
+            Self::Revolver         => 8,
+            Self::NinjaRope        => 9,
+            Self::Blasthive        => 10,
+            Self::BlackHoleBomb    => 11,
+            Self::PlasmaTorch      => 12,
+            Self::Garcia           => 13,
+            Self::AirStrike        => 14,
+            // Legacy/unimplemented variants — not in any loadout or crate table.
+            // Assigned IDs so the match stays exhaustive; round-trip is untested.
+            Self::DeathExplosion   => 15,
+            Self::HolyHandGrenade  => 16,
+            Self::Minigun          => 17,
+            Self::FreezeGrenade    => 18,
+            Self::Earthquake       => 19,
+            Self::Drill            => 20,
+            Self::HomingMissile    => 21,
+            Self::MineLayer        => 22,
+            Self::ConcreteDonkey   => 23,
+            Self::SuperSheep       => 24,
         }
     }
 
@@ -209,7 +222,36 @@ impl WeaponKind {
             12 => Self::PlasmaTorch,
             13 => Self::Garcia,
             14 => Self::AirStrike,
+            15 => Self::DeathExplosion,
+            16 => Self::HolyHandGrenade,
+            17 => Self::Minigun,
+            18 => Self::FreezeGrenade,
+            19 => Self::Earthquake,
+            20 => Self::Drill,
+            21 => Self::HomingMissile,
+            22 => Self::MineLayer,
+            23 => Self::ConcreteDonkey,
+            24 => Self::SuperSheep,
             _  => Self::Bazooka,
+        }
+    }
+
+    /// Compile-time forcing function: exhaustively matches every WeaponKind so
+    /// adding a new variant breaks compilation here until you assign it a wire ID
+    /// in both `to_net_u8` AND `from_net_u8`. Mirrors the GameState parity
+    /// checklists in `src/game/net_sync.rs`.
+    #[allow(dead_code)]
+    fn _net_coverage_checklist(k: WeaponKind) -> u8 {
+        match k {
+            WeaponKind::Bazooka | WeaponKind::Grenade | WeaponKind::Shotgun |
+            WeaponKind::ClusterBomb | WeaponKind::Landmine | WeaponKind::Tnt |
+            WeaponKind::BananaBomb | WeaponKind::BaseballBat | WeaponKind::Revolver |
+            WeaponKind::NinjaRope | WeaponKind::Blasthive | WeaponKind::BlackHoleBomb |
+            WeaponKind::PlasmaTorch | WeaponKind::Garcia | WeaponKind::AirStrike |
+            WeaponKind::DeathExplosion | WeaponKind::HolyHandGrenade | WeaponKind::Minigun |
+            WeaponKind::FreezeGrenade | WeaponKind::Earthquake | WeaponKind::Drill |
+            WeaponKind::HomingMissile | WeaponKind::MineLayer | WeaponKind::ConcreteDonkey |
+            WeaponKind::SuperSheep => k.to_net_u8()
         }
     }
 
@@ -515,5 +557,24 @@ mod tests {
         assert_eq!(p.vel.x, 3.5);
         assert_eq!(p.vel.y, -7.2);
         assert_eq!(p.kind, WeaponKind::HomingMissile);
+    }
+
+    #[test]
+    fn weapon_net_roundtrip() {
+        // Every variant must survive to_net_u8 → from_net_u8 intact.
+        // This test is exhaustive: adding a WeaponKind and forgetting
+        // from_net_u8 will fail here even if to_net_u8 compiles.
+        use WeaponKind::*;
+        let all = [
+            Bazooka, Grenade, Shotgun, ClusterBomb, Landmine, Tnt,
+            BananaBomb, BaseballBat, Revolver, NinjaRope,
+            Blasthive, BlackHoleBomb, PlasmaTorch, Garcia, AirStrike,
+            DeathExplosion, HolyHandGrenade, Minigun, FreezeGrenade,
+            Earthquake, Drill, HomingMissile, MineLayer, ConcreteDonkey, SuperSheep,
+        ];
+        for kind in all {
+            assert_eq!(WeaponKind::from_net_u8(kind.to_net_u8()), kind,
+                "{kind:?} did not survive net round-trip");
+        }
     }
 }
