@@ -6,7 +6,7 @@ mod game;
 mod net;
 mod updater;
 mod audio;
-const VERSION: &str = "0.5.4.241";
+const VERSION: &str = "0.5.4.242";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -166,14 +166,20 @@ fn main() {
     if return_to_mp { title.continue_to_submenu(); return_to_mp = false; }
 
     // Reconnect popup — only shown for involuntary disconnects from a
-    // reconnectable ranked match, while the server's pause window is open.
+    // reconnectable match, while the server's pause window is open.
     if let Some((tok, port, since)) = pending_reconnect.take() {
         if since.elapsed() < std::time::Duration::from_secs(180) {
+            let mut cursor: usize = 0; // 0=RECONNECT, 1=ABANDON
             let accept = loop {
                 input.poll();
-                draw_msg(&mut buf, &mut fb, "CONNECTION LOST  A=RECONNECT  B=ABANDON");
-                if input.just_pressed(input::Button::A) { break true; }
-                if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { break false; }
+                let secs_left = 180u64.saturating_sub(since.elapsed().as_secs());
+                draw_reconnect_popup(&mut buf, &mut fb, cursor, secs_left);
+                if input.just_pressed(input::Button::Up)   { cursor = 0; }
+                if input.just_pressed(input::Button::Down) { cursor = 1; }
+                if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
+                    break cursor == 0;
+                }
+                if input.just_pressed(input::Button::B) { break false; }
                 std::thread::sleep(TICK_DURATION);
             };
             if accept { force_reconnect = Some((tok, port)); }
@@ -560,6 +566,9 @@ fn main() {
             server_seed = Some(w.seed);
             team_count  = w.team_count.clamp(2, 4);
             my_color    = w.your_color.min(3);
+            if !w.reconnect_token.is_empty() {
+                session_token = w.reconnect_token.clone();
+            }
             conn.start_reader();
             let colour_name = ["RED", "BLUE", "GREEN", "YELLOW"][my_color as usize];
             let msg = if my_team == 0 {
@@ -702,6 +711,7 @@ fn main() {
     let mut fps_frame_count: u32 = 0;
     let mut paused_secs: Option<u32> = None;
     let mut opponent_abandoned = false;
+    let mut opponent_quit_acked = false; // true after player dismisses the quit dialog
     loop {
         let frame_start = Instant::now();
         input.poll();
@@ -987,13 +997,20 @@ fn main() {
             // draw_weapon_menu_overlay uses game.weapon_menu_open — same source as tick()
             game::loop_runner::draw_weapon_menu_overlay(&game, &mut buf, cam.left_edge() as i32);
             if let Some(secs) = paused_secs {
-                use renderer::font::{draw_str_scaled, str_width_scaled};
-                let msg = format!("OPPONENT DISCONNECTED - WAITING {}s", secs);
-                let x = cam.left_edge() as i32 + (world::SCREEN_W as i32 - str_width_scaled(&msg, 1)) / 2;
-                draw_str_scaled(&mut buf, &msg, x, 20, renderer::Bgra::new(255, 80, 80), 1);
+                draw_disconnect_overlay(&mut buf, cam.left_edge() as i32, secs);
             }
-            // Game over overlay — use latched final_result so server's new-game reset can't clear it
-            if let Some(ref fr) = final_result.clone() {
+            // Opponent-quit blocking dialog — shown before the game-over screen.
+            // The player must acknowledge before we exit.
+            if opponent_abandoned && !opponent_quit_acked {
+                draw_opponent_quit_overlay(&mut buf, cam.left_edge() as i32);
+                if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
+                    opponent_quit_acked = true;
+                    mp_quit = true;
+                }
+            }
+            // Game over overlay — use latched final_result so server's new-game reset can't clear it.
+            // Skipped when the opponent-quit dialog is pending.
+            else if let Some(ref fr) = final_result.clone() {
                 // Report ranked result on first tick, capture ELO delta via channel
                 if game_over_ticks == 0 && live_ranked_match {
                     if let game::state::GameResult::Winner(winner_team) = fr {
@@ -1040,12 +1057,6 @@ fn main() {
                 // "RED/BLUE TEAM WINS!" identically to local modes. The ELO line
                 // is gated on elo_delta != 0, so ranked still shows it.
                 crate::renderer::hud::draw_game_over(&mut buf, winner, None, cam.left_edge() as i32, wa, elo_delta, kills, hp_left, &memo, wc);
-                if opponent_abandoned {
-                    use renderer::font::{draw_str_scaled, str_width_scaled};
-                    let msg = "OPPONENT LEFT - YOU WIN";
-                    let x = cam.left_edge() as i32 + (world::SCREEN_W as i32 - str_width_scaled(msg, 1)) / 2;
-                    draw_str_scaled(&mut buf, msg, x, 20, renderer::Bgra::new(255, 80, 80), 1);
-                }
                 // Countdown bar at bottom
                 {
                     use world::{SCREEN_W, SCREEN_H};
@@ -1889,6 +1900,109 @@ fn draw_msg(buf: &mut WorldBuffer, fb: &mut Framebuffer, msg: &str) {
     let x = sw / 2 - str_width_scaled(msg, 2) / 2;
     draw_str_scaled(buf, msg, x, 10, Bgra::new(255, 210, 50), 2);
     buf.blit_to_fb(fb, 0);
+}
+
+/// Styled reconnect-or-abandon dialog shown on the title screen after an
+/// involuntary disconnect. `cursor`=0→RECONNECT selected, 1→ABANDON selected.
+fn draw_reconnect_popup(buf: &mut WorldBuffer, fb: &mut Framebuffer, cursor: usize, secs_left: u64) {
+    use renderer::Bgra;
+    use renderer::font::{draw_str_scaled, str_width_scaled};
+    use world::{SCREEN_W, SCREEN_H};
+    let sw = SCREEN_W as i32;
+    let sh = SCREEN_H as i32;
+    // Dim full screen.
+    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(8, 10, 22));
+    // Dialog box.
+    let dw: i32 = 440;
+    let dh: i32 = 220;
+    let dx = (sw - dw) / 2;
+    let dy = (sh - dh) / 2;
+    // Border + background.
+    buf.fill_rect(dx - 2, dy - 2, (dw + 4) as u32, (dh + 4) as u32, Bgra::new(60, 70, 120));
+    buf.fill_rect(dx, dy, dw as u32, dh as u32, Bgra::new(12, 14, 30));
+    // Header bar.
+    buf.fill_rect(dx, dy, dw as u32, 40, Bgra::new(24, 28, 70));
+    let title = "CONNECTION LOST";
+    let tx = dx + (dw - str_width_scaled(title, 2)) / 2;
+    draw_str_scaled(buf, title, tx, dy + 8, Bgra::new(255, 90, 90), 2);
+    // Body text.
+    let mins = secs_left / 60;
+    let secs = secs_left % 60;
+    let countdown = format!("Reconnect window: {}:{:02}", mins, secs);
+    let cx = dx + (dw - str_width_scaled(&countdown, 1)) / 2;
+    draw_str_scaled(buf, &countdown, cx, dy + 52, Bgra::new(160, 170, 200), 1);
+    // Menu options.
+    let options = ["RECONNECT", "ABANDON"];
+    let option_colors = [Bgra::new(80, 220, 120), Bgra::new(200, 100, 100)];
+    for (i, (opt, col)) in options.iter().zip(option_colors.iter()).enumerate() {
+        let oy = dy + 100 + (i as i32) * 46;
+        let highlight = cursor == i;
+        if highlight {
+            buf.fill_rect(dx + 20, oy - 4, (dw - 40) as u32, 36, Bgra::new(20, 24, 55));
+            buf.fill_rect(dx + 20, oy - 4, (dw - 40) as u32, 36, Bgra::new(30, 35, 80));
+            let arrow_x = dx + 30;
+            draw_str_scaled(buf, ">", arrow_x, oy, Bgra::new(255, 210, 50), 2);
+        }
+        let ox = dx + (dw - str_width_scaled(opt, 2)) / 2;
+        draw_str_scaled(buf, opt, ox, oy, if highlight { *col } else { Bgra::new(100, 110, 140) }, 2);
+    }
+    // Controls hint.
+    let hint = "UP/DOWN  A=SELECT  B=ABANDON";
+    let hx = dx + (dw - str_width_scaled(hint, 1)) / 2;
+    draw_str_scaled(buf, hint, hx, dy + dh - 22, Bgra::new(80, 90, 120), 1);
+    buf.blit_to_fb(fb, 0);
+}
+
+/// In-game overlay drawn while waiting for the opponent to reconnect.
+fn draw_disconnect_overlay(buf: &mut WorldBuffer, cam_left: i32, secs: u32) {
+    use renderer::Bgra;
+    use renderer::font::{draw_str_scaled, str_width_scaled};
+    use world::SCREEN_W;
+    let sw = SCREEN_W as i32;
+    let mins = secs / 60;
+    let s = secs % 60;
+    let msg1 = "OPPONENT DISCONNECTED";
+    let msg2 = format!("Reconnecting...  {}:{:02} remaining", mins, s);
+    let bw: i32 = 400;
+    let bh: i32 = 54;
+    let bx = cam_left + (sw - bw) / 2;
+    let by: i32 = 12;
+    buf.fill_rect(bx - 2, by - 2, (bw + 4) as u32, (bh + 4) as u32, Bgra::new(50, 60, 110));
+    buf.fill_rect(bx, by, bw as u32, bh as u32, Bgra::new(10, 12, 28));
+    let x1 = bx + (bw - str_width_scaled(msg1, 1)) / 2;
+    draw_str_scaled(buf, msg1, x1, by + 6, Bgra::new(255, 180, 50), 1);
+    let x2 = bx + (bw - str_width_scaled(&msg2, 1)) / 2;
+    draw_str_scaled(buf, &msg2, x2, by + 28, Bgra::new(160, 170, 200), 1);
+}
+
+/// Full-screen blocking overlay shown when the opponent intentionally quits.
+fn draw_opponent_quit_overlay(buf: &mut WorldBuffer, cam_left: i32) {
+    use renderer::Bgra;
+    use renderer::font::{draw_str_scaled, str_width_scaled};
+    use world::{SCREEN_W, SCREEN_H};
+    let sw = SCREEN_W as i32;
+    let sh = SCREEN_H as i32;
+    // Semi-transparent dark layer.
+    buf.fill_rect(cam_left, 0, SCREEN_W, SCREEN_H, Bgra::new(0, 0, 0));
+    let dw: i32 = 420;
+    let dh: i32 = 180;
+    let dx = cam_left + (sw - dw) / 2;
+    let dy = (sh - dh) / 2;
+    buf.fill_rect(dx - 2, dy - 2, (dw + 4) as u32, (dh + 4) as u32, Bgra::new(80, 30, 30));
+    buf.fill_rect(dx, dy, dw as u32, dh as u32, Bgra::new(14, 8, 8));
+    buf.fill_rect(dx, dy, dw as u32, 42, Bgra::new(40, 12, 12));
+    let t1 = "OPPONENT QUIT";
+    let x1 = dx + (dw - str_width_scaled(t1, 2)) / 2;
+    draw_str_scaled(buf, t1, x1, dy + 8, Bgra::new(255, 80, 80), 2);
+    let t2 = "Your opponent has left the match.";
+    let x2 = dx + (dw - str_width_scaled(t2, 1)) / 2;
+    draw_str_scaled(buf, t2, x2, dy + 60, Bgra::new(200, 160, 160), 1);
+    let t3 = "You win!";
+    let x3 = dx + (dw - str_width_scaled(t3, 2)) / 2;
+    draw_str_scaled(buf, t3, x3, dy + 82, Bgra::new(80, 220, 120), 2);
+    let t4 = "PRESS A TO CONTINUE";
+    let x4 = dx + (dw - str_width_scaled(t4, 1)) / 2;
+    draw_str_scaled(buf, t4, x4, dy + dh - 28, Bgra::new(140, 150, 180), 1);
 }
 
 

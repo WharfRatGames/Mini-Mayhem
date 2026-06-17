@@ -6,6 +6,19 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Connection info for one player in a paused casual match — used for reconnect.
+struct CasualSlot {
+    write:      Arc<Mutex<TcpStream>>,
+    input:      Arc<Mutex<Option<InputMsg>>>,
+    disc:       Arc<AtomicBool>,
+    gen:        Arc<AtomicU64>,
+    team:       usize,
+    seed:       u64,
+    team_count: usize,
+    color:      u8,
+}
+type CasualRegistry = Arc<Mutex<HashMap<String, Arc<CasualSlot>>>>;
+
 use arty::net::{msg::*, encode};
 use arty::game::net_sync::build_state;
 use log::info;
@@ -46,6 +59,7 @@ fn main() {
     let listener = TcpListener::bind(("0.0.0.0", port)).expect("bind failed");
     let match_id: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
+    let casual_registry: CasualRegistry = Arc::new(Mutex::new(HashMap::new()));
     let lobby: SharedLobby = Arc::new(Mutex::new(Lobby::default()));
     let mut pending: Option<(TcpStream, String)> = None;
     loop {
@@ -56,17 +70,22 @@ fn main() {
         if token.is_empty() {
             let lobby2 = lobby.clone();
             let mid = match_id.clone();
-            thread::spawn(move || casual_conn(stream, lobby2, mid));
+            let cr2 = casual_registry.clone();
+            thread::spawn(move || casual_conn(stream, lobby2, mid, cr2));
             continue;
         }
 
-        // Reconnect: token matches a paused slot of an in-progress match.
-        if !token.is_empty() {
+        // Reconnect: check ranked registry, then casual registry.
+        {
             let slot = registry.lock().unwrap_or_else(|e| e.into_inner()).get(&token).cloned();
             if let Some(slot) = slot {
-                if reconnect_into(&slot, &stream) {
-                    continue;
-                }
+                if reconnect_into(&slot, &stream) { continue; }
+            }
+        }
+        {
+            let cs = casual_registry.lock().unwrap_or_else(|e| e.into_inner()).get(&token).cloned();
+            if let Some(cs) = cs {
+                if casual_reconnect_into(&cs, &stream) { continue; }
             }
         }
 
@@ -132,7 +151,7 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
             // Send a fresh WelcomeMsg so a client returning from the title screen
             // (no in-memory game state) can rebuild the match from the same seed;
             // the next StateMsg then syncs positions/terrain/HP to the live state.
-            if let Some(bytes) = encode(&WelcomeMsg { your_team: team, seed: slot.seed, team_count: 2, your_color: team as u8 }) {
+            if let Some(bytes) = encode(&WelcomeMsg { your_team: team, seed: slot.seed, team_count: 2, your_color: team as u8, reconnect_token: String::new() }) {
                 let mut s = &welcome_clone;
                 let _ = s.write_all(&bytes);
             }
@@ -147,6 +166,48 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
         }
     }
     false
+}
+
+/// Reconnect a player into an in-progress casual match. Returns true on success.
+fn casual_reconnect_into(slot: &Arc<CasualSlot>, stream: &TcpStream) -> bool {
+    if !slot.disc.load(Ordering::Relaxed) { return false; }
+    let (write_s, read_s) = match (stream.try_clone(), stream.try_clone()) {
+        (Ok(w), Ok(r)) => (w, r),
+        _ => return false,
+    };
+    write_s.set_nodelay(true).ok();
+    write_s.set_write_timeout(Some(Duration::from_millis(100))).ok();
+    *slot.write.lock().unwrap_or_else(|e| e.into_inner()) = write_s;
+    let new_gen = slot.gen.fetch_add(1, Ordering::Relaxed) + 1;
+    slot.disc.store(false, Ordering::Relaxed);
+    *slot.input.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    // Send WelcomeMsg so the client rebuilds the game from the same seed.
+    if let Some(bytes) = encode(&WelcomeMsg {
+        your_team: slot.team, seed: slot.seed, team_count: slot.team_count,
+        your_color: slot.color, reconnect_token: String::new(),
+    }) {
+        let mut s = stream;
+        let _ = s.write_all(&bytes);
+    }
+    let inbox = slot.input.clone();
+    let disc = slot.disc.clone();
+    let gen = slot.gen.clone();
+    thread::spawn(move || {
+        read_loop(read_s, inbox);
+        if gen.load(Ordering::Relaxed) == new_gen {
+            disc.store(true, Ordering::Relaxed);
+        }
+    });
+    info!("Casual reconnected team {}", slot.team);
+    true
+}
+
+/// Generate a short unique token for a casual match slot.
+fn gen_casual_token(match_id: u64, team: usize) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+        .subsec_nanos();
+    format!("c{:016x}{:07x}{}", match_id, nanos, team)
 }
 
 /// How long a paused match waits for the disconnected player to reconnect.
@@ -198,8 +259,8 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
 
-    send_msg(&s0, &WelcomeMsg { your_team: 0, seed, team_count: 2, your_color: 0 });
-    send_msg(&s1, &WelcomeMsg { your_team: 1, seed, team_count: 2, your_color: 1 });
+    send_msg(&s0, &WelcomeMsg { your_team: 0, seed, team_count: 2, your_color: 0, reconnect_token: String::new() });
+    send_msg(&s1, &WelcomeMsg { your_team: 1, seed, team_count: 2, your_color: 1, reconnect_token: String::new() });
 
     let inp0: Arc<Mutex<Option<InputMsg>>> = Arc::new(Mutex::new(None));
     let inp1: Arc<Mutex<Option<InputMsg>>> = Arc::new(Mutex::new(None));
@@ -314,7 +375,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
                         t.soldiers[si].boot_color_id    = msg.boot_color_ids[si];
                         t.soldiers[si].gun_style_id     = msg.gun_style_ids[si];
                         if !msg.worm_names[si].is_empty() {
-                            t.soldiers[si].name = msg.worm_names[si].clone();
+                            t.soldiers[si].name = sanitize_name(&msg.worm_names[si]);
                         }
                     }
                 }
@@ -327,7 +388,9 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         // Apply client's authoritative aim angle directly; strip Up/Down so
         // process_aim doesn't double-apply them on top of the received angle.
         if let Some(ref msg) = inp {
-            game.aim.angle = msg.aim_angle;
+            if msg.aim_angle.is_finite() {
+                game.aim.angle = msg.aim_angle.clamp(-std::f32::consts::PI, std::f32::consts::PI);
+            }
             use arty::input::Button;
             input_state.clear_button(Button::Up);
             input_state.clear_button(Button::Down);
@@ -402,8 +465,8 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             last_craters_sent = 0;
             *inp0.lock().unwrap_or_else(|e| e.into_inner()) = None;
             *inp1.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            if let Some(bytes) = encode(&WelcomeMsg { your_team: 0, seed, team_count: 2, your_color: 0 }) { write_team!(0, &bytes); }
-            if let Some(bytes) = encode(&WelcomeMsg { your_team: 1, seed, team_count: 2, your_color: 1 }) { write_team!(1, &bytes); }
+            if let Some(bytes) = encode(&WelcomeMsg { your_team: 0, seed, team_count: 2, your_color: 0, reconnect_token: String::new() }) { write_team!(0, &bytes); }
+            if let Some(bytes) = encode(&WelcomeMsg { your_team: 1, seed, team_count: 2, your_color: 1, reconnect_token: String::new() }) { write_team!(1, &bytes); }
             mboth!(&mut mfile, match_id, "Game over — new game with seed {}", seed);
             continue;
         }
@@ -534,6 +597,7 @@ struct LobbyMember {
     write:    Arc<Mutex<TcpStream>>,
     input:    Arc<Mutex<Option<InputMsg>>>,
     disc:     Arc<AtomicBool>,
+    gen:      Arc<AtomicU64>,
     started:  Arc<AtomicBool>,
     join:     Option<LobbyJoin>,
     color_id: Option<u8>,
@@ -578,13 +642,14 @@ fn broadcast_lobby(lobby: &SharedLobby) {
 
 /// Per-connection handler for casual play: registers the player in the lobby,
 /// relays lobby messages, and once the match starts keeps feeding InputMsg.
-fn casual_conn(stream: TcpStream, lobby: SharedLobby, match_id: Arc<AtomicU64>) {
+fn casual_conn(stream: TcpStream, lobby: SharedLobby, match_id: Arc<AtomicU64>, casual_registry: CasualRegistry) {
     stream.set_nodelay(true).ok();
     stream.set_write_timeout(Some(Duration::from_millis(100))).ok();
     let mut read_stream = match stream.try_clone() { Ok(s) => s, Err(_) => return };
     let write   = Arc::new(Mutex::new(stream));
     let input   = Arc::new(Mutex::new(None));
     let disc    = Arc::new(AtomicBool::new(false));
+    let gen     = Arc::new(AtomicU64::new(0));
     let started = Arc::new(AtomicBool::new(false));
 
     let my_id = {
@@ -599,10 +664,13 @@ fn casual_conn(stream: TcpStream, lobby: SharedLobby, match_id: Arc<AtomicU64>) 
                 *input.lock().unwrap_or_else(|e| e.into_inner()) = Some(inp);
             }
         } else if let Ok(m) = bincode::deserialize::<LobbyClientMsg>(&buf) {
-            handle_lobby_msg(&lobby, &match_id, my_id, &write, &input, &disc, &started, m);
+            handle_lobby_msg(&lobby, &match_id, my_id, &write, &input, &disc, &gen, &started, casual_registry.clone(), m);
         }
     }
-    disc.store(true, Ordering::Relaxed);
+    // Only mark disconnected if gen=0 (no reconnect has happened on this slot).
+    if gen.load(Ordering::Relaxed) == 0 {
+        disc.store(true, Ordering::Relaxed);
+    }
     let removed = {
         let mut lb = lobby.lock().unwrap_or_else(|e| e.into_inner());
         let before = lb.members.len();
@@ -614,14 +682,16 @@ fn casual_conn(stream: TcpStream, lobby: SharedLobby, match_id: Arc<AtomicU64>) 
 
 #[allow(clippy::too_many_arguments)]
 fn handle_lobby_msg(
-    lobby:    &SharedLobby,
-    match_id: &Arc<AtomicU64>,
-    my_id:    u64,
-    write:    &Arc<Mutex<TcpStream>>,
-    input:    &Arc<Mutex<Option<InputMsg>>>,
-    disc:     &Arc<AtomicBool>,
-    started:  &Arc<AtomicBool>,
-    msg:      LobbyClientMsg,
+    lobby:           &SharedLobby,
+    match_id:        &Arc<AtomicU64>,
+    my_id:           u64,
+    write:           &Arc<Mutex<TcpStream>>,
+    input:           &Arc<Mutex<Option<InputMsg>>>,
+    disc:            &Arc<AtomicBool>,
+    gen:             &Arc<AtomicU64>,
+    started:         &Arc<AtomicBool>,
+    casual_registry: CasualRegistry,
+    msg:             LobbyClientMsg,
 ) {
     let mut start_members: Option<Vec<LobbyMember>> = None;
     {
@@ -631,7 +701,7 @@ fn handle_lobby_msg(
                 if !lb.members.iter().any(|m| m.id == my_id) && lb.members.len() < 4 {
                     lb.members.push(LobbyMember {
                         id: my_id, write: write.clone(), input: input.clone(),
-                        disc: disc.clone(), started: started.clone(),
+                        disc: disc.clone(), gen: gen.clone(), started: started.clone(),
                         join: Some(j), color_id: None, ready: false,
                     });
                 }
@@ -661,22 +731,39 @@ fn handle_lobby_msg(
         let mid = match_id.fetch_add(1, Ordering::Relaxed) + 1;
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-        thread::spawn(move || run_lobby_match(mid, members, seed));
+        thread::spawn(move || run_lobby_match(mid, members, seed, casual_registry));
     } else {
         broadcast_lobby(lobby);
     }
 }
 
-/// Run a casual N-player match (2-4 teams). No reconnect, no rematch — on game
-/// over the clients return to the title screen.
-fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64) {
+/// Run a casual N-player match (2-4 teams). 2-player matches support reconnect;
+/// on game over the clients return to the title screen.
+fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_registry: CasualRegistry) {
     let mut mfile = match_log_file(match_id);
     let n = members.len();
     let colors: Vec<u8> = members.iter().map(|m| m.color_id.unwrap_or(0)).collect();
     mboth!(&mut mfile, match_id, "casual lobby match starting with {n} players");
 
+    // For 2-player matches: generate reconnect tokens and register slots.
+    let tokens: Vec<String> = if n == 2 {
+        (0..n).map(|i| gen_casual_token(match_id, i)).collect()
+    } else {
+        vec![String::new(); n]
+    };
+    if n == 2 {
+        let mut cr = casual_registry.lock().unwrap_or_else(|e| e.into_inner());
+        for (i, m) in members.iter().enumerate() {
+            cr.insert(tokens[i].clone(), Arc::new(CasualSlot {
+                write: m.write.clone(), input: m.input.clone(),
+                disc:  m.disc.clone(),  gen:   m.gen.clone(),
+                team: i, seed, team_count: n, color: colors[i],
+            }));
+        }
+    }
+
     for (i, m) in members.iter().enumerate() {
-        let w = WelcomeMsg { your_team: i, seed, team_count: n, your_color: colors[i] };
+        let w = WelcomeMsg { your_team: i, seed, team_count: n, your_color: colors[i], reconnect_token: tokens[i].clone() };
         if let Some(bytes) = encode(&LobbyServerMsg::Start(w)) {
             let mut s = m.write.lock().unwrap_or_else(|e| e.into_inner());
             let _ = s.write_all(&bytes);
@@ -688,11 +775,11 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64) {
     // Apply each player's roster to their team.
     for (i, m) in members.iter().enumerate() {
         if let (Some(j), Some(team)) = (m.join.as_ref(), game.teams.get_mut(i)) {
-            team.name         = j.name.clone();
+            team.name         = sanitize_name(&j.name);
             team.avatar_id    = j.avatar_id;
             team.headstone_id = j.headstone_id;
             for si in 0..team.soldiers.len().min(4) {
-                if !j.worm_names[si].is_empty() { team.soldiers[si].name = j.worm_names[si].clone(); }
+                if !j.worm_names[si].is_empty() { team.soldiers[si].name = sanitize_name(&j.worm_names[si]); }
                 team.soldiers[si].hat_id           = j.hat_ids[si];
                 team.soldiers[si].uniform_color_id = j.uniform_color_ids[si];
                 team.soldiers[si].boot_color_id    = j.boot_color_ids[si];
@@ -703,6 +790,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64) {
 
     let mut tick: u32 = 0;
     let mut eliminated = vec![false; n];
+    let mut paused: Option<(usize, Instant)> = None; // (disconnected_team, since) — 2-player only
     macro_rules! write_all_conns {
         ($bytes:expr) => {{
             for m in &members {
@@ -715,6 +803,46 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64) {
 
     loop {
         let t = Instant::now();
+
+        // Pause/resume handling — 2-player casual only.
+        if n == 2 {
+            if let Some((dteam, since)) = paused {
+                let still_disc = members[dteam].disc.load(Ordering::Relaxed);
+                if !still_disc {
+                    mboth!(&mut mfile, match_id, "casual team {dteam} reconnected — resuming");
+                    // Send full state so the returning player catches up.
+                    if let Some(state_bytes) = encode(&build_state(&game, tick, 0)) {
+                        let mut s = members[dteam].write.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = s.write_all(&state_bytes);
+                    }
+                    paused = None;
+                } else if since.elapsed() >= RECONNECT_TIMEOUT {
+                    mboth!(&mut mfile, match_id, "casual team {dteam} did not reconnect — ending");
+                    let connected = 1 - dteam;
+                    let mut state = build_state(&game, tick, 0);
+                    state.opponent_abandoned = true;
+                    state.result = NetResult::Winner(connected);
+                    if let Some(bytes) = encode(&state) {
+                        let mut s = members[connected].write.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = s.write_all(&bytes);
+                    }
+                    break;
+                } else {
+                    // Still waiting — send countdown to the connected player.
+                    let connected = 1 - dteam;
+                    let mut state = build_state(&game, tick, 0);
+                    state.paused_opponent = Some((RECONNECT_TIMEOUT - since.elapsed()).as_secs() as u32);
+                    if let Some(bytes) = encode(&state) {
+                        let mut s = members[connected].write.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = s.write_all(&bytes);
+                    }
+                    let e = t.elapsed();
+                    if e < TICK_DURATION { thread::sleep(TICK_DURATION - e); }
+                    continue;
+                }
+            }
+        }
+
         tick = tick.wrapping_add(1);
         game.tick = tick;
 
@@ -722,16 +850,25 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64) {
             mboth!(&mut mfile, match_id, "all players left — ending");
             break;
         }
-        // A disconnected player's team is eliminated so check_win can resolve.
+
+        // Handle disconnects: pause for 2-player, eliminate immediately for N>2.
         for (i, m) in members.iter().enumerate() {
             if m.disc.load(Ordering::Relaxed) && !eliminated[i] {
-                eliminated[i] = true;
-                if let Some(team) = game.teams.get_mut(i) {
-                    for s in &mut team.soldiers { s.take_damage(100); }
+                if n == 2 && paused.is_none() {
+                    mboth!(&mut mfile, match_id, "casual team {i} disconnected — pausing for reconnect");
+                    paused = Some((i, Instant::now()));
+                } else if n != 2 {
+                    eliminated[i] = true;
+                    if let Some(team) = game.teams.get_mut(i) {
+                        for s in &mut team.soldiers { s.take_damage(100); }
+                    }
+                    mboth!(&mut mfile, match_id, "team {i} left — eliminated");
                 }
-                mboth!(&mut mfile, match_id, "team {i} left — eliminated");
             }
         }
+
+        // Skip simulation while paused (2-player).
+        if paused.is_some() { continue; }
 
         // Apply cosmetics/names from every player each tick.
         let inputs: Vec<Option<InputMsg>> = members.iter()
@@ -743,7 +880,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64) {
                     team.soldiers[si].uniform_color_id = msg.uniform_color_ids[si];
                     team.soldiers[si].boot_color_id    = msg.boot_color_ids[si];
                     team.soldiers[si].gun_style_id     = msg.gun_style_ids[si];
-                    if !msg.worm_names[si].is_empty() { team.soldiers[si].name = msg.worm_names[si].clone(); }
+                    if !msg.worm_names[si].is_empty() { team.soldiers[si].name = sanitize_name(&msg.worm_names[si]); }
                 }
             }
         }
@@ -752,7 +889,9 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64) {
         let inp = inputs.get(active).cloned().flatten();
         let mut input_state = inp.as_ref().map(msg_to_input).unwrap_or_else(arty::input::InputState::new);
         if let Some(ref msg) = inp {
-            game.aim.angle = msg.aim_angle;
+            if msg.aim_angle.is_finite() {
+                game.aim.angle = msg.aim_angle.clamp(-std::f32::consts::PI, std::f32::consts::PI);
+            }
             use arty::input::Button;
             input_state.clear_button(Button::Up);
             input_state.clear_button(Button::Down);
@@ -784,6 +923,11 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64) {
         }
         let e = t.elapsed();
         if e < TICK_DURATION { thread::sleep(TICK_DURATION - e); }
+    }
+    // Clean up casual reconnect tokens.
+    if n == 2 {
+        let mut cr = casual_registry.lock().unwrap_or_else(|e| e.into_inner());
+        for tok in &tokens { cr.remove(tok); }
     }
     mboth!(&mut mfile, match_id, "casual lobby match ended");
 }
@@ -925,9 +1069,14 @@ fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
     })
 }
 
+/// Sanitize a player-supplied name: printable ASCII only, max 20 chars.
+fn sanitize_name(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_graphic() || *c == ' ').take(20).collect()
+}
+
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.241";
+const REQUIRED_VERSION: &str = "0.5.4.242";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
@@ -978,7 +1127,7 @@ fn accept_one(listener: &TcpListener) -> (TcpStream, std::net::SocketAddr, Strin
                     info!("Rejected wrong version {}: {}", ver, addr);
                     continue;
                 }
-                let token = match read_line(&mut stream, 32) {
+                let token = match read_line(&mut stream, 70) {
                     Some(t) => t,
                     None => { info!("Handshake read failed: {}", addr); continue; }
                 };

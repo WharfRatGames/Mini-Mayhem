@@ -275,6 +275,9 @@ pub struct WelcomeMsg {
     pub team_count: usize,
     /// This client's chosen colour identity (0-3).
     pub your_color: u8,
+    /// Per-player reconnect token for casual matches (empty = non-reconnectable).
+    #[serde(default)]
+    pub reconnect_token: String,
 }
 
 // ── Casual lobby protocol ───────────────────────────────────────────────────
