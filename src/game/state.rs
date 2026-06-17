@@ -934,34 +934,34 @@ impl GameState {
         if self.terrain.surface_y_at(x).is_none() { return false; }
 
         // Type split: 75% weapon, 25% health.
-        // Weapon pool: Mine 13%, Shotgun 12%, TNT 12%, Rope 11%, Bat 10%, Torch 10%, Revolver 10%, Beehive 8%, Meteor 8%, BlackHole 3%, Garcia 3%
+        // Weapon pool: Mine 11%, Shotgun 10%, TNT 10%, Rope 9%, Bat 9%, Torch 8%, Revolver 8%, Beehive 7%, Meteor 7%, BlackHole 3%, AirStrike 2%, Garcia 1%, Sacred Ordnance 15%
         let kind = if kind_rng >= 0.75 {
             CrateKind::Health // +25 HP
         } else {
             let w = kind_rng / 0.75; // rescale weapon rng to [0,1)
-            if w < 0.13 {
+            if w < 0.11 {
                 CrateKind::Weapon(WeaponKind::Landmine)
-            } else if w < 0.25 {
+            } else if w < 0.21 {
                 CrateKind::Weapon(WeaponKind::Shotgun)
-            } else if w < 0.37 {
+            } else if w < 0.31 {
                 CrateKind::Weapon(WeaponKind::Tnt)
-            } else if w < 0.48 {
+            } else if w < 0.40 {
                 CrateKind::Weapon(WeaponKind::NinjaRope)
-            } else if w < 0.58 {
+            } else if w < 0.49 {
                 CrateKind::Weapon(WeaponKind::BaseballBat)
-            } else if w < 0.68 {
+            } else if w < 0.57 {
                 CrateKind::Weapon(WeaponKind::PlasmaTorch)
-            } else if w < 0.78 {
+            } else if w < 0.65 {
                 CrateKind::Weapon(WeaponKind::Revolver)
-            } else if w < 0.86 {
+            } else if w < 0.72 {
                 CrateKind::Weapon(WeaponKind::Blasthive)
-            } else if w < 0.94 {
+            } else if w < 0.79 {
                 CrateKind::Weapon(WeaponKind::BananaBomb)
-            } else if w < 0.97 {
+            } else if w < 0.82 {
                 CrateKind::Weapon(WeaponKind::BlackHoleBomb)
-            } else if w < 0.99 {
+            } else if w < 0.84 {
                 CrateKind::Weapon(WeaponKind::AirStrike)
-            } else if w < 0.995 {
+            } else if w < 0.85 {
                 CrateKind::Weapon(WeaponKind::Garcia)
             } else {
                 CrateKind::Weapon(WeaponKind::HolyHandGrenade)
