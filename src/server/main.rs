@@ -11,6 +11,7 @@ struct CasualSlot {
     write:      Arc<Mutex<TcpStream>>,
     input:      Arc<Mutex<Option<InputMsg>>>,
     disc:       Arc<AtomicBool>,
+    quit:       Arc<AtomicBool>,
     gen:        Arc<AtomicU64>,
     team:       usize,
     seed:       u64,
@@ -118,6 +119,7 @@ struct SharedConn {
     stream: TcpStream,
     inbox:  Arc<Mutex<Option<InputMsg>>>,
     disc:   Arc<AtomicBool>,
+    quit:   Arc<AtomicBool>,
     gen:    Arc<AtomicU64>,
 }
 
@@ -146,6 +148,7 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
             *sc.inbox.lock().unwrap_or_else(|e| e.into_inner()) = None;
             let inbox = sc.inbox.clone();
             let disc = sc.disc.clone();
+            let quit = sc.quit.clone();
             let gen = sc.gen.clone();
             drop(sc);
             // Send a fresh WelcomeMsg so a client returning from the title screen
@@ -156,7 +159,7 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
                 let _ = s.write_all(&bytes);
             }
             thread::spawn(move || {
-                read_loop(read_clone, inbox);
+                read_loop(read_clone, inbox, quit);
                 if gen.load(Ordering::Relaxed) == new_gen {
                     disc.store(true, Ordering::Relaxed);
                 }
@@ -191,9 +194,10 @@ fn casual_reconnect_into(slot: &Arc<CasualSlot>, stream: &TcpStream) -> bool {
     }
     let inbox = slot.input.clone();
     let disc = slot.disc.clone();
+    let quit = slot.quit.clone();
     let gen = slot.gen.clone();
     thread::spawn(move || {
-        read_loop(read_s, inbox);
+        read_loop(read_s, inbox, quit);
         if gen.load(Ordering::Relaxed) == new_gen {
             disc.store(true, Ordering::Relaxed);
         }
@@ -272,6 +276,10 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     let disc1 = Arc::new(AtomicBool::new(false));
     let gen0 = Arc::new(AtomicU64::new(0));
     let gen1 = Arc::new(AtomicU64::new(0));
+    // Set when a client sends InputMsg { quit: true } — voluntary forfeit.
+    // Stored in SharedConn so reconnect_into can thread it through a new read_loop.
+    let quit0 = Arc::new(AtomicBool::new(false));
+    let quit1 = Arc::new(AtomicBool::new(false));
 
     let (read_s0, ws0, ws1, read_s1) = match (
         s0.try_clone(), s0.try_clone(), s1.try_clone(), s1.try_clone()
@@ -280,17 +288,17 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         _ => { mboth!(&mut mfile, match_id, "socket clone failed — aborting"); return; }
     };
     thread::spawn({
-        let i = inp0.clone(); let d = disc0.clone(); let g = gen0.clone();
-        move || { read_loop(read_s0, i); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
+        let i = inp0.clone(); let d = disc0.clone(); let g = gen0.clone(); let q = quit0.clone();
+        move || { read_loop(read_s0, i, q); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
     });
     thread::spawn({
-        let i = inp1.clone(); let d = disc1.clone(); let g = gen1.clone();
-        move || { read_loop(read_s1, i); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
+        let i = inp1.clone(); let d = disc1.clone(); let g = gen1.clone(); let q = quit1.clone();
+        move || { read_loop(read_s1, i, q); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
     });
 
     let match_slot = Arc::new(MatchSlot { conns: [
-        Mutex::new(SharedConn { stream: ws0, inbox: inp0.clone(), disc: disc0.clone(), gen: gen0.clone() }),
-        Mutex::new(SharedConn { stream: ws1, inbox: inp1.clone(), disc: disc1.clone(), gen: gen1.clone() }),
+        Mutex::new(SharedConn { stream: ws0, inbox: inp0.clone(), disc: disc0.clone(), quit: quit0.clone(), gen: gen0.clone() }),
+        Mutex::new(SharedConn { stream: ws1, inbox: inp1.clone(), disc: disc1.clone(), quit: quit1.clone(), gen: gen1.clone() }),
     ], seed });
     let reconnectable = !session_token.is_empty();
     if reconnectable {
@@ -348,6 +356,18 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
         tick = tick.wrapping_add(1);
         game.tick = tick;
 
+        // Voluntary forfeit — client sent InputMsg { quit: true }.
+        // Award the win immediately; skip the reconnect window entirely.
+        if quit0.load(Ordering::Relaxed) || quit1.load(Ordering::Relaxed) {
+            let qteam = if quit0.load(Ordering::Relaxed) { 0 } else { 1 };
+            let winner = 1 - qteam;
+            let name = game.teams[qteam].soldiers.get(0).map(|s| s.name.as_str()).unwrap_or("?");
+            mboth!(&mut mfile, match_id, "team {qteam} ({name}) forfeited — team {winner} wins");
+            let mut state = build_state(&game, tick, last_craters_sent);
+            state.result = NetResult::Winner(winner);
+            if let Some(bytes) = encode(&state) { write_team!(winner, &bytes); }
+            break;
+        }
         // Disconnect detection via read-thread flags
         if disc0.load(Ordering::Relaxed) || disc1.load(Ordering::Relaxed) {
             let dteam = if disc0.load(Ordering::Relaxed) { 0 } else { 1 };
@@ -601,6 +621,7 @@ struct LobbyMember {
     write:    Arc<Mutex<TcpStream>>,
     input:    Arc<Mutex<Option<InputMsg>>>,
     disc:     Arc<AtomicBool>,
+    quit:     Arc<AtomicBool>,
     gen:      Arc<AtomicU64>,
     started:  Arc<AtomicBool>,
     join:     Option<LobbyJoin>,
@@ -653,6 +674,7 @@ fn casual_conn(stream: TcpStream, lobby: SharedLobby, match_id: Arc<AtomicU64>, 
     let write   = Arc::new(Mutex::new(stream));
     let input   = Arc::new(Mutex::new(None));
     let disc    = Arc::new(AtomicBool::new(false));
+    let quit    = Arc::new(AtomicBool::new(false));
     let gen     = Arc::new(AtomicU64::new(0));
     let started = Arc::new(AtomicBool::new(false));
 
@@ -665,10 +687,11 @@ fn casual_conn(stream: TcpStream, lobby: SharedLobby, match_id: Arc<AtomicU64>, 
         let buf = match read_frame(&mut read_stream) { Some(b) => b, None => break };
         if started.load(Ordering::Relaxed) {
             if let Ok(inp) = bincode::deserialize::<InputMsg>(&buf) {
+                if inp.quit { quit.store(true, Ordering::Relaxed); }
                 *input.lock().unwrap_or_else(|e| e.into_inner()) = Some(inp);
             }
         } else if let Ok(m) = bincode::deserialize::<LobbyClientMsg>(&buf) {
-            handle_lobby_msg(&lobby, &match_id, my_id, &write, &input, &disc, &gen, &started, casual_registry.clone(), m);
+            handle_lobby_msg(&lobby, &match_id, my_id, &write, &input, &disc, &quit, &gen, &started, casual_registry.clone(), m);
         }
     }
     // Only mark disconnected if gen=0 (no reconnect has happened on this slot).
@@ -692,6 +715,7 @@ fn handle_lobby_msg(
     write:           &Arc<Mutex<TcpStream>>,
     input:           &Arc<Mutex<Option<InputMsg>>>,
     disc:            &Arc<AtomicBool>,
+    quit:            &Arc<AtomicBool>,
     gen:             &Arc<AtomicU64>,
     started:         &Arc<AtomicBool>,
     casual_registry: CasualRegistry,
@@ -705,8 +729,8 @@ fn handle_lobby_msg(
                 if !lb.members.iter().any(|m| m.id == my_id) && lb.members.len() < 4 {
                     lb.members.push(LobbyMember {
                         id: my_id, write: write.clone(), input: input.clone(),
-                        disc: disc.clone(), gen: gen.clone(), started: started.clone(),
-                        join: Some(j), color_id: None, ready: false,
+                        disc: disc.clone(), quit: quit.clone(), gen: gen.clone(),
+                        started: started.clone(), join: Some(j), color_id: None, ready: false,
                     });
                 }
             }
@@ -760,7 +784,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
         for (i, m) in members.iter().enumerate() {
             cr.insert(tokens[i].clone(), Arc::new(CasualSlot {
                 write: m.write.clone(), input: m.input.clone(),
-                disc:  m.disc.clone(),  gen:   m.gen.clone(),
+                disc:  m.disc.clone(),  quit:  m.quit.clone(), gen: m.gen.clone(),
                 team: i, seed, team_count: n, color: colors[i],
             }));
         }
@@ -853,6 +877,32 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
         if members.iter().all(|m| m.disc.load(Ordering::Relaxed)) {
             mboth!(&mut mfile, match_id, "all players left — ending");
             break;
+        }
+
+        // Voluntary forfeit — player sent InputMsg { quit: true }.
+        // For 2-player: award the win immediately, no reconnect window.
+        // For N>2: eliminate immediately (same as disconnect but no reconnect).
+        for (i, m) in members.iter().enumerate() {
+            if m.quit.load(Ordering::Relaxed) && !eliminated[i] {
+                if n == 2 {
+                    let winner = 1 - i;
+                    let name = game.teams[i].soldiers.get(0).map(|s| s.name.as_str()).unwrap_or("?");
+                    mboth!(&mut mfile, match_id, "casual team {i} ({name}) forfeited — team {winner} wins");
+                    let mut state = build_state(&game, tick, 0);
+                    state.result = NetResult::Winner(winner);
+                    if let Some(bytes) = encode(&state) {
+                        let mut s = members[winner].write.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = s.write_all(&bytes);
+                    }
+                    return;
+                } else {
+                    eliminated[i] = true;
+                    if let Some(team) = game.teams.get_mut(i) {
+                        for s in &mut team.soldiers { s.take_damage(100); }
+                    }
+                    mboth!(&mut mfile, match_id, "casual team {i} forfeited — eliminated");
+                }
+            }
         }
 
         // Handle disconnects: pause for 2-player, eliminate immediately for N>2.
@@ -1033,7 +1083,7 @@ fn too_close_to_soldiers_srv(game: &GameState, pos: WorldPos) -> bool {
 }
 
 
-fn read_loop(mut s: TcpStream, inbox: Arc<Mutex<Option<InputMsg>>>) {
+fn read_loop(mut s: TcpStream, inbox: Arc<Mutex<Option<InputMsg>>>, quit: Arc<AtomicBool>) {
     loop {
         let mut hdr = [0u8; 4];
         if s.read_exact(&mut hdr).is_err() { break; }
@@ -1042,6 +1092,7 @@ fn read_loop(mut s: TcpStream, inbox: Arc<Mutex<Option<InputMsg>>>) {
         let mut buf = vec![0u8; len];
         if s.read_exact(&mut buf).is_err() { break; }
         if let Ok(msg) = bincode::deserialize::<InputMsg>(&buf) {
+            if msg.quit { quit.store(true, Ordering::Relaxed); }
             *inbox.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
         }
     }
@@ -1088,7 +1139,7 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.258";
+const REQUIRED_VERSION: &str = "0.5.4.259";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

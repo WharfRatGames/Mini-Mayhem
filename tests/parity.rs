@@ -166,6 +166,7 @@ fn inputmsg_muzzle_roundtrip() {
         boot_color_ids: [0; 4], gun_style_ids: [0; 4],
         worm_names: Default::default(),
         muzzle_x: 123.45, muzzle_y: 67.89,
+        quit: false,
     };
     let bytes = encode(&msg).expect("encode failed");
     let decoded: InputMsg = bincode::deserialize(&bytes[4..]).expect("decode failed");
