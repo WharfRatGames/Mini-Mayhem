@@ -117,6 +117,9 @@ pub struct LoopState {
     pub water_strip:      Vec<u8>,
     pub water_strip_tick: u32,  // last tick/3 bucket when strip was built
     pub water_strip_cam:  u32,  // cam_x used when strip was built
+    /// Skeleton barrel tip from the previous render frame — used as the fire
+    /// origin for hitscan weapons so shots start exactly where the reticle does.
+    pub last_muzzle: Option<(f32, f32)>,
 }
 
 impl LoopState {
@@ -137,6 +140,7 @@ impl LoopState {
             water_strip: vec![0u8; (SCREEN_W * WATER_STRIP_H * 4) as usize],
             water_strip_tick: u32::MAX,
             water_strip_cam: u32::MAX,
+            last_muzzle: None,
         }
     }
 }
@@ -160,6 +164,10 @@ pub enum SimStep {
 /// identically. Camera follow and visual-only grave settling live in the
 /// client wrapper (`tick()` / `update_camera()`).
 pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
+    simulate_with_muzzle(game, input, None)
+}
+
+pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_override: Option<(f32, f32)>) -> SimStep {
     use super::turn::TurnPhase;
 
     game.sounds.clear(); // per-tick sound event buffer (shipped to live client)
@@ -205,7 +213,7 @@ pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
                 game.teams[ti].soldiers[si].has_fired = true;
                 game.turn.on_fired();
             } else {
-                process_acting_sim(game, input);
+                process_acting_sim(game, input, muzzle_override);
                 if game.active_worm_hit {
                     let ti = game.active_team();
                     let si = game.teams[ti].active;
@@ -585,7 +593,7 @@ pub fn tick(
 
     // ── Shared gameplay simulation ────────────────────────────────────────────
     let prev_turn = lstate.prev_turn_number;
-    let step = simulate(game, input);
+    let step = simulate_with_muzzle(game, input, lstate.last_muzzle);
     lstate.prev_turn_number = game.turn.turn_number;
 
     match step {
@@ -606,7 +614,7 @@ pub fn tick(
 
 /// Acting-phase simulation only — no camera. Camera follow lives in
 /// update_camera() (client). Shared by tick() and server_tick() via simulate().
-fn process_acting_sim(game: &mut GameState, input: &InputState) {
+fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override: Option<(f32, f32)>) {
     let has_fired = game.active_team_ref().active_soldier().has_fired;
 
     // Snap idle soldier to surface on every frame
@@ -623,7 +631,7 @@ fn process_acting_sim(game: &mut GameState, input: &InputState) {
     let in_airstrike = game.airstrike.is_some();
     if !has_fired || in_revolver || in_rope || in_torch || in_garcia || in_airstrike {
         if in_torch {
-            process_fire(game, input); // direction changes only while torching
+            process_fire(game, input, muzzle_override); // direction changes only while torching
             step_plasma_torch(game);
         } else if in_garcia {
             step_garcia(game, input);
@@ -632,7 +640,7 @@ fn process_acting_sim(game: &mut GameState, input: &InputState) {
         } else {
             process_movement(game, input);
             process_aim(game, input);
-            process_fire(game, input); // no tick-guard — matches server_tick() exactly
+            process_fire(game, input, muzzle_override); // no tick-guard — matches server_tick() exactly
         }
     }
 
@@ -1094,7 +1102,7 @@ fn release_rope(game: &mut GameState) {
     game.rope = None; // rope_session stays true — player can re-rope mid-air
 }
 
-fn process_fire(game: &mut GameState, input: &InputState) {
+fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Option<(f32, f32)>) {
     use crate::physics::projectile::WeaponKind;
     let weapon = game.active_team_ref().current_weapon();
 
@@ -1149,7 +1157,7 @@ fn process_fire(game: &mut GameState, input: &InputState) {
     if game.shotgun_shots_left > 0 {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
             game.emit_sound(crate::audio::Sfx::Shotgun);
-            fire_shotgun(game);
+            fire_shotgun(game, muzzle_override);
         }
         return;
     }
@@ -1160,7 +1168,7 @@ fn process_fire(game: &mut GameState, input: &InputState) {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
-            fire_revolver_shot(game, ti, si);
+            fire_revolver_shot(game, ti, si, muzzle_override);
         }
         return;
     }
@@ -1210,7 +1218,7 @@ fn process_fire(game: &mut GameState, input: &InputState) {
             game.teams[ti].prune_empty_weapons();
             game.shotgun_shots_left = 2;
             game.emit_sound(crate::audio::Sfx::Shotgun);
-            fire_shotgun(game);
+            fire_shotgun(game, muzzle_override);
         }
         return;
     }
@@ -1223,7 +1231,7 @@ fn process_fire(game: &mut GameState, input: &InputState) {
             if !game.teams[ti].consume_weapon() { return; }
             game.teams[ti].prune_empty_weapons();
             game.revolver_shots_left = 6;
-            fire_revolver_shot(game, ti, si);
+            fire_revolver_shot(game, ti, si, muzzle_override);
         }
         return;
     }
@@ -1731,7 +1739,7 @@ fn fire_weapon(game: &mut GameState) {
     game.turn.on_fired();
 }
 
-fn fire_shotgun(game: &mut GameState) {
+fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
     use crate::game::soldier::SoldierState;
     use crate::world::Vec2;
 
@@ -1747,10 +1755,12 @@ fn fire_shotgun(game: &mut GameState) {
     let fm = game.teams[ti].soldiers[si].facing as f32;
     let base_angle = game.aim.angle;
 
-    // Muzzle position: arm origin (70% up 13px torso from hip at pos.y-11 = pos.y-20)
-    // plus arm (9px) + barrel (17px) = 26px along the aim direction.
-    let muzzle_x = game.teams[ti].soldiers[si].pos.x + base_angle.cos() * fm * 26.0;
-    let muzzle_y = game.teams[ti].soldiers[si].pos.y - 20.0 - base_angle.sin() * 26.0;
+    // Fire from the rendered barrel tip so shots start exactly where the reticle does.
+    let (muzzle_x, muzzle_y) = muzzle_override.unwrap_or_else(|| {
+        let x = game.teams[ti].soldiers[si].pos.x + base_angle.cos() * fm * 26.0;
+        let y = game.teams[ti].soldiers[si].pos.y - 20.0 - base_angle.sin() * 26.0;
+        (x, y)
+    });
 
     // LCG seeded from tick + shot number for deterministic but varied spread
     let seed = game.tick.wrapping_mul(1664525).wrapping_add(1013904223);
@@ -1991,7 +2001,7 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
 }
 
 /// Hitscan revolver shot: ray-march up to 800 px, deal 15 damage + knockback to first soldier hit.
-fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize) {
+fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Option<(f32, f32)>) {
     game.emit_sound(crate::audio::Sfx::Revolver);
     use crate::world::Vec2;
     use crate::game::soldier::{DeathCause, SoldierState};
@@ -2006,12 +2016,12 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize) {
     let step_x = angle.cos() * fm * STEP;
     let step_y = -angle.sin() * STEP;
 
-    // Start ray from the gun muzzle. Arm origin is at 70% up the 13px torso from
-    // hip (pos.y - 11), giving arm_orig.y = pos.y - 20. Gun tip is arm (9px) +
-    // barrel (17px) = 26px forward from arm_orig along the aim direction.
-    let arm_orig_y = game.teams[ti].soldiers[si].pos.y - 20.0;
-    let mut rx = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 26.0;
-    let mut ry = arm_orig_y - angle.sin() * 26.0;
+    // Fire from the rendered barrel tip so the ray starts exactly where the reticle does.
+    let (mut rx, mut ry) = muzzle_override.unwrap_or_else(|| {
+        let x = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 26.0;
+        let y = game.teams[ti].soldiers[si].pos.y - 20.0 - angle.sin() * 26.0;
+        (x, y)
+    });
     let steps = (MAX_RANGE / STEP) as u32;
     let mut hit_ti: Option<usize> = None;
     let mut hit_si_idx: Option<usize> = None;
@@ -2873,7 +2883,10 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 let muzzle = draw_soldier_skeletal(buf, soldier.pos, team.color_id as usize, soldier.facing, soldier.hp, &anim, aim_angle, soldier.hp > 0,
                     soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style,
                     game.wind.value(), game.tick, soldier.on_fire_ticks);
-                if ti == active_ti && si == active_si { active_muzzle = muzzle; }
+                if ti == active_ti && si == active_si {
+                    active_muzzle = muzzle;
+                    if let Some(m) = muzzle { lstate.last_muzzle = Some(m); }
+                }
 
                 // Soldier name — bold 8px (drawn twice offset by 1px) with shadow
                 {
