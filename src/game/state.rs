@@ -934,37 +934,41 @@ impl GameState {
         if self.terrain.surface_y_at(x).is_none() { return false; }
 
         // Type split: 75% weapon, 25% health.
-        // Weapon pool: Mine 11%, Shotgun 10%, TNT 10%, Rope 9%, Bat 9%, Torch 8%, Revolver 8%, Beehive 7%, Meteor 7%, BlackHole 3%, AirStrike 2%, Garcia 1%, Sacred Ordnance 15%
+        // Rarity tiers (weapon pool):
+        //   Common     (~10% each): Mine, Shotgun, TNT, Grapple, Bat, Torch
+        //   Uncommon   (~8% each):  Blasthive, Meteor Bomb, Sacred Ordnance, Air Strike
+        //   Rare       (~3% each):  Black Hole, Revolver
+        //   Ultra Rare (~2%):       Hand of Jerry
         let kind = if kind_rng >= 0.75 {
             CrateKind::Health // +25 HP
         } else {
             let w = kind_rng / 0.75; // rescale weapon rng to [0,1)
-            if w < 0.11 {
-                CrateKind::Weapon(WeaponKind::Landmine)
-            } else if w < 0.21 {
-                CrateKind::Weapon(WeaponKind::Shotgun)
-            } else if w < 0.31 {
-                CrateKind::Weapon(WeaponKind::Tnt)
+            if w < 0.10 {
+                CrateKind::Weapon(WeaponKind::Landmine)       // Common
+            } else if w < 0.20 {
+                CrateKind::Weapon(WeaponKind::Shotgun)        // Common
+            } else if w < 0.30 {
+                CrateKind::Weapon(WeaponKind::Tnt)            // Common
             } else if w < 0.40 {
-                CrateKind::Weapon(WeaponKind::NinjaRope)
-            } else if w < 0.49 {
-                CrateKind::Weapon(WeaponKind::BaseballBat)
-            } else if w < 0.57 {
-                CrateKind::Weapon(WeaponKind::PlasmaTorch)
-            } else if w < 0.65 {
-                CrateKind::Weapon(WeaponKind::Revolver)
-            } else if w < 0.72 {
-                CrateKind::Weapon(WeaponKind::Blasthive)
-            } else if w < 0.79 {
-                CrateKind::Weapon(WeaponKind::BananaBomb)
-            } else if w < 0.82 {
-                CrateKind::Weapon(WeaponKind::BlackHoleBomb)
+                CrateKind::Weapon(WeaponKind::NinjaRope)      // Common
+            } else if w < 0.50 {
+                CrateKind::Weapon(WeaponKind::BaseballBat)    // Common
+            } else if w < 0.60 {
+                CrateKind::Weapon(WeaponKind::PlasmaTorch)    // Common
+            } else if w < 0.68 {
+                CrateKind::Weapon(WeaponKind::Blasthive)      // Uncommon
+            } else if w < 0.76 {
+                CrateKind::Weapon(WeaponKind::BananaBomb)     // Uncommon
             } else if w < 0.84 {
-                CrateKind::Weapon(WeaponKind::AirStrike)
-            } else if w < 0.85 {
-                CrateKind::Weapon(WeaponKind::Garcia)
+                CrateKind::Weapon(WeaponKind::HolyHandGrenade)// Uncommon
+            } else if w < 0.92 {
+                CrateKind::Weapon(WeaponKind::AirStrike)      // Uncommon
+            } else if w < 0.95 {
+                CrateKind::Weapon(WeaponKind::BlackHoleBomb)  // Rare
+            } else if w < 0.98 {
+                CrateKind::Weapon(WeaponKind::Revolver)       // Rare
             } else {
-                CrateKind::Weapon(WeaponKind::HolyHandGrenade)
+                CrateKind::Weapon(WeaponKind::Garcia)         // Ultra Rare
             }
         };
         self.crates.push(DroppedCrate {
