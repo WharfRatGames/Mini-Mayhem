@@ -1,6 +1,6 @@
 # Mini Mayhem (Arty)
 
-A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus** handheld (and playable natively on desktop Linux for development). Two teams of soldiers take turns firing an arsenal of destructive weapons across procedurally generated, fully destructible terrain.
+A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus** handheld. Two teams of soldiers take turns firing an arsenal of destructive weapons across procedurally generated, fully destructible terrain.
 
 ## Features
 
