@@ -1,5 +1,5 @@
 {
-        "label":        "Arty",
+        "label":        "Mini Mayhem",
         "icon":         "/mnt/SDCARD/App/Arty/icon.png",
         "launch":       "launch.sh",
         "description":  "Artillery game"
