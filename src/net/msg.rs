@@ -136,6 +136,9 @@ pub struct StateMsg {
     /// Lets the live client draw the torch flame at the tip and suppress the
     /// per-tick crater-derived explosion flashes the torch's carving would spawn.
     pub torch_dir:          u8,
+    /// Remaining fuel ticks for the plasma torch (0 when inactive).
+    #[serde(default)]
+    pub torch_fuel:         u32,
     /// Some(seconds_remaining) while the match is paused waiting for the
     /// opponent to reconnect; None during normal play.
     pub paused_opponent:    Option<u32>,

@@ -56,15 +56,74 @@ fn assert_parity(server: &GameState, client: &GameState) {
             assert_eq!(state_discriminant(&ss.state), state_discriminant(&cs.state),
                        "team {ti} soldier {si} state");
         }
+        // Weapon inventory + selection
+        assert_eq!(st.weapons.len(), ct.weapons.len(), "team {ti} weapon count");
+        for (wi, (sw, cw)) in st.weapons.iter().zip(ct.weapons.iter()).enumerate() {
+            assert_eq!(sw.0, cw.0, "team {ti} weapon {wi} kind");
+            assert_eq!(sw.1, cw.1, "team {ti} weapon {wi} ammo");
+        }
+        assert_eq!(st.selected_weapon, ct.selected_weapon, "team {ti} selected_weapon");
     }
     assert_eq!(server.wind.value(), client.wind.value(), "wind");
     assert_eq!(server.turn.current_team, client.turn.current_team, "turn team");
     assert_eq!(server.crater_log, client.crater_log, "crater log");
+
+    // Counts + key fields for synced collections
     assert_eq!(server.crates.len(), client.crates.len(), "crate count");
     assert_eq!(server.mines.len(), client.mines.len(), "mine count");
+    for (i, (sm, cm)) in server.mines.iter().zip(client.mines.iter()).enumerate() {
+        assert_eq!(sm.pos.x, cm.pos.x, "mine {i} pos.x");
+        assert_eq!(sm.pos.y, cm.pos.y, "mine {i} pos.y");
+        assert_eq!(sm.arm_ticks, cm.arm_ticks, "mine {i} arm_ticks");
+        assert_eq!(sm.trigger_ticks, cm.trigger_ticks, "mine {i} trigger_ticks");
+    }
     assert_eq!(server.barrels.len(), client.barrels.len(), "barrel count");
+    for (i, (sb, cb)) in server.barrels.iter().zip(client.barrels.iter()).enumerate() {
+        assert_eq!(sb.pos.x, cb.pos.x, "barrel {i} pos.x");
+        assert_eq!(sb.hp, cb.hp, "barrel {i} hp");
+    }
     assert_eq!(server.black_holes.len(), client.black_holes.len(), "black hole count");
+    for (i, (sb, cb)) in server.black_holes.iter().zip(client.black_holes.iter()).enumerate() {
+        assert_eq!(sb.pos.x, cb.pos.x, "black_hole {i} pos.x");
+        assert_eq!(sb.lifetime, cb.lifetime, "black_hole {i} lifetime");
+    }
     assert_eq!(server.fire_patches.len(), client.fire_patches.len(), "fire patch count");
+    for (i, (sf, cf)) in server.fire_patches.iter().zip(client.fire_patches.iter()).enumerate() {
+        assert_eq!(sf.pos.x, cf.pos.x, "fire_patch {i} pos.x");
+        assert_eq!(sf.lifetime, cf.lifetime, "fire_patch {i} lifetime");
+    }
+
+    // Plasma torch — fuel_ticks: 1 hardcode would be caught here
+    match (&server.plasma_torch, &client.plasma_torch) {
+        (None, None) => {}
+        (Some(st), Some(ct)) => {
+            assert_eq!(st.fuel_ticks, ct.fuel_ticks, "plasma_torch fuel_ticks");
+        }
+        _ => panic!("plasma_torch presence mismatch: server={} client={}",
+                    server.plasma_torch.is_some(), client.plasma_torch.is_some()),
+    }
+
+    // Rope
+    assert_eq!(server.rope.is_some(), client.rope.is_some(), "rope presence");
+    if let (Some(sr), Some(cr)) = (&server.rope, &client.rope) {
+        assert_eq!(sr.anchor.x, cr.anchor.x, "rope anchor.x");
+        assert_eq!(sr.anchor.y, cr.anchor.y, "rope anchor.y");
+        assert_eq!(sr.length, cr.length, "rope length");
+        assert_eq!(sr.flying, cr.flying, "rope flying");
+    }
+
+    // Blood splats + graves (server-authoritative counts)
+    assert_eq!(server.blood_splats.len(), client.blood_splats.len(), "blood splat count");
+    assert_eq!(server.graves.len(), client.graves.len(), "grave count");
+    for (i, (sg, cg)) in server.graves.iter().zip(client.graves.iter()).enumerate() {
+        assert_eq!(sg.pos.x, cg.pos.x, "grave {i} pos.x");
+        assert_eq!(sg.team, cg.team, "grave {i} team");
+        assert_eq!(sg.headstone_id, cg.headstone_id, "grave {i} headstone_id");
+    }
+
+    // Aim power (synced so spectators see charge meter)
+    assert_eq!(server.aim.power, client.aim.power, "aim.power");
+
 }
 
 /// The core gap-catcher: perturb the server, round-trip through the netcode, and

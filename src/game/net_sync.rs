@@ -146,6 +146,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                 None                        => 0,
             }
         },
+        torch_fuel: game.plasma_torch.as_ref().map(|t| t.fuel_ticks).unwrap_or(0),
         paused_opponent: None,
         opponent_abandoned: false,
         team_weapons: game.teams.iter().map(|t| NetTeamWeapons {
@@ -325,9 +326,9 @@ pub fn apply_server_state(
     use crate::game::state::{PlasmaTorchState, TorchDir};
     let torch_active = state.torch_dir != 0;
     game.plasma_torch = match state.torch_dir {
-        1 => Some(PlasmaTorchState { dir: TorchDir::UpForward,   fuel_ticks: 1 }),
-        2 => Some(PlasmaTorchState { dir: TorchDir::Forward,     fuel_ticks: 1 }),
-        3 => Some(PlasmaTorchState { dir: TorchDir::DownForward, fuel_ticks: 1 }),
+        1 => Some(PlasmaTorchState { dir: TorchDir::UpForward,   fuel_ticks: state.torch_fuel }),
+        2 => Some(PlasmaTorchState { dir: TorchDir::Forward,     fuel_ticks: state.torch_fuel }),
+        3 => Some(PlasmaTorchState { dir: TorchDir::DownForward, fuel_ticks: state.torch_fuel }),
         _ => None,
     };
 
