@@ -107,11 +107,11 @@ struct DebrisStyle {
 /// caverns→dust+embers, canyon→dust.
 fn debris_style(archetype: u8) -> DebrisStyle {
     match archetype {
-        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 350, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow
-        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 260, big_chance: 10, glow_chance: 0,  sway_amp: 0.5, sway_speed: 0.05, spin: 0.04 }, // sea mist
-        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 300, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
-        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 280, big_chance: 12, glow_chance: 0,  sway_amp: 0.4, sway_speed: 0.07, spin: 0.10 }, // canyon dust
-        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 220, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen
+        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 600, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow
+        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 500, big_chance: 10, glow_chance: 0,  sway_amp: 0.5, sway_speed: 0.05, spin: 0.04 }, // sea mist
+        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 550, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
+        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 520, big_chance: 12, glow_chance: 0,  sway_amp: 0.4, sway_speed: 0.07, spin: 0.10 }, // canyon dust
+        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 450, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen
     }
 }
 
