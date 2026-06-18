@@ -39,6 +39,11 @@ pub fn draw_str_shadow(buf: &mut WorldBuffer, s: &str, x: i32, y: i32, colour: B
     draw_str(buf, s, x, y, colour);
 }
 
+pub fn draw_str_shadow_scaled(buf: &mut WorldBuffer, s: &str, x: i32, y: i32, colour: Bgra, scale: i32) {
+    draw_str_scaled(buf, s, x + 1, y + 1, Bgra::new(0, 0, 0), scale);
+    draw_str_scaled(buf, s, x, y, colour, scale);
+}
+
 /// Pixel width of a string in the bitmap font.
 pub fn str_width(s: &str) -> i32 {
     if s.is_empty() { return 0; }

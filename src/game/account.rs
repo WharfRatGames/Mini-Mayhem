@@ -2,6 +2,7 @@ use crate::input::{InputState, Button};
 use crate::renderer::{WorldBuffer, Bgra};
 use crate::renderer::cosmetic_sprites;
 use crate::renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+use crate::renderer::hud::COLOR_DARK_BG;
 use crate::renderer::keyboard::Keyboard;
 use crate::world::{SCREEN_W, SCREEN_H};
 
@@ -133,7 +134,7 @@ impl AccountScreen {
     fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
-        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 10, 22));
+        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
         buf.fill_rect(cam_x, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
         let title = match self.screen {
             LoginScreen::Choice   => "ACCOUNT",
@@ -308,7 +309,7 @@ impl RosterPicker {
     fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
-        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 10, 22));
+        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
         buf.fill_rect(cam_x, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
         let title = "SELECT TEAM";
         let tw = str_width_scaled(title, 2);
@@ -446,7 +447,7 @@ impl RosterEditor {
     fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
-        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 10, 22));
+        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
         buf.fill_rect(cam_x, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
         let title = "EDIT TEAM";
         let tw = str_width_scaled(title, 2);
@@ -962,7 +963,7 @@ impl CosmeticsScreen {
     fn draw(&self, buf: &mut WorldBuffer) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 10, 22));
+        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
         buf.fill_rect(0, 0, SCREEN_W, 28, Bgra::new(18, 22, 48));
 
         let title = "EQUIP COSMETICS";

@@ -579,7 +579,7 @@ pub fn tick(
         let wa = winner.and_then(|w| game.teams.get(w)).map(|t| t.avatar_id).unwrap_or(0);
         let (kills, hp_left, memo) = match_end_stats(game);
         let wc = winner.and_then(|w| game.teams.get(w)).map(|t| t.color_id).unwrap_or(0);
-        draw_game_over(buf, winner, my_team, cam.left_edge() as i32, wa, 0, kills, hp_left, &memo, wc);
+        draw_game_over(buf, winner, my_team, cam.left_edge() as i32, wa, 0, 0, kills, hp_left, &memo, wc);
         if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
             return false;
         }

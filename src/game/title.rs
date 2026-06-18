@@ -1,6 +1,6 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{WorldBuffer, Bgra};
-use crate::renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+use crate::renderer::font::{draw_str, draw_str_scaled, draw_str_shadow_scaled, str_width, str_width_scaled};
 use crate::world::{SCREEN_W, SCREEN_H};
 
 pub type TitleChoice = u8;
@@ -20,8 +20,9 @@ pub const CHOICE_TEST:               u8 = 13;  // all-weapons infinite-ammo hots
 pub const CHOICE_LEADERBOARD_CASUAL: u8 = 14;
 pub const CHOICE_LEADERBOARD_RANKED: u8 = 15;
 pub const CHOICE_MISSIONS:           u8 = 16;
+pub const CHOICE_SETTINGS:           u8 = 17;
 
-const ITEMS:      &[&str] = &["SINGLEPLAYER", "MULTIPLAYER", "MY TEAMS", "HOW TO PLAY", "QUIT"];
+const ITEMS:      &[&str] = &["SINGLEPLAYER", "MULTIPLAYER", "MY TEAMS", "SETTINGS", "HOW TO PLAY", "QUIT"];
 const SP_ITEMS:   &[&str] = &["VS CPU", "HOTSEAT", "TEST"];
 const MP_ITEMS:   &[&str] = &["LIVE GAME", "TAKE A TURN", "MISSIONS"];
 const LIVE_ITEMS: &[&str] = &["CASUAL", "RANKED", "LEADERBOARD", "STATS"];
@@ -399,7 +400,8 @@ impl TitleScreen {
                         0 => return Some(CHOICE_SP),
                         1 => return Some(CHOICE_MULTI),
                         2 => return Some(CHOICE_MY_TEAM),
-                        3 => { self.sub = Sub::HowToPlay; self.help_page = 0; return None; }
+                        3 => return Some(CHOICE_SETTINGS),
+                        4 => { self.sub = Sub::HowToPlay; self.help_page = 0; return None; }
                         _ => return Some(CHOICE_QUIT),
                     }
                 }
@@ -453,9 +455,7 @@ impl TitleScreen {
                 _                                => "",
             };
             let lw = str_width_scaled(label, 2);
-            // Shadow then label
-            draw_str_scaled(buf, label, sw/2 - lw/2 + 1, panel_y + 9,  Bgra::new(0, 0, 0), 2);
-            draw_str_scaled(buf, label, sw/2 - lw/2,     panel_y + 8,  Bgra::new(200, 200, 230), 2);
+            draw_str_shadow_scaled(buf, label, sw/2 - lw/2, panel_y + 8, Bgra::new(200, 200, 230), 2);
         }
 
         // Menu items overlaid directly on image — scroll window keeps cursor visible
@@ -476,22 +476,18 @@ impl TitleScreen {
             let iw = str_width_scaled(item, 2);
             let selected = *i == cursor;
             if selected {
-                buf.fill_rect(sw/2 - 155, iy - 4, 310, 28, Bgra::new(20, 30, 70));
-                buf.fill_rect(sw/2 - 155, iy - 4, 3,   28, Bgra::new(255, 180, 0));
+                crate::renderer::hud::draw_menu_selection(buf, sw/2 - 155, iy - 4, 310, 28);
             }
             let col = if selected { Bgra::new(255, 225, 55) } else { Bgra::new(0, 0, 0) };
-            let shadow = if selected { Bgra::new(0, 0, 0) } else { Bgra::new(200, 200, 200) };
-            if selected {
-                draw_str_scaled(buf, ">", sw/2 - iw/2 - 25, iy + 1, Bgra::new(0,0,0), 2);
-                draw_str_scaled(buf, ">", sw/2 - iw/2 - 24, iy,     Bgra::new(255, 180, 0), 2);
-            }
-            draw_str_scaled(buf, item, sw/2 - iw/2 + 1, iy + 1, shadow, 2);
-            draw_str_scaled(buf, item, sw/2 - iw/2,     iy,     col, 2);
+            draw_str_shadow_scaled(buf, item, sw/2 - iw/2, iy, col, 2);
         }
 
         // Hint + version
-        let hint = if self.sub != Sub::None && self.sub != Sub::HowToPlay { "A=SELECT  B=BACK" } else { "A=SELECT" };
-        draw_str(buf, hint, sw/2 - str_width(hint)/2, sh - 18, Bgra::new(100, 100, 140));
+        if self.sub != Sub::None && self.sub != Sub::HowToPlay {
+            crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0);
+        } else {
+            crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT")], 0);
+        }
         draw_str(buf, self.version, sw - str_width(self.version) - 6, sh - 18, Bgra::new(70, 70, 100));
     }
 
