@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.269";
+const VERSION: &str = "0.5.4.270";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -721,7 +721,8 @@ fn main() {
     // ELO delta shown on end screen for ranked matches
     let mut elo_delta: i32 = 0;
     let mut elo_delta_rx: Option<std::sync::mpsc::Receiver<i32>> = None;
-    let mut fps_window_start = Instant::now();
+    let mut last_blit = Instant::now();
+    let mut fps_accum_us: u64 = 0;  // sum of inter-blit intervals in the window
     let mut fps_frame_count: u32 = 0;
     let mut paused_secs: Option<u32> = None;
     let mut opponent_left_ticks: u32 = 0; // banner: "OPPONENT DISCONNECTED"
@@ -1187,12 +1188,16 @@ fn main() {
 
         buf.blit_to_fb(&mut fb, cam.left_edge());
 
+        // Measure actual inter-blit interval so the counter reflects real display
+        // cadence rather than loop iterations (sleep overshoot can make the two diverge).
+        let now = Instant::now();
+        fps_accum_us += now.duration_since(last_blit).as_micros() as u64;
+        last_blit = now;
         fps_frame_count += 1;
-        let fps_elapsed = fps_window_start.elapsed();
-        if fps_elapsed >= Duration::from_secs(1) {
-            lstate.display_fps = (fps_frame_count as f32 / fps_elapsed.as_secs_f32()).round() as u32;
+        if fps_accum_us >= 1_000_000 {
+            lstate.display_fps = (fps_frame_count as f64 / fps_accum_us as f64 * 1_000_000.0).round() as u32;
             fps_frame_count = 0;
-            fps_window_start = Instant::now();
+            fps_accum_us = 0;
         }
 
         let elapsed = frame_start.elapsed();
