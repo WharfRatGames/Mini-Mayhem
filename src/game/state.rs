@@ -1465,6 +1465,9 @@ impl GameState {
         for pos in expired {
             let hx = pos.x;
             let hy = pos.y;
+            let ati = self.active_team();
+            let asi = self.teams[ati].active;
+            let active_hp_before = self.teams[ati].soldiers[asi].hp;
             for team in &mut self.teams {
                 for soldier in &mut team.soldiers {
                     if !soldier.is_alive() { continue; }
@@ -1482,7 +1485,9 @@ impl GameState {
                     };
                 }
             }
-            self.active_worm_hit = true;
+            if self.teams[ati].soldiers[asi].hp < active_hp_before {
+                self.active_worm_hit = true;
+            }
             self.emit_sound(crate::audio::Sfx::Mine);
             self.explosions.push(Explosion::new(pos, 25.0));
         }
@@ -1522,19 +1527,14 @@ impl GameState {
             } else {
                 // Squirm animation: any soldier standing in the fire visibly reacts,
                 // even between damage ticks. Active soldier immediately loses control.
-                let mut active_in_fire = false;
-                for (ti, team) in self.teams.iter_mut().enumerate() {
-                    for (si, s) in team.soldiers.iter_mut().enumerate() {
-                        if !s.is_alive() { continue; }
-                        let dx = s.pos.x - patch.pos.x;
-                        let dy = s.pos.y - patch.pos.y;
-                        if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
-                            s.on_fire_ticks = 10;
-                            if ti == ati && si == asi { active_in_fire = true; }
-                        }
+                for s in self.teams.iter_mut().flat_map(|t| t.soldiers.iter_mut()) {
+                    if !s.is_alive() { continue; }
+                    let dx = s.pos.x - patch.pos.x;
+                    let dy = s.pos.y - patch.pos.y;
+                    if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
+                        s.on_fire_ticks = 10;
                     }
                 }
-                if active_in_fire { self.active_worm_hit = true; }
                 // DoT tick
                 if patch.lifetime % DOT_INTERVAL == 0 {
                     for team in &mut self.teams {
