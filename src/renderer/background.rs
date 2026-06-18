@@ -199,9 +199,7 @@ pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgPart
             let py = sy + oy;
             if py < 0 || py >= WATER_Y as i32 || px < 0 || px >= SCREEN_W as i32 { return; }
             let wx = cam_x as i32 + px;
-            // sky_limit[wx] is the first solid y for this column — cheaper
-            // than a full bitmap is_solid lookup for per-particle sky clipping.
-            if py as u32 >= terrain.sky_limit[wx as usize] { return; }
+            if terrain.is_solid(wx, py) { return; }
             buf.set_pixel(wx, py, colour);
         };
         put(0, 0);

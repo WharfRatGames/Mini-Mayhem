@@ -1019,9 +1019,9 @@ impl Terrain {
         let mut spawns: Vec<WorldPos> = Vec::with_capacity(count);
         let mut used_x: Vec<i32> = Vec::with_capacity(count);
 
-        // Cave maps: ALL soldiers must spawn underground. Never fall through to
-        // surface spawns. Three passes with progressively relaxed separation so we
-        // always fill the roster without touching the surface layer.
+        // Cave maps: prefer underground spawns. Three passes with progressively
+        // relaxed separation; fall through to surface spawning if caves can't
+        // fill the full roster (e.g. sparse cave generation).
         if self.archetype == 3 {
             // Pass 1: team half at full MIN_SEP.
             // Pass 2: full map width at full MIN_SEP (other team's half has cave space too).
@@ -1044,7 +1044,8 @@ impl Terrain {
                     x += 1;
                 }
             }
-            return spawns;
+            if spawns.len() >= count { return spawns; }
+            // Cave passes came up short — fall through to surface spawning below.
         }
 
         // ── Surface spawns on substantial landforms of similar size ───────────────
