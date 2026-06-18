@@ -34,26 +34,27 @@ pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
         let cy = sun_sy as i32;
         let ri = sun_r as i32;
         let sun_r2 = sun_r * sun_r;
-        for sy in (cy - ri).max(0)..(cy + ri).min(water_y) {
-            for sx in (cx - ri).max(0)..(cx + ri).min(SCREEN_W as i32) {
-                let dx = (sx - cx) as f32;
+        // sx-outer loop: hoist dx² out of the inner loop and clamp y with
+        // sky_limit once per column instead of checking every pixel.
+        for sx in (cx - ri).max(0)..(cx + ri).min(SCREEN_W as i32) {
+            let wx = (cam_x as i32 + sx) as u32;
+            let dx = (sx - cx) as f32;
+            let dx2 = dx * dx;
+            if dx2 >= sun_r2 { continue; } // column outside disc — skip early
+            let y_bot = (cy + ri).min(water_y).min(terrain.sky_limit[wx as usize] as i32);
+            for sy in (cy - ri).max(0)..y_bot {
                 let dy = (sy - cy) as f32;
-                let d2 = dx * dx + dy * dy;
+                let d2 = dx2 + dy * dy;
                 if d2 >= sun_r2 { continue; }
-                // Quadratic falloff using squared distance directly — avoids a
-                // per-pixel sqrt (this loop covers ~6600 px/frame).
-                let f = 1.0 - d2 / sun_r2;      // 1 at centre → 0 at edge
-                let add = (f * f * 70.0) as u16; // soft falloff
+                // Quadratic falloff — avoids sqrt (~6600 px/frame at full disc).
+                let f = 1.0 - d2 / sun_r2;
+                let add = (f * f * 70.0) as u16;
                 if add == 0 { continue; }
-                let wx = cam_x as i32 + sx;
-                if sy as u32 >= terrain.sky_limit[wx as usize] { continue; }
-                // wx < WORLD_W (cam_x clamped, sx < SCREEN_W) and
-                // sy in 0..water_y < WORLD_H are guaranteed above.
-                let c = buf.get_pixel_unchecked(wx as u32, sy as u32);
-                buf.set_pixel_unchecked(wx as u32, sy as u32, Bgra::new(
+                let c = buf.get_pixel_unchecked(wx, sy as u32);
+                buf.set_pixel_unchecked(wx, sy as u32, Bgra::new(
                     (c.r as u16 + add).min(255) as u8,
                     (c.g as u16 + add).min(255) as u8,
-                    (c.b as u16 + (add / 2)).min(255) as u8, // warmer (less blue)
+                    (c.b as u16 + (add / 2)).min(255) as u8,
                 ));
             }
         }
@@ -198,7 +199,9 @@ pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgPart
             let py = sy + oy;
             if py < 0 || py >= WATER_Y as i32 || px < 0 || px >= SCREEN_W as i32 { return; }
             let wx = cam_x as i32 + px;
-            if terrain.is_solid(wx, py) { return; }
+            // sky_limit[wx] is the first solid y for this column — cheaper
+            // than a full bitmap is_solid lookup for per-particle sky clipping.
+            if py as u32 >= terrain.sky_limit[wx as usize] { return; }
             buf.set_pixel(wx, py, colour);
         };
         put(0, 0);
