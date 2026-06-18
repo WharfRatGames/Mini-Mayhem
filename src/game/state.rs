@@ -370,6 +370,9 @@ pub struct GameState {
     pub garcia: Option<GarciaState>,
     /// Airstrike targeting / active session; None = inactive.
     pub airstrike: Option<AirstrikeState>,
+    /// Set true during the meteor bomb impact loop so chain-detonated barrels/mines
+    /// also scatter fragments. Transient — not networked.
+    pub meteor_chain: bool,
 }
 
 impl GameState {
@@ -425,6 +428,7 @@ impl GameState {
             plasma_torch: None,
             garcia: None,
             airstrike: None,
+            meteor_chain: false,
             teams,
         }
     }
@@ -881,6 +885,7 @@ impl GameState {
         }
 
         // Meteor Bomb main impact: large crash + scatter 5 burning fragments
+        self.meteor_chain = true;
         for pos in meteor_impacts {
             self.emit_sound(crate::audio::Sfx::Meteor);
             // Initial impact: TNT profile at 60% radius+damage (reduced 40%) with
@@ -903,6 +908,8 @@ impl GameState {
                 ));
             }
         }
+
+        self.meteor_chain = false;
 
         // Beehive impact: small burst + spawn 6 homing bees
         for pos in hive_impacts {
@@ -1207,6 +1214,7 @@ impl GameState {
             self.mines.retain(|m| m.state != MineState::Triggered || m.trigger_ticks > 0);
             for pos in to_explode {
                 self.apply_explosion(pos, WeaponKind::Landmine);
+                if self.meteor_chain { self.spawn_meteor_fragments(pos); }
                 // Chain: trigger any Armed mines within blast radius (25px)
                 for mine in &mut self.mines {
                     if mine.state == MineState::Armed {
@@ -1309,12 +1317,31 @@ impl GameState {
         }
     }
 
+    fn spawn_meteor_fragments(&mut self, pos: WorldPos) {
+        use crate::physics::projectile::Projectile;
+        let seed = (pos.x as u32)
+            .wrapping_mul(0x9E3779B9)
+            .wrapping_add(pos.y as u32)
+            .wrapping_add(self.tick.wrapping_mul(0x6B5A6B5A));
+        for i in 0..5u32 {
+            let ra = seed.wrapping_mul(i.wrapping_mul(0xDEAD).wrapping_add(0xBEEF));
+            let rs = seed.wrapping_mul(i.wrapping_mul(0xCAFE).wrapping_add(0xBABE));
+            let spread = (ra as f32 / u32::MAX as f32 - 0.5) * 5.0;
+            let up     = 5.0 + (rs as f32 / u32::MAX as f32) * 4.0;
+            self.projectiles.push(Projectile::new_meteor_fragment(
+                pos,
+                crate::world::Vec2::new(spread, -up),
+            ));
+        }
+    }
+
     fn explode_barrel(&mut self, pos: WorldPos) {
         use crate::world::Vec2;
         use crate::physics::projectile::WeaponKind;
 
         // Large explosion (TNT-scale)
         self.apply_explosion(pos, WeaponKind::Tnt);
+        if self.meteor_chain { self.spawn_meteor_fragments(pos); }
 
         // Chain: damage nearby barrels
         let barrel_positions: Vec<(usize, WorldPos, i32)> = self.barrels.iter().enumerate()

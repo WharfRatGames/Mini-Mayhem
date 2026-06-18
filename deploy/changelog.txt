@@ -1,3 +1,10 @@
+0.5.4.275  Meteor bomb chain explosions (barrel/mine) now scatter fragments upward; backflip more lenient on slopes and edges; bazooka no longer detonates immediately when fired upward near terrain; settings screen adds controls reference.
+0.5.4.274  Air Strike throws soldiers sideways at an angle (not straight up); flame damage no longer launches victims airborne; menu cohesion pass (shared palette, button hints, selection highlight); Settings screen added; Profile screen added; TAT match end now shows full game-over overlay with ELO and scrap earned; post-match scrap earned shown in all modes.
+0.5.4.273  Scrap earned shown on game-over screen; TAT end screen personalized per player; menu navigation polish (consistent wrap, Back=B); airstrike blast radius and force increased.
+0.5.4.272  Fix false turn-end trigger after mine/fire/black-hole with no damage dealt.
+0.5.4.271  Barrel surface placement fix; wall-stick fix; accurate FPS counter via inter-blit interval.
+0.5.4.270  Accurate FPS counter via inter-blit interval measurement.
+0.5.4.269  Doubled ambient particle counts across all terrain archetypes.
 0.5.4.236  Live: weapon ammo now synced from server — selected weapon and ammo counts always accurate; camera follows airborne soldiers (knockback) nearest to center.
 0.5.4.235  Live camera: tracks airstrike cursor during targeting phase; follows nearest explosion when projectiles land.
 0.5.4.234  Live mode parity fixes: wind particles now drift across full screen; explosion FX animate; soldiers interleaved across map (not side-locked); airstrike plane/bombs now visible to opponent.

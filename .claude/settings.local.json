@@ -111,7 +111,14 @@
       "Bash(scp *)",
       "Bash(xargs ls -1)",
       "Bash(./deploy/update_server.sh 0.5.4.185)",
-      "Bash(jobs -l)"
+      "Bash(jobs -l)",
+      "Bash(git -C /home/dusty/arty add src/net/msg.rs src/main.rs src/server/main.rs)",
+      "Bash(git -C /home/dusty/arty commit -m \"v0.5.4.238: show account username in casual live lobby per-player row\")",
+      "Bash(git *)",
+      "Bash(curl -sv https://crumbonium.duckdns.org/api/)",
+      "Bash(curl -sv https://crumbonium.duckdns.org/arty/version.txt)",
+      "Bash(curl --max-time 8 -v https://crumbonium.duckdns.org/arty/version.txt)",
+      "Bash(echo \"exit:$?\")"
     ]
   }
 }

@@ -494,6 +494,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         revolver_shots_left: _, bullet_trails: _, rope_session: _,
         rope_used_this_turn: _, tnt_placed: _, crate_watch_ticks: _,
         smoke_particles: _, fx: _, pending_deaths: _,
+        meteor_chain: _, // not synced: transient per-tick flag, reset each tick
     } = g;
 }
 
