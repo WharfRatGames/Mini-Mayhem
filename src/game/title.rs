@@ -33,26 +33,6 @@ const MAX_VISIBLE: usize = 4;
 
 const HOW_TO_PAGES: &[HelpPage] = &[
     HelpPage {
-        title: "CONTROLS",
-        lines: &[
-            "D-PAD LEFT/RIGHT   Move",
-            "D-PAD UP/DOWN      Aim angle",
-            "HOLD A + RELEASE   Charge and fire (most weapons)",
-            "B                  Jump forward",
-            "Y                  Backflip",
-            "SELECT             Weapon menu",
-            "START              Pause",
-            "",
-            "R1 + D-PAD         Pan camera (snaps back)",
-            "L1 + D-PAD         Pan camera (stays put)",
-            "",
-            "WEAPON MENU",
-            "  D-PAD            Browse weapons",
-            "  A  Confirm   B / SELECT  Cancel",
-            "  L1/R1  Adjust grenade fuse",
-        ],
-    },
-    HelpPage {
         title: "WEAPON CONTROLS",
         lines: &[
             "GRAPPLE HOOK",
