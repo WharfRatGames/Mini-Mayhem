@@ -558,12 +558,20 @@ impl GameState {
                 // Knockback: push radially outward with upward bias
                 let (nx, ny) = if dist > 0.5 {
                     (dx / dist, dy / dist)
+                } else if kind == WeaponKind::AirStrike {
+                    // Bombs fall from above; direct hit should throw sideways, not straight up
+                    let side = if pos.x > WORLD_W as f32 / 2.0 { -1.0 } else { 1.0 };
+                    (side, -0.5)
                 } else {
                     (0.0, -1.0) // at center: launch straight up
                 };
                 let impulse = falloff * force;
-                let vx = nx * impulse;
-                let vy = ny * impulse - impulse * 0.25; // upward kick (reduced to prevent excessive fall height)
+                let (vx, vy) = if kind == WeaponKind::AirStrike {
+                    // More horizontal throw, less vertical
+                    (nx * impulse * 1.2, ny * impulse * 0.5 - impulse * 0.1)
+                } else {
+                    (nx * impulse, ny * impulse - impulse * 0.25)
+                };
 
                 let was_grounded = matches!(soldier.state, SoldierState::Idle | SoldierState::Walking { .. });
                 let new_state = match &soldier.state {
