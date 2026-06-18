@@ -552,8 +552,25 @@ pub fn draw_aim_arrow(
         let interior     = (bar_len - 2) as f32; // 98 fillable columns
         let fill_px      = (power_frac.min(max) / max * interior) as i32;
         let normal_full  = (1.0 / max * interior) as i32; // column where power=1.0 lands
-        let border_col   = Bgra::new(60, 60, 60);
+        let border_col   = Bgra::new(255, 255, 255);
+        let shadow_col   = Bgra::new(0, 0, 0);
         let right_cap    = (fill_px + 1).min(bar_len - 1);
+
+        // Shadow pass: draw the bar outline 1px offset (down-right) for contrast
+        // on any background colour.
+        for col in 0..=right_cap {
+            let base_x = ox as f32 + ca * col as f32;
+            let base_y = oy as f32 - sa * col as f32;
+            let is_cap = col == 0 || col == right_cap;
+            let half = (2 + col * 6 / fill_px.max(1)).min(8) as i32;
+            for row_off in -half..=half {
+                let is_border_row = row_off == -half || row_off == half;
+                if !(is_cap || is_border_row) { continue; }
+                let px = (base_x + sa * row_off as f32).round() as i32;
+                let py = (base_y + ca * row_off as f32).round() as i32;
+                buf.set_pixel(px + 1, py + 1, shadow_col);
+            }
+        }
 
         for col in 0..=right_cap {
             let base_x = ox as f32 + ca * col as f32;

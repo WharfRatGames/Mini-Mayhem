@@ -370,9 +370,14 @@ mod imp {
             }
         }
 
+        // Write one period of silence to push any remaining audio fully out of the
+        // hardware FIFO before drain — the stub driver's pcm_drain returns immediately
+        // without waiting, so without this the tail gets cut and produces a pop.
+        let silence = vec![0i16; PERIOD];
+        unsafe { pcm_write(pcm, silence.as_ptr(), PERIOD as u32); }
         unsafe { pcm_drain(pcm); }
         let expected = std::time::Duration::from_millis(
-            (samples.len() as u64 * 1000) / RATE as u64
+            (samples.len() as u64 * 1000) / RATE as u64 + 50
         );
         if let Some(remaining) = expected.checked_sub(start.elapsed()) {
             std::thread::sleep(remaining);
@@ -451,7 +456,11 @@ mod imp {
             else if w > 0 { pos += w as usize; }
             if pos >= samples.len() { pos = 0; } // loop the burn while still active
         }
-        unsafe { pcm_drain(pcm); pcm_close(pcm); libc::dlclose(lib); }
+        let silence = vec![0i16; PERIOD];
+        unsafe { pcm_write(pcm, silence.as_ptr(), PERIOD as u32); }
+        unsafe { pcm_drain(pcm); }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        unsafe { pcm_close(pcm); libc::dlclose(lib); }
         TORCH_ACTIVE.store(false, Ordering::Relaxed);
     }
 
