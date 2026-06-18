@@ -724,7 +724,8 @@ fn process_movement(game: &mut GameState, input: &InputState) {
         game.teams[ti].soldiers[si].airtime = 0;
         game.teams[ti].soldiers[si].fall.begin_fall(y0);
     }
-    if input.just_pressed(Button::Y) && on_ground && is_idle {
+    let on_ground_lenient = on_ground || is_on_ground_lenient(game, ti, si);
+    if input.just_pressed(Button::Y) && on_ground_lenient && is_idle {
         // Backflip: maximum vertical, short horizontal — for ledge climbing
         let vx = game.teams[ti].soldiers[si].facing as f32 * -1.5;
         let y0 = game.teams[ti].soldiers[si].pos.y;
@@ -878,6 +879,20 @@ pub fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
         game.terrain.is_blocked(xc, y + 1)
             || game.terrain.is_blocked(xc, y + 2)
             || game.terrain.is_blocked(xc, y + 3)
+    })
+}
+
+/// Lenient ground check for backflip: probes deeper (up to 5px below foot) and
+/// doesn't exclude columns where the foot pixel is solid (handles slopes where the
+/// soldier is slightly embedded). Also checks the center column only so edge-standing
+/// soldiers (where edge columns are excluded by the wall guard) still qualify.
+pub fn is_on_ground_lenient(game: &GameState, ti: usize, si: usize) -> bool {
+    use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+    let s = &game.teams[ti].soldiers[si];
+    let x = s.pos.x as i32;
+    let y = s.pos.y as i32;
+    [x - (SOLDIER_HALF_W - 1), x, x + (SOLDIER_HALF_W - 1)].iter().any(|&xc| {
+        (1..=5).any(|dy| game.terrain.is_blocked(xc, y + dy))
     })
 }
 

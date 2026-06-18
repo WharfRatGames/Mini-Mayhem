@@ -89,7 +89,13 @@ pub fn step_projectile(
         return StepResult::Expired;
     }
 
-    // Swept collision from where we were to where we are now
+    // Swept collision from where we were to where we are now.
+    // Skip on the first tick (age_ticks was 0 before tick()) so projectiles that
+    // spawn inside or adjacent to terrain (e.g. steep upward bazooka aim near a
+    // hillside) have one tick to clear the solid before collision is checked.
+    if proj.age_ticks < 2 {
+        return StepResult::Flying;
+    }
     let collision = swept_collision(pos_before, proj.pos, terrain);
 
     // Resolve what happens

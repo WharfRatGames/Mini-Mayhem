@@ -36,6 +36,30 @@ Render-time, client-local differences (e.g. hiding the opponent's crate-pickup
 messages in `render_live`) are intentional and are *not* state — the parity test
 compares state only and won't flag them.
 
+## TAT replay parity (read before changing tick() or the weapon menu)
+
+TAT (turn-by-turn async) has **five code paths**, not four:
+
+| Path | Where |
+|---|---|
+| Hotseat / VS CPU | `tick()` in `loop_runner.rs` |
+| Live server | `server_tick()` in `loop_runner.rs` |
+| Live client (state rebuild) | `build_state` + `apply_server_state` in `net_sync.rs` |
+| TAT visual replay (opponent's move) | `src/main.rs` ~line 2441 |
+| TAT fast-forward (own move) | `src/main.rs` ~line 2507 |
+
+**The invariant:** anything `tick()` does *before* calling `simulate_with_muzzle`
+must also be done in both TAT replay loops. Currently that means
+`process_weapon_menu` — called first, with `server_tick` skipped when it returns
+`true` (menu open). If you ever add another pre-simulate step to `tick()`, add it
+to the TAT paths too.
+
+**Why this is easy to miss:** the parity checklists and `round_trip_preserves_synced_state`
+only guard the live-mode state round-trip. TAT divergence is silent — the replay
+just plays the wrong weapon. The `tat_replay_applies_weapon_switch` test in
+`tests/parity.rs` catches regressions here. If you change how the weapon menu
+interacts with simulate, run `cargo test --test parity` and check that test passes.
+
 ## Message structs are shared
 
 `src/net/msg.rs` is the single source of truth, exposed via `pub mod net` in

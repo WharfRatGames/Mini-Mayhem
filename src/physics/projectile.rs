@@ -47,7 +47,7 @@ impl WeaponKind {
             Self::Landmine       => 25.0,
             Self::Tnt            => 75.0,   // 2.5× grenade
             Self::HolyHandGrenade => 80.0,
-            Self::AirStrike      => 38.0,
+            Self::AirStrike      => 45.0,
             Self::Minigun        => 8.0,
             Self::BaseballBat    => 0.0,    // knockback only, no blast
             Self::FreezeGrenade  => 35.0,
@@ -109,7 +109,7 @@ impl WeaponKind {
             Self::Landmine       => 9.0,
             Self::Tnt            => 18.0,
             Self::HolyHandGrenade => 10.0,
-            Self::AirStrike      => 8.0,
+            Self::AirStrike      => 14.0,
             Self::Minigun        => 2.0,
             Self::BaseballBat    => 12.0,
             Self::HomingMissile  => 10.0,
