@@ -2,7 +2,7 @@ use crate::world::{SCREEN_W, SCREEN_H, WORLD_H};
 use crate::physics::Wind;
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
-use super::font::{draw_str, draw_str_shadow, draw_str_scaled, str_width, str_width_scaled};
+use super::font::{draw_str, draw_str_shadow, draw_str_scaled, draw_str_shadow_scaled, str_width, str_width_scaled};
 use super::draw_sprites::TEAM_COLOURS;
 
 /// Height of the HUD bar in pixels.
@@ -15,6 +15,13 @@ const HUD_BG:     Bgra = Bgra::new(15, 15, 25);
 const HUD_TEXT:   Bgra = Bgra::new(220, 220, 220);
 const HUD_YELLOW: Bgra = Bgra::new(255, 220, 0);
 const HUD_RED:    Bgra = Bgra::new(220, 60, 60);
+
+// Shared palette used across all menus/screens
+pub const COLOR_DARK_BG:  Bgra = Bgra::new(8, 10, 22);
+pub const COLOR_PANEL_BG: Bgra = Bgra::new(14, 18, 40);
+pub const COLOR_BORDER:   Bgra = Bgra::new(50, 50, 90);
+pub const COLOR_DIM_TEXT: Bgra = Bgra::new(140, 140, 170);
+pub const COLOR_GOLD:     Bgra = Bgra::new(220, 180, 50);
 
 /// Draw the full HUD bar at the bottom of the screen.
 ///
@@ -136,6 +143,7 @@ pub fn draw_game_over(
     cam_x:        i32,
     winner_avatar: u8,
     elo_delta:    i32,
+    scrap_earned: u32,
     kills:        [u32; 2],  // [team0_kills, team1_kills]
     hp_left:      [u32; 2],  // [team0_hp, team1_hp]
     memo_line:    &str,
@@ -151,7 +159,7 @@ pub fn draw_game_over(
     let av_y      = 5i32;
     let dark_top  = av_y + AV as i32 + 4; // ~99 — used for element anchoring
     buf.fill_rect(cx0, 0, SCREEN_W, sh as u32, Bgra::new(6, 8, 22));
-    buf.fill_rect(cx0, dark_top, SCREEN_W, 2, Bgra::new(50, 50, 90));
+    buf.fill_rect(cx0, dark_top, SCREEN_W, 2, COLOR_BORDER);
 
     // Fixed y anchors below the dark line
     let y_headline = dark_top + 12;   // ~111
@@ -167,10 +175,8 @@ pub fn draw_game_over(
             // Draw — no avatar needed
             let msg = "IT'S A DRAW!";
             let mw = str_width_scaled(msg, 3);
-            draw_str_scaled(buf, msg, mid - mw/2 + 1, y_headline + 1, Bgra::new(0,0,0), 3);
-            draw_str_scaled(buf, msg, mid - mw/2,     y_headline,     HUD_TEXT, 3);
-            let hint = "PRESS A TO CONTINUE";
-            draw_str(buf, hint, mid - str_width(hint)/2, y_hint, Bgra::new(100,100,140));
+            draw_str_shadow_scaled(buf, msg, mid - mw/2, y_headline, HUD_TEXT, 3);
+            draw_button_hints(buf, &[("A", "CONTINUE")], cx0);
         }
         Some(winner) => {
             let team_col  = TEAM_COLOURS[winner_color.min(3) as usize];
@@ -197,8 +203,7 @@ pub fn draw_game_over(
                 }
             };
             let hw = str_width_scaled(headline, 3);
-            draw_str_scaled(buf, headline, mid - hw/2 + 1, y_headline + 1, Bgra::new(0,0,0), 3);
-            draw_str_scaled(buf, headline, mid - hw/2,     y_headline,     headline_col, 3);
+            draw_str_shadow_scaled(buf, headline, mid - hw/2, y_headline, headline_col, 3);
 
             // Team wins bar
             let sub  = format!("{} TEAM WINS", team_name);
@@ -233,8 +238,14 @@ pub fn draw_game_over(
                 draw_str_scaled(buf, &elo_str, mid - ew/2, y_elo, elo_col, 2);
             }
 
-            let hint = "PRESS A TO CONTINUE";
-            draw_str(buf, hint, mid - str_width(hint)/2, y_hint, Bgra::new(100,100,140));
+            // Scrap earned
+            if scrap_earned > 0 {
+                let scrap_str = format!("+{}  SCRAP", scrap_earned);
+                let sw = str_width_scaled(&scrap_str, 2);
+                draw_str_scaled(buf, &scrap_str, mid - sw/2, y_elo + 24, COLOR_GOLD, 2);
+            }
+
+            draw_button_hints(buf, &[("A", "CONTINUE")], cx0);
         }
     }
 }
@@ -352,15 +363,15 @@ mod tests {
     #[test]
     fn game_over_winner_draws_without_panic() {
         let mut b = buf();
-        draw_game_over(&mut b, Some(0), Some(0), 0, 0, 0, [0,0], [0,0], "", 0); // winner sees win message
-        draw_game_over(&mut b, Some(3), Some(0), 0, 3, 0, [0,0], [0,0], "", 3); // loser sees lose message
-        draw_game_over(&mut b, Some(1), None,    0, 1, 0, [0,0], [0,0], "", 1); // hotseat — team name
+        draw_game_over(&mut b, Some(0), Some(0), 0, 0, 0, 0, [0,0], [0,0], "", 0); // winner sees win message
+        draw_game_over(&mut b, Some(3), Some(0), 0, 3, 0, 0, [0,0], [0,0], "", 3); // loser sees lose message
+        draw_game_over(&mut b, Some(1), None,    0, 1, 0, 0, [0,0], [0,0], "", 1); // hotseat — team name
     }
 
     #[test]
     fn game_over_draw_draws_without_panic() {
         let mut b = buf();
-        draw_game_over(&mut b, None, None, 0, 0, 0, [0,0], [0,0], "", 0);
+        draw_game_over(&mut b, None, None, 0, 0, 0, 0, [0,0], [0,0], "", 0);
     }
 
     // ── Countdown ────────────────────────────────────────────────────────────
@@ -372,6 +383,29 @@ mod tests {
         draw_countdown(&mut b, 1);
         draw_countdown(&mut b, 0); // "GO!"
     }
+}
+
+/// Draw a row of button hints centered at the bottom of the screen.
+/// `hints` is a slice of (button_label, action_label) pairs, e.g. `&[("A", "SELECT"), ("B", "BACK")]`.
+pub fn draw_button_hints(buf: &mut WorldBuffer, hints: &[(&str, &str)], cam_x: i32) {
+    use super::font::{draw_str, str_width};
+    let parts: Vec<String> = hints.iter().map(|(b, a)| format!("{}={}", b, a)).collect();
+    let line = parts.join("  ");
+    let x = cam_x + (SCREEN_W as i32 - str_width(&line)) / 2;
+    let y = SCREEN_H as i32 - 14;
+    draw_str(buf, &line, x, y, COLOR_DIM_TEXT);
+}
+
+/// Draw a unified menu selection highlight for a list item row.
+/// Fills with dark panel color, adds a 3px gold left border, and draws a ">" arrow.
+/// Call before drawing the item text.
+pub fn draw_menu_selection(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32) {
+    use super::font::{draw_str_shadow_scaled, str_width_scaled};
+    buf.fill_rect(x, y, w as u32, h as u32, Bgra::new(20, 30, 70));
+    buf.fill_rect(x, y, 3, h as u32, Bgra::new(255, 180, 0));
+    let arrow_x = x + 8;
+    let arrow_y = y + (h - 16) / 2;
+    draw_str_shadow_scaled(buf, ">", arrow_x, arrow_y, Bgra::new(255, 180, 0), 2);
 }
 
 /// Draw the pause menu overlay.

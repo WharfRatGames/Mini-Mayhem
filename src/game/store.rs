@@ -284,7 +284,7 @@ impl StoreScreen {
             let sw2 = str_width(&self.status);
             draw_str(buf, &self.status, sw / 2 - sw2 / 2, sh - 16, sc);
         } else {
-            draw_str(buf, "A=BUY  B=BACK", 8, sh - 16, Bgra::new(60, 70, 110));
+            crate::renderer::hud::draw_button_hints(buf, &[("A", "BUY"), ("B", "BACK")], 0);
         }
     }
 }

@@ -1,6 +1,7 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{WorldBuffer, Bgra};
 use crate::renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+use crate::renderer::hud::{COLOR_DARK_BG, COLOR_PANEL_BG};
 use crate::world::{SCREEN_W, SCREEN_H};
 use crate::game::account::{http_get, http_post, json_field};
 
@@ -94,7 +95,7 @@ impl MissionsScreen {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
 
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 10, 22));
+        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
         buf.fill_rect(0, 0, SCREEN_W, 28, Bgra::new(18, 22, 48));
 
         let title = "MISSIONS";
@@ -124,7 +125,7 @@ impl MissionsScreen {
 
         for (section, label) in [("daily", "DAILY"), ("weekly", "WEEKLY")] {
             // Section header
-            buf.fill_rect(0, y, SCREEN_W, 14, Bgra::new(14, 18, 40));
+            buf.fill_rect(0, y, SCREEN_W, 14, COLOR_PANEL_BG);
             let lw = str_width(label) as i32;
             draw_str(buf, label, 8, y + 3, Bgra::new(100, 120, 200));
             let _ = lw;
@@ -202,10 +203,11 @@ impl MissionsScreen {
             draw_str_scaled(buf, &self.message, mx, my, Bgra::new(80, 255, 80), 2);
         }
 
-        // Hint bar
-        buf.fill_rect(0, sh - 18, SCREEN_W, 18, Bgra::new(12, 14, 35));
-        let hint = if claimable.is_empty() { "B=BACK" } else { "A=CLAIM  B=BACK" };
-        draw_str(buf, hint, sw/2 - str_width(hint)/2, sh - 13, Bgra::new(60, 70, 110));
+        if claimable.is_empty() {
+            crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0);
+        } else {
+            crate::renderer::hud::draw_button_hints(buf, &[("A", "CLAIM"), ("B", "BACK")], 0);
+        }
     }
 }
 
