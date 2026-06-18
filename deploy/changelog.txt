@@ -1,3 +1,4 @@
+0.5.4.278  Terrain generates lower on screen; water level lowered; more sky headroom.
 0.5.4.277  Cave maps: soldiers now spawn on top crust or underground (alternating per slot); charge bar white outline for visibility on any background; SFX pop fix.
 0.5.4.276  Charge bar white outline + shadow for visibility on any background; SFX pop fix (silence tail + drain padding); button controls moved to Settings; weapon controls kept in How To Play.
 0.5.4.275  Meteor bomb chain explosions (barrel/mine) now scatter fragments upward; backflip more lenient on slopes and edges; bazooka no longer detonates immediately when fired upward near terrain; settings screen adds controls reference.
