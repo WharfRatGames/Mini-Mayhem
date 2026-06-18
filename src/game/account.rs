@@ -515,32 +515,15 @@ impl RosterEditor {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
+const API_HOST: &str = "crumbonium.duckdns.org";
+
 pub fn http_post(path: &str, body: &str) -> Result<String, String> {
-    use std::io::{Read, Write};
-    use std::net::{TcpStream, ToSocketAddrs};
-    let host = "crumbonium.duckdns.org";
-    let req = format!("POST {} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", path, host, body.len(), body);
-    let sock = (host, 80u16).to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no addr")?;
-    let mut stream = TcpStream::connect_timeout(&sock, std::time::Duration::from_secs(5)).map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok();
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).map_err(|e| e.to_string())?;
-    Ok(resp.split("\r\n\r\n").nth(1).or_else(|| resp.split("\n\n").nth(1)).unwrap_or("").to_string())
+    crate::https::https_post(API_HOST, path, body, 5, 10)
 }
 
 pub fn http_get(path: &str) -> Result<String, String> {
-    use std::io::{Read, Write};
-    use std::net::{TcpStream, ToSocketAddrs};
-    let host = "crumbonium.duckdns.org";
-    let req = format!("GET {} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", path, host);
-    let sock = (host, 80u16).to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no addr")?;
-    let mut stream = TcpStream::connect_timeout(&sock, std::time::Duration::from_secs(5)).map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok();
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).map_err(|e| e.to_string())?;
-    Ok(resp.split("\r\n\r\n").nth(1).or_else(|| resp.split("\n\n").nth(1)).unwrap_or("").to_string())
+    crate::https::https_get(API_HOST, path, 5, 10)
+        .and_then(|b| String::from_utf8(b).map_err(|e| e.to_string()))
 }
 
 /// Hit /player/daily_login. Returns (scrap_awarded, weekly_bonus) if a new bonus was earned,

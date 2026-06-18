@@ -5,3 +5,4 @@ pub mod input;
 pub mod game;
 pub mod audio;
 pub mod net;
+pub mod https;
