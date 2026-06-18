@@ -1139,7 +1139,7 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.267";
+const REQUIRED_VERSION: &str = "0.5.4.268";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
