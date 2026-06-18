@@ -1019,33 +1019,42 @@ impl Terrain {
         let mut spawns: Vec<WorldPos> = Vec::with_capacity(count);
         let mut used_x: Vec<i32> = Vec::with_capacity(count);
 
-        // Cave maps: prefer underground spawns. Three passes with progressively
-        // relaxed separation; fall through to surface spawning if caves can't
-        // fill the full roster (e.g. sparse cave generation).
+        // Cave maps: mix surface (top crust) and underground spawns so soldiers
+        // can appear on either level. Alternate preference per slot — even slots
+        // try surface first, odd slots try underground first — then fall back to
+        // the other pool if the preferred one has no valid position.
         if self.archetype == 3 {
-            // Pass 1: team half at full MIN_SEP.
-            // Pass 2: full map width at full MIN_SEP (other team's half has cave space too).
-            // Pass 3: full map width at half MIN_SEP (crowded cave — pack them tighter).
-            let ranges: &[(i32, i32, i32)] = &[
-                (lo, hi,                 MIN_SEP),
-                (SPAWN_EDGE_MARGIN as i32, WORLD_W as i32 - SPAWN_EDGE_MARGIN as i32, MIN_SEP),
-                (SPAWN_EDGE_MARGIN as i32, WORLD_W as i32 - SPAWN_EDGE_MARGIN as i32, MIN_SEP / 2),
-            ];
-            'outer: for &(scan_lo, scan_hi, sep) in ranges {
-                let mut x = scan_lo;
-                while x <= scan_hi {
-                    if spawns.len() >= count { break 'outer; }
-                    if used_x.iter().all(|&ux| (ux - x).abs() >= sep) {
-                        if let Some(foot_y) = self.standable_cave_foot_simple(x) {
-                            spawns.push(WorldPos::new(x as f32, foot_y as f32));
-                            used_x.push(x);
+            let mut surface_cands: Vec<(i32, i32)> = Vec::new();
+            let mut cave_cands:    Vec<(i32, i32)> = Vec::new();
+            let mut x = lo;
+            while x <= hi {
+                if let Some(fy) = self.standable_foot_y(x) {
+                    surface_cands.push((x, fy));
+                }
+                if let Some(fy) = self.standable_cave_foot_simple(x) {
+                    cave_cands.push((x, fy));
+                }
+                x += 1;
+            }
+            for i in 0..count {
+                let prefer_surface = i % 2 == 0;
+                let pools: [&[(i32, i32)]; 2] = if prefer_surface {
+                    [&surface_cands, &cave_cands]
+                } else {
+                    [&cave_cands, &surface_cands]
+                };
+                'slot: for pool in pools {
+                    for &(cx, cy) in pool {
+                        if used_x.iter().all(|&ux| (ux - cx).abs() >= MIN_SEP) {
+                            spawns.push(WorldPos::new(cx as f32, cy as f32));
+                            used_x.push(cx);
+                            break 'slot;
                         }
                     }
-                    x += 1;
                 }
             }
             if spawns.len() >= count { return spawns; }
-            // Cave passes came up short — fall through to surface spawning below.
+            // Fall through to generic surface spawning if still short.
         }
 
         // ── Surface spawns on substantial landforms of similar size ───────────────
