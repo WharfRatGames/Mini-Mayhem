@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.267";
+const VERSION: &str = "0.5.4.268";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1324,8 +1324,22 @@ fn run_casual_lobby(
                 LobbyServerMsg::State { players: ps, your_index: yi } => {
                     if ps.len() < players.len() { player_left_ticks = 150; } // ~5s at 30fps
                     players = ps; your_index = yi;
-                    // Adopt the server's view of our colour if it assigned/rejected one.
-                    if let Some(c) = players.get(your_index).and_then(|p| p.color_id) { my_color = c; }
+                    if let Some(c) = players.get(your_index).and_then(|p| p.color_id) {
+                        my_color = c; // server confirmed our colour
+                    } else {
+                        // Server hasn't confirmed our colour (conflict or initial join) —
+                        // find the first free slot and request it.
+                        let taken: Vec<u8> = players.iter().enumerate()
+                            .filter(|(i, _)| *i != your_index)
+                            .filter_map(|(_, p)| p.color_id)
+                            .collect();
+                        for d in 0..4u8 {
+                            let c = (my_color + d) % 4;
+                            if !taken.contains(&c) { my_color = c; break; }
+                        }
+                        conn.send(&LobbyClientMsg::PickColor { color_id: my_color });
+                        picked = true;
+                    }
                     if let Some(p) = players.get(your_index) { ready = p.ready; }
                 }
                 LobbyServerMsg::Start(w) => {
