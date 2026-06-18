@@ -1058,7 +1058,7 @@ fn place_map_barrels(game: &mut GameState) {
         let offset = (rng % spread as u64) as u32;
         let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
         if let Some(surf_y) = game.terrain.surface_y_at(x) {
-            let pos = WorldPos::new(x as f32, surf_y as f32 - 11.0);
+            let pos = WorldPos::new(x as f32, surf_y as f32 - 1.0);
             if (surf_y as f32) < arty::world::WATER_Y as f32 - 10.0
                 && !too_close_to_soldiers_srv(game, pos)
             {
@@ -1139,7 +1139,7 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.270";
+const REQUIRED_VERSION: &str = "0.5.4.271";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

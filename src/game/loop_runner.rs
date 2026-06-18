@@ -2789,16 +2789,16 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             let hi_col   = Bgra::new(200, 60, 50);
             let dark_col = Bgra::new(80, 10, 8);
             let band_col = Bgra::new(200, 180, 50); // yellow warning band
-            // Shadow
-            buf.fill_rect(wx - 7, wy + 10, 14, 3, Bgra::new(0, 0, 0));
-            // Body — taller rectangle (was 10×18, now 14×22)
-            buf.fill_rect(wx - 7, wy - 13, 14, 23, dark_col);
-            buf.fill_rect(wx - 6, wy - 12, 12, 21, body_col);
-            buf.fill_rect(wx - 6, wy - 12,  2, 21, hi_col);  // left highlight
+            // Shadow (sits at terrain surface — pos.y is first air pixel above terrain)
+            buf.fill_rect(wx - 7, wy,      14, 3, Bgra::new(0, 0, 0));
+            // Body — shifted up 10px so bottom sits at terrain surface
+            buf.fill_rect(wx - 7, wy - 23, 14, 23, dark_col);
+            buf.fill_rect(wx - 6, wy - 22, 12, 21, body_col);
+            buf.fill_rect(wx - 6, wy - 22,  2, 21, hi_col);  // left highlight
             // Warning band
-            buf.fill_rect(wx - 7, wy - 4, 14, 3, band_col);
+            buf.fill_rect(wx - 7, wy - 14, 14, 3, band_col);
             // Barrel lid top
-            buf.fill_rect(wx - 7, wy - 14, 14, 2, dark_col);
+            buf.fill_rect(wx - 7, wy - 24, 14, 2, dark_col);
         }
     }
 
@@ -4111,7 +4111,31 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         if hit {
                             cx -= sx_;
                             cy -= sy_;
-                            if dy < 0.0 {
+                            // Check if the x step alone caused the hit (wall, not floor/ceiling).
+                            // If so, kill horizontal velocity and stay airborne so the soldier
+                            // falls away from the wall instead of sticking to it.
+                            let wall_only = !soldier_hit && dx != 0.0 && {
+                                let wx = (cx + sx_) as i32;
+                                let wy_c = cy as i32;
+                                let wl = wx - (crate::renderer::draw_sprites::SOLDIER_HALF_W as i32 - 1);
+                                let wr = wx + (crate::renderer::draw_sprites::SOLDIER_HALF_W as i32 - 1);
+                                let x_hit = (0..=crate::renderer::draw_sprites::SOLDIER_H)
+                                    .any(|h| game.terrain.is_blocked(wl, wy_c - h)
+                                        || game.terrain.is_blocked(wx, wy_c - h)
+                                        || game.terrain.is_blocked(wr, wy_c - h));
+                                let y_hit = (0..=crate::renderer::draw_sprites::SOLDIER_H)
+                                    .any(|h| game.terrain.is_blocked(ix_l, wy_c - h)
+                                        || game.terrain.is_blocked(ix,   wy_c - h)
+                                        || game.terrain.is_blocked(ix_r, wy_c - h));
+                                x_hit && !y_hit
+                            };
+                            if wall_only {
+                                vel.x = 0.0;
+                                game.teams[ti].soldiers[si].pos.x = cx;
+                                game.teams[ti].soldiers[si].pos.y = cy.max(0.0);
+                                game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel, spinning };
+                                landed = true;
+                            } else if dy < 0.0 {
                                 // Hit ceiling while going up — bounce, never push through
                                 vel.y = vel.y.abs().max(0.5);
                                 vel.x *= 0.5;

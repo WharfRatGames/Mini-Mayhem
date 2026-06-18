@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.270";
+const VERSION: &str = "0.5.4.271";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1529,9 +1529,8 @@ fn place_map_barrels(game: &mut game::state::GameState) {
         let offset = (rng % spread as u64) as u32;
         let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
         if let Some(surf_y) = game.terrain.surface_y_at(x) {
-            // Barrel body bottom is at pos.y+10; place 4px above surface so the
-            // 3px drop-shadow also clears the terrain.
-            let pos = WorldPos::new(x as f32, surf_y as f32 - 14.0);
+            // pos.y = first air pixel above terrain (surf_y - 1); physics rests here.
+            let pos = WorldPos::new(x as f32, surf_y as f32 - 1.0);
             if (surf_y as f32) < crate::world::WATER_Y as f32 - 10.0
                 && !too_close_to_soldiers(game, pos)
             {
