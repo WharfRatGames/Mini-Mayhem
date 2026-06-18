@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.265";
+const VERSION: &str = "0.5.4.266";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -42,6 +42,19 @@ fn main() {
     // Initialise audio engine (rodio/ALSA on armv7; no-op elsewhere).
     audio::init();
 
+    // Kick off the update check before the splash so the HTTP request runs
+    // during the splash window (0-5s) rather than after it. recv_timeout at the
+    // pre-title gate then finds the result already in the channel instead of
+    // racing against the 2s HTTP timeout.
+    let skip_update = updater::prior_update_attempted();
+    let (update_tx, update_rx) = std::sync::mpsc::channel::<bool>();
+    if !skip_update {
+        std::thread::spawn(move || { let _ = update_tx.send(updater::check_for_update(VERSION)); });
+    } else {
+        drop(update_tx); // channel disconnected immediately; recv_timeout returns Err right away
+    }
+    updater::sync_assets_bg();
+
     // Splash screen: show wharf.jpg while preloading SFX and warming texture atlas.
     std::thread::spawn(audio::preload);
     std::thread::spawn(|| { crate::renderer::terrain_textures::tile(0); });
@@ -55,23 +68,6 @@ fn main() {
             std::thread::sleep(TICK_DURATION);
         }
     }
-
-    // If a binary update was attempted this boot session already, skip the check.
-    // This breaks the update-loop that occurs when cp fails on FAT32:
-    // old binary execs → sentinel exists → no retry → runs normally until reboot.
-    let skip_update = updater::prior_update_attempted();
-
-    // Update check runs silently in background from app launch.
-    // By the time user navigates to MULTIPLAYER (~2-5s), it's done.
-    // try_recv() is instant — no screen, no blocking.
-    let (update_tx, update_rx) = std::sync::mpsc::channel::<bool>();
-    if !skip_update {
-        std::thread::spawn(move || { let _ = update_tx.send(updater::check_for_update(VERSION)); });
-    } else {
-        drop(update_tx); // channel disconnected immediately; recv_timeout returns Err right away
-    }
-    // Always sync missing assets (sfx etc.) in background, even when no binary update is needed.
-    updater::sync_assets_bg();
 
     // After a live game ends, return to the MP submenu rather than full title.
     let mut return_to_mp = false;

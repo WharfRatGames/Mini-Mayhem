@@ -3658,7 +3658,16 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         use crate::world::SCREEN_W;
         let mut sorted = pixel_stats.clone();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        let total_pw: u64 = sorted.iter().map(|(_, n)| n).sum();
         let mut y = 28;
+        {
+            let text = format!("{:<14}{:>7}", "TOTAL", total_pw);
+            let w = str_width_scaled(&text, 1);
+            let x = cam_x as i32 + SCREEN_W as i32 - w - 6;
+            buf.fill_rect(x - 2, y - 1, (w + 4) as u32, 10, Bgra::new(30, 10, 10));
+            draw_str_scaled(buf, &text, x, y, Bgra::new(255, 180, 80), 1);
+            y += 11;
+        }
         for (label, px) in sorted.iter().take(8) {
             let text = format!("{:<14}{:>7}", label, px);
             let w = str_width_scaled(&text, 1);
