@@ -13,7 +13,7 @@ pub const SCREEN_H: u32 = 480;
 
 /// How many rows at the bottom of the world are water.
 /// Worms that enter this zone drown instantly.
-pub const WATER_ROWS: u32 = 120;
+pub const WATER_ROWS: u32 = 108;
 
 /// The Y coordinate at which water begins (inclusive).
 /// Anything at or below this line is water.
@@ -21,7 +21,7 @@ pub const WATER_Y: u32 = WORLD_H - WATER_ROWS;
 
 /// Minimum terrain surface Y. Terrain will never reach above this line,
 /// leaving clear sky at the top of the world.
-pub const TERRAIN_MIN_Y: u32 = 80;
+pub const TERRAIN_MIN_Y: u32 = 88;
 
 /// Maximum terrain surface Y. Terrain will never reach into the water zone.
 pub const TERRAIN_MAX_Y: u32 = WATER_Y - 40;
