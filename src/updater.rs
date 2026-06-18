@@ -1,5 +1,4 @@
-use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::io::Write;
 use sha2::{Sha256, Digest};
 use crate::renderer::{WorldBuffer, Framebuffer};
 
@@ -26,26 +25,9 @@ fn needs_update(fpath: &std::path::Path, expected_size: u64, expected_hash: Opti
 }
 
 const UPDATE_HOST: &str = "crumbonium.duckdns.org";
-const UPDATE_PORT: u16 = 80;
 
 fn http_get_body(path: &str, timeout_secs: u64) -> Option<Vec<u8>> {
-    let req = format!("GET {} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", path, UPDATE_HOST);
-    use std::net::ToSocketAddrs;
-    let addr = (UPDATE_HOST, UPDATE_PORT).to_socket_addrs().ok()?.next()?;
-    let mut stream = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(timeout_secs)).ok()?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(timeout_secs))).ok();
-    stream.write_all(req.as_bytes()).ok()?;
-    let mut resp = Vec::new();
-    let _ = stream.read_to_end(&mut resp);
-    if resp.is_empty() { return None; }
-    let sep = if let Some(i) = resp.windows(4).position(|w| w == b"\r\n\r\n") {
-        i + 4
-    } else if let Some(i) = resp.windows(2).position(|w| w == b"\n\n") {
-        i + 2
-    } else {
-        return None;
-    };
-    Some(resp[sep..].to_vec())
+    crate::https::https_get(UPDATE_HOST, path, timeout_secs, timeout_secs).ok()
 }
 
 pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<bool> {
@@ -110,10 +92,23 @@ pub fn sync_assets_bg() {
 /// Download the binary with streaming, calling on_progress(bytes_done, total_bytes) per chunk.
 /// Returns the binary bytes, or None on failure.
 pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u8>> {
+    use std::io::{Read, Write};
+    use std::net::{TcpStream, ToSocketAddrs};
+    use rustls::pki_types::ServerName;
+
     let req = format!("GET /arty/arty HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", UPDATE_HOST);
-    let mut stream = TcpStream::connect((UPDATE_HOST, UPDATE_PORT)).ok()?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(120))).ok();
+    let addr = (UPDATE_HOST, 443u16).to_socket_addrs().ok()?.next()?;
+    let tcp = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)).ok()?;
+    tcp.set_read_timeout(Some(std::time::Duration::from_secs(120))).ok();
+
+    let config = crate::https::make_tls_config();
+    let server_name: ServerName<'static> = ServerName::try_from(UPDATE_HOST.to_string()).ok()?;
+    let mut conn = rustls::ClientConnection::new(config, server_name).ok()?;
+    let mut tcp = tcp;
+    let mut stream = rustls::Stream::new(&mut conn, &mut tcp);
+
     stream.write_all(req.as_bytes()).ok()?;
+
     // Read headers byte-by-byte until \r\n\r\n
     let mut header_buf: Vec<u8> = Vec::new();
     let mut byte = [0u8; 1];
@@ -130,14 +125,13 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(0);
     let mut body: Vec<u8> = Vec::with_capacity(total.max(512 * 1024));
-    let mut chunk = [0u8; 32768]; // 32KB chunks for faster download
+    let mut chunk = [0u8; 32768];
     let mut last_reported = 0usize;
     loop {
         match stream.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
                 body.extend_from_slice(&chunk[..n]);
-                // Update progress every 5% to reduce overhead
                 if total == 0 || body.len() - last_reported > total / 20 {
                     last_reported = body.len();
                     on_progress(body.len(), total);
@@ -146,7 +140,7 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
             Err(_) => break,
         }
     }
-    on_progress(body.len(), total); // final update
+    on_progress(body.len(), total);
     if body.is_empty() { None } else { Some(body) }
 }
 
