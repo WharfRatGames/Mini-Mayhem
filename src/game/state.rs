@@ -259,6 +259,8 @@ pub struct AirstrikeState {
     pub plane_vx:      f32,
     pub bombs_dropped: u32,
     pub direction_right: bool,
+    /// Camera left edge captured at targeting time — plane spawns from screen edge, not map edge.
+    pub spawn_cam_left: f32,
 }
 
 /// Garcia targeting / falling state.
@@ -922,6 +924,9 @@ impl GameState {
         });
 
         for (pos, kind) in explosions {
+            if kind == WeaponKind::AirStrike {
+                self.emit_sound(crate::audio::Sfx::Grenade);
+            }
             self.apply_explosion(pos, kind);
         }
 

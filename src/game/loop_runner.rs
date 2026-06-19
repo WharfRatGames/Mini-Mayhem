@@ -1739,7 +1739,7 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
             game.turn.on_fired();
             let s = game.airstrike.as_mut().unwrap();
             s.active        = true;
-            s.plane_x       = if dir_right { s.spawn_cam_left - 120.0 } else { s.spawn_cam_left + SCREEN_W as f32 + 120.0 };
+            s.plane_x       = if dir_right { s.spawn_cam_left - 40.0 } else { s.spawn_cam_left + SCREEN_W as f32 + 40.0 };
             s.plane_vx      = if dir_right { PLANE_SPEED } else { -PLANE_SPEED };
             s.bombs_dropped = 0;
         } else if input.just_pressed(Button::B) {
@@ -1765,7 +1765,6 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
                 Vec2::new(0.0, 3.0),
                 WeaponKind::AirStrike,
             ));
-            game.emit_sound(crate::audio::Sfx::Grenade);
             game.airstrike.as_mut().unwrap().bombs_dropped += 1;
         }
     }

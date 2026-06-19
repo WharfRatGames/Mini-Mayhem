@@ -474,10 +474,9 @@ pub fn draw_soldier_skeletal(
                   (belt.0 + tpx) as i32, (belt.1 + tpy) as i32, dark_col);
 
     // ── Head ──────────────────────────────────────────────────────────────────
-    // Always draw the head circle — hat sprites render on top and cover the face.
-    // Skipping it for the viking helm left a gap between the torso and the sprite.
-    buf.fill_circle(head_cx, head_cy, 5, dark_col);
+    // Viking helm sprite fully replaces the head — draw no circles under it.
     if hat_id != 15 {
+        buf.fill_circle(head_cx, head_cy, 5, dark_col);
         buf.fill_circle(head_cx, head_cy, 4, skin_col);
     }
     // Helmet cap — only when no hat equipped (hat replaces it)
