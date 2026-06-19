@@ -19,19 +19,6 @@ pub fn init()                   {}
 /// 4-second clip droning on after an early release). Works in every mode because
 /// the live client reconstructs `plasma_torch` from the networked torch_dir.
 /// Drive the Mac-10 loop sound from firing state. Call every render frame.
-pub fn update_mac10(active: bool) {
-    #[cfg(target_arch = "arm")]
-    {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        static WAS: AtomicBool = AtomicBool::new(false);
-        let was = WAS.swap(active, Ordering::Relaxed);
-        if active && !was { imp::start_mac10(); }
-        else if !active && was { imp::stop_mac10(); }
-    }
-    #[cfg(not(target_arch = "arm"))]
-    { let _ = active; }
-}
-
 pub fn update_torch(active: bool) {
     #[cfg(target_arch = "arm")]
     {
@@ -72,7 +59,7 @@ pub fn play_wet_death()         { _play("wet.wav"); }
 pub fn play_death_water()       { _play_death_water(); }
 pub fn play_holy_hand_grenade() { _play_once("hallelujah.wav"); }
 pub fn play_minigun()           { _play_once("minigun.wav"); } // deploy/assets/sfx/hallelujah.wav required
-pub fn play_uzi()               { } // replaced by looping update_mac10
+pub fn play_uzi()               { _play_once("mac10.wav"); }
 
 /// Identifies a sound effect so it can be recorded during simulation and
 /// shipped to the live client (which runs no simulation of its own and would
@@ -263,6 +250,57 @@ mod imp {
         }
     }
 
+    /// Load a WAV and stretch it by `stretch` (>1 = slower/longer).
+    /// Achieved by pretending the source sample rate is lower by that factor.
+    fn try_load_stretched(lock: &OnceLock<Vec<i16>>, dir: &std::path::Path, name: &str, stretch: f32) {
+        if lock.get().is_none() {
+            let path = dir.join(name);
+            let data = match std::fs::read(&path) { Ok(d) => d, Err(_) => return };
+            if data.len() < 44 { return; }
+            let mut pos = 12usize;
+            let (mut fmt_off, mut dat_off, mut dat_sz) = (None, None, 0usize);
+            while pos + 8 <= data.len() {
+                let tag = &data[pos..pos+4];
+                let sz  = u32::from_le_bytes(data[pos+4..pos+8].try_into().unwrap()) as usize;
+                if tag == b"fmt " { fmt_off = Some(pos+8); }
+                if tag == b"data" { dat_off = Some(pos+8); dat_sz = sz; }
+                pos += 8 + sz + (sz & 1);
+            }
+            let (fmt, doff) = match (fmt_off, dat_off) { (Some(a), Some(b)) => (a, b), _ => return };
+            if u16::from_le_bytes(data[fmt..fmt+2].try_into().unwrap()) != 1 { return; }
+            let ch      = u16::from_le_bytes(data[fmt+2..fmt+4].try_into().unwrap()) as usize;
+            let in_rate = u32::from_le_bytes(data[fmt+4..fmt+8].try_into().unwrap()) as usize;
+            if u16::from_le_bytes(data[fmt+14..fmt+16].try_into().unwrap()) != 16 { return; }
+            // Pretend the source rate is lower → more output frames → stretched playback
+            let eff_rate = ((in_rate as f32 / stretch) as usize).max(1);
+            let raw = &data[doff..(doff+dat_sz).min(data.len())];
+            let in_frames  = raw.len() / ch.max(1) / 2;
+            let out_frames = (in_frames as u64 * RATE as u64 / eff_rate as u64) as usize;
+            let mut out = Vec::with_capacity(out_frames);
+            for i in 0..out_frames {
+                let src  = ((i as u64 * eff_rate as u64) / RATE as u64) as usize;
+                let base = src * ch * 2;
+                if base + ch*2 > raw.len() { break; }
+                let sum: i32 = (0..ch).map(|c| {
+                    i16::from_le_bytes(raw[base+c*2..base+c*2+2].try_into().unwrap_or([0;2])) as i32
+                }).sum();
+                out.push((sum / ch.max(1) as i32) as i16);
+            }
+            const HEADROOM: i64 = 32000;
+            let peak = out.iter().map(|&s| (s as i64).abs()).max().unwrap_or(0).max(1);
+            let (gn, gd): (i64, i64) =
+                if GAIN_NUM as i64 * peak <= HEADROOM * GAIN_DEN as i64 { (GAIN_NUM as i64, GAIN_DEN as i64) }
+                else { (HEADROOM, peak) };
+            let fade = 480.min(out.len() / 4);
+            for i in 0..out.len() {
+                let ramp = if i < fade { i as i64 } else if i >= out.len() - fade { (out.len() - 1 - i) as i64 } else { fade as i64 };
+                let s = (out[i] as i64 * gn / gd * ramp / fade.max(1) as i64).clamp(-32768, 32767);
+                out[i] = s as i16;
+            }
+            let _ = lock.set(out);
+        }
+    }
+
     fn ensure_loaded() {
         if EXPLOSION.get().is_none() {
             if let Some(dir) = sfx_dir() {
@@ -284,7 +322,7 @@ mod imp {
                 try_load(&SMASH,       &dir, "smash.wav");
                 try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
                 try_load(&MINIGUN,     &dir, "minigun.wav");
-                try_load(&UZI,         &dir, "mac10.wav");
+                try_load_stretched(&UZI, &dir, "mac10.wav", 1.156); // stretch 1.73s → ~2.0s burst
                 let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
                     .into_iter().flatten().flatten()
                     .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
@@ -425,79 +463,6 @@ mod imp {
 
     /// Stop the looping plasma-torch burn sound.
     pub fn stop_torch() { TORCH_ACTIVE.store(false, Ordering::Relaxed); }
-
-    static MAC10_ACTIVE: AtomicBool = AtomicBool::new(false);
-
-    pub fn start_mac10() {
-        if super::MUTED.load(Ordering::Relaxed) { return; }
-        if MAC10_ACTIVE.swap(true, Ordering::Relaxed) { return; }
-        std::thread::spawn(|| { play_mac10_inner(); });
-    }
-
-    pub fn stop_mac10() { MAC10_ACTIVE.store(false, Ordering::Relaxed); }
-
-    fn play_mac10_inner() {
-        ensure_loaded();
-        let samples = match UZI.get() { Some(s) => s.clone(), None => { MAC10_ACTIVE.store(false, Ordering::Relaxed); return; } };
-        if samples.is_empty() { MAC10_ACTIVE.store(false, Ordering::Relaxed); return; }
-
-        let candidates: &[&[u8]] = &[
-            b"/customer/lib/libasound.so.2\0",
-            b"/usr/lib/libasound.so.2\0",
-            b"libasound.so.2\0",
-        ];
-        let lib = candidates.iter().find_map(|p| {
-            let h = unsafe { libc::dlopen(p.as_ptr() as *const libc::c_char, libc::RTLD_NOW) };
-            if h.is_null() { None } else { Some(h) }
-        });
-        let Some(lib) = lib else { MAC10_ACTIVE.store(false, Ordering::Relaxed); return };
-
-        macro_rules! sym2 {
-            ($name:literal, $T:ty) => {{
-                let s = unsafe { libc::dlsym(lib, concat!($name, "\0").as_ptr() as *const libc::c_char) };
-                if s.is_null() { unsafe { libc::dlclose(lib); } MAC10_ACTIVE.store(false, Ordering::Relaxed); return; }
-                unsafe { std::mem::transmute::<_, $T>(s) }
-            }};
-        }
-        type PcmT2 = *mut libc::c_void;
-        let pcm_open:    unsafe extern "C" fn(*mut PcmT2, *const libc::c_char, i32, i32) -> i32 = sym2!("snd_pcm_open", _);
-        let pcm_set:     unsafe extern "C" fn(PcmT2, u32, u32, u32, u32, i32, u32) -> i32      = sym2!("snd_pcm_set_params", _);
-        let pcm_write:   unsafe extern "C" fn(PcmT2, *const i16, u32) -> i32                   = sym2!("snd_pcm_writei", _);
-        let pcm_recover: unsafe extern "C" fn(PcmT2, i32, i32) -> i32                          = sym2!("snd_pcm_recover", _);
-        let pcm_drain:   unsafe extern "C" fn(PcmT2) -> i32                                    = sym2!("snd_pcm_drain", _);
-        let pcm_close:   unsafe extern "C" fn(PcmT2) -> i32                                    = sym2!("snd_pcm_close", _);
-
-        let dev = b"hw:0,0\0";
-        let mut pcm: PcmT2 = std::ptr::null_mut();
-        let mut open_r = -1i32;
-        for _ in 0..10 {
-            open_r = unsafe { pcm_open(&mut pcm, dev.as_ptr() as *const libc::c_char, 0, 0) };
-            if open_r == 0 { break; }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        if open_r < 0 || pcm.is_null() { unsafe { libc::dlclose(lib); } MAC10_ACTIVE.store(false, Ordering::Relaxed); return; }
-        let r = unsafe { pcm_set(pcm, 2, 3, 1, RATE, 0, 100_000) };
-        if r < 0 { unsafe { pcm_close(pcm); libc::dlclose(lib); } MAC10_ACTIVE.store(false, Ordering::Relaxed); return; }
-
-        let mut pos = 0usize;
-        while MAC10_ACTIVE.load(Ordering::Relaxed) && !super::MUTED.load(Ordering::Relaxed) {
-            let end = (pos + PERIOD).min(samples.len());
-            let chunk = &samples[pos..end];
-            let buf: Vec<i16> = if chunk.len() < PERIOD {
-                let mut v = chunk.to_vec(); v.resize(PERIOD, 0); v
-            } else { chunk.to_vec() };
-            let w = unsafe { pcm_write(pcm, buf.as_ptr(), PERIOD as u32) };
-            if w < 0 { unsafe { pcm_recover(pcm, w, 1); } }
-            else if w > 0 { pos += w as usize; }
-            if pos >= samples.len() { pos = 0; }
-        }
-        let silence = vec![0i16; PERIOD];
-        unsafe { pcm_write(pcm, silence.as_ptr(), PERIOD as u32); }
-        unsafe { pcm_drain(pcm); }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        unsafe { pcm_close(pcm); libc::dlclose(lib); }
-        MAC10_ACTIVE.store(false, Ordering::Relaxed);
-    }
 
     /// Hold hw:0,0 open and loop torch.wav while TORCH_ACTIVE; exits within one
     /// PERIOD (~21 ms) of stop_torch() so the sound ends with the torch.
