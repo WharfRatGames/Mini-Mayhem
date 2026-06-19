@@ -159,6 +159,36 @@ impl WeaponKind {
         }
     }
 
+    /// Sort key for the weapon menu: lower = earlier.
+    /// Bazooka=0, Grenade=1, then Common=10s, Uncommon=20s, Rare=30s, Ultra Rare=40.
+    pub fn menu_sort_key(self) -> u8 {
+        match self {
+            Self::Bazooka         => 0,
+            Self::Grenade         => 1,
+            // Common
+            Self::Shotgun         => 10,
+            Self::Tnt             => 11,
+            Self::Landmine        => 12,
+            Self::NinjaRope       => 13,
+            Self::BaseballBat     => 14,
+            Self::PlasmaTorch     => 15,
+            Self::Uzi             => 16,
+            // Uncommon
+            Self::Blasthive       => 20,
+            Self::BananaBomb      => 21,
+            Self::AirStrike       => 22,
+            // Rare
+            Self::BlackHoleBomb   => 30,
+            Self::Revolver        => 31,
+            Self::Minigun         => 32,
+            Self::HolyHandGrenade => 33,
+            // Ultra Rare
+            Self::Garcia          => 40,
+            // Not in loadout / internal
+            _                     => 99,
+        }
+    }
+
     /// Human-readable display name for messages and UI.
     pub fn display_name(self) -> &'static str {
         match self {

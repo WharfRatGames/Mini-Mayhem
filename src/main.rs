@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.287";
+const VERSION: &str = "0.5.4.288";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -641,8 +641,10 @@ fn main() {
             (WeaponKind::Minigun,         None),
             (WeaponKind::Uzi,             None),
         ];
+        let mut all_weapons_sorted = all_weapons.clone();
+        all_weapons_sorted.sort_by_key(|(k, _)| k.menu_sort_key());
         for team in &mut game.teams {
-            team.weapons = all_weapons.clone();
+            team.weapons = all_weapons_sorted.clone();
             team.selected_weapon = 0;
         }
         game.turn.turn_number = 100; // unlock all time-gated weapons
