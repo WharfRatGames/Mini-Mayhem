@@ -90,7 +90,7 @@ impl WeaponKind {
             Self::HomingMissile  => 45,
             Self::MineLayer      => 50,
             Self::ConcreteDonkey => 100,
-            Self::DeathExplosion => 25,
+            Self::DeathExplosion => 20,
             Self::BananaBomb     => 18,   // fragment damage (direct hit max 38 — can't one-shot)
             Self::SuperSheep     => 60,
             Self::NinjaRope      => 0,
@@ -118,7 +118,7 @@ impl WeaponKind {
             Self::BaseballBat    => 12.0,
             Self::HomingMissile  => 10.0,
             Self::ConcreteDonkey => 20.0,
-            Self::DeathExplosion => 5.0,
+            Self::DeathExplosion => 8.0,
             Self::BananaBomb     => 5.0,    // fragment knockback
             Self::Blasthive      => 3.0,    // low per-sting — up to 7 hits compound on direct
             Self::BlackHoleBomb  => 5.0,    // collapse burst knockback

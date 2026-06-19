@@ -604,6 +604,10 @@ pub fn tick(
         let ti = game.active_team();
         draw_weapon_menu(buf, &game.teams[ti].weapons, game.weapon_menu_cursor, cam.left_edge() as i32, game.aim.fuse_ticks, game.turn.turn_number, game.teams.len());
     } else {
+        // Keep spawn_cam_left current while the player is targeting the airstrike.
+        if let Some(ref mut air) = game.airstrike {
+            if !air.active { air.spawn_cam_left = cam.left_edge_f32(); }
+        }
         let step = simulate_with_muzzle(game, input, lstate.last_muzzle);
         lstate.prev_turn_number = game.turn.turn_number;
         update_camera(game, cam, input, step, prev_turn);
@@ -1396,6 +1400,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
                 plane_vx:     6.0,
                 bombs_dropped: 0,
                 direction_right: true,
+                spawn_cam_left: 0.0, // updated each frame from tick() while targeting
             });
         }
         return;
@@ -1693,7 +1698,7 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
 
 fn step_airstrike(game: &mut GameState, input: &InputState) {
     use crate::physics::projectile::{Projectile, WeaponKind};
-    use crate::world::{Vec2, WorldPos, WORLD_W};
+    use crate::world::{Vec2, WorldPos, WORLD_W, SCREEN_W};
 
     const BOMB_COUNT:   u32 = 5;
     const BOMB_SPACING: f32 = 20.0;
@@ -1734,7 +1739,7 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
             game.turn.on_fired();
             let s = game.airstrike.as_mut().unwrap();
             s.active        = true;
-            s.plane_x       = if dir_right { -120.0 } else { WORLD_W as f32 + 120.0 };
+            s.plane_x       = if dir_right { s.spawn_cam_left - 120.0 } else { s.spawn_cam_left + SCREEN_W as f32 + 120.0 };
             s.plane_vx      = if dir_right { PLANE_SPEED } else { -PLANE_SPEED };
             s.bombs_dropped = 0;
         } else if input.just_pressed(Button::B) {
@@ -4472,7 +4477,11 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
 
     for ti in 0..game.teams.len() {
         for si in 0..game.teams[ti].soldiers.len() {
-            if game.teams[ti].soldiers[si].is_dead() { continue; }
+            // Dead airborne soldiers keep falling until they land (then state→Dead).
+            // Dead+grounded soldiers skip physics entirely.
+            if game.teams[ti].soldiers[si].is_dead()
+                && !matches!(game.teams[ti].soldiers[si].state, SoldierState::Airborne { .. })
+            { continue; }
             // Soldiers held inside a black hole's event horizon are pinned by
             // step_black_holes(); skip gravity so they can't fall, drown, or take
             // fall damage and vanish before the hole collapses (collapse deals the
@@ -4597,26 +4606,43 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 nx = anchor.x + dx / dist * effective_len;
                                 ny = anchor.y + dy / dist * effective_len;
                             }
-                            // 5. Terrain collision — only land when moving downward with speed.
-                            // Skips the initial tick (vel.y ≈ 0.5) so newly-attached rope
-                            // doesn't immediately cancel by detecting the ground.
-                            let ix = nx as i32;
-                            let iy = ny as i32;
-                            let hit = vel.y > 2.5
-                                && (0..=crate::renderer::draw_sprites::SOLDIER_H)
-                                    .any(|h| game.terrain.is_solid(ix, iy - h));
+                            // 5. Terrain collision — swept check along the full movement
+                            // path so angled/horizontal swings can't phase through walls.
+                            // Still skips the first tick (total speed < 3) so newly-attached
+                            // rope doesn't immediately cancel by detecting the ground underfoot.
+                            let move_len = ((nx - cx).abs() + (ny - cy).abs()).ceil() as i32 + 1;
+                            let mut last_clear_x = cx;
+                            let mut last_clear_y = cy;
+                            let mut hit = false;
+                            if (vel.x * vel.x + vel.y * vel.y).sqrt() > 3.0 {
+                                for s in 1..=move_len {
+                                    let t = s as f32 / move_len as f32;
+                                    let sx = cx + (nx - cx) * t;
+                                    let sy = cy + (ny - cy) * t;
+                                    if (0..=crate::renderer::draw_sprites::SOLDIER_H)
+                                        .any(|h| game.terrain.is_solid(sx as i32, sy as i32 - h))
+                                    {
+                                        hit = true;
+                                        break;
+                                    }
+                                    last_clear_x = sx;
+                                    last_clear_y = sy;
+                                }
+                            }
                             if hit {
-                                // Swinging into ground — detach rope and land
-                                let land_y = land_on_surface(&game.terrain, nx, ny) as f32;
+                                // Swinging into ground — detach rope and land at last clear pos
+                                let land_y = land_on_surface(&game.terrain, last_clear_x, last_clear_y) as f32;
                                 let dmg = game.teams[ti].soldiers[si].fall.land(land_y);
                                 if dmg > 0 {
                                     game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                     game.teams[ti].soldiers[si].take_damage(dmg);
                                 }
-                                game.teams[ti].soldiers[si].pos.x = nx;
+                                game.teams[ti].soldiers[si].pos.x = last_clear_x;
                                 game.teams[ti].soldiers[si].pos.y = land_y;
                                 game.teams[ti].soldiers[si].airtime = 0;
-                                if !game.teams[ti].soldiers[si].is_dead() {
+                                if game.teams[ti].soldiers[si].is_dead() {
+                                    game.teams[ti].soldiers[si].state = SoldierState::Dead;
+                                } else {
                                     game.teams[ti].soldiers[si].state = SoldierState::Idle;
                                 }
                                 game.rope = None;
@@ -4626,6 +4652,8 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Water;
                                 game.teams[ti].soldiers[si].take_damage(999);
                                 game.teams[ti].soldiers[si].state = SoldierState::Dead;
+                                let ati = game.active_team();
+                                if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                                 game.rope = None;
                                 game.rope_session = false;
                             } else if nx < 0.0 || nx >= crate::world::WORLD_W as f32 {
@@ -4730,7 +4758,9 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             game.teams[ti].soldiers[si].pos.x = cx;
                             game.teams[ti].soldiers[si].pos.y = cy.max(0.0);
                             game.teams[ti].soldiers[si].airtime = 0;
-                            if !game.teams[ti].soldiers[si].is_dead() {
+                            if game.teams[ti].soldiers[si].is_dead() {
+                                game.teams[ti].soldiers[si].state = SoldierState::Dead;
+                            } else {
                                 game.teams[ti].soldiers[si].state = SoldierState::Idle;
                             }
                             if game.rope_session && ti == game.active_team() && si == game.teams[game.active_team()].active {
@@ -4800,8 +4830,9 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                         x: cx, y: cy.max(0.0) + 3.0, count: n, kick: 0.8, dir: 0.0,
                                     });
                                 }
-                                // Don't overwrite Dead state set by take_damage
-                                if !game.teams[ti].soldiers[si].is_dead() {
+                                if game.teams[ti].soldiers[si].is_dead() {
+                                    game.teams[ti].soldiers[si].state = SoldierState::Dead;
+                                } else {
                                     game.teams[ti].soldiers[si].state = SoldierState::Idle;
                                 }
                                 // Rope session: landing ends the session but NOT the turn.
@@ -5011,7 +5042,7 @@ fn record_deaths(game: &mut GameState) {
 
     for (ti, team) in game.teams.iter_mut().enumerate() {
         for soldier in &mut team.soldiers {
-            if soldier.is_dead() && !soldier.has_grave {
+            if soldier.is_dead() && soldier.state == SoldierState::Dead && !soldier.has_grave {
                 // Route through emit_sound so the live client (which runs no sim
                 // of its own) and TAT replay get death audio too — it's recorded
                 // into game.sounds and shipped in StateMsg, and plays locally on

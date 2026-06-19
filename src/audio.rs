@@ -274,6 +274,7 @@ mod imp {
                 let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
                     .into_iter().flatten().flatten()
                     .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
+                    .filter(|e| e.file_name() != *"garcia.wav")
                     // load_wav already boosts each sound as loud as it can go without
                     // clipping, so no extra per-sound dB multipliers here (they would
                     // push the peak past full scale and re-introduce distortion).
