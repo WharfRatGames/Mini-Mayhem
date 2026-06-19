@@ -75,8 +75,8 @@ fn pose_idle(bones: &mut [Bone; N_BONES], t: f32) {
     let breath = (t * 1.8).sin() * 0.04;
     bones[TORSO].angle = breath;
     bones[HEAD].angle  = -breath * 0.5;
-    bones[ARM_R].angle = 0.6;  // arms hang at sides
-    bones[ARM_L].angle = -0.6;
+    bones[ARM_R].angle = 1.3;  // arms hang at sides, gun at waist
+    bones[ARM_L].angle = -1.3;
     bones[LEG_R].angle = std::f32::consts::PI - 0.05;
     bones[LEG_L].angle = std::f32::consts::PI + 0.05;
 }
@@ -190,12 +190,14 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     // higher or lower than the standard anchor row.
     let hat_dy: i32 = match hat_id {
         5  => 5,   // Fez: art sits in the top of sprite, nudge down
+        15 => 6,   // Viking Helm: drop sprite to cover head
         28 => 9,   // Luchador: center sprite on face, not above it
         _  => 0,
     };
     // Per-hat size scale (default 1.0)
     let scale: f32 = match hat_id {
         22 => 0.75,  // Pirate Tricorn: rescaled sprite reads large, pull back
+        28 => 0.80,  // Luchador Mask: slightly smaller
         _  => 1.0,
     };
     let (w, h) = ((W as f32 * scale) as i32, (H as f32 * scale) as i32);
@@ -394,8 +396,11 @@ pub fn draw_soldier_skeletal(
                   (belt.0 + tpx) as i32, (belt.1 + tpy) as i32, dark_col);
 
     // ── Head ──────────────────────────────────────────────────────────────────
-    buf.fill_circle(head_cx, head_cy, 5, dark_col);
-    buf.fill_circle(head_cx, head_cy, 4, skin_col);
+    // Viking helm sprite covers the entire head; skip procedural head drawing
+    if hat_id != 15 {
+        buf.fill_circle(head_cx, head_cy, 5, dark_col);
+        buf.fill_circle(head_cx, head_cy, 4, skin_col);
+    }
     // Helmet cap — only when no hat equipped (hat replaces it)
     if hat_id == 0 {
         for dy in -5..=0i32 {
@@ -406,8 +411,8 @@ pub fn draw_soldier_skeletal(
             }
         }
     }
-    // Eye — suppressed for luchador mask (mask sprite draws its own eyes)
-    if hat_id != 28 {
+    // Eye — suppressed for luchador mask and viking helm (sprites draw their own faces)
+    if hat_id != 28 && hat_id != 15 {
         let eye_x = head_cx + f as i32;
         buf.set_pixel(eye_x,     head_cy + 1, dark_col);
         buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);

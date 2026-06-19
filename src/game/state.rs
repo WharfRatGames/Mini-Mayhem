@@ -573,6 +573,9 @@ impl GameState {
                 let (vx, vy) = if kind == WeaponKind::AirStrike {
                     // More horizontal throw, less vertical
                     (nx * impulse * 1.2, ny * impulse * 0.5 - impulse * 0.1)
+                } else if kind == WeaponKind::HolyHandGrenade {
+                    // Strong upward launch
+                    (nx * impulse * 0.7, ny * impulse - impulse * 0.7)
                 } else {
                     (nx * impulse, ny * impulse - impulse * 0.25)
                 };

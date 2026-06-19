@@ -1,3 +1,4 @@
+0.5.4.282  Idle gun held lower; sacred ordnance launches soldiers higher; viking helm replaces head; luchador mask smaller; sacred ord 8-frame direction-aware rotation.
 0.5.4.281  Update is now mandatory; cannot be skipped for any mode.
 0.5.4.278  Terrain generates lower on screen; water level lowered; more sky headroom.
 0.5.4.277  Cave maps: soldiers now spawn on top crust or underground (alternating per slot); charge bar white outline for visibility on any background; SFX pop fix.
