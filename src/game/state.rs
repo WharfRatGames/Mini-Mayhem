@@ -343,6 +343,8 @@ pub struct GameState {
     pub revolver_shots_left: u8,
     /// Minigun burst state: shots remaining this turn; 0 = not firing.
     pub minigun_shots_left: u8,
+    /// Ticks until next minigun bullet fires (counts down each tick).
+    pub minigun_fire_timer: u8,
     /// Bullet trail visuals: (start, end, ttl_ticks). Client-side only — not networked.
     pub bullet_trails: Vec<(WorldPos, WorldPos, u8)>,
     /// Active grappling-hook rope; None = no rope deployed.
@@ -417,6 +419,7 @@ impl GameState {
             shotgun_shots_left: 0,
             revolver_shots_left: 0,
             minigun_shots_left: 0,
+            minigun_fire_timer: 0,
             bullet_trails: Vec::new(),
             rope: None,
             rope_session: false,
