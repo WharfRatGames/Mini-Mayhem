@@ -70,11 +70,13 @@ echo "Pushing to Miyoos... (md5: $LOCAL_HASH)"
 push_to_miyoo() {
     local HOST=$1 LABEL=$2
     for attempt in 1 2 3; do
-        # Copy to /tmp first (game may still be running — FAT32 can't be overwritten in-place)
+        # Stage to /tmp, copy to SDCARD BEFORE kill so the launcher restarts with the new binary.
+        # Kill-before-copy causes a race: launcher restarts old game, FAT32 locks the file,
+        # cp fails silently, device stays on old version with game killed.
         if scp -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
                "$BINARY" "$HOST:/tmp/mini-mayhem.new" 2>/dev/null && \
            ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$HOST" \
-               "pkill mini-mayhem 2>/dev/null; pkill arty 2>/dev/null; cp /tmp/mini-mayhem.new $MIYOO_PATH && rm /tmp/mini-mayhem.new" 2>/dev/null; then
+               "cp /tmp/mini-mayhem.new $MIYOO_PATH && pkill mini-mayhem 2>/dev/null; pkill arty 2>/dev/null; rm /tmp/mini-mayhem.new" 2>/dev/null; then
             REMOTE_HASH=$(ssh -o ConnectTimeout=5 "$HOST" \
                 "md5sum $MIYOO_PATH 2>/dev/null | awk '{print \$1}'" 2>/dev/null)
             if [ "$REMOTE_HASH" = "$LOCAL_HASH" ]; then
