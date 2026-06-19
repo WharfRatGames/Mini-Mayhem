@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.280";
+const VERSION: &str = "0.5.4.281";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -138,9 +138,6 @@ fn main() {
                     }
                     break 'pre_update;
                 }
-                if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) {
-                    break 'pre_update; // skip — update_available stays true, MP will catch it
-                }
                 buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
                 buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
                 let t = "UPDATE AVAILABLE";
@@ -152,8 +149,7 @@ fn main() {
                     if i > 0 { buf.fill_rect(12, y - 2, SCREEN_W - 24, 1, Bgra::new(40, 45, 70)); }
                     draw_str(&mut buf, line, 18, y, Bgra::new(110, 130, 160));
                 }
-                draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
-                draw_str_scaled(&mut buf, "B = SKIP", sw/2 - str_width_scaled("B = SKIP",2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
+                draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 54, Bgra::new(80, 220, 120), 2);
                 buf.blit_to_fb(&mut fb, 0);
                 std::thread::sleep(TICK_DURATION);
             }
@@ -262,7 +258,7 @@ fn main() {
         use renderer::Bgra;
         use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
         use world::{SCREEN_W, SCREEN_H};
-        let forced = is_mp_mode;
+        let forced = true;
         let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
         let bar_x = 40i32; let bar_w = sw - 80;
         let bar_y = sh/2 + 10; let bar_h = 24i32;
