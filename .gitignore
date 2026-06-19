@@ -5,3 +5,5 @@ Cargo.lock
 *.log
 dp.sh
 deploy/__pycache__/
+assets/
+deploy/assets/
