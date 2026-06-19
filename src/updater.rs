@@ -64,7 +64,7 @@ pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
 pub fn sync_assets_bg() {
     std::thread::spawn(|| {
         let dest = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/arty"));
+            .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/mini-mayhem"));
         let app_dir = dest.parent()
             .unwrap_or(std::path::Path::new("/mnt/SDCARD/App/Arty"))
             .to_path_buf();
@@ -96,7 +96,7 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
     use std::net::{TcpStream, ToSocketAddrs};
     use rustls::pki_types::ServerName;
 
-    let req = format!("GET /arty/arty HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", UPDATE_HOST);
+    let req = format!("GET /arty/mini-mayhem HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", UPDATE_HOST);
     let addr = (UPDATE_HOST, 443u16).to_socket_addrs().ok()?.next()?;
     let tcp = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)).ok()?;
     tcp.set_read_timeout(Some(std::time::Duration::from_secs(120))).ok();
@@ -144,7 +144,7 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
     if body.is_empty() { None } else { Some(body) }
 }
 
-const SENTINEL: &str = "/tmp/arty_update_sentinel";
+const SENTINEL: &str = "/tmp/mini-mayhem_update_sentinel";
 
 /// Returns true if a binary update was attempted this boot session but
 /// may have failed.  /tmp is cleared on reboot so this resets automatically.
@@ -156,12 +156,12 @@ pub fn prior_update_attempted() -> bool {
 /// Apply a validated ELF binary — write, chmod, copy, exec update script.
 pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) {
     let dest = std::env::current_exe()
-        .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/arty"));
-    let dest_str = dest.to_str().unwrap_or("/mnt/SDCARD/App/Arty/arty");
+        .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/mini-mayhem"));
+    let dest_str = dest.to_str().unwrap_or("/mnt/SDCARD/App/Arty/mini-mayhem");
 
     // Write to /tmp first, then copy to dest
     {
-        let mut f = match std::fs::File::create("/tmp/arty.new") {
+        let mut f = match std::fs::File::create("/tmp/mini-mayhem.new") {
             Ok(f) => f,
             Err(_) => { super::draw_msg(buf, fb, "FAIL:TMPWRITE"); std::thread::sleep(std::time::Duration::from_secs(2)); return; }
         };
@@ -172,18 +172,18 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
             return;
         }
     }
-    unsafe { libc::chmod(b"/tmp/arty.new\0".as_ptr() as *const libc::c_char, 0o755); }
+    unsafe { libc::chmod(b"/tmp/mini-mayhem.new\0".as_ptr() as *const libc::c_char, 0o755); }
 
     // Update script: copy new binary then exec it.
     // Uses && so exec only runs if cp succeeded — prevents exec-old-binary loop.
-    let script = format!("#!/bin/sh\ncp /tmp/arty.new '{}' && chmod +x '{}' && exec '{}'\n",
+    let script = format!("#!/bin/sh\ncp /tmp/mini-mayhem.new '{}' && chmod +x '{}' && exec '{}'\n",
         dest_str, dest_str, dest_str);
-    if std::fs::write("/tmp/arty_update.sh", script.as_bytes()).is_err() {
+    if std::fs::write("/tmp/mini-mayhem_update.sh", script.as_bytes()).is_err() {
         super::draw_msg(buf, fb, "FAIL:SCRIPT");
         std::thread::sleep(std::time::Duration::from_secs(2));
         return;
     }
-    unsafe { libc::chmod(b"/tmp/arty_update.sh\0".as_ptr() as *const libc::c_char, 0o755); }
+    unsafe { libc::chmod(b"/tmp/mini-mayhem_update.sh\0".as_ptr() as *const libc::c_char, 0o755); }
 
     // Fetch updated app files (short timeout — don't block the restart)
     if let Some(manifest) = http_get_body("/arty/manifest.txt", 2) {
@@ -219,7 +219,7 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
 
     // Replace this process with a shell that copies the binary and relaunches
     let sh  = std::ffi::CString::new("/bin/sh").unwrap();
-    let arg = std::ffi::CString::new("/tmp/arty_update.sh").unwrap();
+    let arg = std::ffi::CString::new("/tmp/mini-mayhem_update.sh").unwrap();
     let args: [*const libc::c_char; 3] = [sh.as_ptr(), arg.as_ptr(), std::ptr::null()];
     unsafe { libc::execv(sh.as_ptr(), args.as_ptr()); }
     std::process::exit(0);
@@ -227,7 +227,7 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
 
 pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
     super::draw_msg(buf, fb, "DOWNLOADING UPDATE...");
-    let binary = match http_get_body("/arty/arty", 120) {
+    let binary = match http_get_body("/arty/mini-mayhem", 120) {
         Some(b) => b,
         None => { super::draw_msg(buf, fb, "FAIL:DOWNLOAD"); std::thread::sleep(std::time::Duration::from_secs(2)); return; }
     };
@@ -238,7 +238,7 @@ pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
     }
     // Write binary to /tmp
     {
-        let mut f = match std::fs::File::create("/tmp/arty.new") {
+        let mut f = match std::fs::File::create("/tmp/mini-mayhem.new") {
             Ok(f) => f,
             Err(_) => { super::draw_msg(buf, fb, "FAIL:TMPWRITE"); std::thread::sleep(std::time::Duration::from_secs(2)); return; }
         };
@@ -248,22 +248,22 @@ pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
             return;
         }
     }
-    unsafe { libc::chmod(b"/tmp/arty.new\0".as_ptr() as *const libc::c_char, 0o755); }
+    unsafe { libc::chmod(b"/tmp/mini-mayhem.new\0".as_ptr() as *const libc::c_char, 0o755); }
 
     // Use a shell script to replace ourselves (avoids can-not-overwrite-running-exe issues)
     let dest = std::env::current_exe()
-        .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/arty"));
-    let dest_str = dest.to_str().unwrap_or("/mnt/SDCARD/App/Arty/arty");
-    let script = format!("#!/bin/sh\ncp /tmp/arty.new '{}' && chmod +x '{}' && exec '{}'\n",
+        .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/mini-mayhem"));
+    let dest_str = dest.to_str().unwrap_or("/mnt/SDCARD/App/Arty/mini-mayhem");
+    let script = format!("#!/bin/sh\ncp /tmp/mini-mayhem.new '{}' && chmod +x '{}' && exec '{}'\n",
         dest_str, dest_str, dest_str);
-    if std::fs::write("/tmp/arty_update.sh", script.as_bytes()).is_err() {
+    if std::fs::write("/tmp/mini-mayhem_update.sh", script.as_bytes()).is_err() {
         super::draw_msg(buf, fb, "FAIL:SCRIPT");
         std::thread::sleep(std::time::Duration::from_secs(2));
         return;
     }
-    unsafe { libc::chmod(b"/tmp/arty_update.sh\0".as_ptr() as *const libc::c_char, 0o755); }
+    unsafe { libc::chmod(b"/tmp/mini-mayhem_update.sh\0".as_ptr() as *const libc::c_char, 0o755); }
     // Try direct copy first as fallback
-    let copy_ok = std::fs::copy("/tmp/arty.new", &dest).is_ok();
+    let copy_ok = std::fs::copy("/tmp/mini-mayhem.new", &dest).is_ok();
     if !copy_ok {
         let msg = format!("DST:{}", dest_str);
         super::draw_msg(buf, fb, &msg);
@@ -295,7 +295,7 @@ pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
     super::draw_msg(buf, fb, "UPDATE DONE - RELAUNCH FROM MENU");
     std::thread::sleep(std::time::Duration::from_secs(2));
     let sh  = std::ffi::CString::new("/bin/sh").unwrap();
-    let arg = std::ffi::CString::new("/tmp/arty_update.sh").unwrap();
+    let arg = std::ffi::CString::new("/tmp/mini-mayhem_update.sh").unwrap();
     let args: [*const libc::c_char; 3] = [sh.as_ptr(), arg.as_ptr(), std::ptr::null()];
     unsafe { libc::execv(sh.as_ptr(), args.as_ptr()); }
     std::process::exit(0);
