@@ -98,6 +98,7 @@ impl Team {
             }
         }
         self.weapons.push((kind, ammo));
+        self.weapons.sort_by_key(|(k, _)| k.menu_sort_key());
     }
 
     /// How many soldiers are still alive.
@@ -142,7 +143,7 @@ impl Team {
 
 /// Shared weapon loadout all teams start with.
 fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
-    vec![
+    let mut v = vec![
         (WeaponKind::Bazooka,  None),    // infinite
         (WeaponKind::Grenade,  None),    // infinite
         (WeaponKind::Shotgun,  Some(2)), // 2 shots
@@ -151,7 +152,9 @@ fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
         (WeaponKind::Landmine,     Some(2)), // 2 uses
         (WeaponKind::BaseballBat,  Some(1)), // 1 use; locked until 3 full cycles
         (WeaponKind::PlasmaTorch,  Some(3)), // 3 uses; terrain tunneling tool
-    ]
+    ];
+    v.sort_by_key(|(k, _)| k.menu_sort_key());
+    v
 }
 
 #[cfg(test)]

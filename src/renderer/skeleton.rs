@@ -1,4 +1,5 @@
 use crate::world::WorldPos;
+use crate::physics::projectile::WeaponKind;
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
 use super::draw_sprites::{TEAM_COLOURS, TEAM_COLOURS_DEAD, draw_hp_number_lifted};
@@ -235,6 +236,84 @@ fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_styl
     super::cosmetic_sprites::draw_gun_oriented(buf, gun_style_id, origin, fwd, prp, 17.0)
 }
 
+// ── Held weapon draw ─────────────────────────────────────────────────────────
+
+fn draw_held_weapon(buf: &mut WorldBuffer, x: i32, y: i32, weapon: WeaponKind, tick: u32) {
+    match weapon {
+        WeaponKind::Grenade => {
+            super::draw_sprites::draw_grenade_projectile(buf, WorldPos::new(x as f32, y as f32));
+        }
+        WeaponKind::HolyHandGrenade => {
+            // Golden orb body (frame 0 — upright)
+            let gdark = Bgra::new(140, 95, 10);
+            let gbody = Bgra::new(210, 155, 30);
+            let ghi   = Bgra::new(255, 230, 100);
+            let gray  = Bgra::new(160, 160, 165);
+            let gold  = Bgra::new(255, 215, 45);
+            buf.fill_rect(x - 3, y - 5, 6, 12, gdark);
+            buf.fill_rect(x - 2, y - 4, 4,  9, gbody);
+            buf.fill_rect(x - 1, y - 3, 2,  1, ghi);
+            buf.fill_rect(x - 3, y - 1, 6,  1, gdark); // equator band
+            // Cross on top
+            buf.fill_rect(x - 1, y - 7, 3, 3, gdark);
+            buf.fill_rect(x,     y - 7, 1, 3, gold);
+            buf.fill_rect(x - 2, y - 6, 5, 1, gold);
+            // Pin
+            buf.fill_rect(x - 1, y + 5, 2, 2, gray);
+            let _ = ghi;
+        }
+        WeaponKind::BananaBomb => {
+            // Gray sphere (main meteor bomb body)
+            buf.fill_circle(x, y, 7, Bgra::new(55, 55, 58));
+            buf.fill_circle(x, y, 6, Bgra::new(130, 130, 135));
+            buf.fill_circle(x - 2, y - 2, 2, Bgra::new(190, 190, 195));
+        }
+        WeaponKind::BlackHoleBomb => {
+            let a = tick as f32 * 0.35;
+            let purpd = Bgra::new(60, 0, 90);
+            let purp  = Bgra::new(160, 0, 220);
+            let void  = Bgra::new(0, 0, 0);
+            let glow  = Bgra::new(200, 80, 255);
+            buf.fill_circle(x, y, 7, purpd);
+            buf.fill_circle(x, y, 5, purp);
+            buf.fill_circle(x, y, 3, void);
+            for &off in &[0.0f32, std::f32::consts::PI] {
+                let gx = x + (6.0 * (a + off).cos()) as i32;
+                let gy = y + (6.0 * (a + off).sin()) as i32;
+                buf.set_pixel(gx, gy, glow);
+            }
+        }
+        WeaponKind::Blasthive => {
+            // Hive: amber rounded box
+            let hdk = Bgra::new(70, 45, 12);
+            let hmd = Bgra::new(165, 110, 35);
+            buf.fill_circle(x, y, 5, hdk);
+            buf.fill_circle(x, y, 4, hmd);
+            buf.draw_line(x - 3, y - 1, x + 3, y - 1, hdk);
+            buf.draw_line(x - 3, y + 1, x + 3, y + 1, hdk);
+        }
+        WeaponKind::Tnt => {
+            // Red stick with gray fuse
+            buf.fill_rect(x - 3, y - 7, 6, 12, Bgra::new(190, 25, 15));
+            buf.fill_rect(x - 3, y - 7, 2, 12, Bgra::new(230, 60, 45));
+            buf.fill_rect(x + 1, y - 7, 2, 12, Bgra::new(110, 12,  8));
+            buf.fill_rect(x,     y - 9, 1,  3, Bgra::new(160, 160, 160));
+            buf.fill_rect(x + 1, y - 11, 1, 2, Bgra::new(160, 160, 160));
+        }
+        WeaponKind::Landmine => {
+            // Green metal ball with blinking LED
+            buf.fill_circle(x, y, 5, Bgra::new(20, 60, 20));
+            buf.fill_circle(x, y, 4, Bgra::new(45, 110, 35));
+            buf.fill_circle(x - 1, y - 1, 2, Bgra::new(70, 150, 55));
+            if (tick / 15) % 2 == 0 {
+                buf.fill_rect(x - 1, y - 5, 3, 3, Bgra::new(230, 30, 30));
+                buf.fill_rect(x,     y - 4, 1, 1, Bgra::new(255, 120, 120));
+            }
+        }
+        _ => {}
+    }
+}
+
 // ── Public draw function ──────────────────────────────────────────────────────
 
 /// Draw a soldier using procedural skeletal animation.
@@ -251,6 +330,7 @@ pub fn draw_soldier_skeletal(
     uniform_color_id: u8,
     boot_color_id:    u8,
     gun_style_id:     u8,
+    held_weapon:      Option<WeaponKind>,
     wind:             f32,
     tick:             u32,
     on_fire_ticks:    u32,
@@ -377,10 +457,8 @@ pub fn draw_soldier_skeletal(
     thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, body_col, 5);
     draw_boot(buf, boot_color_id, back_foot.0 as i32, back_foot.1 as i32, 5, 4, f < 0.0);
 
-    // ── Back arm ──────────────────────────────────────────────────────────────
-    let (back_arm, fwd_arm) = if f >= 0.0 { (arm_l_vis, arm_r_vis) } else { (arm_r_vis, arm_l_vis) };
-    thick_line(buf, arm_orig.0, arm_orig.1, back_arm.0, back_arm.1, dark_col, 5);
-    thick_line(buf, arm_orig.0, arm_orig.1, back_arm.0, back_arm.1, body_col, 3);
+    // ── Back arm (not rendered — hidden behind body) ───────────────────────────
+    let fwd_arm = if f >= 0.0 { arm_r_vis } else { arm_l_vis };
 
     // ── Torso ─────────────────────────────────────────────────────────────────
     thick_line(buf, hip.0, hip.1, shoulder.0, shoulder.1, dark_col, 7);
@@ -396,11 +474,10 @@ pub fn draw_soldier_skeletal(
                   (belt.0 + tpx) as i32, (belt.1 + tpy) as i32, dark_col);
 
     // ── Head ──────────────────────────────────────────────────────────────────
-    // Viking helm sprite covers the entire head; skip procedural head drawing
-    if hat_id != 15 {
-        buf.fill_circle(head_cx, head_cy, 5, dark_col);
-        buf.fill_circle(head_cx, head_cy, 4, skin_col);
-    }
+    // Always draw the head circle — hat sprites render on top and cover the face.
+    // Skipping it for the viking helm left a gap between the torso and the sprite.
+    buf.fill_circle(head_cx, head_cy, 5, dark_col);
+    buf.fill_circle(head_cx, head_cy, 4, skin_col);
     // Helmet cap — only when no hat equipped (hat replaces it)
     if hat_id == 0 {
         for dy in -5..=0i32 {
@@ -431,14 +508,21 @@ pub fn draw_soldier_skeletal(
     thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, dark_col, 5);
     thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, body_col, 3);
 
-    // ── Gun ───────────────────────────────────────────────────────────────────
+    // ── Gun / held item ───────────────────────────────────────────────────────
     let arm_end = fwd_arm;
     let disp = if f >= 0.0 {
         aim_angle.unwrap_or(0.0)
     } else {
         std::f32::consts::PI - aim_angle.unwrap_or(0.0)
     };
-    let (btx, bty) = draw_gun_style(buf, arm_end, disp, gun_style_id);
+    let (btx, bty) = if let Some(weapon) = held_weapon {
+        let ix = arm_end.0 as i32;
+        let iy = arm_end.1 as i32;
+        draw_held_weapon(buf, ix, iy, weapon, tick);
+        (arm_end.0, arm_end.1)
+    } else {
+        draw_gun_style(buf, arm_end, disp, gun_style_id)
+    };
 
     // ── HP number ─────────────────────────────────────────────────────────────
     if hp > 0 && show_hp {

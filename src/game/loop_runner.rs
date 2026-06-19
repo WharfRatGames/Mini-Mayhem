@@ -991,40 +991,44 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
 
         if game.weapon_menu_open {
             let n    = game.teams[ti].weapons.len();
-            const COLS: usize = 2;
+            const COLS: usize = 3;
+            // Column-major layout: weapons fill each column top-to-bottom before moving right.
+            // idx → (row = idx % rows, col = idx / rows)
             let rows = (n + COLS - 1) / COLS;
             let cur  = game.weapon_menu_cursor;
-            let row  = cur / COLS;
-            let col  = cur % COLS;
-            // True 2D navigation: Left/Right move between columns, Up/Down between rows
+            let row  = cur % rows;
+            let col  = cur / rows;
+            // items in the last column may be fewer than rows
+            let col_len = |c: usize| if c < COLS { n.saturating_sub(c * rows).min(rows) } else { 0 };
             if input.just_pressed(Button::Left) {
                 game.weapon_menu_cursor = if col > 0 {
-                    row * COLS + col - 1
+                    let prev_col = col - 1;
+                    let r = row.min(col_len(prev_col).saturating_sub(1));
+                    prev_col * rows + r
                 } else {
-                    // Wrap: last column of previous row (or last item overall)
-                    let prev_row = if row == 0 { rows - 1 } else { row - 1 };
-                    (prev_row * COLS + COLS - 1).min(n - 1)
+                    // Wrap to last column
+                    let last_col = (n - 1) / rows;
+                    let r = row.min(col_len(last_col).saturating_sub(1));
+                    last_col * rows + r
                 };
             }
             if input.just_pressed(Button::Right) {
-                let next = row * COLS + col + 1;
-                game.weapon_menu_cursor = if next < n {
-                    next
+                let next_col = col + 1;
+                game.weapon_menu_cursor = if next_col * rows < n {
+                    let r = row.min(col_len(next_col).saturating_sub(1));
+                    next_col * rows + r
                 } else {
-                    // Wrap: first column of next row
-                    let next_row = (row + 1) % rows;
-                    next_row * COLS
+                    // Wrap to first column
+                    row.min(col_len(0).saturating_sub(1))
                 };
             }
             if input.just_pressed(Button::Up) {
-                let target_row = if row == 0 { rows - 1 } else { row - 1 };
-                let target = target_row * COLS + col;
-                game.weapon_menu_cursor = if target < n { target } else { target_row * COLS };
+                let new_row = if row == 0 { col_len(col).saturating_sub(1) } else { row - 1 };
+                game.weapon_menu_cursor = col * rows + new_row;
             }
             if input.just_pressed(Button::Down) {
-                let target_row = (row + 1) % rows;
-                let target = target_row * COLS + col;
-                game.weapon_menu_cursor = if target < n { target } else { target_row * COLS };
+                let new_row = if row + 1 < col_len(col) { row + 1 } else { 0 };
+                game.weapon_menu_cursor = col * rows + new_row;
             }
             // L1/R1 adjusts grenade fuse even while menu is open
             {
@@ -2523,14 +2527,15 @@ pub fn draw_weapon_menu(
     use crate::physics::projectile::WeaponKind;
     use crate::world::{SCREEN_W, SCREEN_H};
 
-    let cols: i32 = 2;
+    let cols: i32 = 3;
     let cell_w: i32 = 120;
     let cell_h: i32 = 64;
     const MAX_ROWS: i32 = 6;
+    // Column-major: weapons fill down each column before moving right.
+    // idx → row = idx % total_rows, col = idx / total_rows
     let total_rows  = ((weapons.len() as i32) + cols - 1) / cols;
-    let cursor_row  = (cursor as i32) / cols;
+    let cursor_row  = (cursor as i32) % total_rows;
     let scroll      = if total_rows <= MAX_ROWS { 0 } else {
-        // Keep cursor visible: scroll only when cursor goes below the window
         let scroll_min = (cursor_row - MAX_ROWS + 1).max(0);
         let scroll_max = cursor_row;
         scroll_min.min(scroll_max).min(total_rows - MAX_ROWS)
@@ -2570,8 +2575,8 @@ pub fn draw_weapon_menu(
     }
 
     for (i, (kind, ammo)) in weapons.iter().enumerate() {
-        let col = (i as i32) % cols;
-        let row = (i as i32) / cols;
+        let col = (i as i32) / total_rows;
+        let row = (i as i32) % total_rows;
         if row < scroll || row >= scroll + MAX_ROWS { continue; }
         let vis_row = row - scroll;
         let cx = wx + 10 + col * cell_w;
@@ -4656,6 +4661,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     let sy_ = dy / steps as f32;
                     let mut cx = game.teams[ti].soldiers[si].pos.x;
                     let mut cy = game.teams[ti].soldiers[si].pos.y;
+                    game.teams[ti].soldiers[si].fall.update(cy);
                     let mut landed = false;
                     for _ in 0..steps {
                         cx += sx_;

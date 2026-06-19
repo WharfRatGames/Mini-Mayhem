@@ -12,34 +12,40 @@ pub const FALL_DAMAGE_PER_PX: f32 = 0.15;
 pub struct FallTracker {
     /// Y position where the worm left solid ground (or was launched).
     pub start_y: f32,
+    /// Highest point (lowest Y value) reached while airborne — fall is measured from here.
+    pub apex_y: f32,
     /// Whether the worm is currently airborne.
     pub falling: bool,
 }
 
 impl FallTracker {
     pub fn new() -> Self {
-        Self { start_y: 0.0, falling: false }
+        Self { start_y: 0.0, apex_y: 0.0, falling: false }
     }
 
     /// Call when a worm steps off solid ground or is knocked into the air.
     pub fn begin_fall(&mut self, y: f32) {
         self.start_y = y;
+        self.apex_y  = y;
         self.falling = true;
     }
 
-    /// No-op: fall distance is measured from last_ground_y (start_y), not from apex.
-    /// A backflip that lands at the same elevation as it launched from deals no damage.
-    pub fn update(&mut self, _y: f32) {}
+    /// Call each tick while airborne — tracks the highest point reached.
+    pub fn update(&mut self, y: f32) {
+        if self.falling {
+            self.apex_y = self.apex_y.min(y);
+        }
+    }
 
     /// Call when the worm lands on solid ground.
-    /// Returns damage dealt (0 if fall was within safe threshold).
+    /// Returns damage dealt based on fall from apex to landing point.
     /// Resets the tracker back to grounded state.
     pub fn land(&mut self, land_y: f32) -> u32 {
         if !self.falling {
             return 0;
         }
         self.falling = false;
-        let fall_dist = (land_y - self.start_y).max(0.0);
+        let fall_dist = (land_y - self.apex_y).max(0.0);
         fall_damage(fall_dist)
     }
 
@@ -171,41 +177,46 @@ mod tests {
     }
 
     #[test]
-    fn update_never_changes_start_y() {
+    fn update_tracks_apex_not_start_y() {
         let mut t = FallTracker::new();
         t.begin_fall(300.0);
-        t.update(200.0); // rising — should NOT move start_y
-        t.update(150.0);
+        t.update(200.0); // rising — apex_y should update
+        t.update(150.0); // higher still
         assert_eq!(t.start_y, 300.0, "start_y should always be last ground Y");
+        assert_eq!(t.apex_y,  150.0, "apex_y tracks the highest point reached");
     }
 
     #[test]
-    fn backflip_landing_at_same_height_no_damage() {
-        // Worm launches up from y=300, returns to y=300 — net drop = 0
+    fn high_arc_landing_at_same_height_deals_damage() {
+        // Launched from y=300, apex at y=100, lands back at y=300 — 200px fall from apex
         let mut t = FallTracker::new();
         t.begin_fall(300.0);
-        t.update(200.0); // apex
-        let dmg = t.land(300.0); // lands at launch height
-        assert_eq!(dmg, 0, "landing at launch height should deal no damage");
+        t.update(100.0); // apex: 200px above start
+        let dmg = t.land(300.0);
+        let expected = fall_damage(300.0 - 100.0); // fall from apex
+        assert_eq!(dmg, expected);
+        assert!(dmg > 0, "high arc should deal fall damage even landing at launch height");
     }
 
     #[test]
-    fn explosion_knockup_landing_at_same_height_no_damage() {
+    fn small_arc_below_threshold_no_damage() {
+        // Apex only 40px above landing — below SAFE_FALL_PX
         let mut t = FallTracker::new();
         t.begin_fall(300.0);
-        t.update(150.0); // big arc upward
-        let dmg = t.land(300.0); // back at same ground level
+        t.update(260.0); // only 40px up
+        let dmg = t.land(300.0);
         assert_eq!(dmg, 0);
     }
 
     #[test]
-    fn explosion_knockup_then_fall_uses_last_ground_y() {
-        // Blown up from y=300, lands 100px lower at y=400
+    fn explosion_knockup_then_fall_uses_apex() {
+        // Blown up from y=300, apex at y=150, lands 100px lower at y=400
+        // Fall = 400 - 150 = 250px
         let mut t = FallTracker::new();
         t.begin_fall(300.0);
         t.update(150.0); // apex
-        let dmg = t.land(400.0); // 100px net drop
-        let expected = fall_damage(400.0 - 300.0);
+        let dmg = t.land(400.0);
+        let expected = fall_damage(400.0 - 150.0);
         assert_eq!(dmg, expected);
     }
 
