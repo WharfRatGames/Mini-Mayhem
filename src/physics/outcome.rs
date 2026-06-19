@@ -66,7 +66,16 @@ fn worms_bounce(proj: &mut Projectile, pos: WorldPos, terrain: &Terrain) {
         proj.vel.x = 0.0;
         proj.vel.y = 0.0;
         let (nx, ny) = terrain_normal(terrain, pos);
-        proj.pos = WorldPos::new(pos.x + nx, pos.y + ny);
+        // Push along normal until clear of terrain (up to 8 steps) so corner-wedged
+        // grenades don't re-collide next tick and drift upward each time.
+        let mut ex = pos.x;
+        let mut ey = pos.y;
+        for _ in 0..8 {
+            if !terrain.is_solid(ex as i32, ey as i32) { break; }
+            ex += nx;
+            ey += ny;
+        }
+        proj.pos = WorldPos::new(ex, ey);
         return;
     }
     let (nx, ny) = terrain_normal(terrain, pos);
