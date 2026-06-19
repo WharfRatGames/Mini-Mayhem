@@ -21,7 +21,7 @@ pub const WATER_Y: u32 = WORLD_H - WATER_ROWS;
 
 /// Minimum terrain surface Y. Terrain will never reach above this line,
 /// leaving clear sky at the top of the world.
-pub const TERRAIN_MIN_Y: u32 = 88;
+pub const TERRAIN_MIN_Y: u32 = 112;
 
 /// Maximum terrain surface Y. Terrain will never reach into the water zone.
 pub const TERRAIN_MAX_Y: u32 = WATER_Y - 40;
