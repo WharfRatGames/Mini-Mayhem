@@ -345,6 +345,10 @@ pub struct GameState {
     pub minigun_shots_left: u8,
     /// Ticks until next minigun bullet fires (counts down each tick).
     pub minigun_fire_timer: u8,
+    /// Uzi burst state: shots remaining this turn; 0 = not firing.
+    pub uzi_shots_left: u8,
+    /// Ticks until next uzi bullet fires (counts down each tick).
+    pub uzi_fire_timer: u8,
     /// Bullet trail visuals: (start, end, ttl_ticks). Client-side only — not networked.
     pub bullet_trails: Vec<(WorldPos, WorldPos, u8)>,
     /// Active grappling-hook rope; None = no rope deployed.
@@ -420,6 +424,8 @@ impl GameState {
             revolver_shots_left: 0,
             minigun_shots_left: 0,
             minigun_fire_timer: 0,
+            uzi_shots_left: 0,
+            uzi_fire_timer: 0,
             bullet_trails: Vec::new(),
             rope: None,
             rope_session: false,
@@ -494,6 +500,32 @@ impl GameState {
     /// (hotseat/VS-CPU/TAT, all on the Miyoo) this plays immediately; on the live
     /// server (no audio device) it just records into `self.sounds`, which
     /// build_state ships to the live client so it stays in audio parity.
+    /// Destroy any crates whose `damage_this_turn` has reached the threshold,
+    /// spawning fire patches. Call after hitscan weapons that bypass apply_explosion.
+    pub fn flush_crate_damage(&mut self) {
+        for crate_ in self.crates.iter().filter(|c| c.damage_this_turn >= 20) {
+            let cpos = crate_.pos;
+            let mut rng = (cpos.x as u64).wrapping_mul(0x6364136223846885)
+                .wrapping_add((cpos.y as u64).wrapping_mul(0x9e3779b97f4a7c15));
+            let count = 2 + (rng % 4) as usize;
+            for _ in 0..count {
+                rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
+                let angle = (rng >> 33) as f32 / (u32::MAX as f32) * std::f32::consts::TAU;
+                rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
+                let speed = 2.0 + (rng >> 33) as f32 / (u32::MAX as f32) * 4.0;
+                rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
+                let life = 120 + (rng >> 33) as u32 % 60;
+                self.fire_patches.push(FirePatch {
+                    pos: cpos,
+                    vel: crate::world::Vec2::new(angle.cos() * speed, angle.sin() * speed - 2.0),
+                    landed: false,
+                    lifetime: life,
+                });
+            }
+        }
+        self.crates.retain(|c| c.damage_this_turn < 20);
+    }
+
     pub fn emit_sound(&mut self, s: crate::audio::Sfx) {
         self.sounds.push(s as u8);
         crate::audio::play(s);
@@ -958,44 +990,32 @@ impl GameState {
         if self.terrain.surface_y_at(x).is_none() { return false; }
 
         // Type split: 75% weapon, 25% health.
-        // Rarity tiers (weapon pool):
-        //   Common     (~10% each): Mine, Shotgun, TNT, Grapple, Bat, Torch
-        //   Uncommon   (~8% each):  Blasthive, Meteor Bomb, Sacred Ordnance, Air Strike
-        //   Rare       (~3% each):  Black Hole, Revolver, Minigun
-        //   Ultra Rare (~2%):       Hand of Jerry
+        // Tier drop chances (weapon pool):
+        //   Common     60%  — Mine, Shotgun, TNT, Grapple, Bat, Torch, Uzi  (equal within tier)
+        //   Uncommon   24%  — Blasthive, Meteor Bomb, Air Strike
+        //   Rare       14%  — Black Hole, Revolver, Minigun, Sacred Ordnance
+        //   Ultra Rare  2%  — Hand of Jerry
         let kind = if kind_rng >= 0.75 {
             CrateKind::Health // +25 HP
         } else {
             let w = kind_rng / 0.75; // rescale weapon rng to [0,1)
-            if w < 0.10 {
-                CrateKind::Weapon(WeaponKind::Landmine)       // Common
-            } else if w < 0.20 {
-                CrateKind::Weapon(WeaponKind::Shotgun)        // Common
-            } else if w < 0.30 {
-                CrateKind::Weapon(WeaponKind::Tnt)            // Common
-            } else if w < 0.40 {
-                CrateKind::Weapon(WeaponKind::NinjaRope)      // Common
-            } else if w < 0.50 {
-                CrateKind::Weapon(WeaponKind::BaseballBat)    // Common
-            } else if w < 0.60 {
-                CrateKind::Weapon(WeaponKind::PlasmaTorch)    // Common
-            } else if w < 0.68 {
-                CrateKind::Weapon(WeaponKind::Blasthive)      // Uncommon
-            } else if w < 0.76 {
-                CrateKind::Weapon(WeaponKind::BananaBomb)     // Uncommon
+            let weapon = if w < 0.60 {
+                let slot = (w / 0.60 * 7.0) as usize;
+                [WeaponKind::Landmine, WeaponKind::Shotgun, WeaponKind::Tnt,
+                 WeaponKind::NinjaRope, WeaponKind::BaseballBat,
+                 WeaponKind::PlasmaTorch, WeaponKind::Uzi][slot.min(6)]
             } else if w < 0.84 {
-                CrateKind::Weapon(WeaponKind::HolyHandGrenade)// Uncommon
-            } else if w < 0.92 {
-                CrateKind::Weapon(WeaponKind::AirStrike)      // Uncommon
-            } else if w < 0.93 {
-                CrateKind::Weapon(WeaponKind::BlackHoleBomb)  // Rare
-            } else if w < 0.96 {
-                CrateKind::Weapon(WeaponKind::Revolver)       // Rare
+                let slot = ((w - 0.60) / 0.24 * 3.0) as usize;
+                [WeaponKind::Blasthive, WeaponKind::BananaBomb,
+                 WeaponKind::AirStrike][slot.min(2)]
             } else if w < 0.98 {
-                CrateKind::Weapon(WeaponKind::Minigun)        // Rare
+                let slot = ((w - 0.84) / 0.14 * 4.0) as usize;
+                [WeaponKind::BlackHoleBomb, WeaponKind::Revolver,
+                 WeaponKind::Minigun, WeaponKind::HolyHandGrenade][slot.min(3)]
             } else {
-                CrateKind::Weapon(WeaponKind::Garcia)         // Ultra Rare
-            }
+                WeaponKind::Garcia
+            };
+            CrateKind::Weapon(weapon)
         };
         self.crates.push(DroppedCrate {
             pos: WorldPos::new(x as f32, 0.0),

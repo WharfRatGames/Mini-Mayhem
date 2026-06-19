@@ -58,6 +58,7 @@ pub fn play_wet_death()         { _play("wet.wav"); }
 pub fn play_death_water()       { _play_death_water(); }
 pub fn play_holy_hand_grenade() { _play_once("hallelujah.wav"); }
 pub fn play_minigun()           { _play_once("minigun.wav"); } // deploy/assets/sfx/hallelujah.wav required
+pub fn play_uzi()               { _play_once("uzi.wav"); }
 
 /// Identifies a sound effect so it can be recorded during simulation and
 /// shipped to the live client (which runs no simulation of its own and would
@@ -85,6 +86,7 @@ pub enum Sfx {
     DeathWater  = 16,
     HolyHandGrenade = 17,
     Minigun         = 18,
+    Uzi             = 19,
 }
 
 impl Sfx {
@@ -100,6 +102,7 @@ impl Sfx {
             16 => Sfx::DeathWater,
             17 => Sfx::HolyHandGrenade,
             18 => Sfx::Minigun,
+            19 => Sfx::Uzi,
             _ => return None,
         })
     }
@@ -115,7 +118,7 @@ impl Sfx {
             Sfx::BlackHole | Sfx::Mine | Sfx::MineArm | Sfx::Barrel |
             Sfx::Revolver | Sfx::Shotgun | Sfx::Bat | Sfx::CrateDrop |
             Sfx::PlasmaTorch | Sfx::Garcia | Sfx::Smash | Sfx::Death |
-            Sfx::DeathWater | Sfx::HolyHandGrenade | Sfx::Minigun => {}
+            Sfx::DeathWater | Sfx::HolyHandGrenade | Sfx::Minigun | Sfx::Uzi => {}
         }
     }
 }
@@ -143,6 +146,7 @@ pub fn play(s: Sfx) {
         Sfx::DeathWater  => play_death_water(),
         Sfx::HolyHandGrenade => play_holy_hand_grenade(),
         Sfx::Minigun         => play_minigun(),
+        Sfx::Uzi             => play_uzi(),
     }
 }
 
@@ -177,6 +181,7 @@ mod imp {
     static SMASH:       OnceLock<Vec<i16>> = OnceLock::new();
     static HALLELUJAH:  OnceLock<Vec<i16>> = OnceLock::new();
     static MINIGUN:     OnceLock<Vec<i16>> = OnceLock::new();
+    static UZI:         OnceLock<Vec<i16>> = OnceLock::new();
     static DEATHS:      OnceLock<Vec<Vec<i16>>> = OnceLock::new();
 
     // ── WAV → 48kHz mono i16 ─────────────────────────────────────────────────
@@ -265,6 +270,7 @@ mod imp {
                 try_load(&SMASH,       &dir, "smash.wav");
                 try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
                 try_load(&MINIGUN,     &dir, "minigun.wav");
+                try_load(&UZI,         &dir, "uzi.wav");
                 let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
                     .into_iter().flatten().flatten()
                     .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
@@ -491,6 +497,7 @@ mod imp {
             "smash.wav"             => SMASH.get().cloned(),
             "hallelujah.wav"        => HALLELUJAH.get().cloned(),
             "minigun.wav"           => MINIGUN.get().cloned(),
+            "uzi.wav"               => UZI.get().or_else(|| MINIGUN.get()).cloned(),
             _ => None,
         }
     }
