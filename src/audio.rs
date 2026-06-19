@@ -18,6 +18,20 @@ pub fn init()                   {}
 /// torch turns off — so the sound only plays WHILE the torch is active (no more
 /// 4-second clip droning on after an early release). Works in every mode because
 /// the live client reconstructs `plasma_torch` from the networked torch_dir.
+/// Drive the Mac-10 loop sound from firing state. Call every render frame.
+pub fn update_mac10(active: bool) {
+    #[cfg(target_arch = "arm")]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static WAS: AtomicBool = AtomicBool::new(false);
+        let was = WAS.swap(active, Ordering::Relaxed);
+        if active && !was { imp::start_mac10(); }
+        else if !active && was { imp::stop_mac10(); }
+    }
+    #[cfg(not(target_arch = "arm"))]
+    { let _ = active; }
+}
+
 pub fn update_torch(active: bool) {
     #[cfg(target_arch = "arm")]
     {
@@ -58,7 +72,7 @@ pub fn play_wet_death()         { _play("wet.wav"); }
 pub fn play_death_water()       { _play_death_water(); }
 pub fn play_holy_hand_grenade() { _play_once("hallelujah.wav"); }
 pub fn play_minigun()           { _play_once("minigun.wav"); } // deploy/assets/sfx/hallelujah.wav required
-pub fn play_uzi()               { _play_once("mac10.wav"); }
+pub fn play_uzi()               { } // replaced by looping update_mac10
 
 /// Identifies a sound effect so it can be recorded during simulation and
 /// shipped to the live client (which runs no simulation of its own and would
@@ -411,6 +425,79 @@ mod imp {
 
     /// Stop the looping plasma-torch burn sound.
     pub fn stop_torch() { TORCH_ACTIVE.store(false, Ordering::Relaxed); }
+
+    static MAC10_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+    pub fn start_mac10() {
+        if super::MUTED.load(Ordering::Relaxed) { return; }
+        if MAC10_ACTIVE.swap(true, Ordering::Relaxed) { return; }
+        std::thread::spawn(|| { play_mac10_inner(); });
+    }
+
+    pub fn stop_mac10() { MAC10_ACTIVE.store(false, Ordering::Relaxed); }
+
+    fn play_mac10_inner() {
+        ensure_loaded();
+        let samples = match UZI.get() { Some(s) => s.clone(), None => { MAC10_ACTIVE.store(false, Ordering::Relaxed); return; } };
+        if samples.is_empty() { MAC10_ACTIVE.store(false, Ordering::Relaxed); return; }
+
+        let candidates: &[&[u8]] = &[
+            b"/customer/lib/libasound.so.2\0",
+            b"/usr/lib/libasound.so.2\0",
+            b"libasound.so.2\0",
+        ];
+        let lib = candidates.iter().find_map(|p| {
+            let h = unsafe { libc::dlopen(p.as_ptr() as *const libc::c_char, libc::RTLD_NOW) };
+            if h.is_null() { None } else { Some(h) }
+        });
+        let Some(lib) = lib else { MAC10_ACTIVE.store(false, Ordering::Relaxed); return };
+
+        macro_rules! sym2 {
+            ($name:literal, $T:ty) => {{
+                let s = unsafe { libc::dlsym(lib, concat!($name, "\0").as_ptr() as *const libc::c_char) };
+                if s.is_null() { unsafe { libc::dlclose(lib); } MAC10_ACTIVE.store(false, Ordering::Relaxed); return; }
+                unsafe { std::mem::transmute::<_, $T>(s) }
+            }};
+        }
+        type PcmT2 = *mut libc::c_void;
+        let pcm_open:    unsafe extern "C" fn(*mut PcmT2, *const libc::c_char, i32, i32) -> i32 = sym2!("snd_pcm_open", _);
+        let pcm_set:     unsafe extern "C" fn(PcmT2, u32, u32, u32, u32, i32, u32) -> i32      = sym2!("snd_pcm_set_params", _);
+        let pcm_write:   unsafe extern "C" fn(PcmT2, *const i16, u32) -> i32                   = sym2!("snd_pcm_writei", _);
+        let pcm_recover: unsafe extern "C" fn(PcmT2, i32, i32) -> i32                          = sym2!("snd_pcm_recover", _);
+        let pcm_drain:   unsafe extern "C" fn(PcmT2) -> i32                                    = sym2!("snd_pcm_drain", _);
+        let pcm_close:   unsafe extern "C" fn(PcmT2) -> i32                                    = sym2!("snd_pcm_close", _);
+
+        let dev = b"hw:0,0\0";
+        let mut pcm: PcmT2 = std::ptr::null_mut();
+        let mut open_r = -1i32;
+        for _ in 0..10 {
+            open_r = unsafe { pcm_open(&mut pcm, dev.as_ptr() as *const libc::c_char, 0, 0) };
+            if open_r == 0 { break; }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        if open_r < 0 || pcm.is_null() { unsafe { libc::dlclose(lib); } MAC10_ACTIVE.store(false, Ordering::Relaxed); return; }
+        let r = unsafe { pcm_set(pcm, 2, 3, 1, RATE, 0, 100_000) };
+        if r < 0 { unsafe { pcm_close(pcm); libc::dlclose(lib); } MAC10_ACTIVE.store(false, Ordering::Relaxed); return; }
+
+        let mut pos = 0usize;
+        while MAC10_ACTIVE.load(Ordering::Relaxed) && !super::MUTED.load(Ordering::Relaxed) {
+            let end = (pos + PERIOD).min(samples.len());
+            let chunk = &samples[pos..end];
+            let buf: Vec<i16> = if chunk.len() < PERIOD {
+                let mut v = chunk.to_vec(); v.resize(PERIOD, 0); v
+            } else { chunk.to_vec() };
+            let w = unsafe { pcm_write(pcm, buf.as_ptr(), PERIOD as u32) };
+            if w < 0 { unsafe { pcm_recover(pcm, w, 1); } }
+            else if w > 0 { pos += w as usize; }
+            if pos >= samples.len() { pos = 0; }
+        }
+        let silence = vec![0i16; PERIOD];
+        unsafe { pcm_write(pcm, silence.as_ptr(), PERIOD as u32); }
+        unsafe { pcm_drain(pcm); }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        unsafe { pcm_close(pcm); libc::dlclose(lib); }
+        MAC10_ACTIVE.store(false, Ordering::Relaxed);
+    }
 
     /// Hold hw:0,0 open and loop torch.wav while TORCH_ACTIVE; exits within one
     /// PERIOD (~21 ms) of stop_torch() so the sound ends with the torch.
