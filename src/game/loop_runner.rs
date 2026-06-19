@@ -1319,7 +1319,6 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             game.teams[ti].prune_empty_weapons();
             game.uzi_shots_left = 20;
             game.uzi_fire_timer = 0;
-            game.emit_sound(crate::audio::Sfx::Uzi);
             fire_uzi_shot(game, ti, si, muzzle_override);
         }
         return;
@@ -3100,6 +3099,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // deactivation/early release. Driven here so it covers every mode (local/TAT
     // use the simulated plasma_torch; live reconstructs it from networked torch_dir).
     crate::audio::update_torch(game.plasma_torch.is_some());
+    crate::audio::update_mac10(game.uzi_shots_left > 0);
 
     // Per-section pixel-write profiling (TEST mode overlay, see section 9b/9d
     // below). `mark!` records how many pixels were written since the previous
