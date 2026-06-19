@@ -776,7 +776,7 @@ pub fn try_move_horizontal(game: &mut GameState, ti: usize, si: usize, new_x: f3
     // Sweep the leading edge across every intermediate column between the current
     // and target position so a multi-px step can't jump over a thin (1-2px) wall
     // that the destination-only check would miss.
-    let lead_off = if dir > 0 { SOLDIER_HALF_W - 1 } else { -(SOLDIER_HALF_W - 1) };
+    let lead_off = if dir > 0 { SOLDIER_HALF_W as i32 } else { -(SOLDIER_HALF_W as i32) };
     let cur_lead = cur_x as i32 + lead_off;
     let target_lead = new_x as i32 + lead_off;
     let mut new_x = new_x;
@@ -800,8 +800,8 @@ pub fn try_move_horizontal(game: &mut GameState, ti: usize, si: usize, new_x: f3
 
     let ix = new_x as i32;
     // Edge columns of the soldier body (center ± half-width - 1).
-    let ix_l = ix - (SOLDIER_HALF_W - 1);
-    let ix_r = ix + (SOLDIER_HALF_W - 1);
+    let ix_l = ix - SOLDIER_HALF_W as i32;
+    let ix_r = ix + SOLDIER_HALF_W as i32;
     // Leading edge column (in the direction of travel) — the side that would run
     // INTO an obstacle. Barrels/mines stay solid (is_blocked), but a soldier already
     // wedged against one must still be able to step AWAY from it.
@@ -811,8 +811,8 @@ pub fn try_move_horizontal(game: &mut GameState, ti: usize, si: usize, new_x: f3
     // (If so we permit an escape step whose leading edge is clear.)
     let cxi   = cur_x as i32;
     let cfy   = cur_y as i32;
-    let cx_l  = cxi - (SOLDIER_HALF_W - 1);
-    let cx_r  = cxi + (SOLDIER_HALF_W - 1);
+    let cx_l  = cxi - SOLDIER_HALF_W as i32;
+    let cx_r  = cxi + SOLDIER_HALF_W as i32;
     let stuck_now = (0..=SOLDIER_H).any(|h|
         game.terrain.is_blocked(cx_l, cfy - h)
         || game.terrain.is_blocked(cxi,  cfy - h)
@@ -854,8 +854,8 @@ pub fn snap_to_surface(game: &mut GameState, ti: usize, si: usize) {
     // Check all 3 body columns (left edge, center, right edge) — matching
     // try_move_horizontal's footprint — so a move that lands clear there
     // can't be snapped sideways into terrain at an edge column.
-    let x_l = x - (SOLDIER_HALF_W - 1);
-    let x_r = x + (SOLDIER_HALF_W - 1);
+    let x_l = x - SOLDIER_HALF_W as i32;
+    let x_r = x + SOLDIER_HALF_W as i32;
     let any_solid = |yy: i32| {
         game.terrain.is_solid(x_l, yy) || game.terrain.is_solid(x, yy) || game.terrain.is_solid(x_r, yy)
     };
@@ -890,7 +890,7 @@ pub fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
     // vertical walls beside the soldier, not ground beneath it. Without this
     // guard, pressing against a wall makes is_on_ground return true and
     // spamming jump ratchets the soldier upward.
-    [x - (SOLDIER_HALF_W - 1), x, x + (SOLDIER_HALF_W - 1)].iter().any(|&xc| {
+    [x - SOLDIER_HALF_W as i32, x, x + SOLDIER_HALF_W as i32].iter().any(|&xc| {
         if game.terrain.is_solid(xc, y) { return false; }
         game.terrain.is_blocked(xc, y + 1)
             || game.terrain.is_blocked(xc, y + 2)
@@ -907,7 +907,7 @@ pub fn is_on_ground_lenient(game: &GameState, ti: usize, si: usize) -> bool {
     let s = &game.teams[ti].soldiers[si];
     let x = s.pos.x as i32;
     let y = s.pos.y as i32;
-    [x - (SOLDIER_HALF_W - 1), x, x + (SOLDIER_HALF_W - 1)].iter().any(|&xc| {
+    [x - SOLDIER_HALF_W as i32, x, x + SOLDIER_HALF_W as i32].iter().any(|&xc| {
         (1..=5).any(|dy| game.terrain.is_blocked(xc, y + dy))
     })
 }
@@ -920,8 +920,8 @@ pub fn jump_unstick_lift(game: &GameState, ti: usize, si: usize) -> f32 {
     use crate::renderer::draw_sprites::{SOLDIER_H, SOLDIER_HALF_W};
     let x = game.teams[ti].soldiers[si].pos.x as i32;
     let head = game.teams[ti].soldiers[si].pos.y as i32 - SOLDIER_H as i32;
-    let x_l = x - (SOLDIER_HALF_W - 1);
-    let x_r = x + (SOLDIER_HALF_W - 1);
+    let x_l = x - SOLDIER_HALF_W as i32;
+    let x_r = x + SOLDIER_HALF_W as i32;
     let mut lift = 0.0;
     for k in 1..=2 {
         if game.terrain.is_solid(x_l, head - k)
@@ -944,8 +944,8 @@ pub fn jump_unstick_lift(game: &GameState, ti: usize, si: usize) -> f32 {
 fn land_on_surface(terrain: &crate::world::Terrain, cx: f32, cy: f32) -> i32 {
     use crate::renderer::draw_sprites::SOLDIER_HALF_W;
     let ix = cx as i32;
-    let ix_l = ix - (SOLDIER_HALF_W - 1);
-    let ix_r = ix + (SOLDIER_HALF_W - 1);
+    let ix_l = ix - SOLDIER_HALF_W as i32;
+    let ix_r = ix + SOLDIER_HALF_W as i32;
     let fy = cy as i32;
     // Check all 3 body columns (left edge, center, right edge) — matching
     // try_move_horizontal's footprint — so landing can't embed an edge column.
@@ -4702,8 +4702,8 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         cy += sy_;
                         let ix = cx as i32;
                         let iy = cy as i32;
-                        let ix_l = ix - (crate::renderer::draw_sprites::SOLDIER_HALF_W - 1);
-                        let ix_r = ix + (crate::renderer::draw_sprites::SOLDIER_HALF_W - 1);
+                        let ix_l = ix - crate::renderer::draw_sprites::SOLDIER_HALF_W as i32;
+                        let ix_r = ix + crate::renderer::draw_sprites::SOLDIER_HALF_W as i32;
                         let terrain_hit = (0..=crate::renderer::draw_sprites::SOLDIER_H)
                             .any(|h| game.terrain.is_blocked(ix_l, iy - h)
                                 || game.terrain.is_blocked(ix,   iy - h)
@@ -5153,9 +5153,9 @@ pub fn push_active_soldier_out(game: &mut GameState) {
                 let ix = new_x as i32;
                 let iy = ay as i32;
                 let terrain_clear = (0..=SOLDIER_H).all(|h|
-                    !game.terrain.is_blocked(ix - (SOLDIER_HALF_W - 1), iy - h)
+                    !game.terrain.is_blocked(ix - SOLDIER_HALF_W as i32, iy - h)
                     && !game.terrain.is_blocked(ix, iy - h)
-                    && !game.terrain.is_blocked(ix + (SOLDIER_HALF_W - 1), iy - h));
+                    && !game.terrain.is_blocked(ix + SOLDIER_HALF_W as i32, iy - h));
                 if terrain_clear {
                     game.teams[active_ti].soldiers[active_si].pos.x = new_x;
                 }

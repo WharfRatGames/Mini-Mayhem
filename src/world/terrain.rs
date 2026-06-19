@@ -543,134 +543,111 @@ impl Terrain {
                 }
             }
 
-            // B — Two horizontal corridors at different depths for multi-level caves
-            let upper_y = SKY_FLOOR + 55 + (lcg(&mut rng) % 25) as i32;  // y≈185-210 (upper level)
-            let lower_y = SKY_FLOOR + 130 + (lcg(&mut rng) % 40) as i32; // y≈260-300 (lower level)
-            // Upper corridor: fewer, wider segments for a broad passage feel
-            {
-                let n_seg = 24usize;
-                let seg_w = WORLD_W as i32 / n_seg as i32;
-                let mut prev_x = 0i32;
-                let mut prev_y = upper_y;
-                for i in 1..=n_seg {
-                    let nx = i as i32 * seg_w;
-                    let ny_off = (lcg(&mut rng) % 30) as i32 - 15;
-                    let ny = (upper_y + ny_off).clamp(SKY_FLOOR + 35, upper_y + 30);
-                    let r = 18 + (lcg(&mut rng) % 10) as i32;
-                    dig_tunnel(&mut terrain, prev_x, prev_y, nx, ny, r);
-                    prev_x = nx;
-                    prev_y = ny;
+            // B — Organic noise seeding (Worms-style). Carve air where a layered
+            // OpenSimplex field falls below a threshold, biased into 2–3 stacked
+            // horizontal layers so the result has multiple vertical levels rather
+            // than one blob. Cellular automata (step C) then rounds it into caverns,
+            // pillars and overhangs.
+            let t_air = rnd(&mut rng, 0.40, 0.05);                 // ~0.40–0.45 air threshold (solid-dominant rock)
+            let fx = 6.0 + (lcg(&mut rng) % 5) as f64;             // 6–10 horizontal cycles
+            let fy = 5.0 + (lcg(&mut rng) % 4) as f64;             // 5–8 vertical cycles
+            let layers = 2.0 + (lcg(&mut rng) % 2) as f64;         // 2–3 stacked levels
+            const CONTRAST: f64 = 2.0;                             // expand noise spread → clean chambers/tunnels
+            let band_span = (CAVE_FLOOR - SKY_FLOOR) as f64;
+            for y in SKY_FLOOR..CAVE_FLOOR {
+                let ny = y as f64 / WORLD_H as f64;
+                let band = (y - SKY_FLOOR) as f64 / band_span;     // 0 at ceiling → 1 at floor
+                for x in 6..WORLD_W as i32 - 6 {                    // keep a solid edge guard
+                    let nx = x as f64 / WORLD_W as f64;
+                    // 3-octave FBM from cave_a + a low-freq cave_b warp octave.
+                    let mut v = 0.0f64;
+                    let mut amp = 1.0f64;
+                    let mut fr = 1.0f64;
+                    let mut norm = 0.0f64;
+                    for _ in 0..3 {
+                        v += cave_a.get([nx * fx * fr, ny * fy * fr]) * amp;
+                        norm += amp;
+                        amp *= 0.5;
+                        fr *= 2.0;
+                    }
+                    v += cave_b.get([nx * 1.7, ny * 3.0]) * 0.4;
+                    norm += 0.4;
+                    let mut d = (v / norm + 1.0) * 0.5;             // normalize to ~[0,1]
+                    // Contrast-stretch so the field spans the full range — this is what
+                    // turns the noise into distinct caverns, pillars and overhangs
+                    // rather than a flat sheet hovering near the threshold.
+                    d = ((d - 0.5) * CONTRAST + 0.5).clamp(0.0, 1.0);
+                    // Vertical-layering as a SUBTLE threshold nudge only: air gathers a
+                    // little more toward band centers and solid toward band edges
+                    // (floors/ceilings), but noise still dictates the actual shapes.
+                    let layer = (band * layers * std::f64::consts::PI).sin().abs(); // 0 edges → 1 centers
+                    let local_thresh = t_air + (layer - 0.5) * 0.18;
+                    if d < local_thresh {
+                        terrain.set_solid(x, y, false);
+                    }
                 }
             }
-            // Lower corridor: narrower, more winding for tight cave feel
-            {
-                let n_seg = 32usize;
-                let seg_w = WORLD_W as i32 / n_seg as i32;
-                let mut prev_x = 0i32;
-                let mut prev_y = lower_y;
-                for i in 1..=n_seg {
-                    let nx = i as i32 * seg_w;
-                    let ny_off = (lcg(&mut rng) % 40) as i32 - 20;
-                    let ny = (lower_y + ny_off).clamp(upper_y + 40, CAVE_FLOOR - 35);
-                    let r = 14 + (lcg(&mut rng) % 10) as i32;
-                    dig_tunnel(&mut terrain, prev_x, prev_y, nx, ny, r);
-                    prev_x = nx;
-                    prev_y = ny;
+
+            // C — Cellular automata (Moore/8-neighbour) for rounded WA cave walls.
+            // Rows outside the rock band count as solid so the sky crust / base
+            // aren't eroded away. 3–4 passes round the noise field into smooth
+            // caverns, leaving freestanding pillars where cells stay locally dense.
+            let ca_passes = 3 + (lcg(&mut rng) % 2);
+            for _ in 0..ca_passes {
+                let snap = terrain.solid.clone();
+                for y in SKY_FLOOR + 1..CAVE_FLOOR - 1 {
+                    for x in 1..WORLD_W as i32 - 1 {
+                        let mut solid_n = 0;
+                        for dy in -1..=1 {
+                            for dx in -1..=1 {
+                                if dx == 0 && dy == 0 { continue; }
+                                let yy = y + dy;
+                                let s = if yy < SKY_FLOOR || yy >= CAVE_FLOOR {
+                                    true // crust outside the band
+                                } else {
+                                    snap[world_index((x + dx) as u32, yy as u32)]
+                                };
+                                if s { solid_n += 1; }
+                            }
+                        }
+                        terrain.set_solid(x, y, solid_n >= 5);
+                    }
                 }
             }
 
-            // C — Large chambers: some off the upper corridor, some off the lower
-            let n_chambers = 6 + (lcg(&mut rng) % 4) as usize;
-            let mut chamber_pts: Vec<(i32, i32)> = Vec::with_capacity(n_chambers);
-            for i in 0..n_chambers {
-                let cx = 120 + (lcg(&mut rng) % (WORLD_W as u64 - 240)) as i32;
-                // Alternate chambers between upper and lower levels
-                let base_y = if i % 2 == 0 { upper_y } else { lower_y };
-                let cy_off = (lcg(&mut rng) % 30) as i32 - 15;
-                let cy = (base_y + cy_off).clamp(SKY_FLOOR + 45, CAVE_FLOOR - 45);
-                let rx = 60 + (lcg(&mut rng) % 60) as i32;   // 60-120
-                let ry = 30 + (lcg(&mut rng) % 40) as i32;   // 30-70
-                carve_ellipse(&mut terrain, cx, cy, rx, ry);
-                // Connect to nearest corridor level
-                dig_tunnel(&mut terrain, cx, cy, cx, base_y, 12);
-                chamber_pts.push((cx, cy));
+            // C.5 — Air dilation: widen all air passages so soldiers (14px wide) can
+            // traverse them. Two passes of Moore-neighborhood dilation — each pass
+            // expands existing air by 1px on all sides, only within the rock band.
+            for _ in 0..2 {
+                let snap = terrain.solid.clone();
+                for y in SKY_FLOOR + 1..CAVE_FLOOR - 1 {
+                    for x in 1..WORLD_W as i32 - 1 {
+                        if !snap[world_index(x as u32, y as u32)] { continue; }
+                        let has_air_neighbor = (-1i32..=1).any(|dy| {
+                            let yy = y + dy;
+                            if yy < SKY_FLOOR || yy >= CAVE_FLOOR { return false; }
+                            (-1i32..=1).any(|dx| {
+                                if dx == 0 && dy == 0 { return false; }
+                                let xx = x + dx;
+                                if xx < 0 || xx >= WORLD_W as i32 { return false; }
+                                !snap[world_index(xx as u32, yy as u32)]
+                            })
+                        });
+                        if has_air_neighbor { terrain.set_solid(x, y, false); }
+                    }
+                }
             }
 
-            // D — Vertical connectors between upper and lower corridors
-            let n_connect = 3 + (lcg(&mut rng) % 3) as usize;
-            for _ in 0..n_connect {
-                let vx = 200 + (lcg(&mut rng) % (WORLD_W as u64 - 400)) as i32;
-                let drift = (lcg(&mut rng) % 40) as i32 - 20;
-                let r = 9 + (lcg(&mut rng) % 6) as i32;
-                dig_tunnel(&mut terrain, vx, upper_y, vx + drift, lower_y, r);
-            }
-
-            // E — Dead-end horizontal tunnels for exploration variety
-            let n_branch = 4 + (lcg(&mut rng) % 4) as usize;
-            for _ in 0..n_branch {
-                let sx = 80 + (lcg(&mut rng) % (WORLD_W as u64 - 160)) as i32;
-                let base_y = if lcg(&mut rng) % 2 == 0 { upper_y } else { lower_y };
-                let sy = base_y + (lcg(&mut rng) % 20) as i32 - 10;
-                let dir: i32 = if lcg(&mut rng) % 2 == 0 { 1 } else { -1 };
-                let len = 100 + (lcg(&mut rng) % 200) as i32;
-                let ex = (sx + dir * len).clamp(40, WORLD_W as i32 - 40);
-                let ey = (sy + (lcg(&mut rng) % 40) as i32 - 20).clamp(SKY_FLOOR + 20, CAVE_FLOOR - 20);
-                let r = 8 + (lcg(&mut rng) % 8) as i32;
-                dig_tunnel(&mut terrain, sx, sy, ex, ey, r);
-            }
-
-            // F — Vertical entry shafts from sky down into upper corridor
-            let n_shafts = 4 + (lcg(&mut rng) % 3) as usize;
+            // D — Sky entry shafts: vertical tunnels from the rock ceiling into the
+            // upper third. Guarantee surface-spawn candidates and air→sky links so
+            // soldiers can rope in/out of the cave system.
+            let n_shafts = 3 + (lcg(&mut rng) % 3) as usize;
+            let upper_third = SKY_FLOOR + (CAVE_FLOOR - SKY_FLOOR) / 3;
             for _ in 0..n_shafts {
                 let sx = 100 + (lcg(&mut rng) % (WORLD_W as u64 - 200)) as i32;
                 let drift = (lcg(&mut rng) % 30) as i32 - 15;
                 let shaft_r = 8 + (lcg(&mut rng) % 5) as i32;
-                dig_tunnel(&mut terrain, sx, SKY_FLOOR, sx + drift, upper_y, shaft_r);
-            }
-
-            // F — Noise edge erosion: textures cave walls organically
-            {
-                let snap = terrain.solid.clone();
-                for y in SKY_FLOOR as u32..CAVE_FLOOR as u32 {
-                    let ny = y as f64 / WORLD_H as f64;
-                    for x in 0..WORLD_W {
-                        let idx = world_index(x, y);
-                        if !snap[idx] { continue; } // already air
-                        let nx = x as f64 / WORLD_W as f64;
-                        // Count air neighbors
-                        let air_neighbors = [(0i32,-1),(0,1),(-1,0),(1,0)].iter()
-                            .filter(|(dx,dy)| {
-                                let nx2 = x as i32 + dx;
-                                let ny2 = y as i32 + dy;
-                                nx2 >= 0 && nx2 < WORLD_W as i32 && ny2 >= 0 && ny2 < WATER_Y as i32
-                                && !snap[world_index(nx2 as u32, ny2 as u32)]
-                            })
-                            .count();
-                        if air_neighbors >= 1 {
-                            let c = cave_a.get([nx * 9.0, ny * 8.0]);
-                            if c.abs() < 0.20 {
-                                terrain.set_solid(x as i32, y as i32, false);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // G — Cellular automata: 2 passes to round jagged noise-carved edges
-            for _ in 0..2 {
-                let snap = terrain.solid.clone();
-                for y in SKY_FLOOR as u32 + 1..CAVE_FLOOR as u32 - 1 {
-                    for x in 1..WORLD_W - 1 {
-                        let idx = world_index(x, y);
-                        if !snap[idx] { continue; } // skip air
-                        let solid_neighbors = [(0i32,-1),(0,1),(-1,0),(1,0)].iter()
-                            .filter(|(dx,dy)| snap[world_index((x as i32+dx) as u32, (y as i32+dy) as u32)])
-                            .count();
-                        if solid_neighbors <= 1 {
-                            terrain.set_solid(x as i32, y as i32, false);
-                        }
-                    }
-                }
+                dig_tunnel(&mut terrain, sx, SKY_FLOOR, sx + drift, upper_third, shaft_r);
             }
 
             // Water-margin erosion (same as other archetypes): taper rock near world edges
@@ -683,6 +660,70 @@ impl Terrain {
                         let smooth_t = t * t * (3.0 - 2.0 * t);
                         if smooth_t < 0.55 {
                             terrain.set_solid(x as i32, y as i32, false);
+                        }
+                    }
+                }
+            }
+
+            // E — Air-region connectivity guarantee. Flood-fill every air pocket in
+            // the rock band; keep the largest as the main traversable region. Small
+            // sealed pockets are filled solid (no soldier stranded inside); larger
+            // isolated pockets are tunnel-connected to the main region so every
+            // spawnable cave floor is reachable. Deterministic: index-based flood
+            // fill in scan order, no HashSet.
+            {
+                const POCKET_MIN: usize = 400;
+                let mut visited = vec![false; WORLD_PIXELS];
+                let mut comps: Vec<Vec<(i32, i32)>> = Vec::new();
+                let mut stack: Vec<(i32, i32)> = Vec::new();
+                for sy in SKY_FLOOR..CAVE_FLOOR {
+                    for sx in 0..WORLD_W as i32 {
+                        let i0 = world_index(sx as u32, sy as u32);
+                        if terrain.solid[i0] || visited[i0] { continue; }
+                        stack.clear();
+                        let mut comp: Vec<(i32, i32)> = Vec::new();
+                        stack.push((sx, sy));
+                        visited[i0] = true;
+                        while let Some((cxp, cyp)) = stack.pop() {
+                            comp.push((cxp, cyp));
+                            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                                let nxp = cxp + dx;
+                                let nyp = cyp + dy;
+                                if nxp < 0 || nxp >= WORLD_W as i32 { continue; }
+                                if nyp < SKY_FLOOR || nyp >= CAVE_FLOOR { continue; }
+                                let j = world_index(nxp as u32, nyp as u32);
+                                if !terrain.solid[j] && !visited[j] {
+                                    visited[j] = true;
+                                    stack.push((nxp, nyp));
+                                }
+                            }
+                        }
+                        comps.push(comp);
+                    }
+                }
+                if !comps.is_empty() {
+                    let main_idx = (0..comps.len())
+                        .max_by_key(|&i| comps[i].len())
+                        .unwrap();
+                    for i in 0..comps.len() {
+                        if i == main_idx { continue; }
+                        if comps[i].len() < POCKET_MIN {
+                            for (cxp, cyp) in &comps[i] { terrain.set_solid(*cxp, *cyp, true); }
+                        } else {
+                            // Tunnel from the pocket centroid to the nearest main cell.
+                            let (mut sxs, mut sys) = (0i64, 0i64);
+                            for (cxp, cyp) in &comps[i] { sxs += *cxp as i64; sys += *cyp as i64; }
+                            let n = comps[i].len() as i64;
+                            let pcx = (sxs / n) as i32;
+                            let pcy = (sys / n) as i32;
+                            let mut best = comps[main_idx][0];
+                            let mut best_d = i64::MAX;
+                            for &(mxp, myp) in &comps[main_idx] {
+                                let dd = (mxp - pcx) as i64 * (mxp - pcx) as i64
+                                    + (myp - pcy) as i64 * (myp - pcy) as i64;
+                                if dd < best_d { best_d = dd; best = (mxp, myp); }
+                            }
+                            dig_tunnel(&mut terrain, pcx, pcy, best.0, best.1, 10);
                         }
                     }
                 }
@@ -1031,7 +1072,7 @@ impl Terrain {
                 if let Some(fy) = self.standable_foot_y(x) {
                     surface_cands.push((x, fy));
                 }
-                if let Some(fy) = self.standable_cave_foot_simple(x) {
+                if let Some(fy) = self.standable_cave_foot_y(x) {
                     cave_cands.push((x, fy));
                 }
                 x += 1;
@@ -1201,8 +1242,8 @@ impl Terrain {
         const CLEAR_H: i32 = 24; // soldier body + clearance
         const SKY_H:   i32 = 100;
         if x < 0 || x >= WORLD_W as i32 { return None; }
-        let x_l = x - (SOLDIER_HALF_W - 1);
-        let x_r = x + (SOLDIER_HALF_W - 1);
+        let x_l = x - SOLDIER_HALF_W as i32;
+        let x_r = x + SOLDIER_HALF_W as i32;
         let ok = |foot_y: i32| -> bool {
             // Body must fit in-world; high islands are fine (their open sky is
             // verified by the all-air scan below, not by a hard Y floor).
@@ -1235,8 +1276,8 @@ impl Terrain {
         const HEAD_H: i32 = 26;
         const CEIL_MAX: i32 = 220;
         if x < 0 || x >= WORLD_W as i32 { return None; }
-        let x_l = x - (SOLDIER_HALF_W - 1);
-        let x_r = x + (SOLDIER_HALF_W - 1);
+        let x_l = x - SOLDIER_HALF_W as i32;
+        let x_r = x + SOLDIER_HALF_W as i32;
         let ok = |foot_y: i32| -> bool {
             if foot_y < HEAD_H || foot_y >= WATER_Y as i32 { return false; }
             if !self.is_solid(x, foot_y + 1) { return false; }
@@ -1258,8 +1299,8 @@ impl Terrain {
         const HEAD_H: i32 = 26;   // body + small clearance above the foot
         const CEIL_MAX: i32 = 220; // a ceiling must sit within this height to count as a cave
         if x < 0 || x >= WORLD_W as i32 { return None; }
-        let x_l = x - (SOLDIER_HALF_W - 1);
-        let x_r = x + (SOLDIER_HALF_W - 1);
+        let x_l = x - SOLDIER_HALF_W as i32;
+        let x_r = x + SOLDIER_HALF_W as i32;
         let ok = |foot_y: i32| -> bool {
             if foot_y < HEAD_H || foot_y >= WATER_Y as i32 { return false; }
             if !self.is_solid(x, foot_y + 1) { return false; }
@@ -1300,7 +1341,7 @@ impl Terrain {
         const OPEN_CLEAR: i32 = 220; // clear space above a floor = "open to sky"
         const MAX_VISITED: usize = 300;
 
-        let half = (SOLDIER_HALF_W - 1) as i32;
+        let half = SOLDIER_HALF_W as i32;
         let clear_col = |cx: i32, y0: i32, y1: i32| -> bool {
             let (lo, hi) = (y0.min(y1), y0.max(y1));
             (lo..=hi).all(|y| !self.is_solid(cx, y.max(0)))
