@@ -191,7 +191,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     // higher or lower than the standard anchor row.
     let hat_dy: i32 = match hat_id {
         5  => 5,   // Fez: art sits in the top of sprite, nudge down
-        15 => 6,   // Viking Helm: drop sprite to cover head
+        15 => 11,  // Viking Helm: drop sprite to sit as the head, covering neck join
         28 => 9,   // Luchador: center sprite on face, not above it
         _  => 0,
     };
