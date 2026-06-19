@@ -2948,24 +2948,24 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 5, icon_cy + 6, 2, 6, mmd);
             }
             WeaponKind::Uzi => {
-                // Pixel-art Uzi: slim single barrel, compact receiver, short grip
-                let mdk = Bgra::new(60, 60, 60);
-                let mmd = Bgra::new(130, 130, 140);
-                let mhi = Bgra::new(200, 205, 215);
-                // Single barrel (slimmer than minigun)
-                buf.fill_rect(icon_cx - 2, icon_cy - 1, 16, 3, mdk);
-                buf.fill_rect(icon_cx - 1, icon_cy,     14, 1, mmd);
-                buf.fill_rect(icon_cx - 1, icon_cy - 1, 14, 1, mhi);
-                // Single barrel tip
-                buf.fill_circle(icon_cx + 14, icon_cy, 2, mdk);
-                buf.fill_circle(icon_cx + 14, icon_cy, 1, mmd);
-                // Compact receiver box
-                buf.fill_rect(icon_cx - 8, icon_cy - 4, 7, 9, mdk);
-                buf.fill_rect(icon_cx - 7, icon_cy - 3, 5, 7, mmd);
-                buf.fill_rect(icon_cx - 7, icon_cy - 3, 5, 1, mhi);
-                // Short grip
-                buf.fill_rect(icon_cx - 5, icon_cy + 4, 3, 6, mdk);
-                buf.fill_rect(icon_cx - 4, icon_cy + 5, 2, 4, mmd);
+                // Pixel-art Mac-10: boxy receiver, stubby flush barrel, long box mag
+                let mdk = Bgra::new(50, 50, 55);
+                let mmd = Bgra::new(110, 112, 120);
+                let mhi = Bgra::new(185, 190, 200);
+                // Boxy receiver (wide and squat, Mac-10 hallmark)
+                buf.fill_rect(icon_cx - 6, icon_cy - 4, 14, 9, mdk);
+                buf.fill_rect(icon_cx - 5, icon_cy - 3, 12, 7, mmd);
+                buf.fill_rect(icon_cx - 5, icon_cy - 3, 12, 1, mhi);
+                // Short stubby barrel (barely extends past receiver)
+                buf.fill_rect(icon_cx + 8,  icon_cy - 1, 5, 3, mdk);
+                buf.fill_rect(icon_cx + 9,  icon_cy,     4, 1, mmd);
+                // Wire stock stub on back (folded, just a nub)
+                buf.fill_rect(icon_cx - 9, icon_cy - 2, 3, 5, mdk);
+                buf.fill_rect(icon_cx - 8, icon_cy - 1, 1, 3, mmd);
+                // Long box magazine feeding from bottom center
+                buf.fill_rect(icon_cx - 3, icon_cy + 5,  6, 9, mdk);
+                buf.fill_rect(icon_cx - 2, icon_cy + 6,  4, 7, mmd);
+                buf.fill_rect(icon_cx - 2, icon_cy + 6,  4, 1, mhi);
             }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
@@ -3053,7 +3053,7 @@ pub fn draw_weapon_menu(
             WeaponKind::AirStrike      => "AIR STRIKE",
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
             WeaponKind::Minigun         => "MINIGUN",
-            WeaponKind::Uzi             => "UZI",
+            WeaponKind::Uzi             => "MAC-10",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };

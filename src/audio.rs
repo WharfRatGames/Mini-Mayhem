@@ -58,7 +58,7 @@ pub fn play_wet_death()         { _play("wet.wav"); }
 pub fn play_death_water()       { _play_death_water(); }
 pub fn play_holy_hand_grenade() { _play_once("hallelujah.wav"); }
 pub fn play_minigun()           { _play_once("minigun.wav"); } // deploy/assets/sfx/hallelujah.wav required
-pub fn play_uzi()               { _play_once("uzi.wav"); }
+pub fn play_uzi()               { _play_once("mac10.wav"); }
 
 /// Identifies a sound effect so it can be recorded during simulation and
 /// shipped to the live client (which runs no simulation of its own and would
@@ -270,7 +270,7 @@ mod imp {
                 try_load(&SMASH,       &dir, "smash.wav");
                 try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
                 try_load(&MINIGUN,     &dir, "minigun.wav");
-                try_load(&UZI,         &dir, "uzi.wav");
+                try_load(&UZI,         &dir, "mac10.wav");
                 let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
                     .into_iter().flatten().flatten()
                     .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
@@ -498,7 +498,7 @@ mod imp {
             "smash.wav"             => SMASH.get().cloned(),
             "hallelujah.wav"        => HALLELUJAH.get().cloned(),
             "minigun.wav"           => MINIGUN.get().cloned(),
-            "uzi.wav"               => UZI.get().or_else(|| MINIGUN.get()).cloned(),
+            "mac10.wav"             => UZI.get().or_else(|| MINIGUN.get()).cloned(),
             _ => None,
         }
     }
