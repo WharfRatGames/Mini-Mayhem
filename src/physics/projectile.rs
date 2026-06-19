@@ -34,6 +34,7 @@ pub enum WeaponKind {
     BlackHoleBomb,
     PlasmaTorch,
     Garcia,
+    Uzi,
 }
 
 impl WeaponKind {
@@ -49,6 +50,7 @@ impl WeaponKind {
             Self::HolyHandGrenade => 80.0,
             Self::AirStrike      => 45.0,
             Self::Minigun        => 8.0,
+            Self::Uzi            => 6.0,
             Self::BaseballBat    => 0.0,    // knockback only, no blast
             Self::FreezeGrenade  => 35.0,
             Self::Earthquake     => 0.0,    // world shake, no crater
@@ -80,6 +82,7 @@ impl WeaponKind {
             Self::HolyHandGrenade => 100,
             Self::AirStrike      => 50,
             Self::Minigun        => 12,   // per bullet
+            Self::Uzi            => 8,    // per bullet
             Self::BaseballBat    => 25,
             Self::FreezeGrenade  => 10,
             Self::Earthquake     => 20,
@@ -111,6 +114,7 @@ impl WeaponKind {
             Self::HolyHandGrenade => 10.0,
             Self::AirStrike      => 14.0,
             Self::Minigun        => 2.0,
+            Self::Uzi            => 1.5,
             Self::BaseballBat    => 12.0,
             Self::HomingMissile  => 10.0,
             Self::ConcreteDonkey => 20.0,
@@ -209,6 +213,7 @@ impl WeaponKind {
             Self::MineLayer        => 22,
             Self::ConcreteDonkey   => 23,
             Self::SuperSheep       => 24,
+            Self::Uzi              => 25,
         }
     }
 
@@ -238,6 +243,7 @@ impl WeaponKind {
             22 => Self::MineLayer,
             23 => Self::ConcreteDonkey,
             24 => Self::SuperSheep,
+            25 => Self::Uzi,
             _  => Self::Bazooka,
         }
     }
@@ -257,7 +263,7 @@ impl WeaponKind {
             WeaponKind::DeathExplosion | WeaponKind::HolyHandGrenade | WeaponKind::Minigun |
             WeaponKind::FreezeGrenade | WeaponKind::Earthquake | WeaponKind::Drill |
             WeaponKind::HomingMissile | WeaponKind::MineLayer | WeaponKind::ConcreteDonkey |
-            WeaponKind::SuperSheep => k.to_net_u8()
+            WeaponKind::SuperSheep | WeaponKind::Uzi => k.to_net_u8()
         }
     }
 
@@ -583,7 +589,7 @@ mod tests {
             BananaBomb, BaseballBat, Revolver, NinjaRope,
             Blasthive, BlackHoleBomb, PlasmaTorch, Garcia, AirStrike,
             DeathExplosion, HolyHandGrenade, Minigun, FreezeGrenade,
-            Earthquake, Drill, HomingMissile, MineLayer, ConcreteDonkey, SuperSheep,
+            Earthquake, Drill, HomingMissile, MineLayer, ConcreteDonkey, SuperSheep, Uzi,
         ];
         for kind in all {
             assert_eq!(WeaponKind::from_net_u8(kind.to_net_u8()), kind,

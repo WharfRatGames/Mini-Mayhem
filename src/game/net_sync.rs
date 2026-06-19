@@ -491,7 +491,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         terrain: _, crate_timer: _, map_seed: _, is_test: _, is_multiplayer: _,
         scrap_earned: _, explosions: _, active_worm_hit: _, retreat_locked: _,
         damage_focus: _, server_fire_grace: _, shotgun_shots_left: _,
-        revolver_shots_left: _, minigun_shots_left: _, minigun_fire_timer: _, bullet_trails: _, rope_session: _,
+        revolver_shots_left: _, minigun_shots_left: _, minigun_fire_timer: _, uzi_shots_left: _, uzi_fire_timer: _, bullet_trails: _, rope_session: _,
         rope_used_this_turn: _, tnt_placed: _, crate_watch_ticks: _,
         smoke_particles: _, fx: _, pending_deaths: _,
         meteor_chain: _, // not synced: transient per-tick flag, reset each tick

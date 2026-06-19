@@ -310,6 +310,8 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             game.revolver_shots_left = 0;
             game.minigun_shots_left  = 0;
             game.minigun_fire_timer  = 0;
+            game.uzi_shots_left      = 0;
+            game.uzi_fire_timer      = 0;
             game.rope                = None;
             game.rope_session        = false;
             game.tnt_placed          = false;
@@ -626,11 +628,12 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
 
     let in_revolver  = game.revolver_shots_left > 0;
     let in_minigun   = game.minigun_shots_left > 0;
+    let in_uzi       = game.uzi_shots_left > 0;
     let in_rope      = game.rope_session;
     let in_torch     = game.plasma_torch.is_some();
     let in_garcia    = game.garcia.is_some();
     let in_airstrike = game.airstrike.is_some();
-    if !has_fired || in_revolver || in_minigun || in_rope || in_torch || in_garcia || in_airstrike {
+    if !has_fired || in_revolver || in_minigun || in_uzi || in_rope || in_torch || in_garcia || in_airstrike {
         if in_torch {
             process_fire(game, input, muzzle_override); // direction changes only while torching
             step_plasma_torch(game);
@@ -978,6 +981,7 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
             && game.shotgun_shots_left == 0
             && game.revolver_shots_left == 0
             && game.minigun_shots_left == 0
+            && game.uzi_shots_left == 0
         {
             game.weapon_menu_cursor = game.teams[ti].selected_weapon;
             game.weapon_menu_open   = true;
@@ -1203,6 +1207,19 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
+    // Uzi auto-burst: fires one bullet every 3 ticks (20 shots = 2.0 seconds at 30 Hz).
+    if game.uzi_shots_left > 0 {
+        if game.uzi_fire_timer == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            fire_uzi_shot(game, ti, si, muzzle_override);
+            game.uzi_fire_timer = 3;
+        } else {
+            game.uzi_fire_timer -= 1;
+        }
+        return;
+    }
+
     // Landmine: instant placement on A press — starts arming, turn ends.
     if weapon == WeaponKind::Landmine {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
@@ -1275,6 +1292,21 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             game.minigun_fire_timer = 0;
             game.emit_sound(crate::audio::Sfx::Minigun);
             fire_minigun_shot(game, ti, si, muzzle_override);
+        }
+        return;
+    }
+
+    // Uzi: press A to start the 20-shot auto-burst.
+    if weapon == WeaponKind::Uzi {
+        if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            if !game.teams[ti].consume_weapon() { return; }
+            game.teams[ti].prune_empty_weapons();
+            game.uzi_shots_left = 20;
+            game.uzi_fire_timer = 0;
+            game.emit_sound(crate::audio::Sfx::Uzi);
+            fire_uzi_shot(game, ti, si, muzzle_override);
         }
         return;
     }
@@ -1835,9 +1867,11 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
             let iy = py as i32;
             if ix < 0 || iy < 0 { break; }
             if game.terrain.is_solid(ix, iy) {
-                let crater = crate::world::Crater::new(px, py, 4.0);
-                crater.carve(&mut game.terrain);
-                game.crater_log.push((px, py, 4.0));
+                if !hitscan_hit_crate(game, px, py) {
+                    let crater = crate::world::Crater::new(px, py, 4.0);
+                    crater.carve(&mut game.terrain);
+                    game.crater_log.push((px, py, 4.0));
+                }
                 break;
             }
             // Barrel direct hit
@@ -1932,6 +1966,7 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
     game.teams[ti].soldiers[si].state = shooter_state;
     game.teams[ti].soldiers[si].fall.begin_fall(y0);
 
+    game.flush_crate_damage();
     // Decrement; end turn when all shots exhausted
     game.shotgun_shots_left -= 1;
     if game.shotgun_shots_left == 0 {
@@ -2063,6 +2098,19 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
 }
 
 /// Hitscan revolver shot: ray-march up to 800 px, deal 15 damage + knockback to first soldier hit.
+/// Check if a hitscan ray endpoint is inside a landed crate and damage/destroy it.
+/// Returns true if a crate was hit (ray should stop).
+fn hitscan_hit_crate(game: &mut GameState, rx: f32, ry: f32) -> bool {
+    for crate_ in &mut game.crates {
+        if !crate_.landed { continue; }
+        if (crate_.pos.x - rx).abs() < 12.0 && (crate_.pos.y - ry).abs() < 12.0 {
+            crate_.damage_this_turn = crate_.damage_this_turn.saturating_add(25);
+            return true;
+        }
+    }
+    false
+}
+
 fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Option<(f32, f32)>) {
     game.emit_sound(crate::audio::Sfx::Revolver);
     use crate::world::Vec2;
@@ -2153,12 +2201,14 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
 
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
-        // Ray hit terrain (not off-screen) — nick the surface like a shotgun pellet
-        let crater = crate::world::Crater::new(rx, ry, 3.0);
-        crater.carve(&mut game.terrain);
-        game.crater_log.push((rx, ry, 3.0));
+        if !hitscan_hit_crate(game, rx, ry) {
+            let crater = crate::world::Crater::new(rx, ry, 3.0);
+            crater.carve(&mut game.terrain);
+            game.crater_log.push((rx, ry, 3.0));
+        }
     }
 
+    game.flush_crate_damage();
     game.revolver_shots_left = game.revolver_shots_left.saturating_sub(1);
     if game.revolver_shots_left == 0 {
         game.teams[ti].soldiers[si].has_fired = true;
@@ -2286,15 +2336,17 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
-        let crater = crate::world::Crater::new(rx, ry, 2.0);
-        crater.carve(&mut game.terrain);
-        game.crater_log.push((rx, ry, 2.0));
-        let d = crate::game::state::biome_dirt(game.terrain.archetype);
-        game.emit_fx(crate::renderer::fx::FxEvent::Dig {
-            x: rx, y: ry,
-            dir: -step_x.signum(),
-            col: [d.r, d.g, d.b],
-        });
+        if !hitscan_hit_crate(game, rx, ry) {
+            let crater = crate::world::Crater::new(rx, ry, 2.0);
+            crater.carve(&mut game.terrain);
+            game.crater_log.push((rx, ry, 2.0));
+            let d = crate::game::state::biome_dirt(game.terrain.archetype);
+            game.emit_fx(crate::renderer::fx::FxEvent::Dig {
+                x: rx, y: ry,
+                dir: -step_x.signum(),
+                col: [d.r, d.g, d.b],
+            });
+        }
     }
 
     // Bullet trail visual (client-side, fades in 2 ticks)
@@ -2304,8 +2356,152 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
         2,
     ));
 
+    game.flush_crate_damage();
     game.minigun_shots_left = game.minigun_shots_left.saturating_sub(1);
     if game.minigun_shots_left == 0 {
+        game.teams[ti].soldiers[si].has_fired = true;
+        game.turn.on_fired();
+    }
+}
+
+fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Option<(f32, f32)>) {
+    use crate::world::Vec2;
+    use crate::game::soldier::{DeathCause, SoldierState};
+
+    const MAX_RANGE:         f32 = 450.0;
+    const STEP:              f32 = 3.0;
+    const DAMAGE:            u32 = 3;
+    const KNOCKBACK:         f32 = 2.0;
+    const SPREAD:            f32 = 0.22; // ±12.6° — wider than minigun's ±8°
+    const SHOOTER_RECOIL:    f32 = 0.5;
+    const SHOOTER_RECOIL_VY: f32 = -0.2;
+
+    let fm    = game.teams[ti].soldiers[si].facing as f32;
+    let angle = game.aim.angle;
+
+    let seed = (game.tick as u32)
+        .wrapping_mul(0x9E3779B9)
+        .wrapping_add(game.uzi_shots_left as u32 * 2654435761);
+    let r = seed as f32 / u32::MAX as f32;
+    let spread = (r - 0.5) * 2.0 * SPREAD;
+    let fire_angle = angle + spread;
+
+    let step_x = fire_angle.cos() * fm * STEP;
+    let step_y = -fire_angle.sin() * STEP;
+
+    {
+        let recoil_vx = -fm * SHOOTER_RECOIL;
+        let y0 = game.teams[ti].soldiers[si].pos.y;
+        let shooter_state = match &game.teams[ti].soldiers[si].state {
+            SoldierState::Airborne { vel, spinning } => SoldierState::Airborne {
+                vel: Vec2::new(vel.x + recoil_vx, vel.y + SHOOTER_RECOIL_VY),
+                spinning: *spinning,
+            },
+            _ => SoldierState::Airborne {
+                vel: Vec2::new(recoil_vx, SHOOTER_RECOIL_VY),
+                spinning: false,
+            },
+        };
+        game.teams[ti].soldiers[si].state = shooter_state;
+        game.teams[ti].soldiers[si].fall.begin_fall(y0);
+    }
+
+    let (mut rx, mut ry) = muzzle_override.unwrap_or_else(|| {
+        let x = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 26.0;
+        let y = game.teams[ti].soldiers[si].pos.y - 20.0 - angle.sin() * 26.0;
+        (x, y)
+    });
+    let start_x = rx;
+    let start_y = ry;
+    let steps = (MAX_RANGE / STEP) as u32;
+    let mut hit_ti: Option<usize> = None;
+    let mut hit_si_idx: Option<usize> = None;
+
+    'ray: for _ in 0..steps {
+        rx += step_x;
+        ry += step_y;
+        if rx < 0.0 || rx >= crate::world::WORLD_W as f32 { break; }
+        if ry >= crate::world::WATER_Y as f32 { break; }
+        for barrel in &mut game.barrels {
+            if let super::state::BarrelState::Normal = barrel.state {
+                if (barrel.pos.x - rx).abs() < 8.0 && (barrel.pos.y - ry).abs() < 12.0 {
+                    barrel.state = super::state::BarrelState::Triggered { ticks: 6 };
+                    break 'ray;
+                }
+            }
+        }
+        for mine in &mut game.mines {
+            if mine.state == super::state::MineState::Armed {
+                if (mine.pos.x - rx).abs() < 8.0 && (mine.pos.y - ry).abs() < 8.0 {
+                    mine.state = super::state::MineState::Triggered;
+                    mine.trigger_ticks = 8;
+                    break 'ray;
+                }
+            }
+        }
+        for check_ti in 0..game.teams.len() {
+            for check_si in 0..game.teams[check_ti].soldiers.len() {
+                if check_ti == ti && check_si == si { continue; }
+                if !game.teams[check_ti].soldiers[check_si].is_alive() { continue; }
+                let sx2 = game.teams[check_ti].soldiers[check_si].pos.x;
+                let sy2 = game.teams[check_ti].soldiers[check_si].pos.y;
+                if (rx - sx2).abs() < 10.0
+                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - 2.0
+                    && ry <= sy2 + 4.0
+                {
+                    hit_ti = Some(check_ti);
+                    hit_si_idx = Some(check_si);
+                    break 'ray;
+                }
+            }
+        }
+        if game.terrain.is_solid(rx as i32, ry as i32) { break; }
+    }
+
+    if let (Some(hti), Some(hsi)) = (hit_ti, hit_si_idx) {
+        let dir_x = step_x / STEP;
+        let dir_y = step_y / STEP;
+        let vx = dir_x * KNOCKBACK;
+        let vy = dir_y * KNOCKBACK - 0.5;
+        let s = &mut game.teams[hti].soldiers[hsi];
+        s.death_cause = DeathCause::Explosion;
+        s.kill_weapon = Some(crate::physics::WeaponKind::Uzi);
+        s.take_damage(DAMAGE);
+        if s.is_alive() {
+            let was_grounded = matches!(s.state, SoldierState::Idle | SoldierState::Walking { .. });
+            s.state = match &s.state {
+                SoldierState::Airborne { vel, spinning } => SoldierState::Airborne {
+                    vel: Vec2::new(vel.x + vx, vel.y + vy),
+                    spinning: *spinning,
+                },
+                _ => { if was_grounded { s.fall.begin_fall(s.pos.y); } SoldierState::Airborne { vel: Vec2::new(vx, vy), spinning: false } },
+            };
+        }
+        game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
+    } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
+           && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
+        if !hitscan_hit_crate(game, rx, ry) {
+            let crater = crate::world::Crater::new(rx, ry, 1.5);
+            crater.carve(&mut game.terrain);
+            game.crater_log.push((rx, ry, 1.5));
+            let d = crate::game::state::biome_dirt(game.terrain.archetype);
+            game.emit_fx(crate::renderer::fx::FxEvent::Dig {
+                x: rx, y: ry,
+                dir: -step_x.signum(),
+                col: [d.r, d.g, d.b],
+            });
+        }
+    }
+
+    game.bullet_trails.push((
+        crate::world::WorldPos::new(start_x, start_y),
+        crate::world::WorldPos::new(rx, ry),
+        2,
+    ));
+
+    game.flush_crate_damage();
+    game.uzi_shots_left = game.uzi_shots_left.saturating_sub(1);
+    if game.uzi_shots_left == 0 {
         game.teams[ti].soldiers[si].has_fired = true;
         game.turn.on_fired();
     }
@@ -2735,6 +2931,26 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 6, icon_cy + 5, 4, 8, mdk);
                 buf.fill_rect(icon_cx - 5, icon_cy + 6, 2, 6, mmd);
             }
+            WeaponKind::Uzi => {
+                // Pixel-art Uzi: slim single barrel, compact receiver, short grip
+                let mdk = Bgra::new(60, 60, 60);
+                let mmd = Bgra::new(130, 130, 140);
+                let mhi = Bgra::new(200, 205, 215);
+                // Single barrel (slimmer than minigun)
+                buf.fill_rect(icon_cx - 2, icon_cy - 1, 16, 3, mdk);
+                buf.fill_rect(icon_cx - 1, icon_cy,     14, 1, mmd);
+                buf.fill_rect(icon_cx - 1, icon_cy - 1, 14, 1, mhi);
+                // Single barrel tip
+                buf.fill_circle(icon_cx + 14, icon_cy, 2, mdk);
+                buf.fill_circle(icon_cx + 14, icon_cy, 1, mmd);
+                // Compact receiver box
+                buf.fill_rect(icon_cx - 8, icon_cy - 4, 7, 9, mdk);
+                buf.fill_rect(icon_cx - 7, icon_cy - 3, 5, 7, mmd);
+                buf.fill_rect(icon_cx - 7, icon_cy - 3, 5, 1, mhi);
+                // Short grip
+                buf.fill_rect(icon_cx - 5, icon_cy + 4, 3, 6, mdk);
+                buf.fill_rect(icon_cx - 4, icon_cy + 5, 2, 4, mmd);
+            }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
                 buf.fill_rect(icon_cx - 5, icon_cy - 3, 10, 6, icol);
@@ -2821,6 +3037,7 @@ pub fn draw_weapon_menu(
             WeaponKind::AirStrike      => "AIR STRIKE",
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
             WeaponKind::Minigun         => "MINIGUN",
+            WeaponKind::Uzi             => "UZI",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };
@@ -3079,18 +3296,19 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     SoldierState::Idle =>
                         SoldierAnim::Idle,
                 };
-                let gun_style = if ti == active_ti && si == active_si && game.turn.is_acting() {
+                let (gun_style, held_weapon) = if ti == active_ti && si == active_si && game.turn.is_acting() {
                     match game.active_team_ref().current_weapon() {
-                        WeaponKind::Grenade | WeaponKind::BananaBomb |
-                        WeaponKind::Blasthive | WeaponKind::BlackHoleBomb |
-                        WeaponKind::HolyHandGrenade | WeaponKind::Tnt => 8, // throwable/tnt held in hand
-                        _ => soldier.gun_style_id, // always show chosen cosmetic gun skin
+                        w @ (WeaponKind::Grenade | WeaponKind::BananaBomb |
+                             WeaponKind::Blasthive | WeaponKind::BlackHoleBomb |
+                             WeaponKind::HolyHandGrenade | WeaponKind::Tnt |
+                             WeaponKind::Landmine) => (soldier.gun_style_id, Some(w)),
+                        _ => (soldier.gun_style_id, None),
                     }
                 } else {
-                    soldier.gun_style_id
+                    (soldier.gun_style_id, None)
                 };
                 let muzzle = draw_soldier_skeletal(buf, soldier.pos, team.color_id as usize, soldier.facing, soldier.hp, &anim, aim_angle, soldier.hp > 0,
-                    soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style,
+                    soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style, held_weapon,
                     game.wind.value(), game.tick, soldier.on_fire_ticks);
                 if ti == active_ti && si == active_si {
                     active_muzzle = muzzle;
@@ -3985,6 +4203,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::Blasthive     => "BLASTHIVE",
             WeaponKind::BlackHoleBomb => "BLACK HOLE",
             WeaponKind::Minigun       => "MINIGUN",
+            WeaponKind::Uzi           => "UZI",
             _ => "WEAPON",
         };
         // Small box bottom-left, sized to fit the weapon name + hint
