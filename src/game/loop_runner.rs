@@ -2170,11 +2170,13 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
     use crate::world::Vec2;
     use crate::game::soldier::{DeathCause, SoldierState};
 
-    const MAX_RANGE: f32 = 600.0;
-    const STEP:      f32 = 3.0;
-    const DAMAGE:    u32 = 5;
-    const KNOCKBACK: f32 = 2.0;
-    const SPREAD:    f32 = 0.14; // ±8° in radians
+    const MAX_RANGE:     f32 = 600.0;
+    const STEP:          f32 = 3.0;
+    const DAMAGE:        u32 = 5;
+    const KNOCKBACK:     f32 = 3.5;
+    const SPREAD:        f32 = 0.14; // ±8° in radians
+    const SHOOTER_RECOIL:    f32 = 0.8;
+    const SHOOTER_RECOIL_VY: f32 = -0.3;
 
     let fm    = game.teams[ti].soldiers[si].facing as f32;
     let angle = game.aim.angle;
@@ -2189,6 +2191,24 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
 
     let step_x = fire_angle.cos() * fm * STEP;
     let step_y = -fire_angle.sin() * STEP;
+
+    // Shooter recoil — pushes backward each shot; accumulates across the burst
+    {
+        let recoil_vx = -fm * SHOOTER_RECOIL;
+        let y0 = game.teams[ti].soldiers[si].pos.y;
+        let shooter_state = match &game.teams[ti].soldiers[si].state {
+            SoldierState::Airborne { vel, spinning } => SoldierState::Airborne {
+                vel: Vec2::new(vel.x + recoil_vx, vel.y + SHOOTER_RECOIL_VY),
+                spinning: *spinning,
+            },
+            _ => SoldierState::Airborne {
+                vel: Vec2::new(recoil_vx, SHOOTER_RECOIL_VY),
+                spinning: false,
+            },
+        };
+        game.teams[ti].soldiers[si].state = shooter_state;
+        game.teams[ti].soldiers[si].fall.begin_fall(y0);
+    }
 
     let (mut rx, mut ry) = muzzle_override.unwrap_or_else(|| {
         let x = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 26.0;
@@ -2266,10 +2286,15 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
-        // Tiny terrain nick
         let crater = crate::world::Crater::new(rx, ry, 2.0);
         crater.carve(&mut game.terrain);
         game.crater_log.push((rx, ry, 2.0));
+        let d = crate::game::state::biome_dirt(game.terrain.archetype);
+        game.emit_fx(crate::renderer::fx::FxEvent::Dig {
+            x: rx, y: ry,
+            dir: -step_x.signum(),
+            col: [d.r, d.g, d.b],
+        });
     }
 
     // Bullet trail visual (client-side, fades in 2 ticks)
