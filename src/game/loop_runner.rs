@@ -309,6 +309,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             game.shotgun_shots_left  = 0;
             game.revolver_shots_left = 0;
             game.minigun_shots_left  = 0;
+            game.minigun_fire_timer  = 0;
             game.rope                = None;
             game.rope_session        = false;
             game.tnt_placed          = false;
@@ -1189,12 +1190,15 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
-    // Minigun auto-burst: fires one bullet per tick until shots exhausted.
+    // Minigun auto-burst: fires one bullet every 4 ticks (20 shots ≈ 3 seconds).
     if game.minigun_shots_left > 0 {
-        if game.server_fire_grace == 0 {
+        if game.minigun_fire_timer == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
             fire_minigun_shot(game, ti, si, muzzle_override);
+            game.minigun_fire_timer = 4;
+        } else {
+            game.minigun_fire_timer -= 1;
         }
         return;
     }
@@ -1268,6 +1272,8 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             if !game.teams[ti].consume_weapon() { return; }
             game.teams[ti].prune_empty_weapons();
             game.minigun_shots_left = 20;
+            game.minigun_fire_timer = 0;
+            game.emit_sound(crate::audio::Sfx::Minigun);
             fire_minigun_shot(game, ti, si, muzzle_override);
         }
         return;
@@ -2161,7 +2167,6 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
 }
 
 fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Option<(f32, f32)>) {
-    game.emit_sound(crate::audio::Sfx::Minigun);
     use crate::world::Vec2;
     use crate::game::soldier::{DeathCause, SoldierState};
 
