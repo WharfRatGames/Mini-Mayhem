@@ -341,6 +341,8 @@ pub struct GameState {
     pub shotgun_shots_left: u8,
     /// Revolver multi-shot state: 1–6 shots remaining this turn; 0 = not in revolver mode.
     pub revolver_shots_left: u8,
+    /// Minigun burst state: shots remaining this turn; 0 = not firing.
+    pub minigun_shots_left: u8,
     /// Bullet trail visuals: (start, end, ttl_ticks). Client-side only — not networked.
     pub bullet_trails: Vec<(WorldPos, WorldPos, u8)>,
     /// Active grappling-hook rope; None = no rope deployed.
@@ -414,6 +416,7 @@ impl GameState {
             server_fire_grace: 0,
             shotgun_shots_left: 0,
             revolver_shots_left: 0,
+            minigun_shots_left: 0,
             bullet_trails: Vec::new(),
             rope: None,
             rope_session: false,
@@ -955,7 +958,7 @@ impl GameState {
         // Rarity tiers (weapon pool):
         //   Common     (~10% each): Mine, Shotgun, TNT, Grapple, Bat, Torch
         //   Uncommon   (~8% each):  Blasthive, Meteor Bomb, Sacred Ordnance, Air Strike
-        //   Rare       (~3% each):  Black Hole, Revolver
+        //   Rare       (~3% each):  Black Hole, Revolver, Minigun
         //   Ultra Rare (~2%):       Hand of Jerry
         let kind = if kind_rng >= 0.75 {
             CrateKind::Health // +25 HP
@@ -981,10 +984,12 @@ impl GameState {
                 CrateKind::Weapon(WeaponKind::HolyHandGrenade)// Uncommon
             } else if w < 0.92 {
                 CrateKind::Weapon(WeaponKind::AirStrike)      // Uncommon
-            } else if w < 0.95 {
+            } else if w < 0.93 {
                 CrateKind::Weapon(WeaponKind::BlackHoleBomb)  // Rare
-            } else if w < 0.98 {
+            } else if w < 0.96 {
                 CrateKind::Weapon(WeaponKind::Revolver)       // Rare
+            } else if w < 0.98 {
+                CrateKind::Weapon(WeaponKind::Minigun)        // Rare
             } else {
                 CrateKind::Weapon(WeaponKind::Garcia)         // Ultra Rare
             }

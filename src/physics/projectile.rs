@@ -169,7 +169,7 @@ impl WeaponKind {
             Self::AirStrike      => "AIR STRIKE",
             Self::Revolver       => "REVOLVER",
             Self::NinjaRope      => "GRAPPLE",
-            Self::Blasthive        => "BEEHIVE",
+            Self::Blasthive        => "BLASTHIVE",
             Self::BlackHoleBomb   => "BLACK HOLE",
             Self::PlasmaTorch     => "PLASMA TORCH",
             Self::Garcia          => "HAND OF JERRY",

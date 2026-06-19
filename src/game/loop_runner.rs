@@ -21,9 +21,9 @@ use super::soldier::SoldierState;
 
 // ── Grappling hook constants ──────────────────────────────────────────────────
 const ROPE_HOOK_SPEED:    f32 = 40.0;  // px/tick
-const ROPE_SWING_FORCE:   f32 = 1.50;  // tangential impulse px/tick²
-const ROPE_GRAVITY:       f32 = 2.2;   // pendulum gravity — fast, Worms-like build-up
-const ROPE_RETRACT:       f32 = 3.0;   // px/tick rope length change
+const ROPE_SWING_FORCE:   f32 = 2.0;   // tangential impulse px/tick² — snappy WA swing authority
+const ROPE_GRAVITY:       f32 = 2.5;   // pendulum gravity — fast, Worms-like build-up
+const ROPE_RETRACT:       f32 = 4.0;   // px/tick rope length change — snappy reel in/out
 const ROPE_MIN_LEN:       f32 = 20.0;
 const ROPE_MAX_LEN:       f32 = 320.0;
 const ROPE_MAX_SPEED:     f32 = 40.0;  // px/tick per component — prevents tunnelling
@@ -308,6 +308,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             game.weapon_menu_open  = false;
             game.shotgun_shots_left  = 0;
             game.revolver_shots_left = 0;
+            game.minigun_shots_left  = 0;
             game.rope                = None;
             game.rope_session        = false;
             game.tnt_placed          = false;
@@ -623,11 +624,12 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
     }
 
     let in_revolver  = game.revolver_shots_left > 0;
+    let in_minigun   = game.minigun_shots_left > 0;
     let in_rope      = game.rope_session;
     let in_torch     = game.plasma_torch.is_some();
     let in_garcia    = game.garcia.is_some();
     let in_airstrike = game.airstrike.is_some();
-    if !has_fired || in_revolver || in_rope || in_torch || in_garcia || in_airstrike {
+    if !has_fired || in_revolver || in_minigun || in_rope || in_torch || in_garcia || in_airstrike {
         if in_torch {
             process_fire(game, input, muzzle_override); // direction changes only while torching
             step_plasma_torch(game);
@@ -974,6 +976,7 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
         if !game.weapon_menu_open && input.just_pressed(Button::Select)
             && game.shotgun_shots_left == 0
             && game.revolver_shots_left == 0
+            && game.minigun_shots_left == 0
         {
             game.weapon_menu_cursor = game.teams[ti].selected_weapon;
             game.weapon_menu_open   = true;
@@ -1186,6 +1189,16 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
+    // Minigun auto-burst: fires one bullet per tick until shots exhausted.
+    if game.minigun_shots_left > 0 {
+        if game.server_fire_grace == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            fire_minigun_shot(game, ti, si, muzzle_override);
+        }
+        return;
+    }
+
     // Landmine: instant placement on A press — starts arming, turn ends.
     if weapon == WeaponKind::Landmine {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
@@ -1243,6 +1256,19 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             game.teams[ti].prune_empty_weapons();
             game.revolver_shots_left = 6;
             fire_revolver_shot(game, ti, si, muzzle_override);
+        }
+        return;
+    }
+
+    // Minigun: press A to start the 20-shot auto-burst.
+    if weapon == WeaponKind::Minigun {
+        if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            if !game.teams[ti].consume_weapon() { return; }
+            game.teams[ti].prune_empty_weapons();
+            game.minigun_shots_left = 20;
+            fire_minigun_shot(game, ti, si, muzzle_override);
         }
         return;
     }
@@ -2134,6 +2160,108 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
     }
 }
 
+fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Option<(f32, f32)>) {
+    game.emit_sound(crate::audio::Sfx::Minigun);
+    use crate::world::Vec2;
+    use crate::game::soldier::{DeathCause, SoldierState};
+
+    const MAX_RANGE: f32 = 600.0;
+    const STEP:      f32 = 3.0;
+    const DAMAGE:    u32 = 5;
+    const KNOCKBACK: f32 = 2.0;
+    const SPREAD:    f32 = 0.14; // ±8° in radians
+
+    let fm    = game.teams[ti].soldiers[si].facing as f32;
+    let angle = game.aim.angle;
+
+    // Per-shot spread using tick + shots_left as entropy
+    let seed = (game.tick as u32)
+        .wrapping_mul(0x9E3779B9)
+        .wrapping_add(game.minigun_shots_left as u32 * 2654435761);
+    let r = seed as f32 / u32::MAX as f32;
+    let spread = (r - 0.5) * 2.0 * SPREAD;
+    let fire_angle = angle + spread;
+
+    let step_x = fire_angle.cos() * fm * STEP;
+    let step_y = -fire_angle.sin() * STEP;
+
+    let (mut rx, mut ry) = muzzle_override.unwrap_or_else(|| {
+        let x = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 26.0;
+        let y = game.teams[ti].soldiers[si].pos.y - 20.0 - angle.sin() * 26.0;
+        (x, y)
+    });
+    let start_x = rx;
+    let start_y = ry;
+    let steps = (MAX_RANGE / STEP) as u32;
+    let mut hit_ti: Option<usize> = None;
+    let mut hit_si_idx: Option<usize> = None;
+
+    'ray: for _ in 0..steps {
+        rx += step_x;
+        ry += step_y;
+        if rx < 0.0 || rx >= crate::world::WORLD_W as f32 { break; }
+        if ry >= crate::world::WATER_Y as f32 { break; }
+        for check_ti in 0..game.teams.len() {
+            for check_si in 0..game.teams[check_ti].soldiers.len() {
+                if check_ti == ti && check_si == si { continue; }
+                if !game.teams[check_ti].soldiers[check_si].is_alive() { continue; }
+                let sx2 = game.teams[check_ti].soldiers[check_si].pos.x;
+                let sy2 = game.teams[check_ti].soldiers[check_si].pos.y;
+                if (rx - sx2).abs() < 10.0
+                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - 2.0
+                    && ry <= sy2 + 4.0
+                {
+                    hit_ti = Some(check_ti);
+                    hit_si_idx = Some(check_si);
+                    break 'ray;
+                }
+            }
+        }
+        if game.terrain.is_solid(rx as i32, ry as i32) { break; }
+    }
+
+    if let (Some(hti), Some(hsi)) = (hit_ti, hit_si_idx) {
+        let dir_x = step_x / STEP;
+        let dir_y = step_y / STEP;
+        let vx = dir_x * KNOCKBACK;
+        let vy = dir_y * KNOCKBACK - 0.5;
+        let s = &mut game.teams[hti].soldiers[hsi];
+        s.death_cause = DeathCause::Explosion;
+        s.kill_weapon = Some(crate::physics::WeaponKind::Minigun);
+        s.take_damage(DAMAGE);
+        if s.is_alive() {
+            let was_grounded = matches!(s.state, SoldierState::Idle | SoldierState::Walking { .. });
+            s.state = match &s.state {
+                SoldierState::Airborne { vel, spinning } => SoldierState::Airborne {
+                    vel: Vec2::new(vel.x + vx, vel.y + vy),
+                    spinning: *spinning,
+                },
+                _ => { if was_grounded { s.fall.begin_fall(s.pos.y); } SoldierState::Airborne { vel: Vec2::new(vx, vy), spinning: false } },
+            };
+        }
+        game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
+    } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
+           && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
+        // Tiny terrain nick
+        let crater = crate::world::Crater::new(rx, ry, 2.0);
+        crater.carve(&mut game.terrain);
+        game.crater_log.push((rx, ry, 2.0));
+    }
+
+    // Bullet trail visual (client-side, fades in 2 ticks)
+    game.bullet_trails.push((
+        crate::world::WorldPos::new(start_x, start_y),
+        crate::world::WorldPos::new(rx, ry),
+        2,
+    ));
+
+    game.minigun_shots_left = game.minigun_shots_left.saturating_sub(1);
+    if game.minigun_shots_left == 0 {
+        game.teams[ti].soldiers[si].has_fired = true;
+        game.turn.on_fired();
+    }
+}
+
 // ── Weapon menu ──────────────────────────────────────────────────────────────
 
 pub fn draw_weapon_menu(
@@ -2534,6 +2662,30 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 4,  icon_cy - 8,   8, 4, gray);
                 buf.fill_rect(icon_cx - 3,  icon_cy - 7,   6, 2, icol);
             }
+            WeaponKind::Minigun => {
+                // Pixel-art minigun: clustered triple barrels + long receiver + grip
+                let mdk = Bgra::new(60, 60, 60);
+                let mmd = Bgra::new(130, 130, 140);
+                let mhi = Bgra::new(200, 205, 215);
+                // Long barrel housing
+                buf.fill_rect(icon_cx - 2, icon_cy - 3, 18, 7, mdk);
+                buf.fill_rect(icon_cx - 1, icon_cy - 2, 16, 5, mmd);
+                buf.fill_rect(icon_cx - 1, icon_cy - 2, 16, 1, mhi);
+                // Three barrel tips at front (clustered circles)
+                buf.fill_circle(icon_cx + 16, icon_cy - 4, 2, mdk);
+                buf.fill_circle(icon_cx + 16, icon_cy - 4, 1, mmd);
+                buf.fill_circle(icon_cx + 16, icon_cy,     2, mdk);
+                buf.fill_circle(icon_cx + 16, icon_cy,     1, mmd);
+                buf.fill_circle(icon_cx + 16, icon_cy + 4, 2, mdk);
+                buf.fill_circle(icon_cx + 16, icon_cy + 4, 1, mmd);
+                // Receiver box (left)
+                buf.fill_rect(icon_cx - 8, icon_cy - 5, 8, 11, mdk);
+                buf.fill_rect(icon_cx - 7, icon_cy - 4, 6,  9, mmd);
+                buf.fill_rect(icon_cx - 7, icon_cy - 4, 6,  1, mhi);
+                // Grip
+                buf.fill_rect(icon_cx - 6, icon_cy + 5, 4, 8, mdk);
+                buf.fill_rect(icon_cx - 5, icon_cy + 6, 2, 6, mmd);
+            }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
                 buf.fill_rect(icon_cx - 5, icon_cy - 3, 10, 6, icol);
@@ -2619,6 +2771,7 @@ pub fn draw_weapon_menu(
             WeaponKind::Garcia         => "HAND OF JERRY",
             WeaponKind::AirStrike      => "AIR STRIKE",
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
+            WeaponKind::Minigun         => "MINIGUN",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };
@@ -2879,15 +3032,10 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 };
                 let gun_style = if ti == active_ti && si == active_si && game.turn.is_acting() {
                     match game.active_team_ref().current_weapon() {
-                        WeaponKind::Bazooka                  => 5, // cannon
-                        WeaponKind::Shotgun                  => 2,
-                        WeaponKind::Revolver                 => 1, // pistol
-                        WeaponKind::PlasmaTorch              => 6, // laser
                         WeaponKind::Grenade | WeaponKind::BananaBomb |
                         WeaponKind::Blasthive | WeaponKind::BlackHoleBomb |
-                        WeaponKind::HolyHandGrenade => 8, // throwable oval in hand
-                        WeaponKind::Garcia => soldier.gun_style_id, // soldier holds cosmetic gun, no aim arm
-                        _ => soldier.gun_style_id, // NinjaRope/Tnt/Landmine/Bat etc — keep cosmetic
+                        WeaponKind::HolyHandGrenade | WeaponKind::Tnt => 8, // throwable/tnt held in hand
+                        _ => soldier.gun_style_id, // always show chosen cosmetic gun skin
                     }
                 } else {
                     soldier.gun_style_id
@@ -3172,10 +3320,24 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 let gold   = Bgra::new(255, 215, 45);
                 let goldhi = Bgra::new(255, 248, 160);
                 let lgt    = Bgra::new(200, 200, 205);
-                // spin: 4 orientations; faster when moving, min 1 tick/frame when slow
+                // 8 orientations (every 45°); direction follows vel.x sign
                 let speed  = (proj.vel.x.abs() + proj.vel.y.abs()) as u32;
-                let rate   = if speed > 8 { 4 } else if speed > 3 { 7 } else { 0 };
-                let spin   = if rate > 0 { (proj.age_ticks / rate) % 4 } else { 0 };
+                let rate   = if speed > 8 { 2 } else if speed > 3 { 4 } else { 0 };
+                let raw    = if rate > 0 { (proj.age_ticks / rate) % 8 } else { 0 };
+                // clockwise when moving right, counter-clockwise when moving left
+                let spin   = if proj.vel.x >= 0.0 { raw } else { (8 - raw) % 8 };
+                // Shared diagonal body (~circular, used for frames 1/3/5/7)
+                let draw_diag_body = |buf: &mut crate::renderer::WorldBuffer| {
+                    buf.fill_rect(gx - 3, gy - 5, 6, 1, gdark);
+                    buf.fill_rect(gx - 4, gy - 4, 8, 8, gdark);
+                    buf.fill_rect(gx - 3, gy + 4, 6, 1, gdark);
+                    buf.fill_rect(gx - 2, gy - 4, 4, 1, gbody);
+                    buf.fill_rect(gx - 3, gy - 3, 6, 7, gbody);
+                    buf.fill_rect(gx - 2, gy + 3, 4, 1, gbody);
+                    buf.fill_rect(gx - 1, gy - 3, 2, 1, ghi);
+                    buf.fill_rect(gx - 2, gy - 2, 2, 2, ghi);
+                    buf.fill_rect(gx - 3, gy,     6, 1, gdark);
+                };
                 match spin {
                     0 => {
                         // Cross up — tall oval
@@ -3196,6 +3358,27 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         buf.fill_rect(gx - 2, gy - 10, 5, 1, goldhi);
                     }
                     1 => {
+                        // Cross upper-right (45°) — circular body
+                        draw_diag_body(buf);
+                        buf.fill_rect(gx + 1, gy - 5, 3, 2, gray);
+                        buf.fill_rect(gx + 2, gy - 4, 1, 1, lgt);
+                        // NE arm (6 diagonal steps of 2×2)
+                        buf.fill_rect(gx + 2, gy - 6, 2, 2, gold);
+                        buf.fill_rect(gx + 3, gy - 7, 2, 2, gold);
+                        buf.fill_rect(gx + 4, gy - 8, 2, 2, gold);
+                        buf.fill_rect(gx + 5, gy - 9, 2, 2, gold);
+                        buf.fill_rect(gx + 6, gy -10, 2, 2, gold);
+                        buf.fill_rect(gx + 7, gy -11, 2, 2, gold);
+                        // Crossbar (SE direction, centred at step 3)
+                        buf.fill_rect(gx + 6, gy - 8, 2, 2, gold);
+                        buf.fill_rect(gx + 7, gy - 7, 2, 2, gold);
+                        buf.fill_rect(gx + 4, gy -10, 2, 2, gold);
+                        buf.fill_rect(gx + 3, gy -11, 2, 2, gold);
+                        buf.fill_rect(gx + 5, gy -10, 1, 1, goldhi);
+                        buf.fill_rect(gx + 6, gy -11, 1, 1, goldhi);
+                        buf.fill_rect(gx + 6, gy - 8, 1, 1, goldhi);
+                    }
+                    2 => {
                         // Cross right — wide oval
                         buf.fill_rect(gx - 7, gy - 3, 1, 6, gdark);
                         buf.fill_rect(gx - 6, gy - 4, 11, 8, gdark);
@@ -3213,7 +3396,28 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         buf.fill_rect(gx + 6, gy - 1, 7, 1, goldhi);
                         buf.fill_rect(gx + 9, gy - 3, 1, 5, goldhi);
                     }
-                    2 => {
+                    3 => {
+                        // Cross lower-right (135°) — circular body
+                        draw_diag_body(buf);
+                        buf.fill_rect(gx + 1, gy + 3, 3, 2, gray);
+                        buf.fill_rect(gx + 2, gy + 4, 1, 1, lgt);
+                        // SE arm
+                        buf.fill_rect(gx + 2, gy + 4, 2, 2, gold);
+                        buf.fill_rect(gx + 3, gy + 5, 2, 2, gold);
+                        buf.fill_rect(gx + 4, gy + 6, 2, 2, gold);
+                        buf.fill_rect(gx + 5, gy + 7, 2, 2, gold);
+                        buf.fill_rect(gx + 6, gy + 8, 2, 2, gold);
+                        buf.fill_rect(gx + 7, gy + 9, 2, 2, gold);
+                        // Crossbar (NE direction)
+                        buf.fill_rect(gx + 6, gy + 6, 2, 2, gold);
+                        buf.fill_rect(gx + 7, gy + 5, 2, 2, gold);
+                        buf.fill_rect(gx + 4, gy + 8, 2, 2, gold);
+                        buf.fill_rect(gx + 3, gy + 9, 2, 2, gold);
+                        buf.fill_rect(gx + 5, gy + 7, 1, 1, goldhi);
+                        buf.fill_rect(gx + 6, gy + 8, 1, 1, goldhi);
+                        buf.fill_rect(gx + 6, gy + 6, 1, 1, goldhi);
+                    }
+                    4 => {
                         // Cross down — tall oval
                         buf.fill_rect(gx - 3, gy - 7, 6, 1, gdark);
                         buf.fill_rect(gx - 4, gy - 6, 8, 11, gdark);
@@ -3231,7 +3435,28 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         buf.fill_rect(gx,     gy +  8, 1, 7, goldhi);
                         buf.fill_rect(gx - 2, gy + 12, 5, 1, goldhi);
                     }
-                    _ => {
+                    5 => {
+                        // Cross lower-left (225°) — circular body
+                        draw_diag_body(buf);
+                        buf.fill_rect(gx - 4, gy + 3, 3, 2, gray);
+                        buf.fill_rect(gx - 3, gy + 4, 1, 1, lgt);
+                        // SW arm
+                        buf.fill_rect(gx - 4, gy + 4, 2, 2, gold);
+                        buf.fill_rect(gx - 5, gy + 5, 2, 2, gold);
+                        buf.fill_rect(gx - 6, gy + 6, 2, 2, gold);
+                        buf.fill_rect(gx - 7, gy + 7, 2, 2, gold);
+                        buf.fill_rect(gx - 8, gy + 8, 2, 2, gold);
+                        buf.fill_rect(gx - 9, gy + 9, 2, 2, gold);
+                        // Crossbar (NW direction)
+                        buf.fill_rect(gx - 8, gy + 6, 2, 2, gold);
+                        buf.fill_rect(gx - 9, gy + 5, 2, 2, gold);
+                        buf.fill_rect(gx - 6, gy + 8, 2, 2, gold);
+                        buf.fill_rect(gx - 5, gy + 9, 2, 2, gold);
+                        buf.fill_rect(gx - 7, gy + 7, 1, 1, goldhi);
+                        buf.fill_rect(gx - 8, gy + 8, 1, 1, goldhi);
+                        buf.fill_rect(gx - 8, gy + 6, 1, 1, goldhi);
+                    }
+                    6 => {
                         // Cross left — wide oval
                         buf.fill_rect(gx - 7, gy - 3, 1, 6, gdark);
                         buf.fill_rect(gx - 6, gy - 4, 11, 8, gdark);
@@ -3248,6 +3473,27 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         buf.fill_rect(gx - 11, gy - 4, 2, 7, gold);
                         buf.fill_rect(gx - 13, gy - 1, 7, 1, goldhi);
                         buf.fill_rect(gx - 10, gy - 3, 1, 5, goldhi);
+                    }
+                    _ => {
+                        // Cross upper-left (315°) — circular body
+                        draw_diag_body(buf);
+                        buf.fill_rect(gx - 4, gy - 5, 3, 2, gray);
+                        buf.fill_rect(gx - 3, gy - 4, 1, 1, lgt);
+                        // NW arm
+                        buf.fill_rect(gx - 4, gy - 6, 2, 2, gold);
+                        buf.fill_rect(gx - 5, gy - 7, 2, 2, gold);
+                        buf.fill_rect(gx - 6, gy - 8, 2, 2, gold);
+                        buf.fill_rect(gx - 7, gy - 9, 2, 2, gold);
+                        buf.fill_rect(gx - 8, gy -10, 2, 2, gold);
+                        buf.fill_rect(gx - 9, gy -11, 2, 2, gold);
+                        // Crossbar (SW direction)
+                        buf.fill_rect(gx - 8, gy - 8, 2, 2, gold);
+                        buf.fill_rect(gx - 9, gy - 7, 2, 2, gold);
+                        buf.fill_rect(gx - 6, gy -10, 2, 2, gold);
+                        buf.fill_rect(gx - 5, gy -11, 2, 2, gold);
+                        buf.fill_rect(gx - 7, gy - 9, 1, 1, goldhi);
+                        buf.fill_rect(gx - 8, gy -10, 1, 1, goldhi);
+                        buf.fill_rect(gx - 8, gy - 8, 1, 1, goldhi);
                     }
                 }
                 // Fuse countdown while burning
@@ -3689,6 +3935,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::BaseballBat => "BAT",
             WeaponKind::Blasthive     => "BLASTHIVE",
             WeaponKind::BlackHoleBomb => "BLACK HOLE",
+            WeaponKind::Minigun       => "MINIGUN",
             _ => "WEAPON",
         };
         // Small box bottom-left, sized to fit the weapon name + hint
@@ -3966,40 +4213,63 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     let is_active = ti == ati && si == asi;
                     if is_active {
                         if let Some(rope) = game.rope.as_ref().filter(|r| !r.flying) {
-                            let anchor = rope.anchor;
-                            let length = rope.length;
+                            let mut anchor = rope.anchor;
+                            // Target length BEFORE any corner-wrap this tick. The
+                            // momentum-conservation step below compares the post-wrap
+                            // length against this so a wrap-shortening feeds a
+                            // "slingshot around the corner" speed boost (WA feel).
+                            let length0 = rope.length;
 
-                            // Rope direction from CURRENT position (before any step).
-                            // Must use current pos, not candidate, so the tangent projection
-                            // is correct and velocity accumulates properly for a Worms launch.
+                            // Position is the swing pivot for all the tangent math below.
                             let cx = game.teams[ti].soldiers[si].pos.x;
                             let cy = game.teams[ti].soldiers[si].pos.y;
+
+                            // ── Corner wrap (single-segment) ─────────────────────────
+                            // Sample the line anchor→soldier every 6px. If it crosses
+                            // terrain, re-anchor at the last clear sample (the corner the
+                            // rope bends over) and shorten the free segment. This keeps a
+                            // one-anchor system (no chain) yet lets the soldier swing
+                            // around pillars / overhangs — the signature WA rope move.
+                            {
+                                let wdx = cx - anchor.x;
+                                let wdy = cy - anchor.y;
+                                let wdist = (wdx * wdx + wdy * wdy).sqrt().max(0.1);
+                                let ux = wdx / wdist;
+                                let uy = wdy / wdist;
+                                let check_steps = (wdist / 6.0) as u32;
+                                let mut last_clear = 0.0f32;
+                                let mut hit = false;
+                                for step in 1..=check_steps {
+                                    let d = step as f32 * 6.0;
+                                    let sx = anchor.x + ux * d;
+                                    let sy = anchor.y + uy * d;
+                                    if game.terrain.is_solid(sx as i32, sy as i32) { hit = true; break; }
+                                    last_clear = d;
+                                }
+                                // Only re-anchor when the corner is a meaningful distance
+                                // from the current anchor (>=2px) to avoid per-pixel jitter.
+                                if hit && last_clear >= 2.0 {
+                                    let new_anchor = crate::world::WorldPos::new(
+                                        anchor.x + ux * last_clear,
+                                        anchor.y + uy * last_clear,
+                                    );
+                                    let remaining = (rope.length - last_clear).max(ROPE_MIN_LEN);
+                                    if let Some(ref mut rm) = game.rope {
+                                        rm.anchor = new_anchor;
+                                        rm.length = remaining;
+                                    }
+                                    anchor = new_anchor;
+                                }
+                            }
+                            // Post-wrap target length and rope direction from the
+                            // (possibly moved) anchor.
+                            let length = game.rope.as_ref().map(|r| r.length).unwrap_or(length0);
                             let rdx = cx - anchor.x;
                             let rdy = cy - anchor.y;
                             let rdist = (rdx * rdx + rdy * rdy).sqrt().max(0.1);
                             let dir_x = rdx / rdist;
                             let dir_y = rdy / rdist;
-
-                            // Rope line terrain check: sample every 12px from anchor to soldier.
-                            // If the line passes through terrain, shorten effective length
-                            // (prevents the rope visually passing through walls/slopes).
-                            let mut effective_len = length;
-                            let check_steps = (rdist / 12.0) as u32;
-                            for step in 1..=check_steps {
-                                let sample_dist = step as f32 * 12.0;
-                                let sx = anchor.x + dir_x * sample_dist;
-                                let sy = anchor.y + dir_y * sample_dist;
-                                if game.terrain.is_solid(sx as i32, sy as i32) {
-                                    effective_len = (sample_dist - 6.0).max(0.0);
-                                    break;
-                                }
-                            }
-                            if effective_len < 10.0 {
-                                // Rope wrapped into geometry — detach
-                                game.rope = None;
-                                game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel, spinning };
-                                continue;
-                            }
+                            let effective_len = length;
 
                             // 1. Pendulum gravity
                             vel.y = (vel.y + ROPE_GRAVITY).min(ROPE_MAX_SPEED);
@@ -4012,8 +4282,8 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             //    This is the "figure skater pulling arms in" acceleration.
                             if let Some(ref rope_m) = game.rope {
                                 let new_len = rope_m.length;
-                                if new_len < length && new_len > 0.1 {
-                                    let scale = length / new_len; // conservation factor
+                                if new_len < length0 && new_len > 0.1 {
+                                    let scale = length0 / new_len; // conservation factor
                                     // Only scale the tangential component
                                     let radial_pre = vel.x * dir_x + vel.y * dir_y;
                                     let tx = vel.x - dir_x * radial_pre;
@@ -4096,7 +4366,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         }
                     }
                     // ── Normal airborne physics ───────────────────────────────
-                    vel.y = (vel.y + 0.5).min(18.0); // raised cap to preserve rope-release momentum
+                    vel.y = (vel.y + 0.5).min(23.0); // raised cap to preserve rope-release / slingshot momentum
                     game.teams[ti].soldiers[si].airtime += 1;
                     // One full revolution = 4 frames × 5 ticks = 20 ticks, then stay upright
                     if spinning && game.teams[ti].soldiers[si].airtime >= 20 {
