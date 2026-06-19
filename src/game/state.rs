@@ -1596,6 +1596,18 @@ impl GameState {
                     patch.pos.y = ny;
                 }
             } else {
+                // If terrain beneath the patch was destroyed, let it fall.
+                let px = patch.pos.x as i32;
+                let py = patch.pos.y as i32;
+                let has_support = self.terrain.is_solid(px, py)
+                    || self.terrain.is_solid(px, py + 1)
+                    || self.terrain.is_solid(px - 2, py)
+                    || self.terrain.is_solid(px + 2, py);
+                if !has_support {
+                    patch.landed = false;
+                    patch.vel = crate::world::Vec2::new(0.0, 1.0);
+                }
+
                 // Squirm animation: any soldier standing in the fire visibly reacts,
                 // even between damage ticks. Active soldier immediately loses control.
                 for s in self.teams.iter_mut().flat_map(|t| t.soldiers.iter_mut()) {

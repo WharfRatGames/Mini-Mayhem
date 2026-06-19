@@ -196,7 +196,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
         for team in &mut game.teams {
             for s in &mut team.soldiers {
                 if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
-                if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(3).max(s.hp); }
+                if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(1).max(s.hp); }
                 else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
             }
         }
@@ -407,7 +407,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     for team in &mut game.teams {
         for s in &mut team.soldiers {
             if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
-            if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(3).max(s.hp); }
+            if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(1).max(s.hp); }
             else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
         }
     }
@@ -1486,11 +1486,12 @@ fn step_plasma_torch(game: &mut GameState) {
 
     // Only advance (and carve) if there's actually solid terrain to dig through.
     // Prevents the torch from propelling the soldier through open air.
+    // Check BEYOND the carve zone (tip_dist + tip_radius = 28px) so the first-tick
+    // carve (which clears 0-28px) doesn't cause has_solid=false on tick 2.
+    let check_start = TORCH_TIP_DIST + TORCH_RADIUS + 2.0; // 30px from soldier
     let has_solid = (0..=4).any(|i| {
-        let t = i as f32 / 4.0;
-        let cx = sx + dx * TORCH_TIP_DIST * t;
-        let cy = body_cy + dy * TORCH_TIP_DIST * t;
-        game.terrain.is_solid(cx as i32, cy as i32)
+        let d = check_start + i as f32 * 3.0; // 30, 33, 36, 39, 42 px ahead
+        game.terrain.is_solid((sx + dx * d) as i32, (body_cy + dy * d) as i32)
     });
     if !has_solid {
         // Nothing to carve — don't move, but still burn fuel and keep state ticking.
@@ -4903,7 +4904,7 @@ pub fn update_visuals(game: &mut GameState) {
     for team in &mut game.teams {
         for s in &mut team.soldiers {
             if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
-            if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(3).max(s.hp); }
+            if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(1).max(s.hp); }
             else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
         }
     }
