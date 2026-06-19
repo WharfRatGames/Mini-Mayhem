@@ -822,13 +822,11 @@ pub fn try_move_horizontal(game: &mut GameState, ti: usize, si: usize, new_x: f3
         let try_y = cur_y - step_up as f32;
         if try_y < 0.0 { break; }
         let fy = try_y as i32;
-        // All three columns (left edge, center, right edge) must be clear foot-to-head
-        // so the soldier's full width can't squeeze into a passage it shouldn't fit through.
-        // is_blocked includes barrels/mines so they stay solid obstacles.
-        let terrain_clear = (0..=SOLDIER_H)
-            .all(|h| !game.terrain.is_blocked(ix_l, fy - h)
-                  && !game.terrain.is_blocked(ix,   fy - h)
-                  && !game.terrain.is_blocked(ix_r, fy - h));
+        // Every column across the full soldier width must be clear foot-to-head.
+        // Checking only 3 columns (edges + center) misses terrain at intermediate
+        // pixels — especially ceiling notches that cause head-clipping in tunnels.
+        let terrain_clear = (ix_l..=ix_r)
+            .all(|xc| (0..=SOLDIER_H).all(|h| !game.terrain.is_blocked(xc, fy - h)));
         // Escape allowance: if already wedged, permit the step as long as the leading
         // edge (the side moving forward) is clear — so you can back off a barrel you're
         // stuck on, but never push further into one.
@@ -1319,6 +1317,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             game.teams[ti].prune_empty_weapons();
             game.uzi_shots_left = 20;
             game.uzi_fire_timer = 0;
+            game.emit_sound(crate::audio::Sfx::Uzi);
             fire_uzi_shot(game, ti, si, muzzle_override);
         }
         return;
@@ -1458,7 +1457,7 @@ fn step_plasma_torch(game: &mut GameState) {
 
     const TORCH_SPEED:    f32 = 2.0;  // px/tick forward
     const TORCH_TIP_DIST: f32 = 18.0; // px ahead where carving leads
-    const TORCH_RADIUS:   f32 = 10.0; // carving circle radius at tip
+    const TORCH_RADIUS:   f32 = 14.0; // carving circle radius at tip — must be ≥ sqrt(SOLDIER_HALF_W²+10²)≈12.2 to clear full soldier height at tip
     const BODY_RADIUS:    f32 = 14.0; // carving circle at soldier midpoint — SOLDIER_H=20, tunnel ~28px tall
 
     let (dir, fuel) = {
@@ -1487,7 +1486,7 @@ fn step_plasma_torch(game: &mut GameState) {
     // Prevents the torch from propelling the soldier through open air.
     // Check BEYOND the carve zone (tip_dist + tip_radius = 28px) so the first-tick
     // carve (which clears 0-28px) doesn't cause has_solid=false on tick 2.
-    let check_start = TORCH_TIP_DIST + TORCH_RADIUS + 2.0; // 30px from soldier
+    let check_start = TORCH_TIP_DIST + TORCH_RADIUS + 2.0; // 34px from soldier
     let has_solid = (0..=4).any(|i| {
         let d = check_start + i as f32 * 3.0; // 30, 33, 36, 39, 42 px ahead
         game.terrain.is_solid((sx + dx * d) as i32, (body_cy + dy * d) as i32)
@@ -1505,8 +1504,14 @@ fn step_plasma_torch(game: &mut GameState) {
         return;
     }
 
-    // Carve ahead (tip) then at body so soldier fits in the tunnel
+    // Three overlapping circles ensure the tunnel is fully passable at all heights.
+    // Two circles (body + tip 18px apart, both r=14) leave a narrow waist midway
+    // where head/foot clearance drops below the soldier size. Adding a mid circle
+    // at 9px closes that gap.
+    let mid_x = sx + dx * (TORCH_TIP_DIST * 0.5);
+    let mid_y = body_cy + dy * (TORCH_TIP_DIST * 0.5);
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, tip_x, tip_y, TORCH_RADIUS);
+    carve_torch_circle(&mut game.terrain, &mut game.crater_log, mid_x, mid_y, TORCH_RADIUS);
     carve_torch_circle(&mut game.terrain, &mut game.crater_log, sx, body_cy, BODY_RADIUS);
 
     // Dirt chips spat back out of the bore.
@@ -3099,7 +3104,6 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // deactivation/early release. Driven here so it covers every mode (local/TAT
     // use the simulated plasma_torch; live reconstructs it from networked torch_dir).
     crate::audio::update_torch(game.plasma_torch.is_some());
-    crate::audio::update_mac10(game.uzi_shots_left > 0);
 
     // Per-section pixel-write profiling (TEST mode overlay, see section 9b/9d
     // below). `mark!` records how many pixels were written since the previous

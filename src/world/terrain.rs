@@ -615,10 +615,10 @@ impl Terrain {
                 }
             }
 
-            // C.5 — Air dilation: widen all air passages so soldiers (14px wide) can
-            // traverse them. Two passes of Moore-neighborhood dilation — each pass
+            // C.5 — Air dilation: widen all air passages so soldiers (14px wide, 20px tall)
+            // can traverse them. Four passes of Moore-neighborhood dilation — each pass
             // expands existing air by 1px on all sides, only within the rock band.
-            for _ in 0..2 {
+            for _ in 0..4 {
                 let snap = terrain.solid.clone();
                 for y in SKY_FLOOR + 1..CAVE_FLOOR - 1 {
                     for x in 1..WORLD_W as i32 - 1 {
@@ -885,6 +885,32 @@ impl Terrain {
                            + cave_b.get([nx * cave_sx * 0.6 + 100.0, ny * cave_sy * 0.6 + 100.0]) * 0.5) / 1.5;
                     if c.abs() < cave_thresh {
                         terrain.set_solid(x as i32, y as i32, false);
+                    }
+                }
+            }
+        }
+
+        // Phase 3.5 — Air dilation for cave-punched non-cavern maps.
+        // Same 2-pass Moore dilation as archetype 3, but clamped below the crust
+        // (ty > 0.18) so surface terrain is not eroded.
+        if cave && archetype != 3 {
+            let cave_min_y = TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.18) as i32 + 1;
+            for _ in 0..4 {
+                let snap = terrain.solid.clone();
+                for y in cave_min_y..WATER_Y as i32 - 1 {
+                    for x in 1..WORLD_W as i32 - 1 {
+                        if !snap[world_index(x as u32, y as u32)] { continue; }
+                        let has_air_neighbor = (-1i32..=1).any(|dy| {
+                            let yy = y + dy;
+                            if yy < cave_min_y || yy >= WATER_Y as i32 { return false; }
+                            (-1i32..=1).any(|dx| {
+                                if dx == 0 && dy == 0 { return false; }
+                                let xx = x + dx;
+                                if xx < 0 || xx >= WORLD_W as i32 { return false; }
+                                !snap[world_index(xx as u32, yy as u32)]
+                            })
+                        });
+                        if has_air_neighbor { terrain.set_solid(x, y, false); }
                     }
                 }
             }
