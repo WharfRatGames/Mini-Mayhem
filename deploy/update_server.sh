@@ -70,14 +70,11 @@ echo "Pushing to Miyoos... (md5: $LOCAL_HASH)"
 push_to_miyoo() {
     local HOST=$1 LABEL=$2
     for attempt in 1 2 3; do
-        # Kill running game so we can overwrite the binary
-        ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$HOST" \
-            "pkill mini-mayhem 2>/dev/null; pkill arty 2>/dev/null; exit 0" 2>/dev/null
-        # Copy via /tmp to avoid FAT overwrite issues
+        # Copy to /tmp first (game may still be running — FAT32 can't be overwritten in-place)
         if scp -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
                "$BINARY" "$HOST:/tmp/mini-mayhem.new" 2>/dev/null && \
            ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$HOST" \
-               "cp /tmp/mini-mayhem.new $MIYOO_PATH && rm /tmp/mini-mayhem.new" 2>/dev/null; then
+               "pkill mini-mayhem 2>/dev/null; pkill arty 2>/dev/null; cp /tmp/mini-mayhem.new $MIYOO_PATH && rm /tmp/mini-mayhem.new" 2>/dev/null; then
             REMOTE_HASH=$(ssh -o ConnectTimeout=5 "$HOST" \
                 "md5sum $MIYOO_PATH 2>/dev/null | awk '{print \$1}'" 2>/dev/null)
             if [ "$REMOTE_HASH" = "$LOCAL_HASH" ]; then
@@ -114,11 +111,6 @@ cp "$BINARY" "$STAGE/mini-mayhem"
 for f in launch.sh config.json icon.png; do
     [ -f "$DEPLOY_DIR/$f" ] && cp "$DEPLOY_DIR/$f" "$STAGE/$f"
 done
-if [ -d "$DEPLOY_DIR/assets/sfx" ]; then
-    mkdir -p "$STAGE/sfx/death"
-    cp "$DEPLOY_DIR/assets/sfx/"*.wav "$STAGE/sfx/" 2>/dev/null || true
-    cp "$DEPLOY_DIR/assets/sfx/death/"*.wav "$STAGE/sfx/death/" 2>/dev/null || true
-fi
 ZIP="$BUILD_DIR/mini-mayhem-$VERSION.zip"
 if (cd "$BUILD_DIR" && zip -r "$ZIP" MiniMayhem/ -x "*.DS_Store" > /dev/null); then
     echo "Shareable build: $ZIP ($(du -sh "$ZIP" | cut -f1))"
@@ -141,16 +133,14 @@ else
     echo "WARNING: $ZIP not found — builds upload skipped"
 fi
 
-# Publish to GitHub Releases
-if [ -f "$ZIP" ]; then
-    NOTES=$(tail -1 deploy/changelog.txt 2>/dev/null || echo "v$VERSION")
-    if gh release create "v$VERSION" "$ZIP" \
-        --repo WharfRatGames/Mini-Mayhem \
-        --title "v$VERSION" \
-        --notes "$NOTES" \
-        --latest 2>&1; then
-        echo "GitHub release: https://github.com/WharfRatGames/Mini-Mayhem/releases/tag/v$VERSION"
-    else
-        echo "WARNING: GitHub release failed (non-fatal)"
-    fi
+# Publish to GitHub Releases (attach deploy/assets.zip; build zip stays on Pi only)
+NOTES=$(tail -1 deploy/changelog.txt 2>/dev/null || echo "v$VERSION")
+if gh release create "v$VERSION" "$ZIP" deploy/assets.zip \
+    --repo WharfRatGames/Mini-Mayhem \
+    --title "v$VERSION" \
+    --notes "$NOTES" \
+    --latest 2>&1; then
+    echo "GitHub release: https://github.com/WharfRatGames/Mini-Mayhem/releases/tag/v$VERSION"
+else
+    echo "WARNING: GitHub release failed (non-fatal)"
 fi
