@@ -2501,38 +2501,38 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 17, icon_cy,     2, 1, exhaust);
             }
             WeaponKind::HolyHandGrenade => {
-                // ── Sacred Ordnance: grenade oval with gold cross on top ──────
-                let gbody = Bgra::new(55, 120, 45);
-                let ghi2  = Bgra::new(90, 170, 70);
-                let gdark = Bgra::new(25, 60, 20);
-                let gold  = Bgra::new(255, 210, 40);
-                let goldhi = Bgra::new(255, 240, 120);
-                // Oval outline
-                buf.fill_rect(icon_cx - 5,  icon_cy - 5,  10, 2, dark);
-                buf.fill_rect(icon_cx - 8,  icon_cy - 3,  16, 2, dark);
-                buf.fill_rect(icon_cx - 9,  icon_cy - 1,  18, 8, dark);
-                buf.fill_rect(icon_cx - 8,  icon_cy + 7,  16, 2, dark);
-                buf.fill_rect(icon_cx - 5,  icon_cy + 9,  10, 2, dark);
-                // Oval body fill
-                buf.fill_rect(icon_cx - 4,  icon_cy - 4,   8, 2, gbody);
-                buf.fill_rect(icon_cx - 7,  icon_cy - 2,  14, 2, gbody);
-                buf.fill_rect(icon_cx - 8,  icon_cy,      16, 7, gbody);
-                buf.fill_rect(icon_cx - 7,  icon_cy + 7,  14, 2, gbody);
-                buf.fill_rect(icon_cx - 4,  icon_cy + 9,   8, 2, gbody);
+                // ── Sacred Ordnance: large golden oval with gold cross on top ──
+                let gbody  = Bgra::new(210, 155, 30);
+                let ghi2   = Bgra::new(255, 230, 100);
+                let gdark  = Bgra::new(140, 95, 10);
+                let gold   = Bgra::new(255, 215, 45);
+                let goldhi = Bgra::new(255, 248, 160);
+                // Oval outline (~1.35× bigger)
+                buf.fill_rect(icon_cx - 7,  icon_cy - 7,  14, 3, dark);
+                buf.fill_rect(icon_cx - 11, icon_cy - 4,  22, 3, dark);
+                buf.fill_rect(icon_cx - 12, icon_cy - 1,  24, 11, dark);
+                buf.fill_rect(icon_cx - 11, icon_cy + 10, 22, 3, dark);
+                buf.fill_rect(icon_cx - 7,  icon_cy + 13, 14, 3, dark);
+                // Gold body fill
+                buf.fill_rect(icon_cx - 5,  icon_cy - 6,  10, 3, gbody);
+                buf.fill_rect(icon_cx - 9,  icon_cy - 3,  18, 3, gbody);
+                buf.fill_rect(icon_cx - 10, icon_cy,       20, 9, gbody);
+                buf.fill_rect(icon_cx - 9,  icon_cy + 9,  18, 3, gbody);
+                buf.fill_rect(icon_cx - 5,  icon_cy + 12, 10, 3, gbody);
                 // Highlight
-                buf.fill_rect(icon_cx - 6,  icon_cy - 2,   5, 2, ghi2);
-                buf.fill_rect(icon_cx - 7,  icon_cy,        3, 3, ghi2);
+                buf.fill_rect(icon_cx - 8,  icon_cy - 3,   7, 3, ghi2);
+                buf.fill_rect(icon_cx - 9,  icon_cy,        4, 4, ghi2);
                 // Horizontal seam
-                buf.fill_rect(icon_cx - 8,  icon_cy + 3,  16, 2, gdark);
-                // Gold cross (vertical bar: 3px wide, 10px tall; horizontal bar: 10px wide, 3px tall, centered)
-                buf.fill_rect(icon_cx - 1,  icon_cy - 16,  3, 10, gold);
-                buf.fill_rect(icon_cx - 5,  icon_cy - 12,  11, 3, gold);
+                buf.fill_rect(icon_cx - 10, icon_cy + 4,  20, 3, gdark);
+                // Gold cross (vertical 4×14, horizontal 15×4)
+                buf.fill_rect(icon_cx - 2,  icon_cy - 21,  4, 14, gold);
+                buf.fill_rect(icon_cx - 7,  icon_cy - 15, 15,  4, gold);
                 // Cross highlight
-                buf.fill_rect(icon_cx,      icon_cy - 15,  1, 8, goldhi);
-                buf.fill_rect(icon_cx - 4,  icon_cy - 11,  9, 1, goldhi);
+                buf.fill_rect(icon_cx - 1,  icon_cy - 20,  2, 11, goldhi);
+                buf.fill_rect(icon_cx - 6,  icon_cy - 14, 12,  2, goldhi);
                 // Collar ring connecting cross to body
-                buf.fill_rect(icon_cx - 3,  icon_cy - 6,   6, 3, gray);
-                buf.fill_rect(icon_cx - 2,  icon_cy - 5,   4, 1, icol);
+                buf.fill_rect(icon_cx - 4,  icon_cy - 8,   8, 4, gray);
+                buf.fill_rect(icon_cx - 3,  icon_cy - 7,   6, 2, icol);
             }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
@@ -3162,43 +3162,109 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     draw_str_scaled(buf, &label, lx,     ly,     Bgra::yellow(), 2);
                 }
             } else if proj.kind == WeaponKind::HolyHandGrenade {
-                // Sacred Ordnance: grenade body with gold cross on top
+                // Sacred Ordnance: large golden body with tumbling cross
                 let gx = proj.pos.x as i32;
                 let gy = proj.pos.y as i32;
-                let gbody = Bgra::new(55, 120, 45);
-                let gdark = Bgra::new(25, 60, 20);
-                let ghi   = Bgra::new(90, 170, 70);
-                let gray  = Bgra::new(160, 160, 165);
-                let gold  = Bgra::new(255, 210, 40);
-                // Oval body (same as draw_grenade_projectile)
-                buf.fill_rect(gx - 1, gy - 4, 2, 1, gdark);
-                buf.fill_rect(gx - 2, gy - 3, 4, 5, gdark);
-                buf.fill_rect(gx - 1, gy + 2, 2, 1, gdark);
-                buf.fill_rect(gx - 1, gy - 3, 2, 1, gbody);
-                buf.fill_rect(gx - 1, gy - 2, 2, 4, gbody);
-                buf.fill_rect(gx - 1, gy + 1, 2, 1, gbody);
-                buf.set_pixel(gx - 1, gy - 2, ghi);
-                buf.fill_rect(gx - 2, gy - 1, 4, 1, gdark);
-                // Gold cross above body (vertical 1×5, horizontal 3×1, centered)
-                buf.fill_rect(gx,     gy - 9, 1, 5, gold);
-                buf.fill_rect(gx - 1, gy - 7, 3, 1, gold);
-                // Collar connecting cross to body
-                buf.fill_rect(gx - 1, gy - 5, 2, 2, gray);
+                let gdark  = Bgra::new(140, 95, 10);
+                let gbody  = Bgra::new(210, 155, 30);
+                let ghi    = Bgra::new(255, 230, 100);
+                let gray   = Bgra::new(160, 160, 165);
+                let gold   = Bgra::new(255, 215, 45);
+                let goldhi = Bgra::new(255, 248, 160);
+                let lgt    = Bgra::new(200, 200, 205);
+                // spin: 4 orientations; faster when moving, min 1 tick/frame when slow
+                let speed  = (proj.vel.x.abs() + proj.vel.y.abs()) as u32;
+                let rate   = if speed > 8 { 4 } else if speed > 3 { 7 } else { 0 };
+                let spin   = if rate > 0 { (proj.age_ticks / rate) % 4 } else { 0 };
+                match spin {
+                    0 => {
+                        // Cross up — tall oval
+                        buf.fill_rect(gx - 3, gy - 7, 6, 1, gdark);
+                        buf.fill_rect(gx - 4, gy - 6, 8, 11, gdark);
+                        buf.fill_rect(gx - 3, gy + 5, 6, 1, gdark);
+                        buf.fill_rect(gx - 2, gy - 6, 4, 1, gbody);
+                        buf.fill_rect(gx - 3, gy - 5, 6, 9, gbody);
+                        buf.fill_rect(gx - 2, gy + 4, 4, 1, gbody);
+                        buf.fill_rect(gx - 2, gy - 4, 2, 1, ghi);
+                        buf.fill_rect(gx - 3, gy - 3, 2, 3, ghi);
+                        buf.fill_rect(gx - 3, gy,     6, 1, gdark);
+                        buf.fill_rect(gx - 3, gy - 7, 6, 2, gray);
+                        buf.fill_rect(gx - 2, gy - 6, 4, 1, lgt);
+                        buf.fill_rect(gx - 1, gy - 15, 2, 9, gold);
+                        buf.fill_rect(gx - 3, gy - 11, 7, 2, gold);
+                        buf.fill_rect(gx,     gy - 14, 1, 7, goldhi);
+                        buf.fill_rect(gx - 2, gy - 10, 5, 1, goldhi);
+                    }
+                    1 => {
+                        // Cross right — wide oval
+                        buf.fill_rect(gx - 7, gy - 3, 1, 6, gdark);
+                        buf.fill_rect(gx - 6, gy - 4, 11, 8, gdark);
+                        buf.fill_rect(gx + 4, gy - 3, 1, 6, gdark);
+                        buf.fill_rect(gx - 6, gy - 2, 1, 4, gbody);
+                        buf.fill_rect(gx - 5, gy - 3, 9, 6, gbody);
+                        buf.fill_rect(gx + 3, gy - 2, 1, 4, gbody);
+                        buf.fill_rect(gx - 4, gy - 2, 2, 1, ghi);
+                        buf.fill_rect(gx - 5, gy - 1, 2, 2, ghi);
+                        buf.fill_rect(gx,     gy - 3, 1, 6, gdark);
+                        buf.fill_rect(gx + 3, gy - 3, 2, 6, gray);
+                        buf.fill_rect(gx + 4, gy - 2, 1, 4, lgt);
+                        buf.fill_rect(gx + 5, gy - 1, 9, 2, gold);
+                        buf.fill_rect(gx + 9, gy - 4, 2, 7, gold);
+                        buf.fill_rect(gx + 6, gy - 1, 7, 1, goldhi);
+                        buf.fill_rect(gx + 9, gy - 3, 1, 5, goldhi);
+                    }
+                    2 => {
+                        // Cross down — tall oval
+                        buf.fill_rect(gx - 3, gy - 7, 6, 1, gdark);
+                        buf.fill_rect(gx - 4, gy - 6, 8, 11, gdark);
+                        buf.fill_rect(gx - 3, gy + 5, 6, 1, gdark);
+                        buf.fill_rect(gx - 2, gy - 6, 4, 1, gbody);
+                        buf.fill_rect(gx - 3, gy - 5, 6, 9, gbody);
+                        buf.fill_rect(gx - 2, gy + 4, 4, 1, gbody);
+                        buf.fill_rect(gx - 2, gy - 4, 2, 1, ghi);
+                        buf.fill_rect(gx - 3, gy - 3, 2, 3, ghi);
+                        buf.fill_rect(gx - 3, gy,     6, 1, gdark);
+                        buf.fill_rect(gx - 3, gy + 5, 6, 2, gray);
+                        buf.fill_rect(gx - 2, gy + 6, 4, 1, lgt);
+                        buf.fill_rect(gx - 1, gy + 7, 2, 9, gold);
+                        buf.fill_rect(gx - 3, gy + 11, 7, 2, gold);
+                        buf.fill_rect(gx,     gy +  8, 1, 7, goldhi);
+                        buf.fill_rect(gx - 2, gy + 12, 5, 1, goldhi);
+                    }
+                    _ => {
+                        // Cross left — wide oval
+                        buf.fill_rect(gx - 7, gy - 3, 1, 6, gdark);
+                        buf.fill_rect(gx - 6, gy - 4, 11, 8, gdark);
+                        buf.fill_rect(gx + 4, gy - 3, 1, 6, gdark);
+                        buf.fill_rect(gx - 6, gy - 2, 1, 4, gbody);
+                        buf.fill_rect(gx - 5, gy - 3, 9, 6, gbody);
+                        buf.fill_rect(gx + 3, gy - 2, 1, 4, gbody);
+                        buf.fill_rect(gx - 4, gy - 2, 2, 1, ghi);
+                        buf.fill_rect(gx - 5, gy - 1, 2, 2, ghi);
+                        buf.fill_rect(gx,     gy - 3, 1, 6, gdark);
+                        buf.fill_rect(gx - 5, gy - 3, 2, 6, gray);
+                        buf.fill_rect(gx - 5, gy - 2, 1, 4, lgt);
+                        buf.fill_rect(gx - 14, gy - 1, 9, 2, gold);
+                        buf.fill_rect(gx - 11, gy - 4, 2, 7, gold);
+                        buf.fill_rect(gx - 13, gy - 1, 7, 1, goldhi);
+                        buf.fill_rect(gx - 10, gy - 3, 1, 5, goldhi);
+                    }
+                }
                 // Fuse countdown while burning
                 if let FuseState::Burning(ticks) = proj.fuse {
                     use crate::renderer::font::{draw_str_scaled, str_width_scaled};
                     let secs = ((ticks + 29) / 30).min(9);
                     let label = format!("{}", secs);
                     let lx = gx - str_width_scaled(&label, 2) / 2;
-                    let ly = gy - 22;
+                    let ly = gy - 26;
                     draw_str_scaled(buf, &label, lx + 1, ly + 1, Bgra::new(0, 0, 0), 2);
-                    draw_str_scaled(buf, &label, lx,     ly,     Bgra::new(255, 210, 40), 2);
+                    draw_str_scaled(buf, &label, lx,     ly,     Bgra::new(255, 215, 45), 2);
                 }
                 // Gold glow when armed (stopped, about to detonate)
                 if matches!(proj.fuse, FuseState::Armed | FuseState::Detonating(_)) {
-                    buf.set_pixel(gx - 2, gy - 1, gold);
-                    buf.set_pixel(gx + 2, gy - 1, gold);
-                    buf.set_pixel(gx,     gy - 5, gold);
+                    buf.set_pixel(gx - 5, gy - 1, gold);
+                    buf.set_pixel(gx + 4, gy - 1, gold);
+                    buf.set_pixel(gx,     gy - 8, gold);
                 }
             } else if proj.kind == WeaponKind::Tnt {
                 let px = proj.pos.x as i32;
