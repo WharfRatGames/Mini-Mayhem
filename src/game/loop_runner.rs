@@ -2206,6 +2206,25 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
         ry += step_y;
         if rx < 0.0 || rx >= crate::world::WORLD_W as f32 { break; }
         if ry >= crate::world::WATER_Y as f32 { break; }
+        // Barrel hit
+        for barrel in &mut game.barrels {
+            if let super::state::BarrelState::Normal = barrel.state {
+                if (barrel.pos.x - rx).abs() < 8.0 && (barrel.pos.y - ry).abs() < 12.0 {
+                    barrel.state = super::state::BarrelState::Triggered { ticks: 6 };
+                    break 'ray;
+                }
+            }
+        }
+        // Mine hit — trigger armed mines the bullet passes through
+        for mine in &mut game.mines {
+            if mine.state == super::state::MineState::Armed {
+                if (mine.pos.x - rx).abs() < 8.0 && (mine.pos.y - ry).abs() < 8.0 {
+                    mine.state = super::state::MineState::Triggered;
+                    mine.trigger_ticks = 8;
+                    break 'ray;
+                }
+            }
+        }
         for check_ti in 0..game.teams.len() {
             for check_si in 0..game.teams[check_ti].soldiers.len() {
                 if check_ti == ti && check_si == si { continue; }
@@ -3962,7 +3981,15 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         use crate::renderer::font::{draw_str_scaled, str_width_scaled};
         use crate::renderer::fb::Bgra;
         use crate::world::SCREEN_W;
-        let label = format!("SEED {:016X}", game.map_seed);
+        let arch_name = match game.terrain.archetype {
+            0 => "HILLS",
+            1 => "CLIFFS",
+            2 => "ISLANDS",
+            3 => "CAVERNS",
+            4 => "MESA",
+            _ => "?",
+        };
+        let label = format!("SEED {:016X}  {}", game.map_seed, arch_name);
         let w = str_width_scaled(&label, 2);
         let x = cam_x as i32 + SCREEN_W as i32 - w - 6;
         let y = 6;
