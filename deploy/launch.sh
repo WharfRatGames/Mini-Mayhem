@@ -5,4 +5,4 @@ export HOME=/mnt/SDCARD
 killall audioserver 2>/dev/null
 sleep 0.2
 /customer/app/tinymix set "Playback Volume Line Out" 0 2>/dev/null || true
-./arty
+./mini-mayhem

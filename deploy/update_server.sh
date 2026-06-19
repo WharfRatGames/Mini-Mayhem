@@ -1,15 +1,15 @@
 #!/bin/bash
 MIYOO1="root@10.0.0.110"
 MIYOO2="root@10.0.0.126"
-MIYOO_PATH="/mnt/SDCARD/App/Arty/arty"
+MIYOO_PATH="/mnt/SDCARD/App/Arty/mini-mayhem"
 VERSION=$1
 if [ -z "$VERSION" ]; then
     echo "Usage: $0 <version>"
     exit 1
 fi
-BINARY="target/armv7-unknown-linux-gnueabihf/miyoo/arty"
+BINARY="target/armv7-unknown-linux-gnueabihf/miyoo/mini-mayhem"
 SERVER_BINARY="target/aarch64-unknown-linux-gnu/release/server"
-scp "$BINARY" arty-pi:/var/www/html/arty/arty
+scp "$BINARY" arty-pi:/var/www/html/arty/mini-mayhem
 ssh arty-pi "echo $VERSION > /var/www/html/arty/version.txt"
 echo "Update server now serving $VERSION"
 # Push game server binary before restarting
@@ -19,9 +19,6 @@ if [ -f "$SERVER_BINARY" ]; then
     echo "Game server binary updated"
 fi
 
-# Serve the live update-screen changelog. The app fetches /arty/changelog.txt at
-# display time, so editing deploy/changelog.txt (one line per release) is all it
-# takes — no rebuild, no per-device push, always current.
 if [ -f "deploy/changelog.txt" ]; then
     scp deploy/changelog.txt arty-pi:/var/www/html/arty/changelog.txt
     echo "Changelog updated"
@@ -40,8 +37,6 @@ for f in launch.sh config.json icon.png; do
         scp "$DEPLOY_DIR/$f" arty-pi:/var/www/html/arty/$f
     fi
 done
-# Include sfx WAV files in manifest (size + sha256 so clients can detect
-# content changes even when file size happens to match).
 if [ -d "$DEPLOY_DIR/assets/sfx" ]; then
     ssh arty-pi "mkdir -p /var/www/html/arty/sfx/death"
     for wav in "$DEPLOY_DIR/assets/sfx/"*.wav; do
@@ -68,7 +63,7 @@ echo "Restarting game server..."
 ssh arty-pi "systemctl --user restart arty-game"
 echo "Game server restarted"
 
-# Push directly to Miyoos with retry (3 attempts, 3s between)
+# Push directly to Miyoos with retry (3 attempts, 1.5s between)
 LOCAL_HASH=$(md5sum "$BINARY" | awk '{print $1}')
 echo "Pushing to Miyoos... (md5: $LOCAL_HASH)"
 
@@ -77,14 +72,16 @@ push_to_miyoo() {
     for attempt in 1 2 3; do
         # Kill running game so we can overwrite the binary
         ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$HOST" \
-            "pkill arty 2>/dev/null; exit 0" 2>/dev/null
+            "pkill mini-mayhem 2>/dev/null; pkill arty 2>/dev/null; exit 0" 2>/dev/null
+        # Copy via /tmp to avoid FAT overwrite issues
         if scp -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
-               "$BINARY" "$HOST:$MIYOO_PATH" 2>/dev/null; then
+               "$BINARY" "$HOST:/tmp/mini-mayhem.new" 2>/dev/null && \
+           ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$HOST" \
+               "cp /tmp/mini-mayhem.new $MIYOO_PATH && rm /tmp/mini-mayhem.new" 2>/dev/null; then
             REMOTE_HASH=$(ssh -o ConnectTimeout=5 "$HOST" \
                 "md5sum $MIYOO_PATH 2>/dev/null | awk '{print \$1}'" 2>/dev/null)
             if [ "$REMOTE_HASH" = "$LOCAL_HASH" ]; then
                 echo "  $LABEL OK (hash verified, attempt $attempt)"
-                # Push sfx files directly so they stay in sync without needing OTA
                 ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$HOST" \
                     "mkdir -p /mnt/SDCARD/App/Arty/sfx/death" 2>/dev/null
                 scp -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
@@ -108,14 +105,12 @@ push_to_miyoo "$MIYOO1" ".110"
 push_to_miyoo "$MIYOO2" ".126"
 
 # ── Local shareable build ─────────────────────────────────────────────────────
-# Packages the binary + app files into ~/arty-builds/arty-<version>.zip
-# No personal data is in the binary; credentials/rosters are runtime SDCARD files.
-BUILD_DIR="$HOME/arty-builds"
+BUILD_DIR="$HOME/mini-mayhem-builds"
 mkdir -p "$BUILD_DIR"
-STAGE="$BUILD_DIR/Arty"
+STAGE="$BUILD_DIR/MiniMayhem"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-cp "$BINARY"            "$STAGE/arty"
+cp "$BINARY" "$STAGE/mini-mayhem"
 for f in launch.sh config.json icon.png; do
     [ -f "$DEPLOY_DIR/$f" ] && cp "$DEPLOY_DIR/$f" "$STAGE/$f"
 done
@@ -124,23 +119,21 @@ if [ -d "$DEPLOY_DIR/assets/sfx" ]; then
     cp "$DEPLOY_DIR/assets/sfx/"*.wav "$STAGE/sfx/" 2>/dev/null || true
     cp "$DEPLOY_DIR/assets/sfx/death/"*.wav "$STAGE/sfx/death/" 2>/dev/null || true
 fi
-ZIP="$BUILD_DIR/arty-$VERSION.zip"
-if (cd "$BUILD_DIR" && zip -r "$ZIP" Arty/ -x "*.DS_Store" > /dev/null); then
+ZIP="$BUILD_DIR/mini-mayhem-$VERSION.zip"
+if (cd "$BUILD_DIR" && zip -r "$ZIP" MiniMayhem/ -x "*.DS_Store" > /dev/null); then
     echo "Shareable build: $ZIP ($(du -sh "$ZIP" | cut -f1))"
 else
     echo "WARNING: zip creation failed — builds upload skipped"
 fi
 rm -rf "$STAGE"
-# Keep only the 3 most recent zips locally
-ls -t "$BUILD_DIR"/arty-*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null
+ls -t "$BUILD_DIR"/mini-mayhem-*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null
 
 # Publish zip to nginx for download
 if [ -f "$ZIP" ]; then
     ssh arty-pi "mkdir -p /var/www/html/arty/builds"
-    if scp "$ZIP" "arty-pi:/var/www/html/arty/builds/arty-$VERSION.zip"; then
-        # Remove older zips from server, keep only the 3 most recent
-        ssh arty-pi "ls -t /var/www/html/arty/builds/arty-*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null"
-        echo "Download: http://crumbonium.duckdns.org/arty/builds/arty-$VERSION.zip"
+    if scp "$ZIP" "arty-pi:/var/www/html/arty/builds/mini-mayhem-$VERSION.zip"; then
+        ssh arty-pi "ls -t /var/www/html/arty/builds/mini-mayhem-*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null"
+        echo "Download: http://crumbonium.duckdns.org/arty/builds/mini-mayhem-$VERSION.zip"
     else
         echo "WARNING: builds scp to Pi failed — nginx not updated"
     fi
