@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.282";
+const VERSION: &str = "0.5.4.283";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -638,6 +638,7 @@ fn main() {
             (WeaponKind::Garcia,          None),
             (WeaponKind::AirStrike,       None),
             (WeaponKind::HolyHandGrenade, None),
+            (WeaponKind::Minigun,         None),
         ];
         for team in &mut game.teams {
             team.weapons = all_weapons.clone();
