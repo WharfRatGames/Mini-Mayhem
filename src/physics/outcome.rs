@@ -63,9 +63,10 @@ fn terrain_normal(terrain: &Terrain, pos: WorldPos) -> (f32, f32) {
 fn worms_bounce(proj: &mut Projectile, pos: WorldPos, terrain: &Terrain) {
     let speed = (proj.vel.x * proj.vel.x + proj.vel.y * proj.vel.y).sqrt();
     if speed < MIN_BOUNCE_SPEED {
+        proj.vel.x = 0.0;
         proj.vel.y = 0.0;
-        proj.vel.x *= 0.7;
-        proj.pos = WorldPos::new(pos.x, pos.y - 1.0);
+        let (nx, ny) = terrain_normal(terrain, pos);
+        proj.pos = WorldPos::new(pos.x + nx, pos.y + ny);
         return;
     }
     let (nx, ny) = terrain_normal(terrain, pos);

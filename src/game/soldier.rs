@@ -111,7 +111,11 @@ impl Soldier {
         }
         self.hp = self.hp.saturating_sub(dmg as u8);
         if self.hp == 0 {
-            self.state = SoldierState::Dead;
+            // Airborne soldiers keep their velocity so they fall before the death explosion.
+            // Grounded soldiers go Dead immediately.
+            if !matches!(self.state, SoldierState::Airborne { .. }) {
+                self.state = SoldierState::Dead;
+            }
         }
     }
 
