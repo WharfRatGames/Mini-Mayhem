@@ -189,8 +189,9 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     // Per-hat vertical nudge (positive = down) for sprites where the art sits
     // higher or lower than the standard anchor row.
     let hat_dy: i32 = match hat_id {
-        5 => 5,   // Fez: art sits in the top of sprite, nudge down
-        _ => 0,
+        5  => 5,   // Fez: art sits in the top of sprite, nudge down
+        28 => 9,   // Luchador: center sprite on face, not above it
+        _  => 0,
     };
     // Per-hat size scale (default 1.0)
     let scale: f32 = match hat_id {
@@ -405,10 +406,12 @@ pub fn draw_soldier_skeletal(
             }
         }
     }
-    // Eye
-    let eye_x = head_cx + f as i32;
-    buf.set_pixel(eye_x,     head_cy + 1, dark_col);
-    buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);
+    // Eye — suppressed for luchador mask (mask sprite draws its own eyes)
+    if hat_id != 28 {
+        let eye_x = head_cx + f as i32;
+        buf.set_pixel(eye_x,     head_cy + 1, dark_col);
+        buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);
+    }
     // Hat drawn after head
     if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick); }
 

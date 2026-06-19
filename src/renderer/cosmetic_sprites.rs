@@ -1,13 +1,13 @@
 /// Hat, gun, and boot cosmetic sprites embedded from deploy/assets/cosmetics/.
-/// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–15 are scrap-purchasable.
-/// Guns:  138×78 px RGBA (46×26 game px @ 3x). IDs 1–10 are scrap-purchasable.
+/// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–28 are scrap-purchasable.
+/// Guns:  138×78 px RGBA (46×26 game px @ 3x). IDs 1–13 are scrap-purchasable.
 /// Boots: 36×27 px RGBA (12×9 game px @ 3x). IDs 1–4 are scrap-purchasable.
 use std::sync::OnceLock;
 use super::buffer::WorldBuffer;
 
-// ── Hat sprites (IDs 1–11) ────────────────────────────────────────────────────
+// ── Hat sprites (IDs 1–27) ───────────────────────────────────────────────────
 
-static HAT_PNGS: [&[u8]; 24] = [
+static HAT_PNGS: [&[u8]; 28] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_2.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_3.png"),
@@ -32,9 +32,13 @@ static HAT_PNGS: [&[u8]; 24] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_22.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_23.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_24.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_25.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_26.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_27.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_28.png"),
 ];
 
-static GUN_PNGS: [&[u8]; 12] = [
+static GUN_PNGS: [&[u8]; 14] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_0.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_2.png"),
@@ -47,6 +51,8 @@ static GUN_PNGS: [&[u8]; 12] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_9.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_10.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_11.png"),
+    include_bytes!("../../deploy/assets/cosmetics/gun_12.png"),
+    include_bytes!("../../deploy/assets/cosmetics/gun_13.png"),
 ];
 
 // ── Boot sprites (IDs 0–5) ───────────────────────────────────────────────────
@@ -62,8 +68,8 @@ static BOOT_PNGS: [&[u8]; 6] = [
 
 struct Sprite { pub w: usize, pub h: usize, pub px: Vec<[u8; 4]> }
 
-static HAT_SPRITES:  OnceLock<[Option<Sprite>; 24]> = OnceLock::new();
-static GUN_SPRITES:  OnceLock<[Option<Sprite>; 12]>  = OnceLock::new();
+static HAT_SPRITES:  OnceLock<[Option<Sprite>; 28]> = OnceLock::new();
+static GUN_SPRITES:  OnceLock<[Option<Sprite>; 14]>  = OnceLock::new();
 static BOOT_SPRITES: OnceLock<[Option<Sprite>; 6]>  = OnceLock::new();
 
 fn decode(bytes: &[u8]) -> Option<Sprite> {
@@ -82,11 +88,11 @@ fn decode(bytes: &[u8]) -> Option<Sprite> {
     Some(Sprite { w, h, px })
 }
 
-fn hat_sprites() -> &'static [Option<Sprite>; 24] {
+fn hat_sprites() -> &'static [Option<Sprite>; 28] {
     HAT_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(HAT_PNGS[i])))
 }
 
-fn gun_sprites() -> &'static [Option<Sprite>; 12] {
+fn gun_sprites() -> &'static [Option<Sprite>; 14] {
     GUN_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(GUN_PNGS[i])))
 }
 
