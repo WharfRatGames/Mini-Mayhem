@@ -194,7 +194,11 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
         game.collect_crates();
         game.step_explosions();
         for team in &mut game.teams {
-            for s in &mut team.soldiers { if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; } }
+            for s in &mut team.soldiers {
+                if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
+                if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(3).max(s.hp); }
+                else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
+            }
         }
         record_deaths(game);
         update_graves(game);
@@ -403,6 +407,8 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     for team in &mut game.teams {
         for s in &mut team.soldiers {
             if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
+            if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(3).max(s.hp); }
+            else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
         }
     }
     game.messages.retain_mut(|m| { m.ticks = m.ticks.saturating_sub(1); m.ticks > 0 });
@@ -1702,7 +1708,7 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
 
     const BOMB_COUNT:   u32 = 5;
     const BOMB_SPACING: f32 = 20.0;
-    const PLANE_SPEED:  f32 = 6.0;
+    const PLANE_SPEED:  f32 = 9.0;
     const CURSOR_SPEED: f32 = 14.0;
 
     // Returns the world X where bomb index `i` (0..5, left-to-right) should drop.
@@ -1739,7 +1745,7 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
             game.turn.on_fired();
             let s = game.airstrike.as_mut().unwrap();
             s.active        = true;
-            s.plane_x       = if dir_right { s.spawn_cam_left - 40.0 } else { s.spawn_cam_left + SCREEN_W as f32 + 40.0 };
+            s.plane_x       = if dir_right { s.spawn_cam_left } else { s.spawn_cam_left + SCREEN_W as f32 };
             s.plane_vx      = if dir_right { PLANE_SPEED } else { -PLANE_SPEED };
             s.bombs_dropped = 0;
         } else if input.just_pressed(Button::B) {
@@ -3316,7 +3322,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 } else {
                     (soldier.gun_style_id, None)
                 };
-                let muzzle = draw_soldier_skeletal(buf, soldier.pos, team.color_id as usize, soldier.facing, soldier.hp, &anim, aim_angle, soldier.hp > 0,
+                let muzzle = draw_soldier_skeletal(buf, soldier.pos, team.color_id as usize, soldier.facing, soldier.displayed_hp, &anim, aim_angle, soldier.hp > 0,
                     soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style, held_weapon,
                     game.wind.value(), game.tick, soldier.on_fire_ticks);
                 if ti == active_ti && si == active_si {
@@ -4897,6 +4903,8 @@ pub fn update_visuals(game: &mut GameState) {
     for team in &mut game.teams {
         for s in &mut team.soldiers {
             if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
+            if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(3).max(s.hp); }
+            else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
         }
     }
     game.messages.retain_mut(|m| { m.ticks = m.ticks.saturating_sub(1); m.ticks > 0 });
@@ -5127,6 +5135,7 @@ pub fn server_tick(game: &mut GameState, input: &crate::input::InputState, muzzl
 }
 
 pub fn push_active_soldier_out(game: &mut GameState) {
+    use crate::renderer::draw_sprites::{SOLDIER_H, SOLDIER_HALF_W};
     let active_ti = game.active_team();
     let active_si = game.teams[active_ti].active;
     let ax = game.teams[active_ti].soldiers[active_si].pos.x;
@@ -5139,7 +5148,16 @@ pub fn push_active_soldier_out(game: &mut GameState) {
             let dy = ay - game.teams[ti].soldiers[si].pos.y;
             if dx.abs() < 14.0 && dy.abs() < 20.0 {
                 let push = if dx >= 0.0 { 1.0 } else { -1.0 };
-                game.teams[active_ti].soldiers[active_si].pos.x += push;
+                let new_x = ax + push;
+                let ix = new_x as i32;
+                let iy = ay as i32;
+                let terrain_clear = (0..=SOLDIER_H).all(|h|
+                    !game.terrain.is_blocked(ix - (SOLDIER_HALF_W - 1), iy - h)
+                    && !game.terrain.is_blocked(ix, iy - h)
+                    && !game.terrain.is_blocked(ix + (SOLDIER_HALF_W - 1), iy - h));
+                if terrain_clear {
+                    game.teams[active_ti].soldiers[active_si].pos.x = new_x;
+                }
             }
         }
     }

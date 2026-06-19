@@ -181,6 +181,8 @@ pub fn apply_server_state(
                     new_deaths.push((soldier.name.clone(), ns.team, ns.index, ns.death_cause_u8));
                 }
                 if ns.hp < soldier.hp { soldier.hp_display_ticks = 150; }
+                // displayed_hp: snap up immediately, let it animate down naturally
+                if ns.hp > soldier.displayed_hp { soldier.displayed_hp = ns.hp; }
                 soldier.pos.x           = ns.x;
                 soldier.pos.y           = ns.y;
                 soldier.hp              = ns.hp;
@@ -448,6 +450,7 @@ pub fn apply_server_state(
             blink_timer: na.blink_timer, active: na.active,
             plane_x: na.plane_x, plane_vx: na.plane_vx,
             bombs_dropped: na.bombs_dropped, direction_right: na.direction_right,
+            spawn_cam_left: 0.0, // client-only, updated by tick() before plane launches
         });
     }
     // Sync weapon inventories so ammo counts and selection stay accurate
