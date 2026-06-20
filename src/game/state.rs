@@ -271,6 +271,8 @@ pub struct HomingMissileState {
     pub render_x:    f32,
     pub render_y:    f32,
     pub blink_timer: u32,
+    /// True once the player has confirmed the target; enters charge-shot phase.
+    pub confirmed:   bool,
 }
 
 /// Garcia targeting / falling state.
@@ -599,6 +601,12 @@ impl GameState {
 
                 let falloff = 1.0 - dist / radius;
 
+                // Snapshot state before damage so knockback uses pre-kill state.
+                // This lets soldiers killed by an explosion still fly before their
+                // death explosion fires (take_damage sets state=Dead immediately for
+                // grounded soldiers, which would suppress knockback otherwise).
+                let pre_state = soldier.state.clone();
+
                 // Damage: linear falloff + direct-hit bonus when nearly touching center
                 let mut dmg = (max_dmg as f32 * falloff) as u32;
                 if dist < 10.0 && kind != WeaponKind::Blasthive && kind != WeaponKind::Bazooka { dmg = (dmg + 20).min(99); }
@@ -633,8 +641,8 @@ impl GameState {
                     (nx * impulse, ny * impulse - impulse * 0.25)
                 };
 
-                let was_grounded = matches!(soldier.state, SoldierState::Idle | SoldierState::Walking { .. });
-                let new_state = match &soldier.state {
+                let was_grounded = matches!(pre_state, SoldierState::Idle | SoldierState::Walking { .. });
+                let new_state = match &pre_state {
                     SoldierState::Airborne { vel, spinning } => Some(SoldierState::Airborne {
                         vel: Vec2::new(vel.x + vx, vel.y + vy),
                         spinning: *spinning,

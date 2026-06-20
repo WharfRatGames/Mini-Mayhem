@@ -10,7 +10,9 @@
 use std::fs::{self, File};
 use std::io::BufWriter;
 
-use arty::world::{Terrain, WORLD_W, WORLD_H, WATER_Y};
+use arty::world::{Terrain, WORLD_W, WORLD_H};
+use arty::renderer::buffer::WorldBuffer;
+use arty::renderer::draw_terrain::draw_terrain;
 
 fn archetype_of(seed: u64) -> u64 {
     // Mirror generate_tactical's first lcg draw: archetype = lcg(seed) % 5.
@@ -44,23 +46,17 @@ fn main() {
         let h = WORLD_H as usize;
         let mut img = vec![0u8; w * h * 3];
 
+        // Render through the real game renderer (dirt texture, archetype sky,
+        // edge shading, wet zone) so the preview matches in-game appearance.
+        let mut buf = WorldBuffer::new();
+        draw_terrain(&mut buf, &terrain);
         for y in 0..h {
             for x in 0..w {
                 let i = (y * w + x) * 3;
-                let (r, g, b) = if y >= WATER_Y as usize {
-                    (40, 90, 170) // water
-                } else if terrain.is_solid(x as i32, y as i32) {
-                    (120, 78, 34) // dirt
-                } else {
-                    // sky gradient, lighter near the top
-                    let t = y as f32 / WATER_Y as f32;
-                    let r = (150.0 - 40.0 * t) as u8;
-                    let g = (185.0 - 30.0 * t) as u8;
-                    (r, g, 225u8)
-                };
-                img[i] = r;
-                img[i + 1] = g;
-                img[i + 2] = b;
+                let px = buf.get_pixel(x as i32, y as i32);
+                img[i] = px.r;
+                img[i + 1] = px.g;
+                img[i + 2] = px.b;
             }
         }
 

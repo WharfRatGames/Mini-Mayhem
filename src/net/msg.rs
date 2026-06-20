@@ -230,6 +230,7 @@ pub struct NetHomingMissile {
     pub cursor_y:    f32,
     pub render_y:    f32,
     pub blink_timer: u32,
+    pub confirmed:   bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

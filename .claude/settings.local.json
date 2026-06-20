@@ -118,7 +118,9 @@
       "Bash(curl -sv https://crumbonium.duckdns.org/api/)",
       "Bash(curl -sv https://crumbonium.duckdns.org/arty/version.txt)",
       "Bash(curl --max-time 8 -v https://crumbonium.duckdns.org/arty/version.txt)",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "Bash(sudo apt-get install -y xvfb x11-apps scrot)",
+      "Bash(convert /tmp/sacred_ordnance.ppm /tmp/sacred_ordnance.png)"
     ]
   }
 }

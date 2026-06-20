@@ -663,6 +663,54 @@ pub fn draw_bazooka(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::world::Vec
     buf.set_pixel(tx, ty, tip_col);
 }
 
+/// Draw a homing missile — same shape as bazooka but with a red tip.
+pub fn draw_homing_missile(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::world::Vec2) {
+    let speed = (vel.x * vel.x + vel.y * vel.y).sqrt();
+    let px = pos.x.round() as i32;
+    let py = pos.y.round() as i32;
+    if speed < 0.1 {
+        buf.fill_circle(px, py, 4, Bgra::new(200, 20, 20));
+        return;
+    }
+    let nx = vel.x / speed;
+    let ny = vel.y / speed;
+    let pt = |t: f32, p: f32| -> (i32, i32) {
+        ((pos.x + nx * t - ny * p).round() as i32,
+         (pos.y + ny * t + nx * p).round() as i32)
+    };
+
+    let exhaust   = Bgra::new( 80,  25,  5);
+    let body_edge = Bgra::new(120,  50,  8);
+    let body_side = Bgra::new(160,  75, 15);
+    let body_ctr  = Bgra::new(210, 110, 25);
+    let nose_col  = Bgra::new(200,  20, 20);  // red nose
+    let tip_col   = Bgra::new(255,  60, 60);  // bright red tip
+
+    let (ex, ey) = pt(-7.0, 0.0);
+    buf.set_pixel(ex, ey, exhaust);
+
+    let (b0x, b0y) = pt(-6.0,  0.0); let (b1x, b1y) = pt(3.0,  0.0);
+    buf.draw_line(b0x, b0y, b1x, b1y, body_ctr);
+    let (s0x, s0y) = pt(-6.0,  1.0); let (s1x, s1y) = pt(3.0,  1.0);
+    buf.draw_line(s0x, s0y, s1x, s1y, body_side);
+    let (s2x, s2y) = pt(-6.0, -1.0); let (s3x, s3y) = pt(3.0, -1.0);
+    buf.draw_line(s2x, s2y, s3x, s3y, body_side);
+    let (e0x, e0y) = pt(-6.0,  2.0); let (e1x, e1y) = pt(3.0,  2.0);
+    buf.draw_line(e0x, e0y, e1x, e1y, body_edge);
+    let (e2x, e2y) = pt(-6.0, -2.0); let (e3x, e3y) = pt(3.0, -2.0);
+    buf.draw_line(e2x, e2y, e3x, e3y, body_edge);
+
+    let (n0x, n0y) = pt(3.0, 0.0); let (n1x, n1y) = pt(6.0, 0.0);
+    buf.draw_line(n0x, n0y, n1x, n1y, nose_col);
+    let (ni0x, ni0y) = pt(3.0,  1.0); let (ni1x, ni1y) = pt(5.0, 0.0);
+    buf.draw_line(ni0x, ni0y, ni1x, ni1y, nose_col);
+    let (ni2x, ni2y) = pt(3.0, -1.0); let (ni3x, ni3y) = pt(5.0, 0.0);
+    buf.draw_line(ni2x, ni2y, ni3x, ni3y, nose_col);
+
+    let (tx, ty) = pt(7.0, 0.0);
+    buf.set_pixel(tx, ty, tip_col);
+}
+
 /// Draw a grenade projectile — small oval body with seam lines and pin, matching the weapon icon style.
 pub fn draw_grenade_projectile(buf: &mut WorldBuffer, pos: WorldPos) {
     let gx = pos.x as i32;

@@ -58,7 +58,7 @@ impl WeaponKind {
             Self::HomingMissile  => 30.0,
             Self::MineLayer      => 25.0,
             Self::ConcreteDonkey => 40.0,
-            Self::DeathExplosion => 28.0,
+            Self::DeathExplosion => 50.0,
             Self::BananaBomb     => 14.0,   // fragment blast radius
             Self::SuperSheep     => 40.0,
             Self::NinjaRope      => 0.0,
@@ -90,7 +90,7 @@ impl WeaponKind {
             Self::HomingMissile  => 45,
             Self::MineLayer      => 50,
             Self::ConcreteDonkey => 100,
-            Self::DeathExplosion => 20,
+            Self::DeathExplosion => 40,
             Self::BananaBomb     => 18,   // fragment damage (direct hit max 38 — can't one-shot)
             Self::SuperSheep     => 60,
             Self::NinjaRope      => 0,
