@@ -440,7 +440,16 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
             .map(|t| t.soldiers.iter().map(|s| (s.hp, s.is_alive())).collect())
             .collect();
 
+        let msgs_before: std::collections::HashSet<String> =
+            game.messages.iter().map(|m| m.text.clone()).collect();
         arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override);
+
+        // Log in-game messages (death phrases, crate pickups, etc.)
+        for m in &game.messages {
+            if !msgs_before.contains(&m.text) {
+                mboth!(&mut mfile, match_id, "MSG: {}", m.text);
+            }
+        }
 
         // Log per-soldier damage/kills caused by this tick, with the weapon
         // responsible (kill_weapon is set on every damaging hit, not just kills).
@@ -463,6 +472,13 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
                     mboth!(&mut mfile, match_id,
                         "KILL: team {attacker_team} killed team {ti} soldier {si} with {cause_label}");
                 }
+            }
+        }
+
+        // Log in-game messages (death phrases, crate pickups, etc.)
+        for m in &game.messages {
+            if m.ticks == 119 { // first tick the message is live (set to 120, decremented once)
+                mboth!(&mut mfile, match_id, "MSG: {}", m.text);
             }
         }
 

@@ -1845,7 +1845,8 @@ fn step_homing_missile(game: &mut GameState, input: &InputState) {
 
     if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
         game.homing_missile.as_mut().unwrap().confirmed = true;
-        game.aim.charge_armed = true;
+        game.aim.charge_armed = false; // require A release before charge starts
+        game.aim.power = 0.0;
         game.messages.push(crate::game::state::GameMessage {
             text: "TARGET LOCKED - AIM AND CHARGE".to_string(),
             team: None,
