@@ -1315,7 +1315,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             let si = game.teams[ti].active;
             if !game.teams[ti].consume_weapon() { return; }
             game.teams[ti].prune_empty_weapons();
-            game.uzi_shots_left = 20;
+            game.uzi_shots_left = 19;
             game.uzi_fire_timer = 0;
             game.emit_sound(crate::audio::Sfx::Uzi);
             fire_uzi_shot(game, ti, si, muzzle_override);

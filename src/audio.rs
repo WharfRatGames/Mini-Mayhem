@@ -322,7 +322,7 @@ mod imp {
                 try_load(&SMASH,       &dir, "smash.wav");
                 try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
                 try_load(&MINIGUN,     &dir, "minigun.wav");
-                try_load_stretched(&UZI, &dir, "mac10.wav", 1.6); // stretch 1.73s → ~2.8s (covers full burst + tail)
+                try_load_stretched(&UZI, &dir, "mac10.wav", 1.0); // no stretch — wav is 1.89s, burst is 19 shots × 3 ticks @ 30Hz = 1.9s
                 let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
                     .into_iter().flatten().flatten()
                     .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
