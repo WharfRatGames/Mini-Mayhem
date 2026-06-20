@@ -449,7 +449,13 @@ fn update_camera(game: &GameState, cam: &mut Camera, input: &InputState, step: S
                 if !input.held(Button::R1) {
                     let ti = game.active_team();
                     let si = game.teams[ti].active;
-                    if game.garcia.as_ref().map_or(false, |g| !g.falling) {
+                    if let Some(ref hm) = game.homing_missile {
+                        if !hm.confirmed {
+                            cam.follow(crate::world::WorldPos::new(hm.render_x, hm.render_y));
+                        } else {
+                            cam.follow(game.teams[ti].soldiers[si].pos);
+                        }
+                    } else if game.garcia.as_ref().map_or(false, |g| !g.falling) {
                         let gx = game.garcia.as_ref().unwrap().render_x;
                         let soldier_y = game.teams[ti].soldiers[si].pos.y;
                         cam.follow(crate::world::WorldPos::new(gx, soldier_y));
@@ -644,7 +650,7 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
     let in_torch     = game.plasma_torch.is_some();
     let in_garcia         = game.garcia.is_some();
     let in_airstrike      = game.airstrike.is_some();
-    let in_homing_missile = game.homing_missile.is_some();
+    let in_homing_missile = game.homing_missile.as_ref().map_or(false, |hm| !hm.confirmed);
     if !has_fired || in_revolver || in_minigun || in_uzi || in_rope || in_torch || in_garcia || in_airstrike || in_homing_missile {
         if in_torch {
             process_fire(game, input, muzzle_override); // direction changes only while torching
@@ -1056,10 +1062,12 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
                 game.aim.power         = 0.0;
                 game.weapon_menu_open  = false;
                 game.server_fire_grace = 30;
+                game.homing_missile    = None;
             }
             // Close on B or SELECT — but not the same tick SELECT opened it
             if was_open && (input.just_pressed(Button::B) || input.just_pressed(Button::Select)) {
                 game.weapon_menu_open = false;
+                game.homing_missile   = None;
             }
             return true;
         }
@@ -1428,9 +1436,13 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
                 cursor_y: sy,
                 render_y: sy,
                 blink_timer: 0,
+                confirmed: false,
             });
         }
-        return;
+        if !game.homing_missile.as_ref().unwrap().confirmed {
+            return; // cursor phase — step_homing_missile handles input
+        }
+        // confirmed: fall through to charge-shot logic below
     }
 
     // All other weapons: hold A to charge, release to fire (Worms-style one-way).
@@ -1831,35 +1843,14 @@ fn step_homing_missile(game: &mut GameState, input: &InputState) {
     hm.cursor_x = hm.cursor_x.clamp(0.0, WORLD_W as f32);
     hm.cursor_y = hm.cursor_y.clamp(12.0, WATER_Y as f32 - 20.0);
 
-    if input.just_pressed(Button::B) {
-        game.homing_missile = None;
-        return;
-    }
-
     if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
-        let target = {
-            let hm = game.homing_missile.as_ref().unwrap();
-            (hm.cursor_x, hm.cursor_y)
-        };
-        game.homing_missile = None;
-        let ti = game.active_team();
-        let si = game.teams[ti].active;
-        if !game.teams[ti].consume_weapon() { return; }
-        game.teams[ti].prune_empty_weapons();
-        let fm    = game.teams[ti].soldiers[si].facing as f32;
-        let angle = game.aim.angle;
-        let power = game.aim.power.min(MAX_CHARGE) * 20.0;
-        let sy = game.teams[ti].soldiers[si].pos.y - 4.0 - angle.sin() * 12.0;
-        let sx = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 12.0;
-        let mut proj = Projectile::new(
-            WorldPos::new(sx, sy),
-            Vec2::new(angle.cos() * power * fm, -angle.sin() * power),
-            WeaponKind::HomingMissile,
-        );
-        proj.homing_target = Some(target);
-        game.projectiles.push(proj);
-        game.teams[ti].soldiers[si].has_fired = true;
-        game.turn.on_fired();
+        game.homing_missile.as_mut().unwrap().confirmed = true;
+        game.aim.charge_armed = true;
+        game.messages.push(crate::game::state::GameMessage {
+            text: "TARGET LOCKED - AIM AND CHARGE".to_string(),
+            team: None,
+            ticks: 60,
+        });
     }
 }
 
@@ -1891,6 +1882,12 @@ fn fire_weapon(game: &mut GameState) {
     let mut proj = Projectile::new(spawn, vel, kind);
     if kind == WeaponKind::Grenade {
         proj.fuse = FuseState::Burning(game.aim.fuse_ticks);
+    }
+    if kind == WeaponKind::HomingMissile {
+        if let Some(ref hm) = game.homing_missile {
+            proj.homing_target = Some((hm.cursor_x, hm.cursor_y));
+        }
+        game.homing_missile = None;
     }
     // HHG uses a fixed 3-second fuse (already set by Projectile::new via default_fuse_ticks)
     match kind {
@@ -2208,7 +2205,7 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
     use crate::game::soldier::{DeathCause, SoldierState};
 
     const MAX_RANGE:  f32 = 800.0;
-    const STEP:       f32 = 4.0;
+    const STEP:       f32 = 1.0;
     const DAMAGE:     u32 = 15;
     const KNOCKBACK:  f32 = 3.5;
 
@@ -2312,7 +2309,7 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
     use crate::game::soldier::{DeathCause, SoldierState};
 
     const MAX_RANGE:     f32 = 600.0;
-    const STEP:          f32 = 3.0;
+    const STEP:          f32 = 1.0;
     const DAMAGE:        u32 = 5;
     const KNOCKBACK:     f32 = 3.5;
     const SPREAD:        f32 = 0.14; // ±8° in radians
@@ -2460,7 +2457,7 @@ fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Op
     use crate::game::soldier::{DeathCause, SoldierState};
 
     const MAX_RANGE:         f32 = 450.0;
-    const STEP:              f32 = 3.0;
+    const STEP:              f32 = 1.0;
     const DAMAGE:            u32 = 3;
     const KNOCKBACK:         f32 = 2.0;
     const SPREAD:            f32 = 0.22; // ±12.6° — wider than minigun's ±8°
@@ -3256,13 +3253,16 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     //     wind debris — all driven by a shared gusting wind so they breathe together.
     use crate::renderer::background;
     crate::renderer::bg_image::copy_bg_viewport(buf, &lstate.bg_cache, &game.terrain, game.map_seed, cam_x);
+    mark!("bg_sky");
     let gw = background::gust_wind(game.wind.value(), lstate.tick);
     background::draw_backdrop(buf, &game.terrain, cam_x);
+    mark!("backdrop");
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
 
     buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain, &lstate.bg_cache, game.map_seed);
+    mark!("terrain_copy");
     background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
-    mark!("terrain+bg");
+    mark!("debris");
 
     // 2. Water ripple — cached strip, regenerated every tick (30 Hz).
     {
@@ -4000,6 +4000,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 }
             } else if proj.kind == WeaponKind::Bazooka {
                 crate::renderer::draw_sprites::draw_bazooka(buf, proj.pos, proj.vel);
+            } else if proj.kind == WeaponKind::HomingMissile {
+                crate::renderer::draw_sprites::draw_homing_missile(buf, proj.pos, proj.vel);
             } else if proj.kind == WeaponKind::BlackHoleBomb {
                 let px = proj.pos.x as i32;
                 let py = proj.pos.y as i32;

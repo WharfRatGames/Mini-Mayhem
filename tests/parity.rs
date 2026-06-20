@@ -96,7 +96,7 @@ struct AirstrikeSn {
 
 #[derive(Debug, PartialEq)]
 struct HomingMissileSn {
-    cursor: (f32, f32), render: (f32, f32), blink_timer: u32,
+    cursor: (f32, f32), render: (f32, f32), blink_timer: u32, confirmed: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -299,7 +299,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
     // ── homing missile ────────────────────────────────────────────────────────
     let homing_missile = homing_missile.as_ref().map(|h| HomingMissileSn {
         cursor: (h.cursor_x, h.cursor_y), render: (h.render_x, h.render_y),
-        blink_timer: h.blink_timer,
+        blink_timer: h.blink_timer, confirmed: h.confirmed,
     });
 
     // ── plasma torch ──────────────────────────────────────────────────────────
@@ -460,6 +460,7 @@ fn round_trip_preserves_synced_state() {
     // Homing missile cursor
     server.homing_missile = Some(HomingMissileState {
         cursor_x: 850.0, cursor_y: 200.0, render_x: 848.5, render_y: 201.3, blink_timer: 7,
+        confirmed: true,
     });
 
     // Grave

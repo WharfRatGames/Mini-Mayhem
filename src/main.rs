@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.304";
+const VERSION: &str = "0.5.4.308";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -97,61 +97,33 @@ fn main() {
         if let Ok(true) = update_rx.recv_timeout(std::time::Duration::from_millis(2500)) {
             update_available = true;
             use renderer::Bgra;
-            use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
+            use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width};
             use world::{SCREEN_W, SCREEN_H};
             let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
             let bar_x = 40i32; let bar_w = sw - 80;
             let bar_y = sh/2 + 10; let bar_h = 24i32;
-            // Pull the changelog from the Pi once, so the list is always current
-            // without rebuilding the app. Falls back if offline.
-            let changelog = updater::fetch_changelog(3)
-                .unwrap_or_else(|| vec!["update notes unavailable offline".to_string()]);
-            let max_lines = ((sh - 70 - 54) / 12).max(1) as usize;
-            let changelog: Vec<String> = changelog.iter()
-                .flat_map(|line| wrap_text(line, 1, sw - 36))
-                .take(max_lines)
-                .collect();
-            'pre_update: loop {
-                input.poll();
-                if input.just_pressed(input::Button::A) {
-                    let binary = updater::stream_binary(|done, total| {
-                        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-                        buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-                        let t = "DOWNLOADING UPDATE";
-                        draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255,210,50), 2);
-                        buf.fill_rect(bar_x-2, bar_y-2, (bar_w+4) as u32, (bar_h+4) as u32, Bgra::new(60,60,100));
-                        buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h as u32, Bgra::new(20,20,40));
-                        let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
-                        let filled = (bar_w as f32 * frac) as u32;
-                        if filled > 0 { buf.fill_rect(bar_x, bar_y, filled, bar_h as u32, Bgra::new(80,200,120)); }
-                        let pct = format!("{}%", (frac * 100.0) as u32);
-                        draw_str(&mut buf, &pct, sw/2 - str_width(&pct)/2, bar_y + bar_h + 10, Bgra::new(180,180,200));
-                        buf.blit_to_fb(&mut fb, 0);
-                    });
-                    match binary {
-                        Some(b) if b.len() > 4 && b[0] == 0x7f && &b[1..4] == b"ELF" => {
-                            draw_msg(&mut buf, &mut fb, "APPLYING UPDATE...");
-                            updater::apply_binary(&b, &mut buf, &mut fb);
-                            // exec failed — fall through to title
-                        }
-                        _ => { draw_msg(&mut buf, &mut fb, "DOWNLOAD FAILED"); std::thread::sleep(std::time::Duration::from_secs(2)); }
-                    }
-                    break 'pre_update;
-                }
+            // Auto-install immediately without waiting for A press.
+            let binary = updater::stream_binary(|done, total| {
                 buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
                 buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-                let t = "UPDATE AVAILABLE";
-                draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255, 210, 50), 2);
-                let v = format!("VERSION {}", VERSION);
-                draw_str_scaled(&mut buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
-                for (i, line) in changelog.iter().enumerate() {
-                    let y = 54 + i as i32 * 13;
-                    if i > 0 { buf.fill_rect(12, y - 2, SCREEN_W - 24, 1, Bgra::new(40, 45, 70)); }
-                    draw_str(&mut buf, line, 18, y, Bgra::new(110, 130, 160));
-                }
-                draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 54, Bgra::new(80, 220, 120), 2);
+                let t = "DOWNLOADING UPDATE";
+                draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255,210,50), 2);
+                buf.fill_rect(bar_x-2, bar_y-2, (bar_w+4) as u32, (bar_h+4) as u32, Bgra::new(60,60,100));
+                buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h as u32, Bgra::new(20,20,40));
+                let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
+                let filled = (bar_w as f32 * frac) as u32;
+                if filled > 0 { buf.fill_rect(bar_x, bar_y, filled, bar_h as u32, Bgra::new(80,200,120)); }
+                let pct = format!("{}%", (frac * 100.0) as u32);
+                draw_str(&mut buf, &pct, sw/2 - str_width(&pct)/2, bar_y + bar_h + 10, Bgra::new(180,180,200));
                 buf.blit_to_fb(&mut fb, 0);
-                std::thread::sleep(TICK_DURATION);
+            });
+            match binary {
+                Some(b) if b.len() > 4 && b[0] == 0x7f && &b[1..4] == b"ELF" => {
+                    draw_msg(&mut buf, &mut fb, "APPLYING UPDATE...");
+                    updater::apply_binary(&b, &mut buf, &mut fb);
+                    // exec failed — fall through to title
+                }
+                _ => { draw_msg(&mut buf, &mut fb, "DOWNLOAD FAILED"); std::thread::sleep(std::time::Duration::from_secs(2)); }
             }
         }
     }
@@ -524,8 +496,17 @@ fn main() {
                         let _ = std::io::BufReader::new(cloned).read_line(&mut resp);
                     }
                     if resp.trim() == "REJECTED:VERSION" {
+                        use renderer::Bgra;
+                        use renderer::font::{draw_str_scaled, str_width_scaled};
+                        use world::{SCREEN_W, SCREEN_H};
+                        let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
                         loop {
-                            draw_msg(&mut buf, &mut fb, "VERSION MISMATCH - UPDATE CLIENT  (B=BACK)");
+                            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
+                            let l1 = "VERSION MISMATCH";
+                            let l2 = "UPDATE CLIENT  (B=BACK)";
+                            draw_str_scaled(&mut buf, l1, sw/2 - str_width_scaled(l1,2)/2, sh/2 - 20, Bgra::new(255,80,80), 2);
+                            draw_str_scaled(&mut buf, l2, sw/2 - str_width_scaled(l2,2)/2, sh/2 + 12, Bgra::new(255,210,50), 2);
+                            buf.blit_to_fb(&mut fb, 0);
                             input.poll();
                             if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::A) { break; }
                             std::thread::sleep(std::time::Duration::from_millis(33));

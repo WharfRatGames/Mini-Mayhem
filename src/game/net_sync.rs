@@ -138,7 +138,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
         homing_missile: game.homing_missile.as_ref().map(|hm| NetHomingMissile {
             cursor_x: hm.cursor_x, render_x: hm.render_x,
             cursor_y: hm.cursor_y, render_y: hm.render_y,
-            blink_timer: hm.blink_timer,
+            blink_timer: hm.blink_timer, confirmed: hm.confirmed,
         }),
         airstrike: game.airstrike.as_ref().map(|a| NetAirstrike {
             cursor_x: a.cursor_x, render_x: a.render_x, cursor_y: a.cursor_y, render_y: a.render_y,
@@ -462,7 +462,7 @@ pub fn apply_server_state(
         game.homing_missile = state.homing_missile.as_ref().map(|hm| HomingMissileState {
             cursor_x: hm.cursor_x, render_x: hm.render_x,
             cursor_y: hm.cursor_y, render_y: hm.render_y,
-            blink_timer: hm.blink_timer,
+            blink_timer: hm.blink_timer, confirmed: hm.confirmed,
         });
     }
     // Sync Airstrike

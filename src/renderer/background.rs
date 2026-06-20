@@ -19,6 +19,31 @@ use std::f32::consts::{PI, TAU};
 // ── Parallax backdrop ─────────────────────────────────────────────────────────
 
 const PAR_SUN: f32 = 0.12;
+const SUN_R:   i32 = 46;
+const SUN_D:   usize = (SUN_R * 2 + 1) as usize; // 93
+
+/// Precomputed sun glow disc: add[dy+R][dx+R] = additive brightness (0 = outside disc).
+struct SunLut { add: [[u8; SUN_D]; SUN_D] }
+
+fn sun_lut() -> &'static SunLut {
+    static LUT: std::sync::OnceLock<SunLut> = std::sync::OnceLock::new();
+    LUT.get_or_init(|| {
+        let r2 = (SUN_R * SUN_R) as f32;
+        let mut add = [[0u8; SUN_D]; SUN_D];
+        for dy_i in 0..SUN_D {
+            let dy = dy_i as f32 - SUN_R as f32;
+            for dx_i in 0..SUN_D {
+                let dx = dx_i as f32 - SUN_R as f32;
+                let d2 = dx * dx + dy * dy;
+                if d2 < r2 {
+                    let f = 1.0 - d2 / r2;
+                    add[dy_i][dx_i] = (f * f * 70.0) as u8;
+                }
+            }
+        }
+        SunLut { add }
+    })
+}
 
 /// Draw the sun glow into the visible viewport, only on sky pixels (skips
 /// terrain and water).
@@ -28,34 +53,29 @@ pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
 
     // ── Sun glow: soft additive disc, slow horizontal parallax ──
     let sun_sx = 130.0 - cam_x as f32 * PAR_SUN;
-    let sun_sy = 70.0_f32;
-    let sun_r = 46.0_f32;
-    if sun_sx > -sun_r && sun_sx < SCREEN_W as f32 + sun_r {
-        let cx = sun_sx as i32;
-        let cy = sun_sy as i32;
-        let ri = sun_r as i32;
-        let sun_r2 = sun_r * sun_r;
-        // sx-outer loop: hoist dx² out of the inner loop and clamp y with
-        // sky_limit once per column instead of checking every pixel.
-        for sx in (cx - ri).max(0)..(cx + ri).min(SCREEN_W as i32) {
-            let wx = (cam_x as i32 + sx) as u32;
-            let dx = (sx - cx) as f32;
-            let dx2 = dx * dx;
-            if dx2 >= sun_r2 { continue; } // column outside disc — skip early
-            let y_bot = (cy + ri).min(water_y).min(terrain.sky_limit[wx as usize] as i32);
-            for sy in (cy - ri).max(0)..y_bot {
-                let dy = (sy - cy) as f32;
-                let d2 = dx2 + dy * dy;
-                if d2 >= sun_r2 { continue; }
-                // Quadratic falloff — avoids sqrt (~6600 px/frame at full disc).
-                let f = 1.0 - d2 / sun_r2;
-                let add = (f * f * 70.0) as u16;
-                if add == 0 { continue; }
+    let cx = sun_sx as i32;
+    let cy = 70i32;
+    if sun_sx > -(SUN_R as f32) && sun_sx < SCREEN_W as f32 + SUN_R as f32 {
+        let lut = sun_lut();
+        let sx0 = (cx - SUN_R).max(0);
+        let sx1 = (cx + SUN_R).min(SCREEN_W as i32);
+        let sy0 = (cy - SUN_R).max(0);
+        let sy1 = (cy + SUN_R).min(water_y);
+        // Row-major: sy outer → sequential buffer writes; LUT row stays in cache.
+        for sy in sy0..sy1 {
+            let dy_i = (sy - cy + SUN_R) as usize;
+            let lut_row = &lut.add[dy_i];
+            for sx in sx0..sx1 {
+                let wx = (cam_x as i32 + sx) as u32;
+                if sy >= terrain.sky_limit[wx as usize] as i32 { continue; }
+                let dx_i = (sx - cx + SUN_R) as usize;
+                let v = lut_row[dx_i];
+                if v == 0 { continue; }
                 let c = buf.get_pixel_unchecked(wx, sy as u32);
                 buf.set_pixel_unchecked(wx, sy as u32, Bgra::new(
-                    (c.r as u16 + add).min(255) as u8,
-                    (c.g as u16 + add).min(255) as u8,
-                    (c.b as u16 + (add / 2)).min(255) as u8,
+                    c.r.saturating_add(v),
+                    c.g.saturating_add(v),
+                    c.b.saturating_add(v >> 1),
                 ));
             }
         }

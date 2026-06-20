@@ -328,13 +328,11 @@ impl WorldBuffer {
 
                     let off0 = ((ys * WORLD_W + wx) * 4) as usize;
                     let off1 = ((ye * WORLD_W + wx) * 4) as usize;
+                    let stride = (WORLD_W * 4) as usize;
                     let mut off = off0;
                     while off < off1 {
-                        self.data[off]     = src.data[off];
-                        self.data[off + 1] = src.data[off + 1];
-                        self.data[off + 2] = src.data[off + 2];
-                        self.data[off + 3] = src.data[off + 3];
-                        off += (WORLD_W * 4) as usize;
+                        self.data[off..off + 4].copy_from_slice(&src.data[off..off + 4]);
+                        off += stride;
                     }
                     self.pixel_writes += (ye - ys) as u64;
                     y = ye;
