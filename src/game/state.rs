@@ -1206,7 +1206,7 @@ impl GameState {
 
     /// Advance all placed mines one tick. Returns true if any mine exploded.
     pub fn step_mines(&mut self) -> bool {
-        const TRIGGER_RADIUS: f32 = 20.0;
+        const TRIGGER_RADIUS: f32 = 25.0;
         let mut exploded = false;
         let mut to_explode: Vec<WorldPos> = Vec::new();
 
