@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.310";
+const VERSION: &str = "0.5.4.311";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -841,7 +841,7 @@ fn main() {
             {
                 use crate::physics::projectile::WeaponKind;
                 let spawns: Vec<_> = game.projectiles.iter()
-                    .filter(|p| p.kind == WeaponKind::Bazooka)
+                    .filter(|p| p.kind == WeaponKind::Bazooka || p.kind == WeaponKind::HomingMissile)
                     .map(|p| p.pos)
                     .collect();
                 for pos in spawns { game.smoke_particles.push((pos, 22)); }

@@ -1,3 +1,25 @@
+0.5.4.311  End screen text uses full screen height; headline larger; mine flat-topped dome shape; torch flames restored; homing missile smoke trail; L1+aim for precision aiming.
+0.5.4.310  Ranked matchmaking built into game server; homing missile locks soldier in place after firing; body colors match bazooka with red nose.
+0.5.4.309  Homing missile charge fix; death blast explosion; server message logging.
+0.5.4.308  Homing missile: target-locked message, death explosion knockback fix, red-tip visual; Mac-10 sound stretch; auto-update on startup.
+0.5.4.304  Homing missile weapon added; comprehensive parity tests.
+0.5.4.303  Sine LUT for debris and wind; Mac-10 burst fix; flame flicker fix.
+0.5.4.302  Sine LUT for water waves; mine radius increased; X glyph fix.
+0.5.4.301  New Mac-10 sound; 19-shot burst; mine damage 35.
+0.5.4.300  Head-clipping fix; wider plasma torch tunnels; longer Mac-10 sound.
+0.5.4.297  Cavern tunnel width and spawn reachability fixes; soldier collision fix.
+0.5.4.296  Mac-10 looping fire sound.
+0.5.4.293  Mac-10 weapon added (SMG with sprite); viking helm gap fix; waterline raised.
+0.5.4.292  Torch tunnel fix; HP animation slower; fire gravity; grenade settle fix.
+0.5.4.291  HP countdown animation; soldier stuck fix; terrain height; font X fix.
+0.5.4.290  Airstrike sound on impact; plane spawn fix; viking helm full replacement.
+0.5.4.289  Grenade settle fix; death FX tuning; rope and death bugfixes; viking helm.
+0.5.4.288  Weapon menu 3-column sort; apex-based fall damage; Uzi sound fallback.
+0.5.4.287  Uzi weapon — hitscan SMG burst, 20 shots over 2 seconds.
+0.5.4.286  Minigun Worms-style recoil and dirt FX on terrain hits.
+0.5.4.285  Minigun hits barrels and mines; test mode shows map archetype.
+0.5.4.284  Minigun sound and 20-shot burst over 3 seconds.
+0.5.4.283  Minigun weapon — crate-only rare, 20-shot auto-burst.
 0.5.4.282  Idle gun held lower; sacred ordnance launches soldiers higher; viking helm replaces head; luchador mask smaller; sacred ord 8-frame direction-aware rotation.
 0.5.4.281  Update is now mandatory; cannot be skipped for any mode.
 0.5.4.278  Terrain generates lower on screen; water level lowered; more sky headroom.

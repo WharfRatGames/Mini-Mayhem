@@ -161,21 +161,21 @@ pub fn draw_game_over(
     buf.fill_rect(cx0, 0, SCREEN_W, sh as u32, Bgra::new(6, 8, 22));
     buf.fill_rect(cx0, dark_top, SCREEN_W, 2, COLOR_BORDER);
 
-    // Fixed y anchors below the dark line
-    let y_headline = dark_top + 12;   // ~111
-    let y_subtext  = dark_top + 48;   // ~147
-    let y_divider  = dark_top + 67;   // ~166
-    let y_stats    = dark_top + 86;   // ~185
-    let y_memo     = dark_top + 140;  // ~239  (near screen centre)
-    let y_elo      = dark_top + 168;  // ~267
+    // Fixed y anchors below the dark line — spread across full screen height
+    let y_headline = dark_top + 14;   // ~113
+    let y_subtext  = dark_top + 62;   // ~161
+    let y_divider  = dark_top + 92;   // ~191
+    let y_stats    = dark_top + 112;  // ~211
+    let y_memo     = dark_top + 185;  // ~284
+    let y_elo      = dark_top + 240;  // ~339
     let y_hint     = sh - 26;         // 454
 
     match winner_team {
         None => {
             // Draw — no avatar needed
             let msg = "IT'S A DRAW!";
-            let mw = str_width_scaled(msg, 3);
-            draw_str_shadow_scaled(buf, msg, mid - mw/2, y_headline, HUD_TEXT, 3);
+            let mw = str_width_scaled(msg, 4);
+            draw_str_shadow_scaled(buf, msg, mid - mw/2, y_headline, HUD_TEXT, 4);
             draw_button_hints(buf, &[("A", "CONTINUE")], cx0);
         }
         Some(winner) => {
@@ -202,8 +202,8 @@ pub fn draw_game_over(
                     (s, team_col)
                 }
             };
-            let hw = str_width_scaled(headline, 3);
-            draw_str_shadow_scaled(buf, headline, mid - hw/2, y_headline, headline_col, 3);
+            let hw = str_width_scaled(headline, 4);
+            draw_str_shadow_scaled(buf, headline, mid - hw/2, y_headline, headline_col, 4);
 
             // Team wins bar
             let sub  = format!("{} TEAM WINS", team_name);
@@ -220,7 +220,7 @@ pub fn draw_game_over(
             let sw0 = str_width_scaled(&stats0, 2) as i32;
             let sw1 = str_width_scaled(&stats1, 2) as i32;
             draw_str_scaled(buf, &stats0, mid - sw0/2, y_stats,      Bgra::new(150, 150, 180), 2);
-            draw_str_scaled(buf, &stats1, mid - sw1/2, y_stats + 24, Bgra::new(150, 150, 180), 2);
+            draw_str_scaled(buf, &stats1, mid - sw1/2, y_stats + 32, Bgra::new(150, 150, 180), 2);
 
             // Fun stat + quip — near screen centre; scale down if too wide
             if !memo_line.is_empty() {
@@ -242,7 +242,7 @@ pub fn draw_game_over(
             if scrap_earned > 0 {
                 let scrap_str = format!("+{}  SCRAP", scrap_earned);
                 let sw = str_width_scaled(&scrap_str, 2);
-                draw_str_scaled(buf, &scrap_str, mid - sw/2, y_elo + 24, COLOR_GOLD, 2);
+                draw_str_scaled(buf, &scrap_str, mid - sw/2, y_elo + 36, COLOR_GOLD, 2);
             }
 
             draw_button_hints(buf, &[("A", "CONTINUE")], cx0);
