@@ -263,6 +263,16 @@ pub struct AirstrikeState {
     pub spawn_cam_left: f32,
 }
 
+/// Homing Missile targeting state (active while player is picking the target point).
+#[derive(Debug, Clone)]
+pub struct HomingMissileState {
+    pub cursor_x:    f32,
+    pub cursor_y:    f32,
+    pub render_x:    f32,
+    pub render_y:    f32,
+    pub blink_timer: u32,
+}
+
 /// Garcia targeting / falling state.
 #[derive(Debug, Clone)]
 pub struct GarciaState {
@@ -380,6 +390,8 @@ pub struct GameState {
     pub garcia: Option<GarciaState>,
     /// Airstrike targeting / active session; None = inactive.
     pub airstrike: Option<AirstrikeState>,
+    /// Homing missile target-picking session; None = inactive.
+    pub homing_missile: Option<HomingMissileState>,
     /// Set true during the meteor bomb impact loop so chain-detonated barrels/mines
     /// also scatter fragments. Transient — not networked.
     pub meteor_chain: bool,
@@ -442,6 +454,7 @@ impl GameState {
             plasma_torch: None,
             garcia: None,
             airstrike: None,
+            homing_missile: None,
             meteor_chain: false,
             teams,
         }
@@ -799,6 +812,27 @@ impl GameState {
             }
         }
 
+        // Pre-step: steer homing missiles toward their fixed target after 1s unguided
+        for proj in &mut self.projectiles {
+            if proj.kind == WeaponKind::HomingMissile && proj.age_ticks > 30 {
+                if let Some((tx, ty)) = proj.homing_target {
+                    let to_x = tx - proj.pos.x;
+                    let to_y = ty - proj.pos.y;
+                    let dist = (to_x * to_x + to_y * to_y).sqrt().max(0.001);
+                    let speed = (proj.vel.x * proj.vel.x + proj.vel.y * proj.vel.y).sqrt().max(0.001);
+                    let target_angle = to_y.atan2(to_x);
+                    let cur_angle = proj.vel.y.atan2(proj.vel.x);
+                    let mut diff = target_angle - cur_angle;
+                    while diff >  std::f32::consts::PI { diff -= std::f32::consts::TAU; }
+                    while diff < -std::f32::consts::PI { diff += std::f32::consts::TAU; }
+                    let new_angle = cur_angle + diff.clamp(-0.06, 0.06);
+                    proj.vel.x = new_angle.cos() * speed;
+                    proj.vel.y = new_angle.sin() * speed;
+                    let _ = dist; // used only for angle, not clamping speed
+                }
+            }
+        }
+
         self.projectiles.retain_mut(|proj| {
             // Silently expire projectiles that have flown far off the map edges or too high.
             if proj.pos.x < -(WORLD_W as f32) || proj.pos.x > 2.0 * WORLD_W as f32 || proj.pos.y < -600.0 {
@@ -1010,9 +1044,9 @@ impl GameState {
                  WeaponKind::NinjaRope, WeaponKind::BaseballBat,
                  WeaponKind::PlasmaTorch, WeaponKind::Uzi][slot.min(6)]
             } else if w < 0.84 {
-                let slot = ((w - 0.60) / 0.24 * 3.0) as usize;
+                let slot = ((w - 0.60) / 0.24 * 4.0) as usize;
                 [WeaponKind::Blasthive, WeaponKind::BananaBomb,
-                 WeaponKind::AirStrike][slot.min(2)]
+                 WeaponKind::AirStrike, WeaponKind::HomingMissile][slot.min(3)]
             } else if w < 0.98 {
                 let slot = ((w - 0.84) / 0.14 * 4.0) as usize;
                 [WeaponKind::BlackHoleBomb, WeaponKind::Revolver,
@@ -1251,12 +1285,12 @@ impl GameState {
             for pos in to_explode {
                 self.apply_explosion(pos, WeaponKind::Landmine);
                 if self.meteor_chain { self.spawn_meteor_fragments(pos); }
-                // Chain: trigger any Armed mines within blast radius (25px)
+                // Chain: trigger any Armed mines within blast radius (43px)
                 for mine in &mut self.mines {
                     if mine.state == MineState::Armed {
                         let dx = mine.pos.x - pos.x;
                         let dy = mine.pos.y - pos.y;
-                        if (dx * dx + dy * dy).sqrt() < 25.0 {
+                        if (dx * dx + dy * dy).sqrt() < 43.0 {
                             mine.state = MineState::Triggered;
                             mine.trigger_ticks = 5; // shorter chain delay
                         }

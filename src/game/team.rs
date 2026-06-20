@@ -152,6 +152,7 @@ fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
         (WeaponKind::Landmine,     Some(2)), // 2 uses
         (WeaponKind::BaseballBat,  Some(1)), // 1 use; locked until 3 full cycles
         (WeaponKind::PlasmaTorch,  Some(3)), // 3 uses; terrain tunneling tool
+        (WeaponKind::HomingMissile, Some(1)), // 1 use; locked until 2 full cycles
     ];
     v.sort_by_key(|(k, _)| k.menu_sort_key());
     v
