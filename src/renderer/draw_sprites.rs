@@ -2,21 +2,7 @@ use crate::world::{WorldPos, Vec2, WATER_Y};
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
 
-// ── Sine LUT — replaces f32::sin() in the per-frame water wave loops ──────────
-
-const SIN_LUT_N: usize = 1024;
-
-fn sin_lut(x: f32) -> f32 {
-    static LUT: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
-    let lut = LUT.get_or_init(|| {
-        (0..SIN_LUT_N)
-            .map(|i| (i as f32 * std::f32::consts::TAU / SIN_LUT_N as f32).sin())
-            .collect()
-    });
-    let idx = (x * (SIN_LUT_N as f32 / std::f32::consts::TAU))
-        .rem_euclid(SIN_LUT_N as f32) as usize;
-    lut[idx]
-}
+use super::sin_lut;
 
 // ── Garcia sprite ─────────────────────────────────────────────────────────────
 

@@ -13,6 +13,7 @@
 use crate::world::{Terrain, WATER_Y, WORLD_W, SCREEN_W, SCREEN_H};
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
+use super::sin_lut;
 use std::f32::consts::{PI, TAU};
 
 // ── Parallax backdrop ─────────────────────────────────────────────────────────
@@ -69,9 +70,9 @@ pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
 /// background system breathes together. Magnitude can briefly exceed `base`.
 pub fn gust_wind(base: f32, tick: u32) -> f32 {
     let t = tick as f32;
-    let breath = 1.0 + 0.35 * (t * 0.030).sin() + 0.25 * (t * 0.011).sin();
+    let breath = 1.0 + 0.35 * sin_lut(t * 0.030) + 0.25 * sin_lut(t * 0.011);
     // Slow envelope that occasionally crests → a short gust burst.
-    let env = (t * 0.006).sin();
+    let env = sin_lut(t * 0.006);
     let gust = if env > 0.7 { (env - 0.7) / 0.3 * 0.8 } else { 0.0 };
     base * (breath + gust)
 }
@@ -158,7 +159,7 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
         p.vx += wind * style.drift * 0.25;
         p.vx *= 0.97;                       // damp so drift tracks wind, not runaway
         p.phase += style.sway_speed;
-        p.x += p.vx + p.phase.sin() * style.sway_amp; // wavy arc, not a straight fall
+        p.x += p.vx + sin_lut(p.phase) * style.sway_amp; // wavy arc, not a straight fall
         p.y += p.vy;
         p.rot += p.spin;
     }

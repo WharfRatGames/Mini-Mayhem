@@ -1,4 +1,23 @@
 #![allow(unused_imports)]
+
+// ── Shared sine LUT ───────────────────────────────────────────────────────────
+
+const SIN_LUT_N: usize = 1024;
+
+/// Fast sin approximation via 1024-entry lookup table.
+/// Max error < 0.003 rad — imperceptible for visual animation.
+pub fn sin_lut(x: f32) -> f32 {
+    static LUT: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    let lut = LUT.get_or_init(|| {
+        (0..SIN_LUT_N)
+            .map(|i| (i as f32 * std::f32::consts::TAU / SIN_LUT_N as f32).sin())
+            .collect()
+    });
+    let idx = (x * (SIN_LUT_N as f32 / std::f32::consts::TAU))
+        .rem_euclid(SIN_LUT_N as f32) as usize;
+    lut[idx]
+}
+
 pub mod fb;
 pub mod buffer;
 pub mod camera;

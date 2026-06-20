@@ -1219,7 +1219,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
-    // Uzi auto-burst: fires one bullet every 3 ticks (20 shots = 2.0 seconds at 30 Hz).
+    // Uzi auto-burst: fires one bullet every 3 ticks (20 shots × 3 ticks = 60 ticks = 2.0s at 30 Hz).
     if game.uzi_shots_left > 0 {
         if game.uzi_fire_timer == 0 {
             let ti = game.active_team();
@@ -1315,8 +1315,8 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             let si = game.teams[ti].active;
             if !game.teams[ti].consume_weapon() { return; }
             game.teams[ti].prune_empty_weapons();
-            game.uzi_shots_left = 19;
-            game.uzi_fire_timer = 0;
+            game.uzi_shots_left = 20;
+            game.uzi_fire_timer = 3;
             game.emit_sound(crate::audio::Sfx::Uzi);
             fire_uzi_shot(game, ti, si, muzzle_override);
         }
@@ -3380,7 +3380,6 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         if patch.pos.x < vx0 - 10.0 || patch.pos.x >= vx1 + 10.0 { continue; }
         if wy < -20 || wy >= sh { continue; }
 
-        let outer = if (game.tick / 2) % 2 == 0 { Bgra::new(210, 40, 0) } else { Bgra::new(235, 60, 0) };
         let mid   = Bgra::new(255, 130, 15);
         let inner = Bgra::new(255, 205, 60);
         let core  = Bgra::new(255, 250, 205);
@@ -3390,8 +3389,10 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         // whole flame grows proportionally in both height and width.)
         let h = if patch.landed { 17 } else { 8 };
         let max_half = h as f32 * 0.42;
-        // Independent phase per flame so they don't flicker in lockstep.
+        // Independent phase per flame — drives both sway/width flicker and outer
+        // colour toggle so flames don't all change colour in lockstep.
         let phase = game.tick as f32 * 0.30 + (wx as f32) * 0.7 + (wy as f32) * 0.5;
+        let outer = if phase.sin() > 0.0 { Bgra::new(210, 40, 0) } else { Bgra::new(235, 60, 0) };
         let base_y = wy + 1;
 
         for ry in 0..h {
