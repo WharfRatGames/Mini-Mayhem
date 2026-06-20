@@ -1889,6 +1889,7 @@ fn fire_weapon(game: &mut GameState) {
             proj.homing_target = Some((hm.cursor_x, hm.cursor_y));
         }
         game.homing_missile = None;
+        game.retreat_locked = true;
     }
     // HHG uses a fixed 3-second fuse (already set by Projectile::new via default_fuse_ticks)
     match kind {

@@ -683,8 +683,8 @@ pub fn draw_homing_missile(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::wor
     let body_edge = Bgra::new(120,  50,  8);
     let body_side = Bgra::new(160,  75, 15);
     let body_ctr  = Bgra::new(210, 110, 25);
-    let nose_col  = Bgra::new(200,  20, 20);  // red nose
-    let tip_col   = Bgra::new(255,  60, 60);  // bright red tip
+    let nose_col  = Bgra::new(200,  20,  20);  // red nose
+    let tip_col   = Bgra::new(255,  60,  60);  // bright red tip
 
     let (ex, ey) = pt(-7.0, 0.0);
     buf.set_pixel(ex, ey, exhaust);

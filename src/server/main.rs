@@ -35,6 +35,10 @@ use arty::world::WorldPos;
 
 const PORT_DEFAULT: u16 = 7777;
 const TICK_DURATION: Duration = Duration::from_millis(1000 / 30);
+/// Token sent by clients who want to enter the ranked queue (not a reconnect).
+const RANKED_QUEUE_TOKEN: &str = "RANKED";
+
+type RankedQueue = Arc<Mutex<Vec<TcpStream>>>;
 
 fn main() {
     // Log to a text file (in addition to terminal/journal when run attached).
@@ -61,8 +65,8 @@ fn main() {
     let match_id: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
     let casual_registry: CasualRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let ranked_queue: RankedQueue = Arc::new(Mutex::new(Vec::new()));
     let lobby: SharedLobby = Arc::new(Mutex::new(Lobby::default()));
-    let mut pending: Option<(TcpStream, String)> = None;
     loop {
         let (stream, _addr, token) = accept_one(&listener);
 
@@ -90,28 +94,28 @@ fn main() {
             }
         }
 
-        // Fresh pairing — first of a pair waits for the second. If the player
-        // holding the `pending` slot gave up (closed their connection) before
-        // a second player arrived, the dead stream would otherwise get paired
-        // with this new, unrelated connection — starting a match against a
-        // socket nobody is on the other end of. Discard dead pendings and let
-        // this new connection take the slot instead.
-        loop {
-            match pending.take() {
-                None => { pending = Some((stream, token)); break; }
-                Some((s0, tok0)) => {
-                    if !stream_alive(&s0) {
-                        info!("Dropping dead pending connection");
-                        continue;
-                    }
-                    let shared_token = if !tok0.is_empty() { tok0 } else { token };
-                    let mid = match_id.fetch_add(1, Ordering::Relaxed) + 1;
-                    let registry2 = registry.clone();
-                    thread::spawn(move || run_match(mid, s0, stream, registry2, shared_token));
-                    break;
-                }
+        // Ranked queue: a player connecting with RANKED_QUEUE_TOKEN wants a
+        // ranked match. Drain dead waiters first, then pair if someone else is
+        // already waiting, otherwise add this player to the queue.
+        if token == RANKED_QUEUE_TOKEN {
+            // Drain dead waiters, then either pair immediately or enqueue.
+            let mut q = ranked_queue.lock().unwrap_or_else(|e| e.into_inner());
+            q.retain(|s| stream_alive(s));
+            if q.is_empty() {
+                q.push(stream);
+                info!("Ranked: player queued ({} waiting)", q.len());
+            } else {
+                let s0 = q.remove(0);
+                drop(q); // release lock before spawning
+                let mid = match_id.fetch_add(1, Ordering::Relaxed) + 1;
+                let registry2 = registry.clone();
+                info!("Ranked: pairing match {mid}");
+                thread::spawn(move || run_ranked_match(mid, s0, stream, registry2));
             }
+            continue;
         }
+
+        info!("Unknown token — ignoring connection");
     }
 }
 
@@ -248,6 +252,14 @@ macro_rules! mboth {
     }};
 }
 
+/// Ranked match entry point — generates reconnect tokens and delegates to run_match.
+fn run_ranked_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry) {
+    let token = format!("r{:016x}{:016x}", match_id,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64);
+    run_match(match_id, s0, s1, registry, token);
+}
+
 fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, session_token: String) {
     let mut mfile = match_log_file(match_id);
     mboth!(&mut mfile, match_id, "starting");
@@ -263,8 +275,8 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
 
-    send_msg(&s0, &WelcomeMsg { your_team: 0, seed, team_count: 2, your_color: 0, reconnect_token: String::new() });
-    send_msg(&s1, &WelcomeMsg { your_team: 1, seed, team_count: 2, your_color: 1, reconnect_token: String::new() });
+    send_msg(&s0, &WelcomeMsg { your_team: 0, seed, team_count: 2, your_color: 0, reconnect_token: session_token.clone() });
+    send_msg(&s1, &WelcomeMsg { your_team: 1, seed, team_count: 2, your_color: 1, reconnect_token: session_token.clone() });
 
     let inp0: Arc<Mutex<Option<InputMsg>>> = Arc::new(Mutex::new(None));
     let inp1: Arc<Mutex<Option<InputMsg>>> = Arc::new(Mutex::new(None));
@@ -1155,7 +1167,7 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.304";
+const REQUIRED_VERSION: &str = "0.5.4.310";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

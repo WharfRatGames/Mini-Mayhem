@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.309";
+const VERSION: &str = "0.5.4.310";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -398,71 +398,13 @@ fn main() {
         }
     }
 
-    // ── Ranked live: join queue and wait for match ─────────────────────────
+    // ── Ranked live: queue on the game server directly ─────────────────────
+    // Connect with the RANKED token; the server queues us and sends WelcomeMsg
+    // once a second player arrives. The "WAITING FOR OPPONENT" loop below
+    // (after TCP connect) handles the wait + B=cancel.
     if is_live_ranked {
-        use game::account::{http_post, http_get, json_field, load_saved_creds};
-        let token = load_saved_creds().map(|(_, t)| t).unwrap_or_default();
-        // Join queue
-        let body = format!(r#"{{"token":"{}"}}"#, token);
-        match http_post("/api/ranked/queue/join", &body) {
-            Ok(resp) if resp.contains("matched") => {
-                // Paired immediately
-                if resp.contains("\"matched\"") {
-                    live_ranked_match = true;
-                    live_elo_opp     = json_field(&resp, "opponent_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
-                    live_elo_my      = json_field(&resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
-                    live_game_port   = json_field(&resp, "port").and_then(|s| s.parse().ok()).unwrap_or(7777);
-                    session_token    = json_field(&resp, "session_token").unwrap_or_default();
-                    live_opp_username = json_field(&resp, "opponent_username").unwrap_or_default();
-                }
-            }
-            Ok(ref wait_resp) => {
-                // Waiting — capture our ELO from the waiting response before the poll loop
-                live_elo_my = json_field(wait_resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(0);
-                let (tx, rx) = std::sync::mpsc::channel::<Option<(u16,i32,i32,String,String)>>();
-                let token2 = token.clone();
-                std::thread::spawn(move || {
-                    for _ in 0..60 { // poll up to 60 times (max 30 seconds)
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        let path = format!("/api/ranked/queue/status?token={}", token2);
-                        if let Ok(resp) = http_get(&path) {
-                            if resp.contains("\"matched\"") {
-                                let port: u16 = json_field(&resp, "port").and_then(|s| s.parse().ok()).unwrap_or(7777);
-                                let opp: i32  = json_field(&resp, "opponent_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
-                                let my: i32   = json_field(&resp, "my_elo").and_then(|s| s.parse().ok()).unwrap_or(1000);
-                                let tok = json_field(&resp, "session_token").unwrap_or_default();
-                                let opp_uname = json_field(&resp, "opponent_username").unwrap_or_default();
-                                let _ = tx.send(Some((port, my, opp, tok, opp_uname)));
-                                return;
-                            }
-                        }
-                    }
-                    let _ = tx.send(None); // timed out
-                });
-                let matched = loop {
-                    input.poll();
-                    if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) {
-                        // Leave queue
-                        let b2 = format!(r#"{{"token":"{}"}}"#, token);
-                        std::thread::spawn(move || { http_post("/api/ranked/queue/leave", &b2).ok(); });
-                        continue 'game;
-                    }
-                    let wait_msg = if live_elo_my > 0 {
-                        format!("FINDING MATCH...  ELO {}  B=CANCEL", live_elo_my)
-                    } else {
-                        "FINDING MATCH...  B=CANCEL".to_string()
-                    };
-                    draw_msg(&mut buf, &mut fb, &wait_msg);
-                    if let Ok(result) = rx.try_recv() { break result; }
-                    std::thread::sleep(std::time::Duration::from_millis(33));
-                };
-                match matched {
-                    Some((port, my, opp, tok, opp_uname)) => { live_ranked_match = true; live_game_port = port; live_elo_my = my; live_elo_opp = opp; session_token = tok; live_opp_username = opp_uname; }
-                    None => { draw_msg(&mut buf, &mut fb, "NO MATCH FOUND"); std::thread::sleep(std::time::Duration::from_secs(2)); continue 'game; }
-                }
-            }
-            Err(_) => { draw_msg(&mut buf, &mut fb, "NETWORK ERROR"); std::thread::sleep(std::time::Duration::from_secs(2)); continue 'game; }
-        }
+        session_token = "RANKED".to_string();
+        live_ranked_match = true;
     }
 
     // ── Multiplayer connect — background thread so B cancels instantly ──────
