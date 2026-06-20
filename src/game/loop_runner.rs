@@ -232,7 +232,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             {
                 use crate::physics::projectile::WeaponKind;
                 let spawns: Vec<_> = game.projectiles.iter()
-                    .filter(|p| p.kind == WeaponKind::Bazooka)
+                    .filter(|p| p.kind == WeaponKind::Bazooka || p.kind == WeaponKind::HomingMissile)
                     .map(|p| {
                         let speed = (p.vel.x * p.vel.x + p.vel.y * p.vel.y).sqrt();
                         if speed < 0.1 {
@@ -1092,7 +1092,7 @@ pub fn tick_fire_grace(game: &mut GameState) {
 pub fn process_aim(game: &mut GameState, input: &InputState) {
     // While rope is attached, Up/Down controls rope length (handled in process_fire).
     if game.rope.as_ref().map_or(false, |r| !r.flying) { return; }
-    let delta = 0.04f32;
+    let delta = if input.held(Button::L1) { 0.01f32 } else { 0.04f32 };
     if input.held(Button::Up)   { game.aim.angle += delta; }
     if input.held(Button::Down) { game.aim.angle -= delta; }
 
@@ -3386,19 +3386,22 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         if wy < -20 || wy >= sh { continue; }
         // Shadow underneath
         buf.fill_circle(wx, wy + 5, 4, Bgra::new(0, 0, 0));
-        // Body — dark green outline + lighter green fill
-        buf.fill_circle(wx, wy, 5, Bgra::new(20, 60, 20));   // dark outline
-        buf.fill_circle(wx, wy, 4, Bgra::new(45, 110, 35));  // main body
-        buf.fill_circle(wx - 1, wy - 1, 2, Bgra::new(70, 150, 55)); // highlight
-        // Red LED — blink rate escalates: slow arming → fast armed → very fast triggered
+        // Body — dome shape: circle with flat top
+        buf.fill_circle(wx, wy + 1, 5, Bgra::new(20, 60, 20));   // dark outline
+        buf.fill_circle(wx, wy + 1, 4, Bgra::new(45, 110, 35));  // main body
+        buf.fill_rect(wx - 5, wy - 4, 11, 5, Bgra::new(45, 110, 35)); // flat top fill (masks circle top)
+        buf.fill_rect(wx - 4, wy - 5, 9, 1, Bgra::new(20, 60, 20));   // flat top edge (dark outline)
+        buf.fill_rect(wx - 3, wy - 4, 7, 1, Bgra::new(65, 130, 50));  // flat top highlight
+        buf.fill_circle(wx - 1, wy + 1, 2, Bgra::new(70, 150, 55)); // body highlight
+        // Red LED on top centre
         let led_on = match mine.state {
             super::state::MineState::Arming    => (game.tick / 15) % 2 == 0,
             super::state::MineState::Armed     => (game.tick / 5)  % 2 == 0,
             super::state::MineState::Triggered => (game.tick / 3)  % 2 == 0,
         };
         if led_on {
-            buf.fill_rect(wx - 1, wy - 5, 3, 3, Bgra::new(230, 30, 30));
-            buf.fill_rect(wx,     wy - 4, 1, 1, Bgra::new(255, 120, 120));
+            buf.fill_rect(wx - 1, wy - 5, 3, 2, Bgra::new(230, 30, 30));
+            buf.set_pixel(wx, wy - 5, Bgra::new(255, 120, 120));
         }
         // Arming is communicated by the slow-blink LED — no countdown number needed
     }
@@ -3554,7 +3557,27 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 
     mark!("fire_patches");
 
-    // 5c. Plasma torch — no separate visual; the fire patches spawned by tunneling are the effect.
+    // 5c. Plasma torch — flickering flame ball at the nozzle tip
+    if let Some(ref torch) = game.plasma_torch {
+        let ti = game.active_team();
+        let si = game.teams[ti].active;
+        if game.teams[ti].soldiers[si].is_alive() {
+            let facing = game.teams[ti].soldiers[si].facing as f32;
+            let (dx, dy) = torch.dir.to_vec(facing);
+            let sx = game.teams[ti].soldiers[si].pos.x;
+            let sy = game.teams[ti].soldiers[si].pos.y - 8.0;
+            let tip_x = (sx + dx * 12.0) as i32;
+            let tip_y = (sy + dy * 12.0) as i32;
+            if tip_x >= cam_x as i32 && tip_x < cam_x as i32 + sw {
+                let phase = game.tick as f32 * 0.6;
+                let r1 = if phase.sin() > 0.0 { 7 } else { 6 };
+                let r2 = if phase.cos() > 0.0 { 5 } else { 4 };
+                buf.fill_circle(tip_x, tip_y, r1, Bgra::new(220, 60, 10));
+                buf.fill_circle(tip_x, tip_y, r2, Bgra::new(255, 150, 30));
+                buf.fill_circle(tip_x, tip_y, 2,  Bgra::new(255, 240, 120));
+            }
+        }
+    }
 
     mark!("plasma_torch");
 

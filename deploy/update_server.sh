@@ -7,6 +7,12 @@ if [ -z "$VERSION" ]; then
     echo "Usage: $0 <version>"
     exit 1
 fi
+
+# Abort if changelog hasn't been updated for this version
+if ! grep -q "^$VERSION" deploy/changelog.txt 2>/dev/null; then
+    echo "ERROR: deploy/changelog.txt has no entry for $VERSION — add one before deploying"
+    exit 1
+fi
 BINARY="target/armv7-unknown-linux-gnueabihf/miyoo/mini-mayhem"
 SERVER_BINARY="target/aarch64-unknown-linux-gnu/release/server"
 scp "$BINARY" arty-pi:/var/www/html/arty/mini-mayhem
@@ -136,7 +142,7 @@ else
 fi
 
 # Publish to GitHub Releases (attach deploy/assets.zip; build zip stays on Pi only)
-NOTES=$(tail -1 deploy/changelog.txt 2>/dev/null || echo "v$VERSION")
+NOTES=$(head -1 deploy/changelog.txt 2>/dev/null || echo "v$VERSION")
 if gh release create "v$VERSION" "$ZIP" deploy/assets.zip \
     --repo WharfRatGames/Mini-Mayhem \
     --title "v$VERSION" \

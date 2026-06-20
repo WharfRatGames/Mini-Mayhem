@@ -301,13 +301,16 @@ fn draw_held_weapon(buf: &mut WorldBuffer, x: i32, y: i32, weapon: WeaponKind, t
             buf.fill_rect(x + 1, y - 11, 1, 2, Bgra::new(160, 160, 160));
         }
         WeaponKind::Landmine => {
-            // Green metal ball with blinking LED
-            buf.fill_circle(x, y, 5, Bgra::new(20, 60, 20));
-            buf.fill_circle(x, y, 4, Bgra::new(45, 110, 35));
-            buf.fill_circle(x - 1, y - 1, 2, Bgra::new(70, 150, 55));
+            // Dome shape: flat top, rounded bottom
+            buf.fill_circle(x, y + 1, 5, Bgra::new(20, 60, 20));
+            buf.fill_circle(x, y + 1, 4, Bgra::new(45, 110, 35));
+            buf.fill_rect(x - 5, y - 4, 11, 5, Bgra::new(45, 110, 35));
+            buf.fill_rect(x - 4, y - 5, 9, 1, Bgra::new(20, 60, 20));
+            buf.fill_rect(x - 3, y - 4, 7, 1, Bgra::new(65, 130, 50));
+            buf.fill_circle(x - 1, y + 1, 2, Bgra::new(70, 150, 55));
             if (tick / 15) % 2 == 0 {
-                buf.fill_rect(x - 1, y - 5, 3, 3, Bgra::new(230, 30, 30));
-                buf.fill_rect(x,     y - 4, 1, 1, Bgra::new(255, 120, 120));
+                buf.fill_rect(x - 1, y - 5, 3, 2, Bgra::new(230, 30, 30));
+                buf.set_pixel(x, y - 5, Bgra::new(255, 120, 120));
             }
         }
         _ => {}
