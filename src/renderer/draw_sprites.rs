@@ -2,6 +2,22 @@ use crate::world::{WorldPos, Vec2, WATER_Y};
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
 
+// ── Sine LUT — replaces f32::sin() in the per-frame water wave loops ──────────
+
+const SIN_LUT_N: usize = 1024;
+
+fn sin_lut(x: f32) -> f32 {
+    static LUT: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    let lut = LUT.get_or_init(|| {
+        (0..SIN_LUT_N)
+            .map(|i| (i as f32 * std::f32::consts::TAU / SIN_LUT_N as f32).sin())
+            .collect()
+    });
+    let idx = (x * (SIN_LUT_N as f32 / std::f32::consts::TAU))
+        .rem_euclid(SIN_LUT_N as f32) as usize;
+    lut[idx]
+}
+
 // ── Garcia sprite ─────────────────────────────────────────────────────────────
 
 const GARCIA_PNG: &[u8] = include_bytes!("../../deploy/assets/GARCIA.png");
@@ -746,12 +762,12 @@ pub fn render_water_strip(strip: &mut [u8], tick: u32, cam_x: u32) {
     while x < end_x {
         let xf = x as f32;
         let tf = tick as f32;
-        let w0 = (xf * 0.038 + tf * 0.10).sin() * 5.5;
-        let w1 = (xf * 0.080 - tf * 0.16).sin() * 3.0;
-        let w2 = (xf * 0.160 + tf * 0.22).sin() * 1.5;
+        let w0 = sin_lut(xf * 0.038 + tf * 0.10) * 5.5;
+        let w1 = sin_lut(xf * 0.080 - tf * 0.16) * 3.0;
+        let w2 = sin_lut(xf * 0.160 + tf * 0.22) * 1.5;
         let wave = (w0 + w1 + w2) as i32;
         let top  = base_y + wave;
-        let foam_phase = (xf * 0.11 + tf * 0.08).sin();
+        let foam_phase = sin_lut(xf * 0.11 + tf * 0.08);
 
         let x2 = (x + 1).min(end_x - 1);
         for &xi in &[x, x2] {
@@ -845,14 +861,14 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {
         let tf = tick as f32;
 
         // Three-component wave — larger amplitude for more visible motion
-        let w0 = (xf * 0.038 + tf * 0.10).sin() * 5.5;
-        let w1 = (xf * 0.080 - tf * 0.16).sin() * 3.0;
-        let w2 = (xf * 0.160 + tf * 0.22).sin() * 1.5;
+        let w0 = sin_lut(xf * 0.038 + tf * 0.10) * 5.5;
+        let w1 = sin_lut(xf * 0.080 - tf * 0.16) * 3.0;
+        let w2 = sin_lut(xf * 0.160 + tf * 0.22) * 1.5;
 
         let wave = (w0 + w1 + w2) as i32;  // ≈ –10 to +10 px
         let top  = base_y + wave;
 
-        let foam_phase = (xf * 0.11 + tf * 0.08).sin();
+        let foam_phase = sin_lut(xf * 0.11 + tf * 0.08);
 
         let x2 = (x + 1).min(end_x - 1);
         for &xi in &[x, x2] {
