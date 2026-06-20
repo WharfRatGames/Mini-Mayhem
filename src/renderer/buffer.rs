@@ -281,9 +281,11 @@ impl WorldBuffer {
                 let run_w = run_end - x;
                 if y0 > min_y {
                     if let Some((par_x, dst_w)) = par {
-                        for rx in x..run_end {
-                            let src_x = (par_x + rx) % dst_w;
-                            for gy in min_y..y0 {
+                        // Row-major order: iterate rows outer, columns inner so
+                        // both src and dst accesses are sequential in memory.
+                        for gy in min_y..y0 {
+                            for rx in x..run_end {
+                                let src_x = (par_x + rx) % dst_w;
                                 let c = bg_cache.get_pixel_unchecked(src_x, gy);
                                 self.set_pixel_unchecked(cam_x + rx, gy, c);
                             }
