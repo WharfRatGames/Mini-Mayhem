@@ -29,10 +29,12 @@ pub const WIND_SCALE: f32 = 0.08;
 /// `wind` is in [-1.0, 1.0]. Positive = rightward, negative = leftward.
 pub fn tick(proj: &mut Projectile, wind: f32) {
     // ── Acceleration ──────────────────────────────────────────────────────────
-    proj.vel.y += GRAVITY;
-
-    if proj.kind.affected_by_wind() {
-        proj.vel.x += wind * WIND_SCALE;
+    // Homing missiles maintain constant speed — no gravity or wind drift.
+    if proj.kind != WeaponKind::HomingMissile {
+        proj.vel.y += GRAVITY;
+        if proj.kind.affected_by_wind() {
+            proj.vel.x += wind * WIND_SCALE;
+        }
     }
 
     // ── Terminal velocity (Y only) ────────────────────────────────────────────

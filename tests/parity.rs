@@ -2,22 +2,337 @@
 //!
 //! The live client never runs `simulate()` — it rebuilds state from `StateMsg`
 //! via `net_sync::{build_state, apply_server_state}`. If a field changes in the
-//! sim but isn't carried through that round-trip, live mode silently diverges
-//! from every other mode. These tests fail the build when that happens.
+//! sim but isn't carried through that round-trip, live mode silently diverges.
 //!
-//! Lives in `tests/` (an integration target) so it compiles against the lib's
-//! normal build and is unaffected by stale inline `#[cfg(test)]` modules.
+//! ## How the automation works
+//!
+//! `synced_snapshot()` exhaustively destructures `GameState` with no `..`. Adding
+//! a field to `GameState` breaks that destructure until you either include the
+//! field in the snapshot (if it should be synced) or exclude it with `_` and a
+//! comment explaining why. The test then just calls `assert_eq!(snapshot(server),
+//! snapshot(client))` — no manual assertions required.
+//!
+//! The two categories of excluded fields:
+//!   • "synced to wire, managed locally" — sent in StateMsg but the live client
+//!     applies them from its own input rather than from the server state
+//!     (weapon_menu_open/cursor, aim.fuse_ticks, aim.angle on own turn, tick).
+//!   • "not networked" — intentionally server-only or client-only state.
 
 use arty::game::net_sync::{build_state, apply_server_state};
 use arty::game::state::GameState;
 use arty::game::team::{Team, Difficulty};
-use arty::game::soldier::SoldierState;
-use arty::physics::projectile::WeaponKind;
+use arty::physics::projectile::{WeaponKind, Projectile, FuseState};
 use arty::renderer::Camera;
-use arty::world::{Terrain, WorldPos, WORLD_W};
+use arty::world::{Terrain, WorldPos, Vec2, WORLD_W};
 
-/// Deterministic two-team game from a seed (mirrors `build_default_game_opts`,
-/// minus the bin-private mine/barrel seeding).
+// ── Snapshot types ────────────────────────────────────────────────────────────
+// All primitives so we get PartialEq + Debug for free.
+
+#[derive(Debug, PartialEq)]
+struct SoldierSnap {
+    pos: (f32, f32),
+    hp: u8,
+    facing: i8,
+    has_fired: bool,
+    /// 0=Idle 1=Walking 2=Airborne(vx,vy) 3=Dead 4=Other
+    state_disc: u8,
+    airborne_vel: Option<(f32, f32)>,
+    airtime: u32,
+    walk_ticks: u32,
+}
+
+#[derive(Debug, PartialEq)]
+struct TeamSnap {
+    active: usize,
+    selected_weapon: usize,
+    soldiers: Vec<SoldierSnap>,
+    weapons: Vec<(u8, u32)>, // (kind_u8, ammo: 0xFFFF=infinite)
+}
+
+#[derive(Debug, PartialEq)]
+struct ProjSnap {
+    kind: u8,
+    pos: (f32, f32),
+    vel: (f32, f32),
+    age_ticks: u32,
+    fuse: u64, // encoded same way as NetProjectile: 0=None, 0xFFFFFFFE=Armed, 0x80000000|n=Detonating, n=Burning
+    is_fragment: bool,
+    homing_target: Option<(f32, f32)>,
+}
+
+#[derive(Debug, PartialEq)]
+struct CrateSnap { pos: (f32, f32), landed: bool, kind_u8: u8 }
+
+#[derive(Debug, PartialEq)]
+struct MineSnap { pos: (f32, f32), state_u8: u8, arm_ticks: u32, trigger_ticks: u32 }
+
+#[derive(Debug, PartialEq)]
+struct BarrelSnap { pos: (f32, f32), hp: i32 }
+// barrel.vel and barrel.state are NOT synced: apply_server_state always resets them to 0/Normal.
+
+#[derive(Debug, PartialEq)]
+struct BlackHoleSnap { pos: (f32, f32), lifetime: u32 }
+
+#[derive(Debug, PartialEq)]
+struct FirePatchSnap { pos: (f32, f32), vel: (f32, f32), landed: bool, lifetime: u32 }
+
+#[derive(Debug, PartialEq)]
+struct RopeSnap { anchor: (f32, f32), hook: (f32, f32), flying: bool, length: f32 }
+// rope.hook_vel is NOT synced: always reset to Vec2::ZERO in apply_server_state.
+
+#[derive(Debug, PartialEq)]
+struct GarciaSn {
+    cursor: (f32, f32), render: (f32, f32), blink_timer: u32,
+    falling: bool, fall_y: f32, vel_y: f32, bounce_count: u32,
+}
+
+#[derive(Debug, PartialEq)]
+struct AirstrikeSn {
+    cursor: (f32, f32), render: (f32, f32), blink_timer: u32,
+    active: bool, plane_x: f32, plane_vx: f32,
+    bombs_dropped: u32, direction_right: bool,
+}
+// airstrike.spawn_cam_left is NOT synced: client-only, updated by tick() before plane launches.
+
+#[derive(Debug, PartialEq)]
+struct HomingMissileSn {
+    cursor: (f32, f32), render: (f32, f32), blink_timer: u32,
+}
+
+#[derive(Debug, PartialEq)]
+struct GraveSnap { pos: (f32, f32), team: usize, headstone_id: u8 }
+
+#[derive(Debug, PartialEq)]
+struct BloodSplatSnap { pos: (f32, f32), ticks: u32 }
+
+#[derive(Debug, PartialEq)]
+struct MessageSnap { text: String, team_i8: i8, ticks: u32 }
+
+/// All synced fields of GameState in a flat, PartialEq-comparable form.
+#[derive(Debug, PartialEq)]
+struct SyncedSnapshot {
+    // teams
+    teams: Vec<TeamSnap>,
+    // turn
+    turn_team: usize,
+    turn_number: u32,
+    // wind
+    wind: f32,
+    // projectiles
+    projectiles: Vec<ProjSnap>,
+    // collections
+    crates: Vec<CrateSnap>,
+    mines: Vec<MineSnap>,
+    barrels: Vec<BarrelSnap>,
+    black_holes: Vec<BlackHoleSnap>,
+    fire_patches: Vec<FirePatchSnap>,
+    // terrain
+    crater_log: Vec<(f32, f32, f32)>,
+    // aim (only power; angle managed locally on own turn; fuse_ticks managed locally)
+    aim_power: f32,
+    // result (0=Ongoing, 1=Winner(t), 2=Draw — encode winner as high bits)
+    result: u64,
+    // special weapon sessions
+    rope: Option<RopeSnap>,
+    garcia: Option<GarciaSn>,
+    airstrike: Option<AirstrikeSn>,
+    homing_missile: Option<HomingMissileSn>,
+    // plasma torch (0=inactive, 1-3=dir, fuel_ticks)
+    torch_dir: u8,
+    torch_fuel: u32,
+    // cosmetic state (server-authoritative)
+    graves: Vec<GraveSnap>,
+    blood_splats: Vec<BloodSplatSnap>,
+    messages: Vec<MessageSnap>,
+}
+
+/// Build a snapshot from `GameState`. This function exhaustively destructures
+/// `GameState` with NO `..` — adding a field to `GameState` breaks compilation
+/// here, forcing the developer to either include it in the snapshot or explicitly
+/// exclude it with a `// not synced:` comment.
+fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
+    use arty::game::state::{
+        GameState, GameResult, MineState, CrateKind, TorchDir,
+        AirstrikeState, GarciaState, HomingMissileState, PlasmaTorchState,
+    };
+    use arty::game::soldier::SoldierState;
+    use arty::physics::projectile::FuseState;
+
+    let GameState {
+        // ── Included in snapshot (all must be round-tripped by apply_server_state) ──
+        teams, turn, projectiles, crates, mines, barrels,
+        fire_patches, black_holes, wind, aim, result, crater_log,
+        graves, rope, messages, blood_splats, plasma_torch,
+        garcia, airstrike, homing_missile,
+        // ── Synced to wire but managed locally by the live client, not from server ──
+        tick:                _, // game.tick increments locally on client; StateMsg.tick used for dedup
+        sounds:              _, // per-tick event channel; tested in round_trip_preserves_synced_state
+        fx_events:           _, // per-tick event channel; tested in round_trip_preserves_synced_state
+        weapon_menu_open:    _, // client applies from own button input, not from server
+        weapon_menu_cursor:  _, // same
+        // ── Not networked (server-only sim state or client-only visuals) ──
+        terrain:             _, // client rebuilds from crater_log
+        crate_timer:         _, // server-internal drop timer
+        map_seed:            _, // fixed at match start
+        is_test:             _, // local mode flag
+        is_multiplayer:      _, // local mode flag
+        scrap_earned:        _, // server-authoritative; displayed at end of match
+        explosions:          _, // client-local ring flash visuals
+        active_worm_hit:     _, // local camera/retreat logic flag
+        retreat_locked:      _, // local camera logic flag
+        damage_focus:        _, // local camera focus helper
+        server_fire_grace:   _, // server-only fire suppression counter
+        shotgun_shots_left:  _, // server-only multi-shot state
+        revolver_shots_left: _, // server-only multi-shot state
+        minigun_shots_left:  _, // server-only burst state
+        minigun_fire_timer:  _, // server-only burst timer
+        uzi_shots_left:      _, // server-only burst state
+        uzi_fire_timer:      _, // server-only burst timer
+        bullet_trails:       _, // client-only visual trail
+        rope_session:        _, // local acting-phase flag
+        rope_used_this_turn: _, // local charge-consumption flag
+        tnt_placed:          _, // local watching-phase flag
+        crate_watch_ticks:   _, // local pre-turn crate-camera phase
+        smoke_particles:     _, // client-only bazooka smoke
+        fx:                  _, // client-only particle system
+        pending_deaths:      _, // transient pre-explosion wait
+        meteor_chain:        _, // transient per-tick flag
+    } = g;
+
+    // ── teams ─────────────────────────────────────────────────────────────────
+    let teams = teams.iter().map(|t| {
+        let soldiers = t.soldiers.iter().map(|s| {
+            let (state_disc, airborne_vel) = match &s.state {
+                SoldierState::Idle           => (0, None),
+                SoldierState::Walking {..}   => (1, None),
+                SoldierState::Airborne { vel, .. } => (2, Some((vel.x, vel.y))),
+                SoldierState::Dead           => (3, None),
+                _                            => (4, None),
+            };
+            SoldierSnap {
+                pos: (s.pos.x, s.pos.y), hp: s.hp, facing: s.facing,
+                has_fired: s.has_fired, state_disc, airborne_vel,
+                airtime: s.airtime, walk_ticks: s.walk_ticks,
+            }
+        }).collect();
+        let weapons = t.weapons.iter()
+            .map(|&(k, a)| (k.to_net_u8(), a.unwrap_or(0xFFFF)))
+            .collect();
+        TeamSnap { active: t.active, selected_weapon: t.selected_weapon, soldiers, weapons }
+    }).collect();
+
+    // ── projectiles ───────────────────────────────────────────────────────────
+    let projectiles = projectiles.iter().map(|p| {
+        let fuse = match p.fuse {
+            FuseState::None           => 0u64,
+            FuseState::Burning(n)     => n as u64,
+            FuseState::Expired        => 0xFFFF_FFFFu64,
+            FuseState::Armed          => 0xFFFF_FFFEu64,
+            FuseState::Detonating(n)  => 0x8000_0000u64 | n as u64,
+        };
+        ProjSnap {
+            kind: p.kind.to_net_u8(),
+            pos: (p.pos.x, p.pos.y), vel: (p.vel.x, p.vel.y),
+            age_ticks: p.age_ticks, fuse, is_fragment: p.is_fragment,
+            homing_target: p.homing_target,
+        }
+    }).collect();
+
+    // ── crates ────────────────────────────────────────────────────────────────
+    let crates = crates.iter().map(|c| {
+        let kind_u8 = match &c.kind {
+            CrateKind::Health    => 0,
+            CrateKind::Weapon(_) => 1,
+            CrateKind::Scrap(_)  => 2,
+        };
+        CrateSnap { pos: (c.pos.x, c.pos.y), landed: c.landed, kind_u8 }
+    }).collect();
+
+    // ── mines ─────────────────────────────────────────────────────────────────
+    let mines = mines.iter().map(|m| {
+        let state_u8 = match m.state { MineState::Arming => 0, MineState::Armed => 1, MineState::Triggered => 2 };
+        MineSnap { pos: (m.pos.x, m.pos.y), state_u8, arm_ticks: m.arm_ticks, trigger_ticks: m.trigger_ticks }
+    }).collect();
+
+    // ── barrels (vel + state NOT synced; see BarrelSnap) ────────────────────
+    let barrels = barrels.iter().map(|b| BarrelSnap { pos: (b.pos.x, b.pos.y), hp: b.hp }).collect();
+
+    // ── black holes ───────────────────────────────────────────────────────────
+    let black_holes = black_holes.iter().map(|h| BlackHoleSnap { pos: (h.pos.x, h.pos.y), lifetime: h.lifetime }).collect();
+
+    // ── fire patches ──────────────────────────────────────────────────────────
+    let fire_patches = fire_patches.iter().map(|f| FirePatchSnap {
+        pos: (f.pos.x, f.pos.y), vel: (f.vel.x, f.vel.y), landed: f.landed, lifetime: f.lifetime,
+    }).collect();
+
+    // ── aim (power only; see field comments) ──────────────────────────────────
+    let aim_power = aim.power;
+
+    // ── result ────────────────────────────────────────────────────────────────
+    let result = match result {
+        GameResult::Ongoing    => 0u64,
+        GameResult::Winner(t)  => 0x1_0000_0000u64 | *t as u64,
+        GameResult::Draw       => 0x2_0000_0000u64,
+    };
+
+    // ── rope (hook_vel NOT synced; see RopeSnap) ──────────────────────────────
+    let rope = rope.as_ref().map(|r| RopeSnap {
+        anchor: (r.anchor.x, r.anchor.y), hook: (r.hook.x, r.hook.y),
+        flying: r.flying, length: r.length,
+    });
+
+    // ── garcia ────────────────────────────────────────────────────────────────
+    let garcia = garcia.as_ref().map(|g| GarciaSn {
+        cursor: (g.cursor_x, g.cursor_y), render: (g.render_x, g.render_y),
+        blink_timer: g.blink_timer, falling: g.falling,
+        fall_y: g.fall_y, vel_y: g.vel_y, bounce_count: g.bounce_count,
+    });
+
+    // ── airstrike (spawn_cam_left NOT synced; see AirstrikeSn) ───────────────
+    let airstrike = airstrike.as_ref().map(|a| AirstrikeSn {
+        cursor: (a.cursor_x, a.cursor_y), render: (a.render_x, a.render_y),
+        blink_timer: a.blink_timer, active: a.active,
+        plane_x: a.plane_x, plane_vx: a.plane_vx,
+        bombs_dropped: a.bombs_dropped, direction_right: a.direction_right,
+    });
+
+    // ── homing missile ────────────────────────────────────────────────────────
+    let homing_missile = homing_missile.as_ref().map(|h| HomingMissileSn {
+        cursor: (h.cursor_x, h.cursor_y), render: (h.render_x, h.render_y),
+        blink_timer: h.blink_timer,
+    });
+
+    // ── plasma torch ──────────────────────────────────────────────────────────
+    let (torch_dir, torch_fuel) = plasma_torch.as_ref().map(|t| {
+        let d = match t.dir { TorchDir::UpForward => 1, TorchDir::Forward => 2, TorchDir::DownForward => 3 };
+        (d, t.fuel_ticks)
+    }).unwrap_or((0, 0));
+
+    // ── graves ────────────────────────────────────────────────────────────────
+    let graves = graves.iter().map(|g| GraveSnap {
+        pos: (g.pos.x, g.pos.y), team: g.team, headstone_id: g.headstone_id,
+    }).collect();
+
+    // ── blood splats ──────────────────────────────────────────────────────────
+    let blood_splats = blood_splats.iter().map(|(p, t)| BloodSplatSnap { pos: (p.x, p.y), ticks: *t }).collect();
+
+    // ── messages ──────────────────────────────────────────────────────────────
+    let messages = messages.iter().map(|m| MessageSnap {
+        text: m.text.clone(),
+        team_i8: m.team.map(|t| t as i8).unwrap_or(-1),
+        ticks: m.ticks,
+    }).collect();
+
+    SyncedSnapshot {
+        teams, turn_team: turn.current_team, turn_number: turn.turn_number, wind: wind.value(),
+        projectiles, crates, mines, barrels, black_holes, fire_patches,
+        crater_log: crater_log.clone(), aim_power, result, rope, garcia, airstrike,
+        homing_missile, torch_dir, torch_fuel, graves, blood_splats, messages,
+    }
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
 fn build_game(seed: u64) -> GameState {
     let mut terrain = Terrain::generate_tactical(seed);
     let all = terrain.find_team_spawns(0, WORLD_W, 8);
@@ -30,140 +345,301 @@ fn build_game(seed: u64) -> GameState {
     GameState::new(seed, terrain, teams, 2)
 }
 
-fn state_discriminant(s: &SoldierState) -> u8 {
-    match s {
-        SoldierState::Idle        => 0,
-        SoldierState::Walking{..} => 1,
-        SoldierState::Airborne{..}=> 2,
-        SoldierState::Dead        => 3,
-        _                         => 4,
-    }
+fn round_trip(server: &GameState, tick: u32, my_team: usize) -> GameState {
+    let mut client = build_game(server.map_seed);
+    let mut cam = Camera::new(0.0);
+    let state = build_state(server, tick, my_team);
+    apply_server_state(&mut client, &mut cam, &state, my_team);
+    client
 }
 
-/// Assert the client (rebuilt purely from a StateMsg) matches the authoritative
-/// server game on every field the netcode promises to sync.
-fn assert_parity(server: &GameState, client: &GameState) {
-    assert_eq!(server.teams.len(), client.teams.len(), "team count");
-    for (ti, (st, ct)) in server.teams.iter().zip(client.teams.iter()).enumerate() {
-        assert_eq!(st.soldiers.len(), ct.soldiers.len(), "team {ti} soldier count");
-        assert_eq!(st.active, ct.active, "team {ti} active soldier");
-        for (si, (ss, cs)) in st.soldiers.iter().zip(ct.soldiers.iter()).enumerate() {
-            assert_eq!(ss.pos.x, cs.pos.x, "team {ti} soldier {si} pos.x");
-            assert_eq!(ss.pos.y, cs.pos.y, "team {ti} soldier {si} pos.y");
-            assert_eq!(ss.hp, cs.hp, "team {ti} soldier {si} hp");
-            assert_eq!(ss.facing, cs.facing, "team {ti} soldier {si} facing");
-            assert_eq!(ss.has_fired, cs.has_fired, "team {ti} soldier {si} has_fired");
-            assert_eq!(state_discriminant(&ss.state), state_discriminant(&cs.state),
-                       "team {ti} soldier {si} state");
-        }
-        // Weapon inventory + selection
-        assert_eq!(st.weapons.len(), ct.weapons.len(), "team {ti} weapon count");
-        for (wi, (sw, cw)) in st.weapons.iter().zip(ct.weapons.iter()).enumerate() {
-            assert_eq!(sw.0, cw.0, "team {ti} weapon {wi} kind");
-            assert_eq!(sw.1, cw.1, "team {ti} weapon {wi} ammo");
-        }
-        assert_eq!(st.selected_weapon, ct.selected_weapon, "team {ti} selected_weapon");
-    }
-    assert_eq!(server.wind.value(), client.wind.value(), "wind");
-    assert_eq!(server.turn.current_team, client.turn.current_team, "turn team");
-    assert_eq!(server.crater_log, client.crater_log, "crater log");
+// ── Core parity tests ─────────────────────────────────────────────────────────
 
-    // Counts + key fields for synced collections
-    assert_eq!(server.crates.len(), client.crates.len(), "crate count");
-    assert_eq!(server.mines.len(), client.mines.len(), "mine count");
-    for (i, (sm, cm)) in server.mines.iter().zip(client.mines.iter()).enumerate() {
-        assert_eq!(sm.pos.x, cm.pos.x, "mine {i} pos.x");
-        assert_eq!(sm.pos.y, cm.pos.y, "mine {i} pos.y");
-        assert_eq!(sm.arm_ticks, cm.arm_ticks, "mine {i} arm_ticks");
-        assert_eq!(sm.trigger_ticks, cm.trigger_ticks, "mine {i} trigger_ticks");
-    }
-    assert_eq!(server.barrels.len(), client.barrels.len(), "barrel count");
-    for (i, (sb, cb)) in server.barrels.iter().zip(client.barrels.iter()).enumerate() {
-        assert_eq!(sb.pos.x, cb.pos.x, "barrel {i} pos.x");
-        assert_eq!(sb.hp, cb.hp, "barrel {i} hp");
-    }
-    assert_eq!(server.black_holes.len(), client.black_holes.len(), "black hole count");
-    for (i, (sb, cb)) in server.black_holes.iter().zip(client.black_holes.iter()).enumerate() {
-        assert_eq!(sb.pos.x, cb.pos.x, "black_hole {i} pos.x");
-        assert_eq!(sb.lifetime, cb.lifetime, "black_hole {i} lifetime");
-    }
-    assert_eq!(server.fire_patches.len(), client.fire_patches.len(), "fire patch count");
-    for (i, (sf, cf)) in server.fire_patches.iter().zip(client.fire_patches.iter()).enumerate() {
-        assert_eq!(sf.pos.x, cf.pos.x, "fire_patch {i} pos.x");
-        assert_eq!(sf.lifetime, cf.lifetime, "fire_patch {i} lifetime");
-    }
-
-    // Plasma torch — fuel_ticks: 1 hardcode would be caught here
-    match (&server.plasma_torch, &client.plasma_torch) {
-        (None, None) => {}
-        (Some(st), Some(ct)) => {
-            assert_eq!(st.fuel_ticks, ct.fuel_ticks, "plasma_torch fuel_ticks");
-        }
-        _ => panic!("plasma_torch presence mismatch: server={} client={}",
-                    server.plasma_torch.is_some(), client.plasma_torch.is_some()),
-    }
-
-    // Rope
-    assert_eq!(server.rope.is_some(), client.rope.is_some(), "rope presence");
-    if let (Some(sr), Some(cr)) = (&server.rope, &client.rope) {
-        assert_eq!(sr.anchor.x, cr.anchor.x, "rope anchor.x");
-        assert_eq!(sr.anchor.y, cr.anchor.y, "rope anchor.y");
-        assert_eq!(sr.length, cr.length, "rope length");
-        assert_eq!(sr.flying, cr.flying, "rope flying");
-    }
-
-    // Blood splats + graves (server-authoritative counts)
-    assert_eq!(server.blood_splats.len(), client.blood_splats.len(), "blood splat count");
-    assert_eq!(server.graves.len(), client.graves.len(), "grave count");
-    for (i, (sg, cg)) in server.graves.iter().zip(client.graves.iter()).enumerate() {
-        assert_eq!(sg.pos.x, cg.pos.x, "grave {i} pos.x");
-        assert_eq!(sg.team, cg.team, "grave {i} team");
-        assert_eq!(sg.headstone_id, cg.headstone_id, "grave {i} headstone_id");
-    }
-
-    // Aim power (synced so spectators see charge meter)
-    assert_eq!(server.aim.power, client.aim.power, "aim.power");
-
-}
-
-/// The core gap-catcher: perturb the server, round-trip through the netcode, and
-/// assert nothing was dropped. A field added to the sim but not to build_state
-/// will diverge here.
+/// The main gap-catcher: perturb server state, round-trip through the netcode,
+/// and assert every synced field was preserved. `synced_snapshot()` is the source
+/// of truth — it destructures `GameState` exhaustively, so future field additions
+/// that aren't handled here will break compilation, not silently diverge.
 #[test]
 fn round_trip_preserves_synced_state() {
     let mut server = build_game(1234);
-    let mut client = build_game(1234);
-    let mut cam = Camera::new(0.0);
 
-    // Perturb: move/damage a soldier, advance the turn, set wind, and detonate
-    // an explosion (populates crater_log, fx_events, sounds, soldier damage).
+    // Perturb every synced field to a non-default value so a missing or broken
+    // apply_server_state line can't hide behind a coincidental zero match.
+    use arty::game::state::{
+        DroppedCrate, CrateKind, Barrel, BarrelState, BlackHole,
+        FirePatch, RopeState, PlasmaTorchState, TorchDir,
+        GarciaState, AirstrikeState, HomingMissileState,
+        GameMessage, Grave,
+    };
+
+    // Soldiers
     server.teams[0].soldiers[0].pos.x += 17.0;
     server.teams[0].soldiers[0].facing = -1;
     server.teams[1].soldiers[0].hp = 55;
+    // Make a soldier airborne so the vel fields are exercised
+    server.teams[0].soldiers[1].state = arty::game::soldier::SoldierState::Airborne {
+        vel: Vec2::new(3.5, -4.2), spinning: false,
+    };
+
+    // Turn
     server.turn.current_team = 1;
+    server.turn.turn_number = 8;
+
+    // Wind
     server.wind = arty::physics::Wind::new(0.42);
+
+    // Aim power
+    server.aim.power = 0.75;
+
+    // Projectile with non-default age_ticks and homing_target
+    {
+        let mut p = Projectile::new(WorldPos::new(800.0, 200.0), Vec2::new(5.0, -3.0), WeaponKind::HomingMissile);
+        p.age_ticks = 45;
+        p.homing_target = Some((900.0, 180.0));
+        server.projectiles.push(p);
+    }
+
+    // Crate (landed weapon crate)
+    server.crates.push(DroppedCrate {
+        pos: WorldPos::new(300.0, 250.0),
+        kind: CrateKind::Weapon(WeaponKind::Grenade),
+        landed: true,
+        descent_vy: 1.5, damage_this_turn: 0, fall_ticks: 0,
+    });
+
+    // Barrel with non-default hp
+    server.barrels.push(Barrel {
+        pos: WorldPos::new(450.0, 280.0),
+        vel: Vec2::new(0.0, 0.0),
+        hp: 50,
+        state: BarrelState::Normal,
+    });
+
+    // Black hole
+    server.black_holes.push(BlackHole {
+        pos: WorldPos::new(600.0, 200.0),
+        lifetime: 120,
+    });
+
+    // Fire patch (airborne)
+    server.fire_patches.push(FirePatch {
+        pos: WorldPos::new(350.0, 180.0),
+        vel: Vec2::new(2.0, -1.5),
+        landed: false,
+        lifetime: 150,
+    });
+
+    // Rope (flying hook)
+    server.rope = Some(RopeState {
+        anchor:   WorldPos::new(500.0, 100.0),
+        hook:     WorldPos::new(520.0, 80.0),
+        flying:   true,
+        length:   60.0,
+        hook_vel: Vec2::new(1.0, -2.0),
+    });
+
+    // Plasma torch
+    server.plasma_torch = Some(PlasmaTorchState {
+        dir: TorchDir::Forward,
+        fuel_ticks: 90,
+    });
+
+    // Garcia (targeting mode)
+    server.garcia = Some(GarciaState {
+        cursor_x: 400.0, cursor_y: 300.0, render_x: 398.0, render_y: 301.0,
+        blink_timer: 5, falling: false, fall_y: 0.0, vel_y: 0.0, bounce_count: 0,
+    });
+
+    // AirStrike (active, plane in flight)
+    server.airstrike = Some(AirstrikeState {
+        cursor_x: 700.0, cursor_y: 100.0, render_x: 699.0, render_y: 101.0,
+        blink_timer: 3, active: true, plane_x: 200.0, plane_vx: 4.0,
+        bombs_dropped: 1, direction_right: true, spawn_cam_left: 0.0,
+    });
+
+    // Homing missile cursor
+    server.homing_missile = Some(HomingMissileState {
+        cursor_x: 850.0, cursor_y: 200.0, render_x: 848.5, render_y: 201.3, blink_timer: 7,
+    });
+
+    // Grave
+    server.graves.push(Grave {
+        pos: WorldPos::new(250.0, 310.0),
+        team: 1, soldier_idx: 0, died_tick: 0, vel_y: 0.0, settled: true,
+        headstone_id: 2,
+    });
+
+    // Blood splat
+    server.blood_splats.push((WorldPos::new(480.0, 290.0), 60));
+
+    // Message
+    server.messages.push(GameMessage {
+        text: "Test message".to_string(),
+        team: Some(0),
+        ticks: 80,
+    });
+
+    // Explosion for crater_log + fx_events + sounds
     let blast = server.teams[1].soldiers[0].pos;
     server.apply_explosion(blast, WeaponKind::Bazooka);
     server.emit_sound(arty::audio::Sfx::Explosion);
 
-    // The explosion must have produced craters + fx for the assertions to bite.
     assert!(!server.crater_log.is_empty(), "explosion should carve a crater");
     assert!(!server.fx_events.is_empty(), "explosion should emit fx_events");
 
+    // Use my_team=1 so aim.angle IS applied (state.turn_team=1 == my_team? No,
+    // turn_team=1 and my_team=1 → same → angle not applied on own turn).
+    // Use my_team=0 so turn_team(1) != my_team(0) → aim.angle is applied.
     let state = build_state(&server, 7, 0);
-    apply_server_state(&mut client, &mut cam, &state, 0);
+    let client = round_trip(&server, 7, 0);
 
-    assert_parity(&server, &client);
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&client));
 
-    // Cosmetic event channels: build_state must carry these verbatim, else live
-    // clients lose the matching SFX / particle bursts.
-    assert_eq!(state.sounds, server.sounds, "sounds channel dropped by build_state");
+    // Event channels are pass-through (not in snapshot since they're per-tick, not state)
+    assert_eq!(state.sounds,    server.sounds,    "sounds channel dropped by build_state");
     assert_eq!(state.fx_events, server.fx_events, "fx_events channel dropped by build_state");
 }
 
+/// All major projectile kinds, each with distinct field values, must survive.
+/// Covers: basic, fuse states (Burning/Armed/Detonating), fragment flag,
+/// age_ticks, and homing_target.
+#[test]
+fn all_projectile_kinds_survive_round_trip() {
+    let mut server = build_game(42);
+    let pos = WorldPos::new(500.0, 100.0);
+
+    server.projectiles.push(Projectile::new(pos, Vec2::new(4.0, -2.0), WeaponKind::Bazooka));
+    {
+        let mut p = Projectile::new(pos, Vec2::new(3.0, -1.5), WeaponKind::Grenade);
+        p.fuse = FuseState::Burning(90);
+        server.projectiles.push(p);
+    }
+    {
+        let mut p = Projectile::new(pos, Vec2::new(5.0, -4.0), WeaponKind::BananaBomb);
+        p.fuse = FuseState::Burning(60);
+        p.is_fragment = true;
+        server.projectiles.push(p);
+    }
+    {
+        let mut p = Projectile::new(pos, Vec2::new(6.0, -1.0), WeaponKind::HomingMissile);
+        p.age_ticks = 55;
+        p.homing_target = Some((700.0, 150.0));
+        server.projectiles.push(p);
+    }
+    { let mut p = Projectile::new(pos, Vec2::new(2.0, -3.0), WeaponKind::HolyHandGrenade); p.fuse = FuseState::Armed; server.projectiles.push(p); }
+    { let mut p = Projectile::new(pos, Vec2::new(0.0,  0.0), WeaponKind::HolyHandGrenade); p.fuse = FuseState::Detonating(8); server.projectiles.push(p); }
+    { let mut p = Projectile::new(pos, Vec2::new(0.0,  0.0), WeaponKind::Tnt); p.fuse = FuseState::Burning(45); server.projectiles.push(p); }
+    server.projectiles.push(Projectile::new(pos, Vec2::new(3.5, -2.0), WeaponKind::BlackHoleBomb));
+    server.projectiles.push(Projectile::new(pos, Vec2::new(4.0, -1.0), WeaponKind::Blasthive));
+
+    let client = round_trip(&server, 1, 0);
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&client));
+}
+
+/// Garcia targeting (not yet confirmed) and falling (in flight) states both survive.
+#[test]
+fn garcia_state_parity() {
+    let mut server = build_game(7);
+    server.garcia = Some(arty::game::state::GarciaState {
+        cursor_x: 400.0, cursor_y: 300.0, render_x: 399.0, render_y: 299.5,
+        blink_timer: 12, falling: false, fall_y: 0.0, vel_y: 0.0, bounce_count: 0,
+    });
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
+
+    let g = server.garcia.as_mut().unwrap();
+    g.falling = true; g.fall_y = -120.5; g.vel_y = 9.2; g.bounce_count = 1;
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 2, 0)));
+}
+
+/// AirStrike cursor and active-plane (bombs dropping) both survive.
+#[test]
+fn airstrike_state_parity() {
+    let mut server = build_game(8);
+    server.airstrike = Some(arty::game::state::AirstrikeState {
+        cursor_x: 600.0, cursor_y: 100.0, render_x: 598.0, render_y: 102.0,
+        blink_timer: 4, active: false, plane_x: 0.0, plane_vx: 0.0,
+        bombs_dropped: 0, direction_right: true, spawn_cam_left: 0.0,
+    });
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
+
+    let a = server.airstrike.as_mut().unwrap();
+    a.active = true; a.plane_x = 250.0; a.plane_vx = 4.5; a.bombs_dropped = 2; a.direction_right = false;
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 2, 0)));
+}
+
+/// Mines in all three states (Arming → Armed → Triggered) survive with correct
+/// state discriminant and countdown values.
+#[test]
+fn mines_in_all_states_survive_round_trip() {
+    use arty::game::state::{PlacedMine, MineState};
+    let mut server = build_game(99);
+    server.mines.push(PlacedMine { pos: WorldPos::new(200.0, 300.0), state: MineState::Arming,    arm_ticks: 72, trigger_ticks: 0  });
+    server.mines.push(PlacedMine { pos: WorldPos::new(400.0, 310.0), state: MineState::Armed,     arm_ticks: 0,  trigger_ticks: 0  });
+    server.mines.push(PlacedMine { pos: WorldPos::new(600.0, 290.0), state: MineState::Triggered, arm_ticks: 0,  trigger_ticks: 11 });
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
+}
+
+/// Fire patches carry their velocity and landed flag through the round-trip.
+/// Missing vel means an airborne patch lands instantly; missing landed makes a
+/// settled patch fly away.
+#[test]
+fn fire_patches_survive_round_trip() {
+    use arty::game::state::FirePatch;
+    let mut server = build_game(55);
+    server.fire_patches.push(FirePatch { pos: WorldPos::new(300.0, 150.0), vel: Vec2::new(3.5, -2.0), landed: false, lifetime: 180 });
+    server.fire_patches.push(FirePatch { pos: WorldPos::new(500.0, 320.0), vel: Vec2::new(0.0,  0.0), landed: true,  lifetime: 90  });
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
+}
+
+/// turn_number must survive: it drives weapon unlock checks (TNT at turn 5,
+/// AirStrike at turn 7, HomingMissile at turn 2×teams). Before this fix the live
+/// client always saw turn_number=0 and all timed weapons were locked forever.
+#[test]
+fn turn_number_survives_round_trip() {
+    let mut server = build_game(11);
+    server.turn.turn_number = 14;
+    assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
+}
+
+/// Run the server sim for 50 ticks with a homing missile and a live grenade in
+/// flight; round-trip on every tick and assert the snapshots stay identical.
+/// Catches drift bugs where a field accumulates differently after tick 0
+/// (e.g. age_ticks incremented twice per tick on the live client).
+#[test]
+fn multi_tick_parity_stays_in_sync() {
+    use arty::game::loop_runner::server_tick;
+    use arty::input::InputState;
+
+    let mut server = build_game(77);
+    {
+        let mut m = Projectile::new(WorldPos::new(300.0, 200.0), Vec2::new(5.0, -2.0), WeaponKind::HomingMissile);
+        m.homing_target = Some((600.0, 150.0));
+        server.projectiles.push(m);
+    }
+    {
+        let mut g = Projectile::new(WorldPos::new(300.0, 200.0), Vec2::new(-2.0, -4.0), WeaponKind::Grenade);
+        g.fuse = FuseState::Burning(60);
+        server.projectiles.push(g);
+    }
+
+    // Reuse a single client to avoid the 50× terrain-generation cost of round_trip().
+    let mut client = build_game(server.map_seed);
+    let mut cam = Camera::new(0.0);
+    let input = InputState::new();
+    for tick in 0..50u32 {
+        server_tick(&mut server, &input, None);
+        let state = build_state(&server, tick, 0);
+        apply_server_state(&mut client, &mut cam, &state, 0);
+        assert_eq!(
+            synced_snapshot(&server), synced_snapshot(&client),
+            "snapshot diverged at tick {tick}"
+        );
+    }
+}
+
+// ── Wire-encoding tests ───────────────────────────────────────────────────────
+
 /// Every Sfx variant must survive the u8 wire encoding round-trip intact.
-/// Forgetting to add a new sound to `from_u8` would silently drop it on live
-/// clients; this test catches that before it ships.
 #[test]
 fn sfx_net_roundtrip() {
     use arty::audio::Sfx;
@@ -175,45 +651,27 @@ fn sfx_net_roundtrip() {
         Sfx::DeathWater, Sfx::HolyHandGrenade,
     ];
     for &sfx in all {
-        let encoded = sfx as u8;
-        let decoded = Sfx::from_u8(encoded);
+        let decoded = Sfx::from_u8(sfx as u8);
         assert_eq!(decoded, Some(sfx), "{sfx:?} did not survive u8 round-trip");
     }
 }
 
-/// HHG FuseState variants (Armed, Detonating) must survive the net encoding round-trip.
+/// HHG Armed and Detonating fuse states survive the net encoding.
 #[test]
 fn hhg_fuse_state_net_roundtrip() {
-    use arty::physics::projectile::{FuseState, WeaponKind};
-    use arty::world::{WorldPos, Vec2};
-    use arty::physics::projectile::Projectile;
-
     let mut server = build_game(42);
-    let mut client = build_game(42);
-    let mut cam = arty::renderer::Camera::new(0.0);
-
-    // Spawn an HHG projectile in Armed state
     let pos = WorldPos::new(500.0, 100.0);
-    let mut proj = Projectile::new(pos, Vec2::new(0.0, 0.0), WeaponKind::HolyHandGrenade);
-    proj.fuse = FuseState::Armed;
-    server.projectiles.push(proj.clone());
+    let mut p1 = Projectile::new(pos, Vec2::new(0.0, 0.0), WeaponKind::HolyHandGrenade); p1.fuse = FuseState::Armed;
+    let mut p2 = Projectile::new(pos, Vec2::new(0.0, 0.0), WeaponKind::HolyHandGrenade); p2.fuse = FuseState::Detonating(5);
+    server.projectiles.extend([p1, p2]);
 
-    // Spawn one in Detonating state
-    let mut proj2 = Projectile::new(pos, Vec2::new(0.0, 0.0), WeaponKind::HolyHandGrenade);
-    proj2.fuse = FuseState::Detonating(5);
-    server.projectiles.push(proj2.clone());
-
-    let state = build_state(&server, 1, 0);
-    apply_server_state(&mut client, &mut cam, &state, 0);
-
-    assert_eq!(client.projectiles.len(), 2, "both HHG projectiles should survive round-trip");
-    assert_eq!(client.projectiles[0].fuse, FuseState::Armed, "Armed state round-trip failed");
-    assert_eq!(client.projectiles[1].fuse, FuseState::Detonating(5), "Detonating(5) round-trip failed");
+    let client = round_trip(&server, 1, 0);
+    assert_eq!(client.projectiles.len(), 2);
+    assert_eq!(client.projectiles[0].fuse, FuseState::Armed);
+    assert_eq!(client.projectiles[1].fuse, FuseState::Detonating(5));
 }
 
-/// Muzzle fields on InputMsg must survive the bincode wire round-trip intact.
-/// If they were accidentally dropped, live-mode hitscan would silently fall back
-/// to the approximation formula instead of the exact rendered barrel tip.
+/// Muzzle fields on InputMsg must survive the bincode wire round-trip.
 #[test]
 fn inputmsg_muzzle_roundtrip() {
     use arty::net::msg::InputMsg;
@@ -229,66 +687,44 @@ fn inputmsg_muzzle_roundtrip() {
     };
     let bytes = encode(&msg).expect("encode failed");
     let decoded: InputMsg = bincode::deserialize(&bytes[4..]).expect("decode failed");
-    assert_eq!(decoded.muzzle_x, 123.45, "muzzle_x lost in wire round-trip");
-    assert_eq!(decoded.muzzle_y, 67.89, "muzzle_y lost in wire round-trip");
+    assert_eq!(decoded.muzzle_x, 123.45);
+    assert_eq!(decoded.muzzle_y, 67.89);
 }
 
-/// TAT replay must call process_weapon_menu before server_tick, and skip
-/// server_tick while the menu is open — exactly mirroring what tick() does
-/// during recording. Without this, weapon switches are lost (wrong weapon fires)
-/// and the A-confirm tick causes a phantom shot (server_fire_grace not set).
-///
-/// Regression guard: if process_weapon_menu is ever removed from the TAT replay
-/// paths in src/main.rs, this test will fail with "fired Bazooka instead of Grenade".
+// ── Sim correctness tests ─────────────────────────────────────────────────────
+
+/// TAT replay must call process_weapon_menu before server_tick so weapon switches
+/// are applied — regression guard for the TAT code paths.
 #[test]
 fn tat_replay_applies_weapon_switch() {
     use arty::game::loop_runner::replay_tick;
-    use arty::physics::projectile::WeaponKind;
 
     let mut game = build_game(42);
-    // Force a predictable 2-weapon loadout: Bazooka at index 0, Grenade at index 1.
-    // The menu is 2 columns wide so pressing Right moves from Bazooka to Grenade.
-    game.teams[0].weapons = vec![
-        (WeaponKind::Bazooka, None),
-        (WeaponKind::Grenade, None),
-    ];
+    game.teams[0].weapons = vec![(WeaponKind::Bazooka, None), (WeaponKind::Grenade, None)];
     game.teams[0].selected_weapon = 0;
 
-    // Button bit positions from Button::ALL order:
-    //   0=Up 1=Down 2=Left 3=Right 4=A 5=B 6=X 7=Y 8=L1 9=R1 10=L2 11=R2 12=Start 13=Select
     const SELECT: u16 = 1 << 13;
     const RIGHT:  u16 = 1 << 3;
     const A_BTN:  u16 = 1 << 4;
 
-    // Bitmask sequence that switches to Grenade and fires:
-    //   SELECT  → open weapon menu
-    //   RIGHT   → cursor moves from Bazooka (col 0) to Grenade (col 1)
-    //   A_BTN   → confirm selection (menu closes, server_fire_grace=30)
-    //   0×30    → fire grace countdown; first tick arms charge_armed, rest idle
-    //   A_BTN   → hold A: power charges
-    //   0       → release A: power > 0 → fire_weapon() fires the selected weapon
     let bitmasks: Vec<u16> = [SELECT, RIGHT, A_BTN]
         .into_iter()
         .chain(std::iter::repeat(0u16).take(30))
         .chain([A_BTN, 0])
         .collect();
 
-    let mut prev: u16 = 0;
+    let mut prev = 0u16;
     for &bits in &bitmasks {
         replay_tick(&mut game, prev, bits);
         prev = bits;
     }
 
-    assert!(!game.projectiles.is_empty(),
-        "TAT replay: expected a projectile to be fired after weapon-switch sequence");
+    assert!(!game.projectiles.is_empty(), "TAT replay: expected a projectile");
     assert_eq!(game.projectiles[0].kind, WeaponKind::Grenade,
-        "TAT replay fired {:?} instead of Grenade — weapon switch was not applied",
-        game.projectiles[0].kind);
+        "TAT replay fired {:?} instead of Grenade", game.projectiles[0].kind);
 }
 
-/// The shared sim must be deterministic: two games from the same seed fed the
-/// same inputs stay identical. Guards against time-based RNG / map iteration
-/// order creeping in (which would desync server vs client).
+/// Two sims from the same seed with the same inputs stay identical.
 #[test]
 fn sim_is_deterministic() {
     use arty::game::loop_runner::server_tick;
@@ -306,14 +742,14 @@ fn sim_is_deterministic() {
         server_tick(&mut b, &input, None);
     }
 
-    assert_eq!(a.crater_log, b.crater_log, "crater log diverged");
-    assert_eq!(a.wind.value(), b.wind.value(), "wind diverged");
-    assert_eq!(a.turn.current_team, b.turn.current_team, "turn diverged");
+    assert_eq!(a.crater_log, b.crater_log);
+    assert_eq!(a.wind.value(), b.wind.value());
+    assert_eq!(a.turn.current_team, b.turn.current_team);
     for (ti, (ta, tb)) in a.teams.iter().zip(b.teams.iter()).enumerate() {
         for (si, (sa, sb)) in ta.soldiers.iter().zip(tb.soldiers.iter()).enumerate() {
-            assert_eq!(sa.pos.x, sb.pos.x, "team {ti} soldier {si} pos.x diverged");
-            assert_eq!(sa.pos.y, sb.pos.y, "team {ti} soldier {si} pos.y diverged");
-            assert_eq!(sa.hp, sb.hp, "team {ti} soldier {si} hp diverged");
+            assert_eq!(sa.pos.x, sb.pos.x, "t{ti} s{si} pos.x");
+            assert_eq!(sa.pos.y, sb.pos.y, "t{ti} s{si} pos.y");
+            assert_eq!(sa.hp, sb.hp, "t{ti} s{si} hp");
         }
     }
 }

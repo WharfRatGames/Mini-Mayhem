@@ -58,12 +58,16 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                     _                        => 0,
                 },
                 is_fragment: p.is_fragment,
+                homing_target_x: p.homing_target.map(|(x, _)| x).unwrap_or(0.0),
+                homing_target_y: p.homing_target.map(|(_, y)| y).unwrap_or(0.0),
+                age_ticks: p.age_ticks,
             }
         }).collect(),
         wind: game.wind.value(),
         turn_team: game.active_team(),
 
         turn_secs: game.turn.secs_remaining(),
+        turn_number: game.turn.turn_number,
         active_soldier: game.teams[game.active_team()].active,
         phase,
         aim_angle: game.aim.angle,
@@ -130,6 +134,11 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
             cursor_x: g.cursor_x, render_x: g.render_x, cursor_y: g.cursor_y, render_y: g.render_y,
             blink_timer: g.blink_timer,
             falling: g.falling, fall_y: g.fall_y, vel_y: g.vel_y, bounce_count: g.bounce_count,
+        }),
+        homing_missile: game.homing_missile.as_ref().map(|hm| NetHomingMissile {
+            cursor_x: hm.cursor_x, render_x: hm.render_x,
+            cursor_y: hm.cursor_y, render_y: hm.render_y,
+            blink_timer: hm.blink_timer,
         }),
         airstrike: game.airstrike.as_ref().map(|a| NetAirstrike {
             cursor_x: a.cursor_x, render_x: a.render_x, cursor_y: a.cursor_y, render_y: a.render_y,
@@ -245,6 +254,10 @@ pub fn apply_server_state(
             n                 => FuseState::Burning(n),
         };
         proj.is_fragment = np.is_fragment;
+        proj.age_ticks   = np.age_ticks;
+        if kind == WeaponKind::HomingMissile && (np.homing_target_x != 0.0 || np.homing_target_y != 0.0) {
+            proj.homing_target = Some((np.homing_target_x, np.homing_target_y));
+        }
         game.projectiles.push(proj);
     }
     // On opponent's turn, apply their aim angle from server state for display.
@@ -259,8 +272,9 @@ pub fn apply_server_state(
     let prev_active = game.teams.get(prev_team).map(|t| t.active).unwrap_or(0);
 
     game.wind               = crate::physics::Wind::new(state.wind);
-    game.turn.ticks_left = state.turn_secs * 30;
+    game.turn.ticks_left  = state.turn_secs * 30;
     game.turn.current_team = state.turn_team;
+    game.turn.turn_number  = state.turn_number;
 
     if state.turn_team != prev_team || state.active_soldier != prev_active {
         crate::game::loop_runner::push_turn_message(game);
@@ -442,6 +456,15 @@ pub fn apply_server_state(
             falling: ng.falling, fall_y: ng.fall_y, vel_y: ng.vel_y, bounce_count: ng.bounce_count,
         });
     }
+    // Sync Homing Missile targeting cursor
+    {
+        use crate::game::state::HomingMissileState;
+        game.homing_missile = state.homing_missile.as_ref().map(|hm| HomingMissileState {
+            cursor_x: hm.cursor_x, render_x: hm.render_x,
+            cursor_y: hm.cursor_y, render_y: hm.render_y,
+            blink_timer: hm.blink_timer,
+        });
+    }
     // Sync Airstrike
     {
         use crate::game::state::AirstrikeState;
@@ -488,7 +511,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         fire_patches: _, black_holes: _, wind: _, aim: _, result: _, tick: _,
         crater_log: _, sounds: _, fx_events: _, graves: _, weapon_menu_open: _,
         weapon_menu_cursor: _, rope: _, messages: _, blood_splats: _,
-        plasma_torch: _, garcia: _, airstrike: _,
+        plasma_torch: _, garcia: _, airstrike: _, homing_missile: _,
         // ── Not networked: client-only visuals / server-internal sim state ──
         // (terrain is rebuilt on the client from `crater_log`; `explosions` from craters)
         terrain: _, crate_timer: _, map_seed: _, is_test: _, is_multiplayer: _,

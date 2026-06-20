@@ -45,7 +45,7 @@ impl WeaponKind {
             Self::Grenade        => 30.0,
             Self::Shotgun        => 12.0,
             Self::ClusterBomb    => 20.0,
-            Self::Landmine       => 25.0,
+            Self::Landmine       => 43.0,
             Self::Tnt            => 75.0,   // 2.5× grenade
             Self::HolyHandGrenade => 80.0,
             Self::AirStrike      => 45.0,
@@ -177,6 +177,7 @@ impl WeaponKind {
             Self::Blasthive       => 20,
             Self::BananaBomb      => 21,
             Self::AirStrike       => 22,
+            Self::HomingMissile   => 23,
             // Rare
             Self::BlackHoleBomb   => 30,
             Self::Revolver        => 31,
@@ -201,6 +202,7 @@ impl WeaponKind {
             Self::HolyHandGrenade => "SACRED ORDNANCE",
             Self::BananaBomb     => "METEOR BOMB",
             Self::AirStrike      => "AIR STRIKE",
+            Self::HomingMissile  => "HOMING MISSILE",
             Self::Revolver       => "REVOLVER",
             Self::NinjaRope      => "GRAPPLE",
             Self::Blasthive        => "BLASTHIVE",
@@ -305,7 +307,6 @@ impl WeaponKind {
         matches!(
             self,
             Self::Bazooka
-                | Self::HomingMissile
                 | Self::SuperSheep
         )
     }
@@ -364,6 +365,8 @@ pub struct Projectile {
     pub fuse: FuseState,
     /// True for BananaBomb sub-munitions — fragments don't spawn more fragments.
     pub is_fragment: bool,
+    /// Fixed world-space target for homing missiles (set at fire time, never changes).
+    pub homing_target: Option<(f32, f32)>,
 }
 
 impl Projectile {
@@ -380,6 +383,7 @@ impl Projectile {
             age_ticks: 0,
             fuse,
             is_fragment: false,
+            homing_target: None,
         }
     }
 
@@ -392,6 +396,7 @@ impl Projectile {
             age_ticks: 0,
             fuse: FuseState::None,
             is_fragment: true,
+            homing_target: None,
         }
     }
 
@@ -404,6 +409,7 @@ impl Projectile {
             age_ticks: 0,
             fuse: FuseState::Burning(180), // ~6 s to find a target
             is_fragment: true,
+            homing_target: None,
         }
     }
 
@@ -416,6 +422,7 @@ impl Projectile {
             age_ticks: 0,
             fuse: FuseState::Burning(fuse_ticks),
             is_fragment: false,
+            homing_target: None,
         }
     }
 

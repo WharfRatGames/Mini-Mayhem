@@ -98,6 +98,9 @@ pub struct StateMsg {
     pub turn_team:      usize,
     pub active_soldier: usize,
     pub turn_secs:      u32,
+    /// Absolute turn counter — used for weapon unlock checks (TNT, AirStrike, etc.).
+    #[serde(default)]
+    pub turn_number:    u32,
     pub phase:          NetPhase,
     pub aim_angle:          f32,
     pub aim_power:          f32,
@@ -132,6 +135,7 @@ pub struct StateMsg {
     pub team_colors:        Vec<u8>,
     pub garcia:             Option<NetGarcia>,
     pub airstrike:          Option<NetAirstrike>,
+    pub homing_missile:     Option<NetHomingMissile>,
     /// Active plasma-torch direction: 0=none, 1=UpForward, 2=Forward, 3=DownForward.
     /// Lets the live client draw the torch flame at the tip and suppress the
     /// per-tick crater-derived explosion flashes the torch's carving would spawn.
@@ -220,6 +224,15 @@ pub struct NetGarcia {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetHomingMissile {
+    pub cursor_x:    f32,
+    pub render_x:    f32,
+    pub cursor_y:    f32,
+    pub render_y:    f32,
+    pub blink_timer: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetSoldier {
     /// Compact team index (0..team_count) — used to look up the local team.
     pub team:            usize,
@@ -254,13 +267,21 @@ pub struct NetSoldier {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetProjectile {
-    pub x:           f32,
-    pub y:           f32,
-    pub vel_x:       f32,
-    pub vel_y:       f32,
-    pub kind_u8:     u8,   // WeaponKind index
-    pub fuse_ticks:  u32,  // 0 = no fuse / expired
-    pub is_fragment: bool, // true for BananaBomb sub-munitions
+    pub x:              f32,
+    pub y:              f32,
+    pub vel_x:          f32,
+    pub vel_y:          f32,
+    pub kind_u8:        u8,   // WeaponKind index
+    pub fuse_ticks:     u32,  // 0 = no fuse / expired
+    pub is_fragment:    bool, // true for BananaBomb sub-munitions
+    /// Homing target: 0/0 = none (non-homing missiles or unset).
+    #[serde(default)]
+    pub homing_target_x: f32,
+    #[serde(default)]
+    pub homing_target_y: f32,
+    /// Age in ticks — needed for age-gated behaviours (e.g. homing guidance delay).
+    #[serde(default)]
+    pub age_ticks: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

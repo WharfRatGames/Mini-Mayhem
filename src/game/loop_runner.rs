@@ -322,6 +322,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             game.plasma_torch        = None;
             game.garcia              = None;
             game.airstrike           = None;
+            game.homing_missile      = None;
             // Force-explode any mines still counting down so they don't bleed into next turn
             {
                 use crate::game::state::MineState;
@@ -641,9 +642,10 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
     let in_uzi       = game.uzi_shots_left > 0;
     let in_rope      = game.rope_session;
     let in_torch     = game.plasma_torch.is_some();
-    let in_garcia    = game.garcia.is_some();
-    let in_airstrike = game.airstrike.is_some();
-    if !has_fired || in_revolver || in_minigun || in_uzi || in_rope || in_torch || in_garcia || in_airstrike {
+    let in_garcia         = game.garcia.is_some();
+    let in_airstrike      = game.airstrike.is_some();
+    let in_homing_missile = game.homing_missile.is_some();
+    if !has_fired || in_revolver || in_minigun || in_uzi || in_rope || in_torch || in_garcia || in_airstrike || in_homing_missile {
         if in_torch {
             process_fire(game, input, muzzle_override); // direction changes only while torching
             step_plasma_torch(game);
@@ -651,6 +653,8 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
             step_garcia(game, input);
         } else if in_airstrike {
             step_airstrike(game, input);
+        } else if in_homing_missile {
+            step_homing_missile(game, input);
         } else {
             process_movement(game, input);
             process_aim(game, input);
@@ -855,7 +859,7 @@ pub fn snap_to_surface(game: &mut GameState, ti: usize, si: usize) {
     let x_l = x - SOLDIER_HALF_W as i32;
     let x_r = x + SOLDIER_HALF_W as i32;
     let any_solid = |yy: i32| {
-        game.terrain.is_solid(x_l, yy) || game.terrain.is_solid(x, yy) || game.terrain.is_solid(x_r, yy)
+        game.terrain.is_blocked(x_l, yy) || game.terrain.is_blocked(x, yy) || game.terrain.is_blocked(x_r, yy)
     };
     // If foot is inside terrain, escape upward by at most 2px (float rounding artifact).
     // More than 2px of escape means we'd push through a wall — don't do it.
@@ -1219,13 +1223,14 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
-    // Uzi auto-burst: fires one bullet every 3 ticks (20 shots × 3 ticks = 60 ticks = 2.0s at 30 Hz).
+    // Uzi auto-burst: fires one bullet every 3 ticks (timer=2 → decrement 2→1→0 → fire = 3-tick interval;
+    // 20 shots × 3 ticks = 57 ticks ≈ 1.9s at 30 Hz, matching the 1.892s wav).
     if game.uzi_shots_left > 0 {
         if game.uzi_fire_timer == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
             fire_uzi_shot(game, ti, si, muzzle_override);
-            game.uzi_fire_timer = 3;
+            game.uzi_fire_timer = 2;
         } else {
             game.uzi_fire_timer -= 1;
         }
@@ -1316,7 +1321,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             if !game.teams[ti].consume_weapon() { return; }
             game.teams[ti].prune_empty_weapons();
             game.uzi_shots_left = 20;
-            game.uzi_fire_timer = 3;
+            game.uzi_fire_timer = 2;
             game.emit_sound(crate::audio::Sfx::Uzi);
             fire_uzi_shot(game, ti, si, muzzle_override);
         }
@@ -1405,6 +1410,24 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
                 bombs_dropped: 0,
                 direction_right: true,
                 spawn_cam_left: 0.0, // updated each frame from tick() while targeting
+            });
+        }
+        return;
+    }
+
+    // Homing Missile: cursor targeting, A to confirm and fire, B to cancel. Locked until turn 2.
+    if weapon == WeaponKind::HomingMissile {
+        if game.turn.turn_number < 2 * game.teams.len() as u32 { return; }
+        if game.homing_missile.is_none() {
+            let ti = game.active_team();
+            let sx = game.teams[ti].soldiers[game.teams[ti].active].pos.x;
+            let sy = (game.teams[ti].soldiers[game.teams[ti].active].pos.y - 60.0).max(12.0);
+            game.homing_missile = Some(crate::game::state::HomingMissileState {
+                cursor_x: sx,
+                render_x: sx,
+                cursor_y: sy,
+                render_y: sy,
+                blink_timer: 0,
             });
         }
         return;
@@ -1788,6 +1811,55 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
     };
     if s.bombs_dropped >= BOMB_COUNT && plane_gone {
         game.airstrike = None;
+    }
+}
+
+fn step_homing_missile(game: &mut GameState, input: &InputState) {
+    use crate::input::Button;
+    use crate::world::{WORLD_W, WATER_Y};
+    use crate::physics::projectile::{Projectile, WeaponKind};
+    use crate::world::{Vec2, WorldPos};
+
+    let hm = match game.homing_missile.as_mut() { Some(h) => h, None => return };
+    hm.blink_timer = hm.blink_timer.wrapping_add(1);
+    hm.render_x += (hm.cursor_x - hm.render_x) * 0.25;
+    hm.render_y += (hm.cursor_y - hm.render_y) * 0.25;
+    if input.held(Button::Left)  { hm.cursor_x -= 14.0; }
+    if input.held(Button::Right) { hm.cursor_x += 14.0; }
+    if input.held(Button::Up)    { hm.cursor_y -= 10.0; }
+    if input.held(Button::Down)  { hm.cursor_y += 10.0; }
+    hm.cursor_x = hm.cursor_x.clamp(0.0, WORLD_W as f32);
+    hm.cursor_y = hm.cursor_y.clamp(12.0, WATER_Y as f32 - 20.0);
+
+    if input.just_pressed(Button::B) {
+        game.homing_missile = None;
+        return;
+    }
+
+    if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
+        let target = {
+            let hm = game.homing_missile.as_ref().unwrap();
+            (hm.cursor_x, hm.cursor_y)
+        };
+        game.homing_missile = None;
+        let ti = game.active_team();
+        let si = game.teams[ti].active;
+        if !game.teams[ti].consume_weapon() { return; }
+        game.teams[ti].prune_empty_weapons();
+        let fm    = game.teams[ti].soldiers[si].facing as f32;
+        let angle = game.aim.angle;
+        let power = game.aim.power.min(MAX_CHARGE) * 20.0;
+        let sy = game.teams[ti].soldiers[si].pos.y - 4.0 - angle.sin() * 12.0;
+        let sx = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 12.0;
+        let mut proj = Projectile::new(
+            WorldPos::new(sx, sy),
+            Vec2::new(angle.cos() * power * fm, -angle.sin() * power),
+            WeaponKind::HomingMissile,
+        );
+        proj.homing_target = Some(target);
+        game.projectiles.push(proj);
+        game.teams[ti].soldiers[si].has_fired = true;
+        game.turn.on_fired();
     }
 }
 
@@ -2971,6 +3043,34 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 2, icon_cy + 6,  4, 7, mmd);
                 buf.fill_rect(icon_cx - 2, icon_cy + 6,  4, 1, mhi);
             }
+            WeaponKind::HomingMissile => {
+                // Pixel-art missile: cylindrical body + pointed nose + 4 fins
+                let mbody = if selected { Bgra::new(190, 195, 200) } else { Bgra::new(120, 125, 130) };
+                let mnose = if selected { Bgra::new(220, 80, 60)   } else { Bgra::new(140, 50, 40)   };
+                let mfin  = if selected { Bgra::new(160, 170, 180) } else { Bgra::new(90, 95, 100)   };
+                let mjet  = Bgra::new(255, 160, 50);
+                // Body (horizontal, pointing right)
+                buf.fill_rect(icon_cx - 10, icon_cy - 2, 20, 5, dark);
+                buf.fill_rect(icon_cx - 9,  icon_cy - 1, 18, 3, mbody);
+                buf.fill_rect(icon_cx - 9,  icon_cy - 1, 18, 1, if selected { Bgra::new(220, 225, 230) } else { Bgra::new(150, 155, 160) });
+                // Pointed nose cone (right side)
+                buf.fill_rect(icon_cx + 9,  icon_cy,       3, 1, mnose);
+                buf.fill_rect(icon_cx + 11, icon_cy,       1, 1, mnose);
+                // Warhead band (red stripe)
+                buf.fill_rect(icon_cx + 4,  icon_cy - 1,   4, 3, mnose);
+                // Top and bottom fins (near nose)
+                buf.fill_rect(icon_cx + 2,  icon_cy - 5,   5, 4, dark);
+                buf.fill_rect(icon_cx + 3,  icon_cy - 4,   4, 3, mfin);
+                buf.fill_rect(icon_cx + 2,  icon_cy + 2,   5, 4, dark);
+                buf.fill_rect(icon_cx + 3,  icon_cy + 2,   4, 3, mfin);
+                // Rear fins (tail)
+                buf.fill_rect(icon_cx - 10, icon_cy - 5,   3, 4, dark);
+                buf.fill_rect(icon_cx - 9,  icon_cy - 4,   2, 3, mfin);
+                buf.fill_rect(icon_cx - 10, icon_cy + 2,   3, 4, dark);
+                buf.fill_rect(icon_cx - 9,  icon_cy + 2,   2, 3, mfin);
+                // Engine exhaust glow
+                buf.fill_rect(icon_cx - 12, icon_cy,       3, 1, mjet);
+            }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
                 buf.fill_rect(icon_cx - 5, icon_cy - 3, 10, 6, icol);
@@ -2993,6 +3093,25 @@ pub fn draw_weapon_menu(
             buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, lkd);
             buf.fill_rect(icon_cx - 1, icon_cy - 3,  2, 2, Bgra::new(30, 30, 20));
             buf.fill_rect(icon_cx - 1, icon_cy - 1,  2, 4, Bgra::new(30, 30, 20));
+            let cdown = format!("T-{}", rotations_left);
+            draw_str(buf, &cdown, cx + cell_w - str_width(&cdown) - 6, cy + cell_h - 18, Bgra::new(220, 200, 60));
+        }
+
+        // Homing missile lock overlay: locked until 2 full turn cycles
+        let hm_unlock = 2 * num_teams as u32;
+        if *kind == WeaponKind::HomingMissile && turn_number < hm_unlock {
+            let team_count = (num_teams as u32).max(1);
+            let rotations_left = 2u32.saturating_sub(turn_number / team_count);
+            let lk  = Bgra::new(180, 180, 60);
+            let lkd = Bgra::new(100, 100, 30);
+            buf.fill_rect(icon_cx - 5, icon_cy - 12,  3,  8, lk);
+            buf.fill_rect(icon_cx + 2, icon_cy - 12,  3,  8, lk);
+            buf.fill_rect(icon_cx - 5, icon_cy - 14, 10,  3, lk);
+            buf.fill_rect(icon_cx - 4, icon_cy - 13,  8,  2, lkd);
+            buf.fill_rect(icon_cx - 7, icon_cy - 5,  14, 10, lk);
+            buf.fill_rect(icon_cx - 6, icon_cy - 4,  12,  8, lkd);
+            buf.fill_rect(icon_cx - 1, icon_cy - 3,   2,  2, Bgra::new(30, 30, 20));
+            buf.fill_rect(icon_cx - 1, icon_cy - 1,   2,  4, Bgra::new(30, 30, 20));
             let cdown = format!("T-{}", rotations_left);
             draw_str(buf, &cdown, cx + cell_w - str_width(&cdown) - 6, cy + cell_h - 18, Bgra::new(220, 200, 60));
         }
@@ -3058,6 +3177,7 @@ pub fn draw_weapon_menu(
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
             WeaponKind::Minigun         => "MINIGUN",
             WeaponKind::Uzi             => "MAC-10",
+            WeaponKind::HomingMissile   => "HOMING MISSILE",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };
@@ -3432,39 +3552,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 
     mark!("fire_patches");
 
-    // 5c. Plasma torch flame — active-soldier tunneling weapon
-    if let Some(ref torch) = game.plasma_torch {
-        let ti = game.active_team();
-        let si = game.teams[ti].active;
-        if game.teams[ti].soldiers[si].is_alive() {
-            let facing = game.teams[ti].soldiers[si].facing as f32;
-            let (dx, dy) = torch.dir.to_vec(facing);
-            let sx = game.teams[ti].soldiers[si].pos.x;
-            let sy = game.teams[ti].soldiers[si].pos.y - 8.0;
-            let tip_x = (sx + dx * 18.0) as i32;
-            let tip_y = (sy + dy * 18.0) as i32;
-            let phase = game.tick as f32 * 0.6;
-            // Beam: draw segments from nozzle to tip
-            for s in 2..=16i32 {
-                let bx = (sx + dx * s as f32) as i32;
-                let by = (sy + dy * s as f32) as i32;
-                let t = s as f32 / 16.0;
-                let col = if t < 0.4 { Bgra::new(255, 240, 120) }
-                          else if t < 0.7 { Bgra::new(255, 150, 30) }
-                          else { Bgra::new(220, 60, 10) };
-                buf.set_pixel(bx, by, col);
-                buf.set_pixel(bx + 1, by, col);
-            }
-            if tip_x >= cam_x as i32 && tip_x < cam_x as i32 + sw {
-                // Three concentric flicker rings at tip
-                let r1 = if phase.sin() > 0.0 { 7 } else { 6 };
-                let r2 = if phase.cos() > 0.0 { 5 } else { 4 };
-                buf.fill_circle(tip_x, tip_y, r1, Bgra::new(220, 60, 10));
-                buf.fill_circle(tip_x, tip_y, r2, Bgra::new(255, 150, 30));
-                buf.fill_circle(tip_x, tip_y, 2,  Bgra::new(255, 240, 120));
-            }
-        }
-    }
+    // 5c. Plasma torch — no separate visual; the fire patches spawned by tunneling are the effect.
 
     mark!("plasma_torch");
 
@@ -3563,6 +3651,15 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     }
 
     mark!("black_holes");
+
+    // 5e-3. Homing Missile targeting crosshair (same style as Garcia/AirStrike)
+    if let Some(ref hm) = game.homing_missile {
+        let rx = hm.render_x as i32;
+        let ry = hm.render_y as i32;
+        let cross_col = Bgra::new(255, 240, 60);
+        buf.fill_rect(rx - 6, ry - 1, 13, 3, cross_col);
+        buf.fill_rect(rx - 1, ry - 6,  3, 13, cross_col);
+    }
 
     // 5c. Bazooka smoke trail (behind rockets)
     for (pos, ticks_left) in &game.smoke_particles {
@@ -4393,12 +4490,13 @@ fn stamp_objects(game: &mut GameState) {
     use crate::game::state::MineState;
     game.terrain.clear_objects();
 
-    // Barrels: 10×20 px footprint centred on barrel pos
+    // Barrels: 14×24 px footprint matching the visual (pos.y = terrain surface,
+    // barrel extends upward to pos.y-24; dx ±7 matches the drawn body width).
     for barrel in &game.barrels {
         let cx = barrel.pos.x as i32;
         let cy = barrel.pos.y as i32;
-        for dy in -10..=10i32 {
-            for dx in -5..=5i32 {
+        for dy in -24..=0i32 {
+            for dx in -7..=7i32 {
                 game.terrain.stamp_object(cx + dx, cy + dy);
             }
         }

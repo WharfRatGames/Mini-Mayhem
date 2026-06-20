@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.303";
+const VERSION: &str = "0.5.4.304";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -640,6 +640,7 @@ fn main() {
             (WeaponKind::HolyHandGrenade, None),
             (WeaponKind::Minigun,         None),
             (WeaponKind::Uzi,             None),
+            (WeaponKind::HomingMissile,   None),
         ];
         let mut all_weapons_sorted = all_weapons.clone();
         all_weapons_sorted.sort_by_key(|(k, _)| k.menu_sort_key());
@@ -876,6 +877,10 @@ fn main() {
                             let mut proj = Projectile::new(WorldPos::new(np.x, np.y), Vec2::new(np.vel_x, np.vel_y), kind);
                             if np.fuse_ticks > 0 { proj.fuse = FuseState::Burning(np.fuse_ticks); }
                             proj.is_fragment = np.is_fragment;
+                            proj.age_ticks   = np.age_ticks;
+                            if kind == WeaponKind::HomingMissile && (np.homing_target_x != 0.0 || np.homing_target_y != 0.0) {
+                                proj.homing_target = Some((np.homing_target_x, np.homing_target_y));
+                            }
                             game.projectiles.push(proj);
                         }
                     }
