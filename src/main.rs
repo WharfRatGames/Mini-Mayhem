@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.311";
+const VERSION: &str = "0.5.4.312";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -432,11 +432,7 @@ fn main() {
                     c.send_raw(session_token.as_bytes());
                     c.send_raw(b"\n");
                     // Read server response: "OK\n" or "REJECTED:VERSION\n"
-                    let mut resp = String::new();
-                    if let Ok(cloned) = c.stream.try_clone() {
-                        use std::io::BufRead;
-                        let _ = std::io::BufReader::new(cloned).read_line(&mut resp);
-                    }
+                    let resp = c.read_line_blocking();
                     if resp.trim() == "REJECTED:VERSION" {
                         use renderer::Bgra;
                         use renderer::font::{draw_str_scaled, str_width_scaled};
@@ -495,7 +491,7 @@ fn main() {
             }
         } else {
             // Ranked: wait for the opponent the server pairs us with.
-            conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(200))).ok();
+            conn.set_read_timeout(Some(std::time::Duration::from_millis(200)));
             loop {
                 input.poll();
                 if input.just_pressed(input::Button::Start) || input.just_pressed(input::Button::B) {
@@ -506,7 +502,7 @@ fn main() {
             }
         };
         if let Some(w) = welcome {
-            conn.stream.set_read_timeout(None).ok(); // clear timeout for gameplay
+            conn.set_read_timeout(None); // clear timeout for gameplay
             my_team     = w.your_team;
             server_seed = Some(w.seed);
             team_count  = w.team_count.clamp(2, 4);
@@ -1212,7 +1208,7 @@ fn run_casual_lobby(
     conn.send(&LobbyClientMsg::Join(join));
     // 500ms timeout: gives the server time to process Join and reply with State before
     // the drain loop times out. After the first State arrives we switch to 60ms per-frame.
-    conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(500))).ok();
+    conn.set_read_timeout(Some(std::time::Duration::from_millis(500)));
 
     let mut players: Vec<net::msg::LobbyPlayer> = Vec::new();
     let mut your_index: usize = 0;
@@ -1291,15 +1287,15 @@ fn run_casual_lobby(
                     if let Some(p) = players.get(your_index) { ready = p.ready; }
                 }
                 LobbyServerMsg::Start(w) => {
-                    conn.stream.set_read_timeout(None).ok();
+                    conn.set_read_timeout(None);
                     return Some((w, players));
                 }
             }
             // After each message, switch to a short poll for any additional buffered messages.
-            conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(10))).ok();
+            conn.set_read_timeout(Some(std::time::Duration::from_millis(10)));
         }
         // Back to normal drain timeout for next frame.
-        conn.stream.set_read_timeout(Some(std::time::Duration::from_millis(60))).ok();
+        conn.set_read_timeout(Some(std::time::Duration::from_millis(60)));
 
         draw_casual_lobby(buf, &players, your_index, ready);
         if player_left_ticks > 0 {

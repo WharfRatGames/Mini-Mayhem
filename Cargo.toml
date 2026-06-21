@@ -13,6 +13,7 @@ libc  = "0.2"
 png            = "0.17"
 jpeg-decoder   = "0.3"
 rustls         = { version = "0.23", default-features = false, features = ["ring", "tls12", "std"] }
+rustls-pemfile = "2"
 webpki-roots   = "0.26"
 
 [profile.release]

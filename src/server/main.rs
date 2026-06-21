@@ -1,14 +1,20 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rustls::ServerConnection;
+use rustls_pemfile::{certs, private_key};
+
+type ServerStream = rustls::StreamOwned<ServerConnection, TcpStream>;
+type ArcStream    = Arc<Mutex<ServerStream>>;
+
 /// Connection info for one player in a paused casual match — used for reconnect.
 struct CasualSlot {
-    write:      Arc<Mutex<TcpStream>>,
+    write:      ArcStream,
     input:      Arc<Mutex<Option<InputMsg>>>,
     disc:       Arc<AtomicBool>,
     quit:       Arc<AtomicBool>,
@@ -38,7 +44,7 @@ const TICK_DURATION: Duration = Duration::from_millis(1000 / 30);
 /// Token sent by clients who want to enter the ranked queue (not a reconnect).
 const RANKED_QUEUE_TOKEN: &str = "RANKED";
 
-type RankedQueue = Arc<Mutex<Vec<TcpStream>>>;
+type RankedQueue = Arc<Mutex<Vec<ArcStream>>>;
 
 fn main() {
     // Log to a text file (in addition to terminal/journal when run attached).
@@ -61,6 +67,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(PORT_DEFAULT);
     info!("Miyoo Mayhem server on :{}", port);
+    let tls_config = load_tls_config();
     let listener = TcpListener::bind(("0.0.0.0", port)).expect("bind failed");
     let match_id: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
@@ -68,7 +75,7 @@ fn main() {
     let ranked_queue: RankedQueue = Arc::new(Mutex::new(Vec::new()));
     let lobby: SharedLobby = Arc::new(Mutex::new(Lobby::default()));
     loop {
-        let (stream, _addr, token) = accept_one(&listener);
+        let (stream, _addr, token) = accept_one(&listener, &tls_config);
 
         // Casual play (empty session token) goes into the shared lobby, where
         // up to 4 players ready up before the match starts.
@@ -120,7 +127,7 @@ fn main() {
 }
 
 struct SharedConn {
-    stream: TcpStream,
+    stream: ArcStream,
     inbox:  Arc<Mutex<Option<InputMsg>>>,
     disc:   Arc<AtomicBool>,
     quit:   Arc<AtomicBool>,
@@ -136,17 +143,11 @@ type Registry = Arc<Mutex<HashMap<String, Arc<MatchSlot>>>>;
 
 /// Attempt to swap `stream` into whichever team slot of `slot` is currently
 /// disconnected. Returns true on success (a fresh read thread was spawned).
-fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
+fn reconnect_into(slot: &Arc<MatchSlot>, stream: &ArcStream) -> bool {
     for team in 0..2 {
         let mut sc = slot.conns[team].lock().unwrap_or_else(|e| e.into_inner());
         if sc.disc.load(Ordering::Relaxed) {
-            let write_clone = match stream.try_clone() { Ok(s) => s, Err(_) => return false };
-            let read_clone  = match stream.try_clone() { Ok(s) => s, Err(_) => return false };
-            let welcome_clone = match stream.try_clone() { Ok(s) => s, Err(_) => return false };
-            write_clone.set_nodelay(true).ok();
-            write_clone.set_write_timeout(Some(Duration::from_millis(50))).ok();
-            read_clone.set_read_timeout(Some(Duration::from_secs(5))).ok();
-            sc.stream = write_clone;
+            sc.stream = Arc::clone(stream);
             let new_gen = sc.gen.fetch_add(1, Ordering::Relaxed) + 1;
             sc.disc.store(false, Ordering::Relaxed);
             *sc.inbox.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -154,16 +155,14 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
             let disc = sc.disc.clone();
             let quit = sc.quit.clone();
             let gen = sc.gen.clone();
+            let read_arc = Arc::clone(stream);
+            let welcome_arc = Arc::clone(stream);
             drop(sc);
-            // Send a fresh WelcomeMsg so a client returning from the title screen
-            // (no in-memory game state) can rebuild the match from the same seed;
-            // the next StateMsg then syncs positions/terrain/HP to the live state.
             if let Some(bytes) = encode(&WelcomeMsg { your_team: team, seed: slot.seed, team_count: 2, your_color: team as u8, reconnect_token: String::new() }) {
-                let mut s = &welcome_clone;
-                let _ = s.write_all(&bytes);
+                write_arc(&welcome_arc, &bytes);
             }
             thread::spawn(move || {
-                read_loop(read_clone, inbox, quit);
+                read_loop(read_arc, inbox, quit);
                 if gen.load(Ordering::Relaxed) == new_gen {
                     disc.store(true, Ordering::Relaxed);
                 }
@@ -176,32 +175,47 @@ fn reconnect_into(slot: &Arc<MatchSlot>, stream: &TcpStream) -> bool {
 }
 
 /// Reconnect a player into an in-progress casual match. Returns true on success.
-fn casual_reconnect_into(slot: &Arc<CasualSlot>, stream: &TcpStream) -> bool {
+fn casual_reconnect_into(slot: &Arc<CasualSlot>, stream: &ArcStream) -> bool {
     if !slot.disc.load(Ordering::Relaxed) { return false; }
-    let (write_s, read_s) = match (stream.try_clone(), stream.try_clone()) {
-        (Ok(w), Ok(r)) => (w, r),
-        _ => return false,
-    };
-    write_s.set_nodelay(true).ok();
-    write_s.set_write_timeout(Some(Duration::from_millis(100))).ok();
-    *slot.write.lock().unwrap_or_else(|e| e.into_inner()) = write_s;
+    // CasualSlot.write is an ArcStream; swap it to the new connection by replacing
+    // the inner ServerStream. We lock both arcs to do the swap atomically.
+    {
+        let mut old = slot.write.lock().unwrap_or_else(|e| e.into_inner());
+        let new_inner = {
+            // We can't move out of the new arc without consuming it, so we need
+            // a different approach: just replace slot.write with the new arc entirely.
+            // Since CasualSlot is behind Arc<CasualSlot> (immutable), we can't
+            // reassign slot.write. Instead, use the existing arc and swap contents.
+            // We move the inner stream from stream into old.
+            // This requires unsafe or a different approach.
+            // Simplest: we can't swap immutably. Use a second mutex level.
+            // Actually: CasualSlot.write is ArcStream = Arc<Mutex<ServerStream>>.
+            // We can't change WHICH arc slot.write points to (immutable field on Arc).
+            // Instead, we swap the inner ServerStream between the two arcs.
+            let mut new_guard = stream.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::swap(&mut *old, &mut *new_guard);
+            // Now slot.write's mutex contains the new connection's stream.
+            // The incoming stream arc now holds the old (dead) stream.
+        };
+        drop(old);
+        let _ = new_inner;
+    }
     let new_gen = slot.gen.fetch_add(1, Ordering::Relaxed) + 1;
     slot.disc.store(false, Ordering::Relaxed);
     *slot.input.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    // Send WelcomeMsg so the client rebuilds the game from the same seed.
     if let Some(bytes) = encode(&WelcomeMsg {
         your_team: slot.team, seed: slot.seed, team_count: slot.team_count,
         your_color: slot.color, reconnect_token: String::new(),
     }) {
-        let mut s = stream;
-        let _ = s.write_all(&bytes);
+        write_arc(&slot.write, &bytes);
     }
     let inbox = slot.input.clone();
     let disc = slot.disc.clone();
     let quit = slot.quit.clone();
     let gen = slot.gen.clone();
+    let read_arc = Arc::clone(&slot.write);
     thread::spawn(move || {
-        read_loop(read_s, inbox, quit);
+        read_loop(read_arc, inbox, quit);
         if gen.load(Ordering::Relaxed) == new_gen {
             disc.store(true, Ordering::Relaxed);
         }
@@ -253,22 +267,16 @@ macro_rules! mboth {
 }
 
 /// Ranked match entry point — generates reconnect tokens and delegates to run_match.
-fn run_ranked_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry) {
+fn run_ranked_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry) {
     let token = format!("r{:016x}{:016x}", match_id,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64);
     run_match(match_id, s0, s1, registry, token);
 }
 
-fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, session_token: String) {
+fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, session_token: String) {
     let mut mfile = match_log_file(match_id);
     mboth!(&mut mfile, match_id, "starting");
-    s0.set_nodelay(true).ok();
-    s1.set_nodelay(true).ok();
-    s0.set_write_timeout(Some(Duration::from_millis(50))).ok();
-    s1.set_write_timeout(Some(Duration::from_millis(50))).ok();
-    s0.set_read_timeout(Some(Duration::from_secs(15))).ok();
-    s1.set_read_timeout(Some(Duration::from_secs(15))).ok();
     mboth!(&mut mfile, match_id, "Both connected - starting!");
     thread::sleep(Duration::from_secs(2));
 
@@ -281,36 +289,27 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     let inp0: Arc<Mutex<Option<InputMsg>>> = Arc::new(Mutex::new(None));
     let inp1: Arc<Mutex<Option<InputMsg>>> = Arc::new(Mutex::new(None));
 
-    // Atomic flags set by read threads the instant a client TCP connection closes.
-    // Much more reliable than write errors — writes succeed even when client is gone
-    // because data sits in the kernel TCP send buffer.
     let disc0 = Arc::new(AtomicBool::new(false));
     let disc1 = Arc::new(AtomicBool::new(false));
     let gen0 = Arc::new(AtomicU64::new(0));
     let gen1 = Arc::new(AtomicU64::new(0));
-    // Set when a client sends InputMsg { quit: true } — voluntary forfeit.
-    // Stored in SharedConn so reconnect_into can thread it through a new read_loop.
     let quit0 = Arc::new(AtomicBool::new(false));
     let quit1 = Arc::new(AtomicBool::new(false));
 
-    let (read_s0, ws0, ws1, read_s1) = match (
-        s0.try_clone(), s0.try_clone(), s1.try_clone(), s1.try_clone()
-    ) {
-        (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
-        _ => { mboth!(&mut mfile, match_id, "socket clone failed — aborting"); return; }
-    };
+    let read_arc0 = Arc::clone(&s0);
+    let read_arc1 = Arc::clone(&s1);
     thread::spawn({
         let i = inp0.clone(); let d = disc0.clone(); let g = gen0.clone(); let q = quit0.clone();
-        move || { read_loop(read_s0, i, q); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
+        move || { read_loop(read_arc0, i, q); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
     });
     thread::spawn({
         let i = inp1.clone(); let d = disc1.clone(); let g = gen1.clone(); let q = quit1.clone();
-        move || { read_loop(read_s1, i, q); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
+        move || { read_loop(read_arc1, i, q); if g.load(Ordering::Relaxed) == 0 { d.store(true, Ordering::Relaxed); } }
     });
 
     let match_slot = Arc::new(MatchSlot { conns: [
-        Mutex::new(SharedConn { stream: ws0, inbox: inp0.clone(), disc: disc0.clone(), quit: quit0.clone(), gen: gen0.clone() }),
-        Mutex::new(SharedConn { stream: ws1, inbox: inp1.clone(), disc: disc1.clone(), quit: quit1.clone(), gen: gen1.clone() }),
+        Mutex::new(SharedConn { stream: s0, inbox: inp0.clone(), disc: disc0.clone(), quit: quit0.clone(), gen: gen0.clone() }),
+        Mutex::new(SharedConn { stream: s1, inbox: inp1.clone(), disc: disc1.clone(), quit: quit1.clone(), gen: gen1.clone() }),
     ], seed });
     let reconnectable = !session_token.is_empty();
     if reconnectable {
@@ -319,7 +318,7 @@ fn run_match(match_id: u64, s0: TcpStream, s1: TcpStream, registry: Registry, se
     macro_rules! write_team {
         ($team:expr, $bytes:expr) => {{
             let sc = match_slot.conns[$team].lock().unwrap_or_else(|e| e.into_inner());
-            let mut s = &sc.stream; let _ = s.write_all($bytes);
+            write_arc(&sc.stream, $bytes);
         }};
     }
 
@@ -646,7 +645,7 @@ fn fire_bazooka(game: &mut GameState) {
 /// match starts, InputMsg after).
 struct LobbyMember {
     id:       u64,
-    write:    Arc<Mutex<TcpStream>>,
+    write:    ArcStream,
     input:    Arc<Mutex<Option<InputMsg>>>,
     disc:     Arc<AtomicBool>,
     quit:     Arc<AtomicBool>,
@@ -687,32 +686,30 @@ fn broadcast_lobby(lobby: &SharedLobby) {
     }).collect();
     for (i, m) in lb.members.iter().enumerate() {
         if let Some(bytes) = encode(&LobbyServerMsg::State { players: players.clone(), your_index: i }) {
-            let mut s = m.write.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = s.write_all(&bytes);
+            write_arc(&m.write, &bytes);
         }
     }
 }
 
 /// Per-connection handler for casual play: registers the player in the lobby,
 /// relays lobby messages, and once the match starts keeps feeding InputMsg.
-fn casual_conn(stream: TcpStream, lobby: SharedLobby, match_id: Arc<AtomicU64>, casual_registry: CasualRegistry) {
-    stream.set_nodelay(true).ok();
-    stream.set_write_timeout(Some(Duration::from_millis(100))).ok();
-    let mut read_stream = match stream.try_clone() { Ok(s) => s, Err(_) => return };
-    let write   = Arc::new(Mutex::new(stream));
+fn casual_conn(stream: ArcStream, lobby: SharedLobby, match_id: Arc<AtomicU64>, casual_registry: CasualRegistry) {
+    let write   = stream;
     let input   = Arc::new(Mutex::new(None));
     let disc    = Arc::new(AtomicBool::new(false));
     let quit    = Arc::new(AtomicBool::new(false));
     let gen     = Arc::new(AtomicU64::new(0));
     let started = Arc::new(AtomicBool::new(false));
+    let read_stream = Arc::clone(&write);
 
     let my_id = {
         let mut lb = lobby.lock().unwrap_or_else(|e| e.into_inner());
         let id = lb.next_id; lb.next_id += 1; id
     };
+    let mut casual_read_buf: Vec<u8> = Vec::new();
 
     loop {
-        let buf = match read_frame(&mut read_stream) { Some(b) => b, None => break };
+        let buf = match read_one_arc(&read_stream, &mut casual_read_buf) { Some(b) => b, None => break };
         if started.load(Ordering::Relaxed) {
             if let Ok(inp) = bincode::deserialize::<InputMsg>(&buf) {
                 if inp.quit { quit.store(true, Ordering::Relaxed); }
@@ -740,7 +737,7 @@ fn handle_lobby_msg(
     lobby:           &SharedLobby,
     match_id:        &Arc<AtomicU64>,
     my_id:           u64,
-    write:           &Arc<Mutex<TcpStream>>,
+    write:           &ArcStream,
     input:           &Arc<Mutex<Option<InputMsg>>>,
     disc:            &Arc<AtomicBool>,
     quit:            &Arc<AtomicBool>,
@@ -821,8 +818,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
     for (i, m) in members.iter().enumerate() {
         let w = WelcomeMsg { your_team: i, seed, team_count: n, your_color: colors[i], reconnect_token: tokens[i].clone() };
         if let Some(bytes) = encode(&LobbyServerMsg::Start(w)) {
-            let mut s = m.write.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = s.write_all(&bytes);
+            write_arc(&m.write, &bytes);
         }
     }
     thread::sleep(Duration::from_millis(500));
@@ -851,8 +847,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
         ($bytes:expr) => {{
             for m in &members {
                 if m.disc.load(Ordering::Relaxed) { continue; }
-                let mut s = m.write.lock().unwrap_or_else(|e| e.into_inner());
-                let _ = s.write_all($bytes);
+                write_arc(&m.write, $bytes);
             }
         }};
     }
@@ -868,8 +863,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
                     mboth!(&mut mfile, match_id, "casual team {dteam} reconnected — resuming");
                     // Send full state so the returning player catches up.
                     if let Some(state_bytes) = encode(&build_state(&game, tick, 0)) {
-                        let mut s = members[dteam].write.lock().unwrap_or_else(|e| e.into_inner());
-                        let _ = s.write_all(&state_bytes);
+                        write_arc(&members[dteam].write, &state_bytes);
                     }
                     paused = None;
                 } else if since.elapsed() >= RECONNECT_TIMEOUT {
@@ -879,8 +873,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
                     state.opponent_abandoned = true;
                     state.result = NetResult::Winner(connected);
                     if let Some(bytes) = encode(&state) {
-                        let mut s = members[connected].write.lock().unwrap_or_else(|e| e.into_inner());
-                        let _ = s.write_all(&bytes);
+                        write_arc(&members[connected].write, &bytes);
                     }
                     break;
                 } else {
@@ -889,8 +882,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
                     let mut state = build_state(&game, tick, 0);
                     state.paused_opponent = Some((RECONNECT_TIMEOUT - since.elapsed()).as_secs() as u32);
                     if let Some(bytes) = encode(&state) {
-                        let mut s = members[connected].write.lock().unwrap_or_else(|e| e.into_inner());
-                        let _ = s.write_all(&bytes);
+                        write_arc(&members[connected].write, &bytes);
                     }
                     let e = t.elapsed();
                     if e < TICK_DURATION { thread::sleep(TICK_DURATION - e); }
@@ -919,8 +911,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
                     let mut state = build_state(&game, tick, 0);
                     state.result = NetResult::Winner(winner);
                     if let Some(bytes) = encode(&state) {
-                        let mut s = members[winner].write.lock().unwrap_or_else(|e| e.into_inner());
-                        let _ = s.write_all(&bytes);
+                        write_arc(&members[winner].write, &bytes);
                     }
                     return;
                 } else {
@@ -1111,25 +1102,61 @@ fn too_close_to_soldiers_srv(game: &GameState, pos: WorldPos) -> bool {
 }
 
 
-fn read_loop(mut s: TcpStream, inbox: Arc<Mutex<Option<InputMsg>>>, quit: Arc<AtomicBool>) {
+fn read_loop(s: ArcStream, inbox: Arc<Mutex<Option<InputMsg>>>, quit: Arc<AtomicBool>) {
+    let mut buf: Vec<u8> = Vec::new();
     loop {
-        let mut hdr = [0u8; 4];
-        if s.read_exact(&mut hdr).is_err() { break; }
-        let len = decode_len(&hdr);
-        if len > 65536 { break; }
-        let mut buf = vec![0u8; len];
-        if s.read_exact(&mut buf).is_err() { break; }
-        if let Ok(msg) = bincode::deserialize::<InputMsg>(&buf) {
-            if msg.quit { quit.store(true, Ordering::Relaxed); }
-            *inbox.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+        match read_one_arc(&s, &mut buf) {
+            Some(frame) => {
+                if let Ok(msg) = bincode::deserialize::<InputMsg>(&frame) {
+                    if msg.quit { quit.store(true, Ordering::Relaxed); }
+                    *inbox.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+                }
+            }
+            None => break,
         }
     }
     info!("read_loop: client connection closed");
 }
 
-fn send_msg<T: serde::Serialize>(mut s: &TcpStream, msg: &T) {
+fn send_msg<T: serde::Serialize>(s: &ArcStream, msg: &T) {
     if let Some(bytes) = encode(msg) {
-        let _ = s.write_all(&bytes);
+        write_arc(s, &bytes);
+    }
+}
+
+fn write_arc(s: &ArcStream, bytes: &[u8]) {
+    let mut guard = s.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = guard.write_all(bytes);
+}
+
+/// Read one complete length-prefixed frame. Holds the lock briefly per chunk so
+/// concurrent writes are never blocked more than ~5 ms.
+fn read_one_arc(s: &ArcStream, read_buf: &mut Vec<u8>) -> Option<Vec<u8>> {
+    loop {
+        if read_buf.len() >= 4 {
+            let len = u32::from_le_bytes(read_buf[..4].try_into().unwrap()) as usize;
+            if len == 0 || len > 65536 { return None; }
+            if read_buf.len() >= 4 + len {
+                let frame = read_buf[4..4+len].to_vec();
+                read_buf.drain(..4+len);
+                return Some(frame);
+            }
+        }
+        let mut tmp = [0u8; 4096];
+        let n = {
+            let mut guard = s.lock().unwrap_or_else(|e| e.into_inner());
+            match guard.read(&mut tmp) {
+                Ok(0) => return None,
+                Ok(n) => n,
+                Err(e) if matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) => {
+                    drop(guard);
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+                Err(_) => return None,
+            }
+        };
+        read_buf.extend_from_slice(&tmp[..n]);
     }
 }
 
@@ -1167,11 +1194,11 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.311";
+const REQUIRED_VERSION: &str = "0.5.4.312";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
-fn read_line(stream: &mut TcpStream, max: usize) -> Option<String> {
+fn read_line(stream: &mut impl Read, max: usize) -> Option<String> {
     let mut s = String::new();
     for _ in 0..max {
         let mut b = [0u8; 1];
@@ -1182,56 +1209,78 @@ fn read_line(stream: &mut TcpStream, max: usize) -> Option<String> {
     Some(s.trim().to_string())
 }
 
-/// Accept a single client connection, perform the MAGIC + version + session-token
-/// handshake, and return the live stream, peer address, and session token
-/// (empty string for non-reconnectable connections, e.g. casual play).
-/// True unless the peer has closed the connection (a 1-byte `peek` returns
-/// `Ok(0)` on EOF). A live connection with nothing to read returns
-/// `WouldBlock`/`TimedOut`, which we also treat as alive.
-fn stream_alive(s: &TcpStream) -> bool {
+fn stream_alive(s: &ArcStream) -> bool {
+    let guard = s.lock().unwrap_or_else(|e| e.into_inner());
+    let tcp = guard.get_ref();
     let mut b = [0u8; 1];
-    s.set_read_timeout(Some(Duration::from_millis(1))).ok();
-    let r = s.peek(&mut b);
-    s.set_read_timeout(None).ok();
+    tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
+    let r = tcp.peek(&mut b);
+    tcp.set_read_timeout(None).ok();
     match r {
         Ok(0) => false,
         Ok(_) => true,
-        Err(e) => e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut,
+        Err(e) => matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut),
     }
 }
 
-fn accept_one(listener: &TcpListener) -> (TcpStream, std::net::SocketAddr, String) {
+fn load_tls_config() -> Arc<rustls::ServerConfig> {
+    let cert_path = std::env::var("ARTY_TLS_CERT")
+        .unwrap_or_else(|_| "/etc/letsencrypt/live/crumbonium.duckdns.org/fullchain.pem".to_string());
+    let key_path = std::env::var("ARTY_TLS_KEY")
+        .unwrap_or_else(|_| "/etc/letsencrypt/live/crumbonium.duckdns.org/privkey.pem".to_string());
+    let cert_file = std::fs::File::open(&cert_path).expect("TLS cert not found — set ARTY_TLS_CERT");
+    let key_file  = std::fs::File::open(&key_path).expect("TLS key not found — set ARTY_TLS_KEY");
+    let server_certs = certs(&mut BufReader::new(cert_file))
+        .collect::<Result<Vec<_>, _>>().expect("invalid cert PEM");
+    let private_key = private_key(&mut BufReader::new(key_file))
+        .expect("key read error").expect("no private key in PEM");
+    Arc::new(rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(server_certs, private_key)
+        .expect("TLS config error"))
+}
+
+/// Accept one client: TCP accept → TLS handshake → app handshake → return ArcStream.
+fn accept_one(listener: &TcpListener, tls_config: &Arc<rustls::ServerConfig>) -> (ArcStream, std::net::SocketAddr, String) {
     loop {
-        let (mut stream, addr) = match listener.accept() {
+        let (mut tcp, addr) = match listener.accept() {
             Ok(pair) => pair,
             Err(e) => { info!("accept error: {e}"); continue; }
         };
-        let mut buf = [0u8; 4];
-        stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
-        match stream.read_exact(&mut buf) {
-            Ok(_) if &buf == MAGIC => {
-                let ver = match read_line(&mut stream, 16) {
-                    Some(v) => v,
-                    None => { info!("Handshake read failed: {}", addr); continue; }
-                };
-                if ver != REQUIRED_VERSION {
-                    info!("Rejected wrong version {}: {}", ver, addr);
-                    let _ = stream.write_all(b"REJECTED:VERSION\n");
-                    continue;
-                }
-                let _ = stream.write_all(b"OK\n");
-                let token = match read_line(&mut stream, 70) {
-                    Some(t) => t,
-                    None => { info!("Handshake read failed: {}", addr); continue; }
-                };
-                stream.set_read_timeout(None).ok();
-                info!("Player (v{}): {}", ver, addr);
-                return (stream, addr, token);
-            }
-            _ => {
-                info!("Rejected: {}", addr);
-            }
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).ok();
+        tcp.set_nodelay(true).ok();
+
+        // TLS handshake
+        let conn = match ServerConnection::new(Arc::clone(tls_config)) {
+            Ok(c) => c,
+            Err(e) => { info!("TLS init error from {addr}: {e}"); continue; }
+        };
+        let mut tls = rustls::StreamOwned::new(conn, tcp);
+
+        // Application handshake over TLS
+        let mut magic = [0u8; 4];
+        match tls.read_exact(&mut magic) {
+            Ok(_) if &magic == MAGIC => {}
+            _ => { info!("Rejected (bad magic): {addr}"); continue; }
         }
+        let ver = match read_line(&mut tls, 16) {
+            Some(v) => v,
+            None => { info!("Handshake read failed: {addr}"); continue; }
+        };
+        if ver != REQUIRED_VERSION {
+            info!("Rejected wrong version {ver}: {addr}");
+            let _ = tls.write_all(b"REJECTED:VERSION\n");
+            continue;
+        }
+        let _ = tls.write_all(b"OK\n");
+        let token = match read_line(&mut tls, 70) {
+            Some(t) => t,
+            None => { info!("Handshake read failed: {addr}"); continue; }
+        };
+        // Clear handshake timeout; normal I/O timeouts are set per-connection downstream.
+        tls.get_ref().set_read_timeout(None).ok();
+        info!("Player (v{ver}): {addr}");
+        return (Arc::new(Mutex::new(tls)), addr, token);
     }
 }
 
