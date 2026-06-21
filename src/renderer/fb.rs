@@ -1,19 +1,14 @@
-//! Direct framebuffer access for Miyoo Mini Plus.
+//! Framebuffer abstraction.
 //!
-//! The device exposes /dev/fb0 as a memory-mapped BGRA buffer.
-//! BGRA byte order is the single most common mistake — not RGB.
+//! On Miyoo Mini Plus (arm, no `desktop` feature): wraps /dev/fb0 as a
+//! memory-mapped BGRA buffer. The screen is rotated 180° in hardware.
 //!
-//!   buf[offset + 0] = blue
-//!   buf[offset + 1] = green
-//!   buf[offset + 2] = red
-//!   buf[offset + 3] = 0xFF  (alpha, ignored by hardware but must be set)
-//!
-//! Screen size is queried at runtime via FBIOGET_VSCREENINFO ioctl
-//! rather than hardcoding 640×480.
-
-
+//! On desktop (`desktop` feature, default): uses a `minifb` window. The pixel
+//! buffer is stored in a thread-local so `InputState::poll()` can pump window
+//! events without holding a `&mut Framebuffer`.
 
 /// BGRA colour — matches the Miyoo framebuffer byte order exactly.
+/// Also used by all drawing code on desktop (converted to XRGB on write).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bgra {
     pub b: u8,
@@ -35,12 +30,157 @@ impl Bgra {
     pub const fn water()  -> Self { Self::new(30, 80, 180) }
 }
 
-// ── ioctl constant from <linux/fb.h> ─────────────────────────────────────────
+// ── Desktop (minifb) implementation ──────────────────────────────────────────
 
+#[cfg(feature = "desktop")]
+mod desktop_impl {
+    use std::cell::RefCell;
+    use minifb::{Window, WindowOptions, Scale};
+
+    pub(super) struct State {
+        pub window: Window,
+        pub pixels: Vec<u32>,
+        pub width:  u32,
+        pub height: u32,
+    }
+
+    thread_local! {
+        pub(super) static WIN: RefCell<Option<State>> = RefCell::new(None);
+    }
+
+    pub fn init(width: u32, height: u32) {
+        let mut opts = WindowOptions::default();
+        opts.scale = Scale::X2;
+        let window = Window::new("Mini Mayhem", width as usize, height as usize, opts)
+            .expect("failed to create minifb window");
+        let pixels = vec![0u32; (width * height) as usize];
+        WIN.with(|w| *w.borrow_mut() = Some(State { window, pixels, width, height }));
+    }
+
+    /// Copy one horizontal scanline (BGRA bytes) into the u32 pixel buffer.
+    pub fn blit_row(screen_y: u32, src: &[u8], width: u32) {
+        WIN.with(|w| {
+            if let Some(ref mut s) = *w.borrow_mut() {
+                let row = (screen_y * width) as usize;
+                for (x, pixel) in src.chunks_exact(4).enumerate() {
+                    let b = pixel[0] as u32;
+                    let g = pixel[1] as u32;
+                    let r = pixel[2] as u32;
+                    s.pixels[row + x] = (r << 16) | (g << 8) | b;
+                }
+            }
+        });
+    }
+
+    /// Push the pixel buffer to the window and process OS events.
+    /// Also called from InputState::poll() to keep the message queue drained
+    /// during loops that poll input without redrawing (splash, confirm prompts).
+    pub fn present() {
+        WIN.with(|w| {
+            if let Some(ref mut s) = *w.borrow_mut() {
+                let _ = s.window.update_with_buffer(&s.pixels, s.width as usize, s.height as usize);
+            }
+        });
+    }
+
+    pub fn is_open() -> bool {
+        WIN.with(|w| w.borrow().as_ref().map(|s| s.window.is_open()).unwrap_or(false))
+    }
+
+    pub fn get_keys_pressed() -> Vec<minifb::Key> {
+        WIN.with(|w| {
+            w.borrow().as_ref().map(|s| {
+                s.window.get_keys_pressed(minifb::KeyRepeat::No)
+            }).unwrap_or_default()
+        })
+    }
+
+    pub fn get_keys_released() -> Vec<minifb::Key> {
+        WIN.with(|w| {
+            w.borrow().as_ref().map(|s| s.window.get_keys_released()).unwrap_or_default()
+        })
+    }
+
+    pub fn get_keys() -> Vec<minifb::Key> {
+        WIN.with(|w| {
+            w.borrow().as_ref().map(|s| s.window.get_keys()).unwrap_or_default()
+        })
+    }
+}
+
+/// Pump the window event queue without presenting a new frame (desktop only).
+/// Call from `InputState::poll()` so input-polling loops don't starve the OS.
+pub fn pump_events() {
+    #[cfg(feature = "desktop")]
+    desktop_impl::present();
+}
+
+/// Keys just pressed this frame (desktop only — returns empty on Miyoo).
+#[cfg(feature = "desktop")]
+pub fn desktop_keys_pressed() -> Vec<minifb::Key> {
+    desktop_impl::get_keys_pressed()
+}
+
+/// Keys just released this frame (desktop only).
+#[cfg(feature = "desktop")]
+pub fn desktop_keys_released() -> Vec<minifb::Key> {
+    desktop_impl::get_keys_released()
+}
+
+/// Keys currently held (desktop only).
+#[cfg(feature = "desktop")]
+pub fn desktop_keys_held() -> Vec<minifb::Key> {
+    desktop_impl::get_keys()
+}
+
+/// True while the desktop window is open (always true on Miyoo).
+pub fn is_window_open() -> bool {
+    #[cfg(feature = "desktop")]
+    return desktop_impl::is_open();
+    #[cfg(not(feature = "desktop"))]
+    true
+}
+
+// ── Desktop Framebuffer ───────────────────────────────────────────────────────
+
+#[cfg(feature = "desktop")]
+pub struct Framebuffer {
+    pub width:  u32,
+    pub height: u32,
+}
+
+#[cfg(feature = "desktop")]
+impl Framebuffer {
+    pub fn open() -> Result<Self, String> {
+        let (w, h) = (640u32, 480u32);
+        desktop_impl::init(w, h);
+        Ok(Self { width: w, height: h })
+    }
+
+    pub fn blit_row(&mut self, screen_y: u32, src: &[u8]) {
+        desktop_impl::blit_row(screen_y, src, self.width);
+    }
+
+    pub fn screen_w(&self) -> u32 { self.width }
+    pub fn screen_h(&self) -> u32 { self.height }
+
+    /// Push the pixel buffer to the window. Called at the end of every blit.
+    pub fn present(&mut self) { desktop_impl::present(); }
+
+    /// True while the window hasn't been closed.
+    pub fn is_open(&self) -> bool { desktop_impl::is_open() }
+
+    // Miyoo-only helpers used by updater — stubs on desktop.
+    pub fn set_pixel(&mut self, _x: u32, _y: u32, _colour: Bgra) {}
+    pub fn clear(&mut self, _colour: Bgra) {}
+}
+
+// ── Miyoo (non-desktop) implementation ───────────────────────────────────────
+
+#[cfg(not(feature = "desktop"))]
 const FBIOGET_VSCREENINFO: libc::c_ulong = 0x4600;
 
-/// Subset of fb_var_screeninfo we care about.
-/// Full struct is 160 bytes; we only read the first few fields.
+#[cfg(not(feature = "desktop"))]
 #[repr(C)]
 struct FbVarScreenInfo {
     xres:           u32,
@@ -53,19 +193,17 @@ struct FbVarScreenInfo {
     _pad: [u8; 132],
 }
 
-/// Direct framebuffer renderer.
-/// Wraps /dev/fb0 as a mmap'd BGRA pixel buffer.
+#[cfg(not(feature = "desktop"))]
 pub struct Framebuffer {
     fd:     libc::c_int,
     buf:    &'static mut [u8],
     pub width:  u32,
     pub height: u32,
-    stride: u32,  // bytes per row
+    stride: u32,
 }
 
+#[cfg(not(feature = "desktop"))]
 impl Framebuffer {
-    /// Open and mmap /dev/fb0. Returns Err on any failure.
-    /// Only call this on the actual Miyoo hardware.
     pub fn open() -> Result<Self, String> {
         use libc::{open, mmap, ioctl, O_RDWR, PROT_READ, PROT_WRITE, MAP_SHARED};
 
@@ -87,19 +225,12 @@ impl Framebuffer {
 
         let width  = info.xres;
         let height = info.yres;
-        let bpp    = info.bits_per_pixel / 8;  // bytes per pixel
+        let bpp    = info.bits_per_pixel / 8;
         let stride = width * bpp;
         let size   = (stride * height) as usize;
 
         let ptr = unsafe {
-            mmap(
-                std::ptr::null_mut(),
-                size,
-                PROT_READ | PROT_WRITE,
-                MAP_SHARED,
-                fd,
-                0,
-            )
+            mmap(std::ptr::null_mut(), size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
         };
 
         if ptr == libc::MAP_FAILED {
@@ -107,14 +238,10 @@ impl Framebuffer {
             return Err("mmap /dev/fb0 failed".into());
         }
 
-        let buf = unsafe {
-            std::slice::from_raw_parts_mut(ptr as *mut u8, size)
-        };
-
+        let buf = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) };
         Ok(Self { fd, buf, width, height, stride })
     }
 
-    /// Write a single BGRA pixel. Silently clips out-of-bounds.
     #[inline(always)]
     pub fn set_pixel(&mut self, x: u32, y: u32, colour: Bgra) {
         if x >= self.width || y >= self.height { return; }
@@ -125,7 +252,6 @@ impl Framebuffer {
         self.buf[off + 3] = 0xFF;
     }
 
-    /// Fill the entire screen with one colour.
     pub fn clear(&mut self, colour: Bgra) {
         for i in (0..self.buf.len()).step_by(4) {
             self.buf[i]     = colour.b;
@@ -135,9 +261,6 @@ impl Framebuffer {
         }
     }
 
-    /// Blit a 640-pixel-wide row slice from a world buffer row into the framebuffer.
-    /// `src` must be BGRA bytes, length exactly `width * 4`.
-    /// Used by WorldBuffer to copy the viewport each frame.
     pub fn blit_row(&mut self, screen_y: u32, src: &[u8]) {
         if screen_y >= self.height { return; }
         // Miyoo Mini Plus framebuffer is rotated 180 degrees
@@ -145,21 +268,21 @@ impl Framebuffer {
         let dst_off = (ry * self.stride) as usize;
         let w = self.width as usize;
         let dst = &mut self.buf[dst_off..dst_off + w * 4];
-        // Reverse pixels horizontally: walk src forward and dst backward,
-        // copying whole 4-byte pixels per step instead of indexing each byte
-        // through `rx * 4 + k` (4 multiplications + bounds checks per pixel).
         for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4).rev()) {
             d.copy_from_slice(s);
         }
     }
 
-    /// Screen width in pixels (queried from hardware, not hardcoded).
     pub fn screen_w(&self) -> u32 { self.width }
-
-    /// Screen height in pixels.
     pub fn screen_h(&self) -> u32 { self.height }
+
+    /// No-op on Miyoo — writes are visible immediately via mmap.
+    pub fn present(&mut self) {}
+
+    pub fn is_open(&self) -> bool { true }
 }
 
+#[cfg(not(feature = "desktop"))]
 impl Drop for Framebuffer {
     fn drop(&mut self) {
         unsafe {
@@ -169,7 +292,7 @@ impl Drop for Framebuffer {
     }
 }
 
-// ── Bgra tests — these run on the dev machine ─────────────────────────────────
+// ── Bgra tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -223,8 +346,4 @@ mod tests {
     fn bgra_yellow_has_no_blue() {
         assert_eq!(Bgra::yellow().b, 0);
     }
-
-    // Framebuffer::open() is not tested here — it requires /dev/fb0
-    // which only exists on the Miyoo. The blit and pixel logic is
-    // tested via WorldBuffer in buffer.rs.
 }

@@ -870,12 +870,8 @@ impl GameState {
                         } else {
                             dx < 8.0 && dy > -22.0 && dy < 2.0
                         };
-                        if hit {
-                            if kind.has_fuse() {
-                                // Fuse weapons bounce off soldiers — never detonate on contact
-                                proj.vel.x = -proj.vel.x * 0.5;
-                                proj.vel.y = -proj.vel.y.abs() * 0.6;
-                            } else if kind == WeaponKind::Blasthive && !proj.is_fragment {
+                        if hit && !kind.has_fuse() {
+                            if kind == WeaponKind::Blasthive && !proj.is_fragment {
                                 // Main hive hits soldier directly: trigger hive burst + spawn bees at soldier center
                                 hive_impacts.push(spos);
                             } else if kind == WeaponKind::BlackHoleBomb {

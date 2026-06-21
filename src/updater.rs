@@ -1,8 +1,44 @@
-use std::io::Write;
-use sha2::{Sha256, Digest};
 use crate::renderer::{WorldBuffer, Framebuffer};
 
-/// Hex-encoded SHA256 of a file's contents, or None if it can't be read.
+// ── Desktop stubs — no OTA on desktop, update via git pull ───────────────────
+//
+// Returning true from prior_update_attempted() causes main() to skip the
+// update check entirely, so none of the other OTA functions are called.
+
+#[cfg(feature = "desktop")]
+pub fn prior_update_attempted() -> bool { true }
+
+#[cfg(feature = "desktop")]
+pub fn sync_assets_bg() {}
+
+#[cfg(feature = "desktop")]
+pub fn check_for_update(_current: &str) -> bool { false }
+
+#[cfg(feature = "desktop")]
+pub fn check_for_update_bg(_current: &'static str) -> std::thread::JoinHandle<bool> {
+    std::thread::spawn(|| false)
+}
+
+#[cfg(feature = "desktop")]
+pub fn fetch_changelog(_timeout_secs: u64) -> Option<Vec<String>> { None }
+
+#[cfg(feature = "desktop")]
+pub fn stream_binary<F: FnMut(usize, usize)>(_on_progress: F) -> Option<Vec<u8>> { None }
+
+#[cfg(feature = "desktop")]
+pub fn apply_binary(_binary: &[u8], _buf: &mut WorldBuffer, _fb: &mut Framebuffer) {}
+
+#[cfg(feature = "desktop")]
+pub fn download_and_apply(_buf: &mut WorldBuffer, _fb: &mut Framebuffer) {}
+
+// ── Miyoo implementation ──────────────────────────────────────────────────────
+
+#[cfg(not(feature = "desktop"))]
+use std::io::Write;
+#[cfg(not(feature = "desktop"))]
+use sha2::{Sha256, Digest};
+
+#[cfg(not(feature = "desktop"))]
 fn sha256_file(path: &std::path::Path) -> Option<String> {
     let data = std::fs::read(path).ok()?;
     let mut hasher = Sha256::new();
@@ -10,8 +46,7 @@ fn sha256_file(path: &std::path::Path) -> Option<String> {
     Some(hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect())
 }
 
-/// True if `fpath` is out of date relative to the manifest entry: missing,
-/// wrong size, or (when the manifest provides a sha256) wrong hash.
+#[cfg(not(feature = "desktop"))]
 fn needs_update(fpath: &std::path::Path, expected_size: u64, expected_hash: Option<&str>) -> bool {
     let meta = match std::fs::metadata(fpath) {
         Ok(m) => m,
@@ -24,16 +59,21 @@ fn needs_update(fpath: &std::path::Path, expected_size: u64, expected_hash: Opti
     }
 }
 
+#[cfg(not(feature = "desktop"))]
 const UPDATE_HOST: &str = "crumbonium.duckdns.org";
 
+#[cfg(not(feature = "desktop"))]
 fn http_get_body(path: &str, timeout_secs: u64) -> Option<Vec<u8>> {
     crate::https::https_get(UPDATE_HOST, path, timeout_secs, timeout_secs).ok()
 }
 
+#[cfg(not(feature = "desktop"))]
+#[cfg(not(feature = "desktop"))]
 pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<bool> {
     std::thread::spawn(move || check_for_update(current))
 }
 
+#[cfg(not(feature = "desktop"))]
 pub fn check_for_update(current: &str) -> bool {
     let body = match http_get_body("/arty/version.txt", 2) {
         Some(b) => b,
@@ -43,10 +83,7 @@ pub fn check_for_update(current: &str) -> bool {
     server_ver != current
 }
 
-/// Fetch the human-readable changelog served alongside the binary
-/// (`/arty/changelog.txt` on the update host): one entry per line, newest first.
-/// Edited in one place on the Pi, so the update screen is always current without a
-/// rebuild. Returns None on network failure so the caller can fall back.
+#[cfg(not(feature = "desktop"))]
 pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
     let body = http_get_body("/arty/changelog.txt", timeout_secs)?;
     let lines: Vec<String> = String::from_utf8_lossy(&body)
@@ -58,9 +95,7 @@ pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
     if lines.is_empty() { None } else { Some(lines) }
 }
 
-/// Background asset sync — runs on every launch regardless of whether a binary
-/// update is available. Downloads any manifest file whose size differs from disk.
-/// Silently skips on network failure. Call in a detached thread at startup.
+#[cfg(not(feature = "desktop"))]
 pub fn sync_assets_bg() {
     std::thread::spawn(|| {
         let dest = std::env::current_exe()
@@ -89,8 +124,7 @@ pub fn sync_assets_bg() {
     });
 }
 
-/// Download the binary with streaming, calling on_progress(bytes_done, total_bytes) per chunk.
-/// Returns the binary bytes, or None on failure.
+#[cfg(not(feature = "desktop"))]
 pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u8>> {
     use std::io::{Read, Write};
     use std::net::{TcpStream, ToSocketAddrs};
@@ -144,16 +178,15 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
     if body.is_empty() { None } else { Some(body) }
 }
 
+#[cfg(not(feature = "desktop"))]
 const SENTINEL: &str = "/tmp/mini-mayhem_update_sentinel";
 
-/// Returns true if a binary update was attempted this boot session but
-/// may have failed.  /tmp is cleared on reboot so this resets automatically.
-/// Call at startup BEFORE launching the update-check thread.
+#[cfg(not(feature = "desktop"))]
 pub fn prior_update_attempted() -> bool {
     std::path::Path::new(SENTINEL).exists()
 }
 
-/// Apply a validated ELF binary — write, chmod, copy, exec update script.
+#[cfg(not(feature = "desktop"))]
 pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) {
     let dest = std::env::current_exe()
         .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/mini-mayhem"));
@@ -225,6 +258,7 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
     std::process::exit(0);
 }
 
+#[cfg(not(feature = "desktop"))]
 pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
     super::draw_msg(buf, fb, "DOWNLOADING UPDATE...");
     let binary = match http_get_body("/arty/mini-mayhem", 120) {

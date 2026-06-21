@@ -1,7 +1,8 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{WorldBuffer, Bgra};
 use crate::renderer::cosmetic_sprites;
-use crate::renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+use crate::renderer::font::{draw_str, draw_str_scaled, draw_str_shadow_scaled, str_width, str_width_scaled};
+use crate::renderer::hud::{draw_button_hints, draw_menu_selection};
 use crate::renderer::hud::COLOR_DARK_BG;
 use crate::renderer::keyboard::Keyboard;
 use crate::world::{SCREEN_W, SCREEN_H};
@@ -134,28 +135,67 @@ impl AccountScreen {
     fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
+        let dim_line = Bgra::new(40, 44, 70);
+
+        // Background + header bar
         buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-        buf.fill_rect(cam_x, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
+        buf.fill_rect(cam_x, 0, SCREEN_W, 36, Bgra::new(18, 22, 48));
+        buf.fill_rect(cam_x, 36, SCREEN_W, 1, dim_line);
+
+        // Title
         let title = match self.screen {
             LoginScreen::Choice   => "ACCOUNT",
             LoginScreen::Username => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
-            LoginScreen::Password => "ENTER PASSWORD",
+            LoginScreen::Password => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
         };
         let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, cam_x + sw/2 - tw/2, 10, Bgra::new(255, 210, 50), 2);
+        draw_str_shadow_scaled(buf, title, cam_x + sw/2 - tw/2, 9, Bgra::new(255, 210, 50), 2);
+
+        // Subtitle (username/password step indicator)
+        if !matches!(self.screen, LoginScreen::Choice) {
+            let sub = match self.screen {
+                LoginScreen::Username => "ENTER USERNAME",
+                LoginScreen::Password => "ENTER PASSWORD",
+                LoginScreen::Choice   => "",
+            };
+            let subw = str_width(sub);
+            draw_str(buf, sub, cam_x + sw/2 - subw/2, 42, Bgra::new(120, 120, 160));
+        }
+
+        // Error banner
         if !self.error.is_empty() {
             let ew = str_width_scaled(&self.error, 2);
-            draw_str_scaled(buf, &self.error, cam_x + sw/2 - ew/2, sh/4, Bgra::new(220, 60, 60), 2);
+            let ex = cam_x + sw/2 - ew/2;
+            buf.fill_rect(ex - 8, sh/4 - 4, (ew + 16) as u32, 24, Bgra::new(60, 10, 10));
+            draw_str_scaled(buf, &self.error, ex, sh/4, Bgra::new(255, 80, 80), 2);
         }
+
         match self.screen {
             LoginScreen::Choice => {
-                let mid = cam_x + sw/2;
-                draw_str_scaled(buf, "A  LOG IN",      mid - str_width_scaled("A  LOG IN", 2)/2,      sh/2 - 20, Bgra::new(80, 200, 80),   2);
-                draw_str_scaled(buf, "Y  NEW ACCOUNT", mid - str_width_scaled("Y  NEW ACCOUNT", 2)/2, sh/2 + 10, Bgra::new(100, 160, 255), 2);
-                draw_str_scaled(buf, "B  BACK",        mid - str_width_scaled("B  BACK", 2)/2,        sh/2 + 40, Bgra::new(140, 140, 140), 2);
+                let item_h  = 36i32;
+                let start_y = sh/2 - item_h;
+                let items: &[(&str, &str, Bgra)] = &[
+                    ("A", "LOG IN",      Bgra::new(80, 200, 80)),
+                    ("Y", "NEW ACCOUNT", Bgra::new(100, 160, 255)),
+                ];
+                for (i, (btn, label, col)) in items.iter().enumerate() {
+                    let iy = start_y + i as i32 * item_h;
+                    let iw = str_width_scaled(label, 2);
+                    let ix = cam_x + sw/2 - iw/2;
+                    draw_menu_selection(buf, cam_x + sw/2 - 140, iy - 4, 280, 28);
+                    draw_str_shadow_scaled(buf, btn,   cam_x + sw/2 - 130, iy, *col, 2);
+                    draw_str_shadow_scaled(buf, label, ix, iy, *col, 2);
+                }
+                draw_button_hints(buf, &[("A", "LOG IN"), ("Y", "NEW ACCOUNT"), ("B", "BACK")], cam_x);
             }
-            LoginScreen::Username => self.username.draw(buf, cam_x),
-            LoginScreen::Password => self.password.draw(buf, cam_x),
+            LoginScreen::Username => {
+                self.username.draw(buf, cam_x);
+                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x);
+            }
+            LoginScreen::Password => {
+                self.password.draw(buf, cam_x);
+                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x);
+            }
         }
     }
 }
@@ -683,16 +723,51 @@ pub fn fetch_rosters(token: &str) -> Result<Vec<Roster>, String> {
     Ok(parse_rosters_from_json(&wrapped))
 }
 
+// ── Data directory ────────────────────────────────────────────────────────────
+
+/// Returns the directory where save data lives.
+/// Desktop: <exe dir>/arty_data/   Miyoo: /mnt/SDCARD/App/Arty/
+fn data_dir() -> std::path::PathBuf {
+    #[cfg(feature = "desktop")]
+    {
+        let base = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let dir = base.join("arty_data");
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+    #[cfg(not(feature = "desktop"))]
+    std::path::PathBuf::from("/mnt/SDCARD/App/Arty")
+}
+
 // ── Credentials storage ───────────────────────────────────────────────────────
 
 pub fn save_creds(username: &str, token: &str) {
     let content = format!("{}\n{}\n", username, token);
+    #[cfg(feature = "desktop")]
+    { let _ = std::fs::write(data_dir().join("creds.txt"), &content); }
+    #[cfg(not(feature = "desktop"))]
     for path in &["/mnt/SDCARD/App/Arty/creds.txt", "/tmp/arty_creds.txt"] {
         if std::fs::write(path, &content).is_ok() { break; }
     }
 }
 
+pub fn clear_saved_creds() {
+    #[cfg(feature = "desktop")]
+    { let _ = std::fs::remove_file(data_dir().join("creds.txt")); }
+    #[cfg(not(feature = "desktop"))]
+    {
+        let _ = std::fs::remove_file("/mnt/SDCARD/App/Arty/creds.txt");
+        let _ = std::fs::remove_file("/tmp/arty_creds.txt");
+    }
+}
+
 pub fn load_saved_creds() -> Option<(String, String)> {
+    #[cfg(feature = "desktop")]
+    let content = std::fs::read_to_string(data_dir().join("creds.txt")).ok()?;
+    #[cfg(not(feature = "desktop"))]
     let content = std::fs::read_to_string("/mnt/SDCARD/App/Arty/creds.txt")
         .or_else(|_| std::fs::read_to_string("/tmp/arty_creds.txt")).ok()?;
     let mut lines = content.lines();
@@ -703,12 +778,13 @@ pub fn load_saved_creds() -> Option<(String, String)> {
 // Survives a full app restart (the common case after "LOST CONNECTION" on the
 // Miyoo, where players relaunch rather than waiting at the title screen).
 
-const RECONNECT_PATHS: [&str; 2] = ["/mnt/SDCARD/App/Arty/reconnect.txt", "/tmp/arty_reconnect.txt"];
-
 /// Save the session token, game port, and unix timestamp when the drop happened.
 pub fn save_pending_reconnect(session_token: &str, port: u16, since_unix: u64) {
     let content = format!("{}\n{}\n{}\n", session_token, port, since_unix);
-    for path in &RECONNECT_PATHS {
+    #[cfg(feature = "desktop")]
+    { let _ = std::fs::write(data_dir().join("reconnect.txt"), &content); }
+    #[cfg(not(feature = "desktop"))]
+    for path in &["/mnt/SDCARD/App/Arty/reconnect.txt", "/tmp/arty_reconnect.txt"] {
         if std::fs::write(path, &content).is_ok() { break; }
     }
 }
@@ -716,13 +792,25 @@ pub fn save_pending_reconnect(session_token: &str, port: u16, since_unix: u64) {
 /// Load and clear any pending reconnect state. Returns None if absent, expired
 /// (>180s old), or unparseable.
 pub fn take_pending_reconnect() -> Option<(String, u16, u64)> {
-    let mut content = None;
-    for path in &RECONNECT_PATHS {
-        if let Ok(c) = std::fs::read_to_string(path) {
-            let _ = std::fs::remove_file(path);
-            content = Some(c);
-            break;
+    let content;
+    #[cfg(feature = "desktop")]
+    {
+        let p = data_dir().join("reconnect.txt");
+        content = std::fs::read_to_string(&p).ok();
+        if content.is_some() { let _ = std::fs::remove_file(&p); }
+    }
+    #[cfg(not(feature = "desktop"))]
+    {
+        let paths = ["/mnt/SDCARD/App/Arty/reconnect.txt", "/tmp/arty_reconnect.txt"];
+        let mut c = None;
+        for path in &paths {
+            if let Ok(s) = std::fs::read_to_string(path) {
+                let _ = std::fs::remove_file(path);
+                c = Some(s);
+                break;
+            }
         }
+        content = c;
     }
     let content = content?;
     let mut lines = content.lines();
@@ -736,7 +824,12 @@ pub fn take_pending_reconnect() -> Option<(String, u16, u64)> {
 }
 
 pub fn clear_pending_reconnect() {
-    for path in &RECONNECT_PATHS { let _ = std::fs::remove_file(path); }
+    #[cfg(feature = "desktop")]
+    { let _ = std::fs::remove_file(data_dir().join("reconnect.txt")); }
+    #[cfg(not(feature = "desktop"))]
+    for path in &["/mnt/SDCARD/App/Arty/reconnect.txt", "/tmp/arty_reconnect.txt"] {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Persist the roster list locally so the next launch loads instantly.
@@ -754,6 +847,9 @@ pub fn save_cached_rosters(rosters: &[Roster]) {
             b[0],b[1],b[2],b[3], g[0],g[1],g[2],g[3])
     }).collect::<Vec<_>>().join(",");
     let json = format!("[{}]", body);
+    #[cfg(feature = "desktop")]
+    { let _ = std::fs::write(data_dir().join("rosters.txt"), &json); }
+    #[cfg(not(feature = "desktop"))]
     for path in &["/mnt/SDCARD/App/Arty/rosters.txt", "/tmp/arty_rosters.txt"] {
         if std::fs::write(path, &json).is_ok() { break; }
     }
@@ -776,21 +872,32 @@ pub fn save_match_roster(match_id: i64, roster: &Roster) {
         h[0],h[1],h[2],h[3], u[0],u[1],u[2],u[3],
         b[0],b[1],b[2],b[3], g[0],g[1],g[2],g[3]);
     // Append to the file (deduplicate by rewriting)
-    let path = "/mnt/SDCARD/App/Arty/match_rosters.txt";
-    let path2 = "/tmp/arty_match_rosters.txt";
-    let existing = std::fs::read_to_string(path).or_else(|_| std::fs::read_to_string(path2)).unwrap_or_default();
+    #[cfg(feature = "desktop")]
+    let (path_owned, path2_owned) = (data_dir().join("match_rosters.txt"), std::path::PathBuf::new());
+    #[cfg(not(feature = "desktop"))]
+    let (path_owned, path2_owned) = (
+        std::path::PathBuf::from("/mnt/SDCARD/App/Arty/match_rosters.txt"),
+        std::path::PathBuf::from("/tmp/arty_match_rosters.txt"),
+    );
+    let existing = std::fs::read_to_string(&path_owned)
+        .or_else(|_| if path2_owned.as_os_str().is_empty() { Err(std::io::Error::other("")) } else { std::fs::read_to_string(&path2_owned) })
+        .unwrap_or_default();
     let filtered: String = existing.lines()
         .filter(|l| !l.starts_with(&format!("{}|", match_id)))
         .map(|l| format!("{}\n", l))
         .collect();
     let content = filtered + &line;
-    if std::fs::write(path, &content).is_err() { let _ = std::fs::write(path2, &content); }
+    if std::fs::write(&path_owned, &content).is_err() && !path2_owned.as_os_str().is_empty() {
+        let _ = std::fs::write(&path2_owned, &content);
+    }
 }
 
 pub fn load_match_roster(match_id: i64) -> Option<Roster> {
-    let path = "/mnt/SDCARD/App/Arty/match_rosters.txt";
-    let path2 = "/tmp/arty_match_rosters.txt";
-    let content = std::fs::read_to_string(path).or_else(|_| std::fs::read_to_string(path2)).ok()?;
+    #[cfg(feature = "desktop")]
+    let content = std::fs::read_to_string(data_dir().join("match_rosters.txt")).ok()?;
+    #[cfg(not(feature = "desktop"))]
+    let content = std::fs::read_to_string("/mnt/SDCARD/App/Arty/match_rosters.txt")
+        .or_else(|_| std::fs::read_to_string("/tmp/arty_match_rosters.txt")).ok()?;
     let prefix = format!("{}|", match_id);
     let line = content.lines().find(|l| l.starts_with(&prefix))?;
     let parts: Vec<&str> = line.splitn(13, '|').collect();
@@ -814,6 +921,9 @@ pub fn load_match_roster(match_id: i64) -> Option<Roster> {
 
 /// Load rosters from local cache — instant, no network.
 pub fn load_cached_rosters() -> Vec<Roster> {
+    #[cfg(feature = "desktop")]
+    let json = std::fs::read_to_string(data_dir().join("rosters.txt")).unwrap_or_default();
+    #[cfg(not(feature = "desktop"))]
     let json = std::fs::read_to_string("/mnt/SDCARD/App/Arty/rosters.txt")
         .or_else(|_| std::fs::read_to_string("/tmp/arty_rosters.txt"))
         .unwrap_or_default();
@@ -1079,7 +1189,7 @@ impl CosmeticsScreen {
                         // Fixed aspect ratio matching in-game (40×36 ≈ 1.1:1); don't stretch to fill cell
                         let hat_icon_h = row_h - 4;  // use nearly full cell height
                         let hat_icon_w = hat_icon_h * 40 / 36;
-                        cosmetic_sprites::draw_hat(buf, id, center_x, icon_cy, hat_icon_w, hat_icon_h);
+                        cosmetic_sprites::draw_hat(buf, id, center_x, icon_cy, hat_icon_w, hat_icon_h, false);
                     },
                     1 => if id > 0 {
                         let col = uniform_swatch_color(id);

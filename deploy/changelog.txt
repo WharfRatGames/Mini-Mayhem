@@ -1,3 +1,7 @@
+0.5.4.317  Windows desktop build; account register/logout on title screen; lobby fix for cross-platform play.
+0.5.4.316  DNS pre-resolved at launch so live connect is instant instead of 15-20s.
+0.5.4.315  Fix lobby freeze (B=cancel now works while waiting for opponent); Pharaoh headdress redesign (lappets flank head); Dragon Skull replaces head, flips to face soldier direction.
+0.5.4.314  36 new cosmetic hats + 22 gun skins wired up; 1500-2000 scrap premium tier (Obsidian Crown, Pharaoh Headdress, Demon Horns, Astronaut Helmet, Dragon Skull, Obsidian Cannon, Crystal Sniper, Dragon's Breath, Blood Revolver, Thunder Rail); all skins unlocked for existing accounts.
 0.5.4.313  Mine redesign (flat disc); flame flicker fix; faster match start; match history on profile screen; buy cosmetics from equip screen; 9 new backgrounds.
 0.5.4.312  Multiplayer now encrypted with TLS; server reads cert from ~/mayhem-server/tls/.
 0.5.4.311  End screen text uses full screen height; headline larger; mine flat-topped dome shape; torch flames restored; homing missile smoke trail; L1+aim for precision aiming.

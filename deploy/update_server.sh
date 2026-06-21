@@ -20,8 +20,8 @@ ssh arty-pi "echo $VERSION > /var/www/html/arty/version.txt"
 echo "Update server now serving $VERSION"
 # Push game server binary before restarting
 if [ -f "$SERVER_BINARY" ]; then
-    scp "$SERVER_BINARY" arty-pi:/home/Grunkus/arty-server.new
-    ssh arty-pi "mv /home/Grunkus/arty-server.new /home/Grunkus/arty-server"
+    scp "$SERVER_BINARY" arty-pi:/home/Grunkus/mayhem-server/server.new
+    ssh arty-pi "mv /home/Grunkus/mayhem-server/server.new /home/Grunkus/mayhem-server/server"
     echo "Game server binary updated"
 fi
 

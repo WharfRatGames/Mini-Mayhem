@@ -45,6 +45,14 @@ pub static CATALOG: &[(&str, u8, &str, u32)] = &[
     ("hat",       26, "War Helm",     500),
     ("hat",       27, "Sombrero",     300),
     ("hat",       28, "Luchador Mask", 600),
+    ("hat",       29, "Mortarboard",  300),
+    ("hat",       30, "Baseball Cap", 200),
+    ("hat",       31, "Samurai Helm",        550),
+    ("hat",       32, "Obsidian Crown",     1500),
+    ("hat",       33, "Pharaoh Headdress",  1800),
+    ("hat",       34, "Demon King Horns",   1600),
+    ("hat",       35, "Astronaut Helmet",   1500),
+    ("hat",       36, "Dragon Skull",       2000),
     // Gun styles (scrap only)
     ("gun_style", 1, "Pistol",        200),
     ("gun_style", 2, "Shotgun",       300),
@@ -59,6 +67,15 @@ pub static CATALOG: &[(&str, u8, &str, u32)] = &[
     ("gun_style", 11, "SMG",           350),
     ("gun_style", 12, "Flintlock",    500),
     ("gun_style", 13, "Crossbow",     600),
+    ("gun_style", 14, "Revolver",    400),
+    ("gun_style", 15, "Laser Pistol",500),
+    ("gun_style", 16, "Gold Musket", 900),
+    ("gun_style", 17, "Fusion Rifle",      650),
+    ("gun_style", 18, "Obsidian Cannon", 1800),
+    ("gun_style", 19, "Crystal Sniper",  1500),
+    ("gun_style", 20, "Dragon's Breath", 2000),
+    ("gun_style", 21, "Blood Revolver",  1600),
+    ("gun_style", 22, "Thunder Rail",    1800),
     // Uniforms (scrap only)
     ("uniform",   1, "Camo Green",    200),
     ("uniform",   2, "Desert Tan",    200),
@@ -226,7 +243,7 @@ impl StoreScreen {
                 let icon_h  = cell_h - 10;
                 match item.cosm_type {
                     "hat" => {
-                        cosmetic_sprites::draw_hat(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h);
+                        cosmetic_sprites::draw_hat(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h, false);
                     }
                     "gun_style" => {
                         cosmetic_sprites::draw_gun(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h);

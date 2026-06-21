@@ -168,6 +168,7 @@ impl WorldBuffer {
             let src_row = &self.data[src_off..src_off + (SCREEN_W * 4) as usize];
             fb.blit_row(screen_y, src_row);
         }
+        fb.present();
     }
 
     /// Fill the deep water band (`WATER_Y+24..WORLD_H`, all columns) with
