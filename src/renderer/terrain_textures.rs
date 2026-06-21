@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 const ATLAS1: &[u8] = include_bytes!("../../assets/textures/TEXTURES.png");   // 6×4 = 24
 const ATLAS3: &[u8] = include_bytes!("../../assets/textures/textures3.png");  // 4×2 = 8
 const ATLAS4: &[u8] = include_bytes!("../../assets/textures/textures4.png");  // 7×5 = 35
+const ATLAS5: &[u8] = include_bytes!("../../assets/textures5.png");           // 8×5 = 40
 
 /// One texture swatch. Pixels are RGBA8, row-major, `w`×`h`.
 pub struct Tile {
@@ -54,6 +55,8 @@ fn tiles() -> &'static Vec<Tile> {
         // ATLAS4 is a 7×5 grid of colourful tiles (lava, crystals, slime, etc.)
         // separated by ~13px black borders baked into the image.
         if let Some(mut d) = decode_grid(ATLAS4, 7, 5, 13) { v.append(&mut d); }
+        // ATLAS5 is an 8×5 grid with ~4px near-black separators between tiles.
+        if let Some(mut e) = decode_grid(ATLAS5, 8, 5, 4) { v.append(&mut e); }
         v
     })
 }
@@ -221,7 +224,7 @@ mod tests {
     /// The pool must be 24 (ATLAS1) + 8 (ATLAS3) + 35 (ATLAS4) clean swatches.
     #[test]
     fn pool_has_all_swatches() {
-        assert_eq!(tiles().len(), 67, "expected 24 + 8 + 35 pooled tiles");
+        assert_eq!(tiles().len(), 107, "expected 24 + 8 + 35 + 40 pooled tiles");
     }
 
     /// Regression: ATLAS3's coloured frames once defeated band detection and
