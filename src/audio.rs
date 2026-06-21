@@ -10,7 +10,10 @@ pub fn set_muted(v: bool) {
     MUTED.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub fn init()                   {}
+pub fn init() {
+    #[cfg(feature = "desktop")]
+    imp_desktop::init();
+}
 
 /// Drive the plasma-torch loop sound from the live torch state. Call every frame
 /// with whether the torch is currently active (`game.plasma_torch.is_some()`).
@@ -594,26 +597,111 @@ mod imp {
     }
 }
 
+// ── Desktop (rodio) implementation ───────────────────────────────────────────
+
+#[cfg(feature = "desktop")]
+mod imp_desktop {
+    use std::sync::OnceLock;
+    use rodio::{OutputStream, OutputStreamHandle, Decoder, Sink};
+    use std::io::BufReader;
+
+    static HANDLE: OnceLock<OutputStreamHandle> = OnceLock::new();
+
+    pub fn init() {
+        match OutputStream::try_default() {
+            Ok((stream, handle)) => {
+                std::mem::forget(stream); // keep alive for process lifetime
+                let _ = HANDLE.set(handle);
+            }
+            Err(e) => eprintln!("audio init failed: {e}"),
+        }
+    }
+
+    fn sfx_dir() -> Option<std::path::PathBuf> {
+        Some(std::env::current_exe().ok()?.parent()?.join("sfx"))
+    }
+
+    pub fn play(name: &str) {
+        let Some(handle) = HANDLE.get() else { return };
+        let Some(dir) = sfx_dir() else { return };
+        let path = dir.join(name);
+        let Ok(file) = std::fs::File::open(&path) else { return };
+        let Ok(decoder) = Decoder::new(BufReader::new(file)) else { return };
+        match Sink::try_new(handle) {
+            Ok(sink) => { sink.append(decoder); sink.detach(); }
+            Err(_) => {}
+        }
+    }
+
+    pub fn play_death() {
+        let Some(dir) = sfx_dir() else { return };
+        let death_dir = dir.join("death");
+        let Ok(entries) = std::fs::read_dir(&death_dir) else {
+            play("death1.wav");
+            return;
+        };
+        let files: Vec<_> = entries
+            .flatten()
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
+            .filter(|e| e.file_name() != *"garcia.wav")
+            .collect();
+        if files.is_empty() { return; }
+        let idx = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as usize)
+            .unwrap_or(0) % files.len();
+        let Some(handle) = HANDLE.get() else { return };
+        let Ok(file) = std::fs::File::open(files[idx].path()) else { return };
+        let Ok(decoder) = Decoder::new(BufReader::new(file)) else { return };
+        match Sink::try_new(handle) {
+            Ok(sink) => { sink.append(decoder); sink.detach(); }
+            Err(_) => {}
+        }
+    }
+
+    pub fn play_death_water() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as usize)
+            .unwrap_or(0);
+        if nanos % 2 == 0 { play("water.wav"); } else { play("wet.wav"); }
+    }
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-#[cfg(target_arch = "arm")]
+// Miyoo arm dispatch
+#[cfg(all(target_arch = "arm", not(feature = "desktop")))]
 fn _play(n: &str)      { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play(n); } }
-#[cfg(target_arch = "arm")]
+#[cfg(all(target_arch = "arm", not(feature = "desktop")))]
 fn _play_once(n: &str) { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_once(n); } }
-#[cfg(target_arch = "arm")]
+#[cfg(all(target_arch = "arm", not(feature = "desktop")))]
 fn _play_revolver()    { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_revolver_shot(); } }
-#[cfg(target_arch = "arm")]
+#[cfg(all(target_arch = "arm", not(feature = "desktop")))]
 fn _play_death()       { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_death(); } }
-#[cfg(target_arch = "arm")]
+#[cfg(all(target_arch = "arm", not(feature = "desktop")))]
 fn _play_death_water() { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_death_water(); } }
 
-#[cfg(not(target_arch = "arm"))]
+// Desktop rodio dispatch
+#[cfg(feature = "desktop")]
+fn _play(n: &str)      { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play(n); } }
+#[cfg(feature = "desktop")]
+fn _play_once(n: &str) { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play(n); } }
+#[cfg(feature = "desktop")]
+fn _play_revolver()    { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play("revolver_shot.wav"); } }
+#[cfg(feature = "desktop")]
+fn _play_death()       { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play_death(); } }
+#[cfg(feature = "desktop")]
+fn _play_death_water() { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play_death_water(); } }
+
+// Non-arm, non-desktop: silence
+#[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
 fn _play(_: &str)        {}
-#[cfg(not(target_arch = "arm"))]
+#[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
 fn _play_once(_: &str)   {}
-#[cfg(not(target_arch = "arm"))]
+#[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
 fn _play_revolver()      {}
-#[cfg(not(target_arch = "arm"))]
+#[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
 fn _play_death()         {}
-#[cfg(not(target_arch = "arm"))]
+#[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
 fn _play_death_water()   {}

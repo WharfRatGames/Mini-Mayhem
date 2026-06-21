@@ -1,13 +1,13 @@
 /// Hat, gun, and boot cosmetic sprites embedded from deploy/assets/cosmetics/.
-/// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–28 are scrap-purchasable.
-/// Guns:  138×78 px RGBA (46×26 game px @ 3x). IDs 1–13 are scrap-purchasable.
+/// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–36 are scrap-purchasable.
+/// Guns:  138×78 px RGBA (46×26 game px @ 3x). IDs 1–22 are scrap-purchasable.
 /// Boots: 36×27 px RGBA (12×9 game px @ 3x). IDs 1–4 are scrap-purchasable.
 use std::sync::OnceLock;
 use super::buffer::WorldBuffer;
 
-// ── Hat sprites (IDs 1–27) ───────────────────────────────────────────────────
+// ── Hat sprites (IDs 1–36) ───────────────────────────────────────────────────
 
-static HAT_PNGS: [&[u8]; 28] = [
+static HAT_PNGS: [&[u8]; 36] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_2.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_3.png"),
@@ -36,9 +36,17 @@ static HAT_PNGS: [&[u8]; 28] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_26.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_27.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_28.png"),
+    include_bytes!("../../deploy/assets/cosmetics/hat_29.png"),  // Mortarboard
+    include_bytes!("../../deploy/assets/cosmetics/hat_30.png"),  // Baseball Cap
+    include_bytes!("../../deploy/assets/cosmetics/hat_31.png"),  // Samurai Kabuto
+    include_bytes!("../../deploy/assets/cosmetics/hat_32.png"),  // Obsidian Crown
+    include_bytes!("../../deploy/assets/cosmetics/hat_33.png"),  // Pharaoh's Headdress
+    include_bytes!("../../deploy/assets/cosmetics/hat_34.png"),  // Demon King Horns
+    include_bytes!("../../deploy/assets/cosmetics/hat_35.png"),  // Astronaut Helmet
+    include_bytes!("../../deploy/assets/cosmetics/hat_36.png"),  // Dragon Skull
 ];
 
-static GUN_PNGS: [&[u8]; 14] = [
+static GUN_PNGS: [&[u8]; 23] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_0.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_2.png"),
@@ -53,6 +61,15 @@ static GUN_PNGS: [&[u8]; 14] = [
     include_bytes!("../../deploy/assets/cosmetics/gun_11.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_12.png"),
     include_bytes!("../../deploy/assets/cosmetics/gun_13.png"),
+    include_bytes!("../../deploy/assets/cosmetics/gun_14.png"),  // Revolver
+    include_bytes!("../../deploy/assets/cosmetics/gun_15.png"),  // Laser Pistol
+    include_bytes!("../../deploy/assets/cosmetics/gun_16.png"),  // Gold Musket
+    include_bytes!("../../deploy/assets/cosmetics/gun_17.png"),  // Fusion Rifle
+    include_bytes!("../../deploy/assets/cosmetics/gun_18.png"),  // Obsidian Cannon
+    include_bytes!("../../deploy/assets/cosmetics/gun_19.png"),  // Crystal Sniper
+    include_bytes!("../../deploy/assets/cosmetics/gun_20.png"),  // Dragon's Breath
+    include_bytes!("../../deploy/assets/cosmetics/gun_21.png"),  // Blood Revolver
+    include_bytes!("../../deploy/assets/cosmetics/gun_22.png"),  // Thunder Rail
 ];
 
 // ── Boot sprites (IDs 0–5) ───────────────────────────────────────────────────
@@ -68,8 +85,8 @@ static BOOT_PNGS: [&[u8]; 6] = [
 
 struct Sprite { pub w: usize, pub h: usize, pub px: Vec<[u8; 4]> }
 
-static HAT_SPRITES:  OnceLock<[Option<Sprite>; 28]> = OnceLock::new();
-static GUN_SPRITES:  OnceLock<[Option<Sprite>; 14]>  = OnceLock::new();
+static HAT_SPRITES:  OnceLock<[Option<Sprite>; 36]> = OnceLock::new();
+static GUN_SPRITES:  OnceLock<[Option<Sprite>; 23]>  = OnceLock::new();
 static BOOT_SPRITES: OnceLock<[Option<Sprite>; 6]>  = OnceLock::new();
 
 fn decode(bytes: &[u8]) -> Option<Sprite> {
@@ -88,11 +105,11 @@ fn decode(bytes: &[u8]) -> Option<Sprite> {
     Some(Sprite { w, h, px })
 }
 
-fn hat_sprites() -> &'static [Option<Sprite>; 28] {
+fn hat_sprites() -> &'static [Option<Sprite>; 36] {
     HAT_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(HAT_PNGS[i])))
 }
 
-fn gun_sprites() -> &'static [Option<Sprite>; 14] {
+fn gun_sprites() -> &'static [Option<Sprite>; 23] {
     GUN_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(GUN_PNGS[i])))
 }
 
@@ -101,19 +118,32 @@ fn boot_sprites() -> &'static [Option<Sprite>; 6] {
 }
 
 /// Draw hat sprite (id 1–15) centred at (cx, cy), scaled to render_w × render_h.
-pub fn draw_hat(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32) {
+pub fn draw_hat(buf: &mut WorldBuffer, id: u8, cx: i32, cy: i32, render_w: i32, render_h: i32, flip: bool) {
     let idx = (id as usize).wrapping_sub(1);
     let sprites = hat_sprites();
     if idx >= sprites.len() { return; }
     let sp = match &sprites[idx] { Some(s) => s, None => return };
+    let x0 = cx - render_w / 2;
+    let y0 = cy - render_h / 2;
     if id == 2 {
-        // Propeller Hat: the sprite's own propeller (source rows 18-26 of 60)
-        // is a static bar; skip it here so skeleton.rs can draw an animated
-        // spinning propeller in its place instead.
-        blit_scaled_skip_rows(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h, 18, 27);
+        blit_scaled_skip_rows(buf, sp, x0, y0, render_w, render_h, 18, 27);
         return;
     }
-    blit_scaled(buf, sp, cx - render_w / 2, cy - render_h / 2, render_w, render_h);
+    if !flip {
+        blit_scaled(buf, sp, x0, y0, render_w, render_h);
+    } else {
+        if render_w <= 0 || render_h <= 0 { return; }
+        for dy in 0..render_h {
+            for dx in 0..render_w {
+                let sx = ((render_w - 1 - dx) * sp.w as i32 / render_w) as usize;
+                let sy = (dy * sp.h as i32 / render_h) as usize;
+                if sx >= sp.w || sy >= sp.h { continue; }
+                let [r, g, b, a] = sp.px[sy * sp.w + sx];
+                if a < 16 { continue; }
+                buf.set_pixel(x0 + dx, y0 + dy, super::fb::Bgra::new(r, g, b));
+            }
+        }
+    }
 }
 
 /// Draw gun sprite (id 1–10) centred at (cx, cy), scaled to render_w × render_h.

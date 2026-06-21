@@ -2324,7 +2324,7 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
     // Per-shot spread using tick + shots_left as entropy
     let seed = (game.tick as u32)
         .wrapping_mul(0x9E3779B9)
-        .wrapping_add(game.minigun_shots_left as u32 * 2654435761);
+        .wrapping_add(game.minigun_shots_left as u32 * 2654435761_u32);
     let r = seed as f32 / u32::MAX as f32;
     let spread = (r - 0.5) * 2.0 * SPREAD;
     let fire_angle = angle + spread;

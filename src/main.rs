@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.313";
+const VERSION: &str = "0.5.4.317";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -30,18 +30,25 @@ const TICK_DURATION: Duration = Duration::from_millis(1000 / TICK_HZ);
 fn main() {
     // Release any audio/device fds inherited from the Onion launcher so that
     // aplay can open the ALSA device cleanly for sound effects.
+    #[cfg(not(feature = "desktop"))]
     unsafe { for fd in 3i32..=255 { libc::close(fd); } }
 
     // ── Open hardware ─────────────────────────────────────────────────────────
     let mut fb = Framebuffer::open()
-        .expect("Failed to open /dev/fb0");
+        .expect("failed to open display");
     let mut input = InputState::new();
+    #[cfg(not(feature = "desktop"))]
     input.open().expect("Failed to open /dev/input/event0");
     let mut buf    = WorldBuffer::new();
     let mut lstate = LoopState::new();
 
     // Initialise audio engine (rodio/ALSA on armv7; no-op elsewhere).
     audio::init();
+
+    // Pre-resolve server DNS at launch so TCP connect is instant when the player
+    // joins a live match. DuckDNS can take 15-20s on first lookup; overlapping
+    // it with the splash/title hides the wait entirely.
+    net::start_dns_prefetch();
 
     // Kick off the update check before the splash so the HTTP request runs
     // during the splash window (0-5s) rather than after it. recv_timeout at the
@@ -191,6 +198,11 @@ fn main() {
             let token = game::account::load_saved_creds().map(|(_, t)| t).unwrap_or_default();
             show_missions_screen(&mut fb, &mut input, &mut buf, &token);
             title.continue_to_submenu(); // return to MULTIPLAYER submenu
+            continue;
+        }
+        if c == game::title::CHOICE_ACCOUNT {
+            run_account_menu(&mut fb, &mut input, &mut buf);
+            title.continue_to_submenu();
             continue;
         }
         if c != game::title::CHOICE_MULTI { break c; }
@@ -415,9 +427,15 @@ fn main() {
         // Spawn connect attempt; main loop polls and checks B each frame
         let (conn_tx, conn_rx) = std::sync::mpsc::channel::<Result<ServerConn, ()>>();
         let port = live_game_port;
+        let pre_resolved = net::cached_server_addr();
         std::thread::spawn(move || {
-            let addr = format!("crumbonium.duckdns.org:{}", port);
-            let _ = conn_tx.send(ServerConn::connect(&addr).map_err(|_| ()));
+            let result = if let Some(sock) = pre_resolved {
+                ServerConn::connect_addr(sock, port)
+            } else {
+                let addr = format!("crumbonium.duckdns.org:{}", port);
+                ServerConn::connect(&addr)
+            };
+            let _ = conn_tx.send(result.map_err(|_| ()));
         });
         let connected = loop {
             input.poll();
@@ -1206,9 +1224,7 @@ fn run_casual_lobby(
         },
     };
     conn.send(&LobbyClientMsg::Join(join));
-    // 500ms timeout: gives the server time to process Join and reply with State before
-    // the drain loop times out. After the first State arrives we switch to 60ms per-frame.
-    conn.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+    conn.set_read_timeout(Some(std::time::Duration::from_millis(60)));
 
     let mut players: Vec<net::msg::LobbyPlayer> = Vec::new();
     let mut your_index: usize = 0;
@@ -1542,6 +1558,69 @@ fn show_roster_picker(
     }
 }
 
+/// MULTIPLAYER → ACCOUNT entry point.
+/// Not logged in: shows login/register screen.
+/// Logged in: shows a small screen with username + logout option.
+fn run_account_menu(
+    fb:    &mut renderer::Framebuffer,
+    input: &mut input::InputState,
+    buf:   &mut WorldBuffer,
+) {
+    use renderer::Bgra;
+    use renderer::font::{draw_str_scaled, draw_str_shadow_scaled, str_width_scaled};
+    use world::{SCREEN_W, SCREEN_H};
+
+    if let Some((username, _token)) = game::account::load_saved_creds() {
+        // Already logged in — show "logged in as" + logout option
+        let sw = SCREEN_W as i32;
+        let sh = SCREEN_H as i32;
+        loop {
+            let fs = std::time::Instant::now();
+            input.poll();
+            if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { break; }
+            if input.just_pressed(input::Button::Y) {
+                game::account::clear_saved_creds();
+                draw_msg(buf, fb, "LOGGED OUT");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                break;
+            }
+            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
+            buf.fill_rect(0, 0, SCREEN_W, 36, Bgra::new(18, 22, 50));
+            let tw = str_width_scaled("ACCOUNT", 2);
+            draw_str_shadow_scaled(buf, "ACCOUNT", sw/2 - tw/2, 9, Bgra::new(255, 210, 50), 2);
+            let msg = format!("LOGGED IN AS  {}", username.to_uppercase());
+            let mw = str_width_scaled(&msg, 2);
+            draw_str_scaled(buf, &msg, sw/2 - mw/2, sh/2 - 30, Bgra::new(120, 200, 120), 2);
+            draw_str_scaled(buf, "Y  LOG OUT", sw/2 - str_width_scaled("Y  LOG OUT", 2)/2, sh/2 + 10, Bgra::new(220, 100, 80), 2);
+            draw_str_scaled(buf, "B  BACK",    sw/2 - str_width_scaled("B  BACK", 2)/2,    sh/2 + 40, Bgra::new(140, 140, 140), 2);
+            buf.blit_to_fb(fb, 0);
+            let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
+        }
+    } else {
+        // Not logged in — show full login/register screen
+        use game::account::{AccountScreen, AccountAction};
+        let mut acct = AccountScreen::new();
+        loop {
+            let fs = std::time::Instant::now();
+            input.poll();
+            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 8, 20));
+            if let Some(action) = acct.update(&input, buf, 0) {
+                match action {
+                    AccountAction::LoggedIn { username, .. } => {
+                        let msg = format!("WELCOME  {}", username.to_uppercase());
+                        draw_msg(buf, fb, &msg);
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                    AccountAction::Back => {}
+                }
+                break;
+            }
+            buf.blit_to_fb(fb, 0);
+            let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
+        }
+    }
+}
+
 fn show_my_teams_menu(
     fb:      &mut renderer::Framebuffer,
     input:   &mut input::InputState,
@@ -1553,7 +1632,7 @@ fn show_my_teams_menu(
     use renderer::font::{draw_str_scaled, draw_str_shadow_scaled, str_width_scaled, draw_str, str_width};
     use world::{SCREEN_W, SCREEN_H};
 
-    const ITEMS: &[&str] = &["ROSTERS", "STORE", "EQUIP", "PROFILE"];
+    const ITEMS: &[&str] = &["ROSTERS", "STORE", "EQUIP", "PROFILE", "LOG OUT"];
     let mut cursor = 0usize;
     let username = game::account::load_saved_creds().map(|(u, _)| u).unwrap_or_default();
 
@@ -1572,6 +1651,12 @@ fn show_my_teams_menu(
                 1 => { show_store_screen(fb, input, buf, token); }
                 2 => { show_equip_screen(fb, input, buf, rosters, token); }
                 3 => { show_profile_screen(fb, input, buf, token, &username); }
+                4 => {
+                    game::account::clear_saved_creds();
+                    draw_msg(buf, fb, "LOGGED OUT");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    return;
+                }
                 _ => {}
             }
         }
@@ -1580,11 +1665,16 @@ fn show_my_teams_menu(
         renderer::title_bg::draw_title_bg(buf, 0);
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
-        let panel_y = 281i32;
-        let item_h  = 38i32;
+        let panel_y = 261i32;
+        let item_h  = 34i32;
         let label   = "MY TEAMS";
         let lw = str_width_scaled(label, 2);
         draw_str_shadow_scaled(buf, label, sw/2 - lw/2, panel_y + 8, Bgra::new(200, 200, 230), 2);
+        if !username.is_empty() {
+            use renderer::font::str_width;
+            let uw = str_width(&username);
+            draw_str(buf, &username, sw/2 - uw/2, panel_y - 14, Bgra::new(110, 115, 165));
+        }
 
         let start_y = panel_y + 32;
         for (i, &item) in ITEMS.iter().enumerate() {
@@ -1594,7 +1684,11 @@ fn show_my_teams_menu(
             if selected {
                 crate::renderer::hud::draw_menu_selection(buf, sw/2 - 155, iy - 4, 310, 28);
             }
-            let col = if selected { Bgra::new(255, 225, 55) } else { Bgra::new(0, 0, 0) };
+            let col = if selected {
+                if i == 4 { Bgra::new(255, 100, 80) } else { Bgra::new(255, 225, 55) }
+            } else {
+                if i == 4 { Bgra::new(180, 70, 60) } else { Bgra::new(0, 0, 0) }
+            };
             draw_str_shadow_scaled(buf, item, sw/2 - iw/2, iy, col, 2);
         }
         crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0);

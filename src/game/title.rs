@@ -21,10 +21,11 @@ pub const CHOICE_LEADERBOARD_CASUAL: u8 = 14;
 pub const CHOICE_LEADERBOARD_RANKED: u8 = 15;
 pub const CHOICE_MISSIONS:           u8 = 16;
 pub const CHOICE_SETTINGS:           u8 = 17;
+pub const CHOICE_ACCOUNT:            u8 = 18;
 
 const ITEMS:      &[&str] = &["SINGLEPLAYER", "MULTIPLAYER", "MY TEAMS", "SETTINGS", "HOW TO PLAY", "QUIT"];
 const SP_ITEMS:   &[&str] = &["VS CPU", "HOTSEAT", "TEST"];
-const MP_ITEMS:   &[&str] = &["LIVE GAME", "TAKE A TURN", "MISSIONS"];
+const MP_ITEMS:   &[&str] = &["LIVE GAME", "TAKE A TURN", "MISSIONS", "ACCOUNT"];
 const LIVE_ITEMS: &[&str] = &["CASUAL", "RANKED", "LEADERBOARD", "STATS"];
 const TAT_ITEMS:  &[&str] = &["CASUAL", "RANKED", "LEADERBOARD", "STATS"];
 
@@ -327,6 +328,7 @@ impl TitleScreen {
                         0 => { self.sub = Sub::Live; self.sub_cursor = 0; self.scroll_offset = 0; }
                         1 => { self.sub = Sub::Tat;  self.sub_cursor = 0; self.scroll_offset = 0; }
                         2 => return Some(CHOICE_MISSIONS),
+                        3 => return Some(CHOICE_ACCOUNT),
                         _ => { self.sub = Sub::None; self.scroll_offset = 0; }
                     }
                 }

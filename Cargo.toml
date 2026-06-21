@@ -3,18 +3,42 @@ name = "arty"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["desktop"]
+desktop = ["dep:minifb", "dep:gilrs", "dep:rodio"]
+
 [[bin]]
 name = "mini-mayhem"
 path = "src/main.rs"
 
+[[bin]]
+name = "server"
+path = "src/server/main.rs"
+
+[[bin]]
+name = "api"
+path = "src/api/main.rs"
+
 [dependencies]
-noise = "0.9"
-libc  = "0.2"
+noise          = "0.9"
+libc           = "0.2"
 png            = "0.17"
 jpeg-decoder   = "0.3"
 rustls         = { version = "0.23", default-features = false, features = ["ring", "tls12", "std"] }
 rustls-pemfile = "2"
 webpki-roots   = "0.26"
+tokio          = { version = "1", features = ["full"] }
+rusqlite       = { version = "0.31", features = ["bundled"] }
+sha2           = "0.10"
+bincode        = "1"
+serde          = { version = "1", features = ["derive"] }
+log            = "0.4"
+env_logger     = "0.11"
+
+# Desktop-only deps (enabled by the `desktop` feature, on by default)
+minifb = { version = "0.27", optional = true }
+gilrs  = { version = "0.10", optional = true }
+rodio  = { version = "0.19", optional = true }
 
 [profile.release]
 opt-level     = 3
@@ -27,35 +51,3 @@ strip         = true
 inherits  = "release"
 panic     = "abort"
 strip     = true
-
-[[bin]]
-name = "server"
-path = "src/server/main.rs"
-
-[dependencies.tokio]
-version = "1"
-features = ["full"]
-
-[dependencies.rusqlite]
-version = "0.31"
-features = ["bundled"]
-
-[dependencies.sha2]
-version = "0.10"
-
-[dependencies.bincode]
-version = "1"
-
-[dependencies.serde]
-version = "1"
-features = ["derive"]
-
-[dependencies.log]
-version = "0.4"
-
-[dependencies.env_logger]
-version = "0.11"
-
-[[bin]]
-name = "api"
-path = "src/api/main.rs"

@@ -177,7 +177,7 @@ fn uniform_color(id: u8) -> Bgra {
 
 // ── Hat drawing ───────────────────────────────────────────────────────────────
 
-fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick: u32) {
+fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick: u32, facing: f32) {
     if hat_id == 0 { return; }
     // Render the real shop-icon sprite, scaled up (32x29, 1.45x the
     // documented 22x20 game-px size) for in-game readability.
@@ -193,16 +193,21 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
         5  => 5,   // Fez: art sits in the top of sprite, nudge down
         15 => 11,  // Viking Helm: drop sprite to sit as the head, covering neck join
         28 => 9,   // Luchador: center sprite on face, not above it
+        33 => 4,   // Pharaoh Headdress: nudge down so lappets sit alongside head
+        36 => 6,   // Dragon Skull: nudge down so cranium covers the head
         _  => 0,
     };
     // Per-hat size scale (default 1.0)
     let scale: f32 = match hat_id {
         22 => 0.75,  // Pirate Tricorn: rescaled sprite reads large, pull back
         28 => 0.80,  // Luchador Mask: slightly smaller
+        36 => 1.15,  // Dragon Skull: larger to fully cover head
         _  => 1.0,
     };
     let (w, h) = ((W as f32 * scale) as i32, (H as f32 * scale) as i32);
-    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - ANCHOR_DY + hat_dy, w, h);
+    // Dragon Skull (36) flips to face the direction the soldier faces
+    let flip = hat_id == 36 && facing < 0.0;
+    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - ANCHOR_DY + hat_dy, w, h, flip);
 
     // Propeller Hat: the sprite's static propeller bar (source rows 18-26) is
     // skipped by cosmetic_sprites::draw_hat for hat_id 2; draw an animated
@@ -500,14 +505,14 @@ pub fn draw_soldier_skeletal(
             }
         }
     }
-    // Eye — suppressed for luchador mask and viking helm (sprites draw their own faces)
-    if hat_id != 28 && hat_id != 15 {
+    // Eye — suppressed for luchador mask, viking helm, and dragon skull (skull covers/replaces head)
+    if hat_id != 28 && hat_id != 15 && hat_id != 36 {
         let eye_x = head_cx + f as i32;
         buf.set_pixel(eye_x,     head_cy + 1, dark_col);
         buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);
     }
     // Hat drawn after head
-    if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick); }
+    if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick, f); }
 
     // ── Front leg (after body for correct depth) ──────────────────────────────
     thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, dark_col, 7);
