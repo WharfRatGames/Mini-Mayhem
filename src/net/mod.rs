@@ -1,12 +1,12 @@
 pub mod msg;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
 
 /// Encode a message as a length-prefixed bincode frame.
-/// Returns None only if bincode serialization fails (should never happen for our structs).
 pub fn encode<T: serde::Serialize>(msg: &T) -> Option<Vec<u8>> {
     let payload = bincode::serialize(msg).ok()?;
     if payload.len() > 65536 { return None; }
@@ -16,53 +16,92 @@ pub fn encode<T: serde::Serialize>(msg: &T) -> Option<Vec<u8>> {
     Some(buf)
 }
 
-/// Read one length-prefixed frame.  Returns None on any IO error, timeout, or oversized packet.
-fn read_one(stream: &mut TcpStream) -> Option<Vec<u8>> {
-    let mut hdr = [0u8; 4];
-    stream.read_exact(&mut hdr).ok()?;
-    let len = u32::from_le_bytes(hdr) as usize;
-    if len == 0 || len > 65536 { return None; }
-    let mut buf = vec![0u8; len];
-    stream.read_exact(&mut buf).ok()?;
-    Some(buf)
+type ClientTlsStream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
+
+enum Inner {
+    Plain(TcpStream),
+    Tls(ClientTlsStream),
+}
+
+impl Inner {
+    fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
+        match self {
+            Inner::Plain(s) => s.set_read_timeout(dur),
+            Inner::Tls(s)   => s.get_ref().set_read_timeout(dur),
+        }
+    }
+}
+
+impl Read for Inner {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self { Inner::Plain(s) => s.read(buf), Inner::Tls(s) => s.read(buf) }
+    }
+}
+impl Write for Inner {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self { Inner::Plain(s) => s.write(buf), Inner::Tls(s) => s.write(buf) }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        match self { Inner::Plain(s) => s.flush(), Inner::Tls(s) => s.flush() }
+    }
 }
 
 pub struct ServerConn {
-    pub stream:   TcpStream,
+    stream:       Arc<Mutex<Inner>>,
     latest:       Arc<Mutex<Option<Vec<u8>>>>,
     welcome:      Arc<Mutex<Option<Vec<u8>>>>,
-    /// Set to true when the reader thread exits or a write fails.
     disconnected: Arc<AtomicBool>,
 }
 
+fn make_tls_config() -> Arc<rustls::ClientConfig> {
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    Arc::new(rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth())
+}
+
 impl ServerConn {
-    pub fn connect(addr: &str) -> std::io::Result<Self> {
+    pub fn connect(addr: &str) -> io::Result<Self> {
         use std::net::ToSocketAddrs;
         let sock = addr.to_socket_addrs()?.next()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no addr"))?;
-        let stream = TcpStream::connect_timeout(&sock, std::time::Duration::from_secs(4))?;
-        stream.set_nodelay(true)?;
-        // 10-second read timeout: detects half-open connections (server disappears without FIN).
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
-        let latest       = Arc::new(Mutex::new(None));
-        let welcome      = Arc::new(Mutex::new(None));
-        let disconnected = Arc::new(AtomicBool::new(false));
-        Ok(Self { stream, latest, welcome, disconnected })
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no addr"))?;
+        let tcp = TcpStream::connect_timeout(&sock, Duration::from_secs(4))?;
+        tcp.set_nodelay(true)?;
+
+        let host = addr.split(':').next().unwrap_or(addr);
+        let inner = match rustls::pki_types::ServerName::try_from(host.to_string()) {
+            Ok(name) => {
+                let config = make_tls_config();
+                match rustls::ClientConnection::new(config, name) {
+                    Ok(conn) => Inner::Tls(rustls::StreamOwned::new(conn, tcp)),
+                    Err(_)   => return Err(io::Error::new(io::ErrorKind::Other, "TLS init failed")),
+                }
+            }
+            Err(_) => Inner::Plain(tcp), // IP address — no TLS (local dev)
+        };
+
+        // 10s read timeout to detect half-open connections
+        inner.set_read_timeout(Some(Duration::from_secs(10)))?;
+
+        let stream = Arc::new(Mutex::new(inner));
+        Ok(Self {
+            stream,
+            latest:       Arc::new(Mutex::new(None)),
+            welcome:      Arc::new(Mutex::new(None)),
+            disconnected: Arc::new(AtomicBool::new(false)),
+        })
     }
 
-    /// Spawn the background reader thread. Call once after the initial handshake.
     pub fn start_reader(&mut self) {
+        let stream2       = self.stream.clone();
         let latest2       = self.latest.clone();
         let welcome2      = self.welcome.clone();
         let disconnected2 = self.disconnected.clone();
-        let mut reader = match self.stream.try_clone() {
-            Ok(r) => r,
-            Err(_) => { disconnected2.store(true, Ordering::Relaxed); return; }
-        };
-        // The timeout is inherited from the original stream on clone (Linux, Windows).
         thread::spawn(move || {
+            let mut read_buf: Vec<u8> = Vec::new();
             loop {
-                match read_one(&mut reader) {
+                match read_one_arc(&stream2, &mut read_buf) {
                     Some(buf) => {
                         if bincode::deserialize::<crate::net::msg::WelcomeMsg>(&buf).is_ok() {
                             *welcome2.lock().unwrap() = Some(buf);
@@ -70,51 +109,104 @@ impl ServerConn {
                             *latest2.lock().unwrap() = Some(buf);
                         }
                     }
-                    None => break, // IO error, timeout, or oversized packet → disconnect
+                    None => break,
                 }
             }
             disconnected2.store(true, Ordering::Relaxed);
         });
     }
 
-    /// Returns true if the connection has been lost (reader thread exited or write failed).
     pub fn is_disconnected(&self) -> bool {
         self.disconnected.load(Ordering::Relaxed)
     }
 
-    /// Send a serializable message. Sets disconnected flag on write failure.
     pub fn send<T: serde::Serialize>(&mut self, msg: &T) {
         if let Some(bytes) = encode(msg) {
-            if self.stream.write_all(&bytes).is_err() {
+            let mut guard = self.stream.lock().unwrap();
+            if guard.write_all(&bytes).is_err() {
                 self.disconnected.store(true, Ordering::Relaxed);
             }
         }
     }
 
-    /// Send raw bytes. Sets disconnected flag on write failure.
     pub fn send_raw(&mut self, bytes: &[u8]) {
-        if self.stream.write_all(bytes).is_err() {
+        let mut guard = self.stream.lock().unwrap();
+        if guard.write_all(bytes).is_err() {
             self.disconnected.store(true, Ordering::Relaxed);
         }
     }
 
-    /// Blocking read of one message — use only during initial handshake before start_reader().
+    /// Blocking read — only use during initial handshake before start_reader().
     pub fn recv_blocking<T: serde::de::DeserializeOwned>(&mut self) -> Option<T> {
-        let buf = read_one(&mut self.stream)?;
+        let mut read_buf = Vec::new();
+        let buf = read_one_arc(&self.stream, &mut read_buf)?;
         bincode::deserialize(&buf).ok()
     }
 
-    /// Non-blocking: returns the latest WelcomeMsg if one arrived on the reader thread.
     pub fn try_recv_welcome(&mut self) -> Option<msg::WelcomeMsg> {
         let buf = self.welcome.lock().unwrap().take()?;
         bincode::deserialize(&buf).ok()
     }
 
-    /// Non-blocking: returns the latest state message from the reader thread (lossy — newest wins).
     pub fn try_recv<T: serde::de::DeserializeOwned>(&mut self) -> Option<T> {
         let buf = self.latest.lock().unwrap().take()?;
         bincode::deserialize(&buf).ok()
     }
 
+    pub fn set_read_timeout(&self, dur: Option<Duration>) {
+        self.stream.lock().unwrap().set_read_timeout(dur).ok();
+    }
+
+    /// Read a line (up to \n) from the stream — used during handshake only.
+    pub fn read_line_blocking(&mut self) -> String {
+        use std::io::BufRead;
+        let mut guard = self.stream.lock().unwrap();
+        let mut line = String::new();
+        // Read byte-by-byte to avoid consuming buffered data past the newline.
+        loop {
+            let mut b = [0u8; 1];
+            match guard.read(&mut b) {
+                Ok(1) => {
+                    if b[0] == b'\n' { break; }
+                    line.push(b[0] as char);
+                }
+                _ => break,
+            }
+        }
+        line.trim().to_string()
+    }
+
     pub fn buf_len(&self) -> usize { 0 }
+}
+
+/// Read one complete length-prefixed frame from a shared stream.
+/// Holds the lock only briefly per chunk; releases between attempts so the
+/// write path is never blocked more than ~5ms.
+fn read_one_arc<S: Read>(stream: &Arc<Mutex<S>>, read_buf: &mut Vec<u8>) -> Option<Vec<u8>> {
+    loop {
+        if read_buf.len() >= 4 {
+            let len = u32::from_le_bytes(read_buf[..4].try_into().unwrap()) as usize;
+            if len == 0 || len > 65536 { return None; }
+            if read_buf.len() >= 4 + len {
+                let frame = read_buf[4..4+len].to_vec();
+                read_buf.drain(..4+len);
+                return Some(frame);
+            }
+        }
+        let mut tmp = [0u8; 4096];
+        let n = {
+            let mut guard = stream.lock().unwrap();
+            match guard.read(&mut tmp) {
+                Ok(0) => return None,
+                Ok(n) => n,
+                Err(e) if matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) => {
+                    drop(guard);
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+                Err(_) => return None,
+            }
+        };
+        read_buf.extend_from_slice(&tmp[..n]);
+    }
 }
