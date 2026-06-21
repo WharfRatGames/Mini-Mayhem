@@ -15,7 +15,7 @@ struct StoreItem {
     owned:     bool,
 }
 
-static CATALOG: &[(&str, u8, &str, u32)] = &[
+pub static CATALOG: &[(&str, u8, &str, u32)] = &[
     // Hats (scrap only)
     ("hat",       1, "Top Hat",       200),
     ("hat",       2, "Propeller Hat", 350),

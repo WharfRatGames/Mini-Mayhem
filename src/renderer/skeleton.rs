@@ -301,16 +301,24 @@ fn draw_held_weapon(buf: &mut WorldBuffer, x: i32, y: i32, weapon: WeaponKind, t
             buf.fill_rect(x + 1, y - 11, 1, 2, Bgra::new(160, 160, 160));
         }
         WeaponKind::Landmine => {
-            // Dome shape: flat top, rounded bottom
-            buf.fill_circle(x, y + 1, 5, Bgra::new(20, 60, 20));
-            buf.fill_circle(x, y + 1, 4, Bgra::new(45, 110, 35));
-            buf.fill_rect(x - 5, y - 4, 11, 5, Bgra::new(45, 110, 35));
-            buf.fill_rect(x - 4, y - 5, 9, 1, Bgra::new(20, 60, 20));
-            buf.fill_rect(x - 3, y - 4, 7, 1, Bgra::new(65, 130, 50));
-            buf.fill_circle(x - 1, y + 1, 2, Bgra::new(70, 150, 55));
+            // Flat disc shape
+            let dk  = Bgra::new(15,  50, 15);
+            let mid = Bgra::new(40, 100, 30);
+            let hi  = Bgra::new(60, 135, 45);
+            let rim = Bgra::new(30,  75, 22);
+            buf.fill_rect(x - 5, y + 2, 11, 1, dk);
+            buf.fill_rect(x - 7, y,     15, 2, mid);
+            buf.fill_rect(x - 7, y - 2, 15, 2, mid);
+            buf.fill_rect(x - 6, y - 3, 13, 1, rim);
+            buf.fill_rect(x - 5, y - 4, 11, 1, dk);
+            buf.set_pixel(x - 7, y + 1, rim);
+            buf.set_pixel(x + 7, y + 1, rim);
+            buf.fill_rect(x - 4, y - 3, 9, 1, hi);
             if (tick / 15) % 2 == 0 {
-                buf.fill_rect(x - 1, y - 5, 3, 2, Bgra::new(230, 30, 30));
-                buf.set_pixel(x, y - 5, Bgra::new(255, 120, 120));
+                buf.fill_rect(x - 1, y - 5, 3, 2, Bgra::new(220, 25, 25));
+                buf.set_pixel(x, y - 5, Bgra::new(255, 110, 110));
+            } else {
+                buf.fill_rect(x - 1, y - 5, 3, 2, Bgra::new(80, 10, 10));
             }
         }
         _ => {}

@@ -20,7 +20,7 @@ use std::sync::OnceLock;
 /// Number of backgrounds in the pool (BG2.png is a 3×3 contact sheet, BG1.png
 /// is a 2×3 sheet contributing 6 more slices, bg3.png is another 3×3 sheet
 /// contributing 9 more).
-const BG_COUNT: usize = 45;
+const BG_COUNT: usize = 54;
 
 struct Decoded {
     w: u32,
@@ -74,6 +74,15 @@ static PNGS: [&[u8]; BG_COUNT] = [
     include_bytes!("../../deploy/assets/backgrounds/bg5_9.png"),
     include_bytes!("../../deploy/assets/backgrounds/bg5_10.png"),
     include_bytes!("../../deploy/assets/backgrounds/bg5_11.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_0.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_1.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_2.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_3.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_4.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_5.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_6.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_7.png"),
+    include_bytes!("../../deploy/assets/backgrounds/bg6_8.png"),
 ];
 
 /// Pick which background to use for a map. Deterministic from the seed so client

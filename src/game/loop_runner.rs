@@ -3378,32 +3378,41 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         }
     }
 
-    // 4d. Mines — green metal ball with blinking red LED (drawn after barrels so always visible)
+    // 4d. Mines — flat disc with blinking red LED
     for mine in &game.mines {
         let wx = mine.pos.x as i32;
         let wy = mine.pos.y as i32;
         if mine.pos.x < vx0 - 16.0 || mine.pos.x >= vx1 + 16.0 { continue; }
         if wy < -20 || wy >= sh { continue; }
-        // Shadow underneath
-        buf.fill_circle(wx, wy + 5, 4, Bgra::new(0, 0, 0));
-        // Body — dome shape: circle with flat top
-        buf.fill_circle(wx, wy + 1, 5, Bgra::new(20, 60, 20));   // dark outline
-        buf.fill_circle(wx, wy + 1, 4, Bgra::new(45, 110, 35));  // main body
-        buf.fill_rect(wx - 5, wy - 4, 11, 5, Bgra::new(45, 110, 35)); // flat top fill (masks circle top)
-        buf.fill_rect(wx - 4, wy - 5, 9, 1, Bgra::new(20, 60, 20));   // flat top edge (dark outline)
-        buf.fill_rect(wx - 3, wy - 4, 7, 1, Bgra::new(65, 130, 50));  // flat top highlight
-        buf.fill_circle(wx - 1, wy + 1, 2, Bgra::new(70, 150, 55)); // body highlight
-        // Red LED on top centre
+        let dk  = Bgra::new(15,  50, 15);   // dark outline
+        let mid = Bgra::new(40, 100, 30);   // body
+        let hi  = Bgra::new(60, 135, 45);   // top highlight
+        let rim = Bgra::new(30,  75, 22);   // rim edge
+        // Shadow
+        buf.fill_rect(wx - 6, wy + 3, 13, 2, Bgra::new(0, 0, 0));
+        // Disc body — wide flat cylinder (15px wide, 6px tall)
+        buf.fill_rect(wx - 5, wy + 2,  11, 1, dk);   // bottom edge
+        buf.fill_rect(wx - 7, wy,      15, 2, mid);   // lower body
+        buf.fill_rect(wx - 7, wy - 2,  15, 2, mid);   // upper body
+        buf.fill_rect(wx - 6, wy - 3,  13, 1, rim);   // top rim
+        buf.fill_rect(wx - 5, wy - 4,  11, 1, dk);    // top dark edge
+        // Left/right curved ends
+        buf.set_pixel(wx - 7, wy + 1, rim);
+        buf.set_pixel(wx + 7, wy + 1, rim);
+        // Top face highlight strip
+        buf.fill_rect(wx - 4, wy - 3, 9, 1, hi);
+        // Red LED nub on top centre
         let led_on = match mine.state {
             super::state::MineState::Arming    => (game.tick / 15) % 2 == 0,
             super::state::MineState::Armed     => (game.tick / 5)  % 2 == 0,
             super::state::MineState::Triggered => (game.tick / 3)  % 2 == 0,
         };
         if led_on {
-            buf.fill_rect(wx - 1, wy - 5, 3, 2, Bgra::new(230, 30, 30));
-            buf.set_pixel(wx, wy - 5, Bgra::new(255, 120, 120));
+            buf.fill_rect(wx - 1, wy - 5, 3, 2, Bgra::new(220, 25, 25));
+            buf.set_pixel(wx, wy - 5, Bgra::new(255, 110, 110));
+        } else {
+            buf.fill_rect(wx - 1, wy - 5, 3, 2, Bgra::new(80, 10, 10));
         }
-        // Arming is communicated by the slow-blink LED — no countdown number needed
     }
 
     mark!("objects");
@@ -3516,7 +3525,9 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let max_half = h as f32 * 0.42;
         // Independent phase per flame — drives both sway/width flicker and outer
         // colour toggle so flames don't all change colour in lockstep.
-        let phase = game.tick as f32 * 0.30 + (wx as f32) * 0.7 + (wy as f32) * 0.5;
+        // Use lifetime for time and spawn-velocity as a stable per-patch offset
+        // (vel is constant after spawn, so phase doesn't jump as the patch moves).
+        let phase = patch.lifetime as f32 * 0.30 + patch.vel.x * 1.1 + patch.vel.y * 0.9;
         let outer = if phase.sin() > 0.0 { Bgra::new(210, 40, 0) } else { Bgra::new(235, 60, 0) };
         let base_y = wy + 1;
 

@@ -1,0 +1,49 @@
+Mini Mayhem / Arty — Progress Summary
+Last updated: 2026-06-21
+
+=== Phase 1 — Terrain & Physics: DONE ===
+Perlin heightmap, crater carving, Euler projectile ballistics, wind, water.
+
+=== Phase 2 — Miyoo Renderer & Input: DONE ===
+/dev/fb0 BGRA framebuffer, evdev buttons, 8x8 font, hot-seat local play.
+
+=== Phase 3 — Weapons & Turn System: DONE ===
+18 weapons implemented: Bazooka, Grenade, Shotgun, TNT, Landmine, Meteor Bomb,
+Baseball Bat, Revolver, Ninja Rope, Blasthive, Black Hole Bomb, Plasma Torch,
+Hand of Jerry (Garcia), Air Strike, Minigun, Mac-10, Holy Hand Grenade, Homing Missile.
+Tiered crate drops (Common/Uncommon/Rare/Ultra Rare). Shared team loadout, turn
+locks, weapon menu. Graves, crates, barrels, fire patches, black holes all synced.
+
+=== Phase 4 — Dedicated Server (RPi4): ~90% ===
+Live multiplayer works. Take-a-Turn async works. Ranked matchmaking built into
+the game server (single port 7777, all match types as threads). Cross-compiled
+aarch64 server binary. All multiplayer traffic encrypted with TLS/SSL (TLS 1.2/1.3
+via rustls + Let's Encrypt cert — same cert as the website). Went Python/SQLite
+instead of planned Rust/Tokio/Postgres for the API layer — functional but simpler
+than originally spec'd.
+
+=== Phase 5 — Accounts & ELO Matchmaking: ~60% ===
+
+DONE (API/backend):
+- ELO system (K=32, floor 100, displayed in ranked matches)
+- Leaderboard, per-weapon kill stats, ranked/casual TAT + live queues
+- Economy: scrap (soft currency) and warbonds (premium currency)
+- Shop: 11 hats + 4 gun colors, purchasable with scrap or warbonds
+- Daily/weekly challenges with scrap rewards
+- Warbond transaction log
+
+NOT DONE (Rust client side):
+- Scrap earned not shown on game-over screen
+- No profile/balance screen in the title menu
+- No shop or challenges screen in-game
+- Hats/gun colors bought in shop don't appear on soldiers in matches
+- Opponent cosmetics not visible in live multiplayer
+
+=== Phase 6 — Polish & Live Ops: NOT STARTED ===
+Spectator mode, server monitoring dashboard.
+
+=== Bottom Line ===
+The game is fully playable and secure — complete weapon sandbox, working live + TAT
+multiplayer, ranked queue, economy backend, encrypted connections. The main gap is
+that the cosmetics/shop loop exists on the server but isn't wired into the game
+client yet. That's the difference between "working" and "feature complete."
