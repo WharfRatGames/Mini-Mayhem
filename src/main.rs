@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.312";
+const VERSION: &str = "0.5.4.313";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -215,10 +215,10 @@ fn main() {
         let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
         if let Ok(true) = got {
             update_available = true;
-        } else if !skip_update && (got == Err(std::sync::mpsc::RecvTimeoutError::Disconnected) || !update_available) {
-            // Background timed out (NOT sentinel) — do a blocking check before proceeding.
-            // skip_update guard is critical: if sentinel fired, the disconnected channel
-            // must NOT trigger a fresh check or the device loops on every failed update.
+        } else if got == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+            // Background thread still in flight after 500 ms — do a capped blocking wait.
+            // Disconnected means the thread already completed (result was Ok(false), consumed
+            // by the pre-title recv_timeout); don't spawn a redundant 2-second check in that case.
             let (ftx, frx) = std::sync::mpsc::channel::<bool>();
             std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION)); });
             if let Ok(true) = frx.recv_timeout(std::time::Duration::from_millis(3000)) {
@@ -1660,7 +1660,7 @@ fn show_equip_screen(
         std::thread::sleep(std::time::Duration::from_secs(2));
         return;
     }
-    let (_, owned_hats, owned_guns, owned_uniforms, owned_boots) = profile.unwrap();
+    let (scrap, owned_hats, owned_guns, owned_uniforms, owned_boots) = profile.unwrap();
 
     // If only one roster, use it directly; otherwise let player pick
     let chosen = if rosters.len() == 1 {
@@ -1673,6 +1673,7 @@ fn show_equip_screen(
 
     let mut screen = CosmeticsScreen::new(
         roster, owned_hats, owned_guns, owned_uniforms, owned_boots,
+        token.to_string(), scrap,
     );
 
     loop {
@@ -2991,6 +2992,7 @@ fn show_profile_screen(
     let profile_resp = http_get(&format!("/api/profile?token={}", token)).unwrap_or_default();
     let live_resp    = http_get(&format!("/api/stats?mode=live&token={}", token)).unwrap_or_default();
     let tat_resp     = http_get(&format!("/api/stats?mode=tat&token={}", token)).unwrap_or_default();
+    let history_resp = http_get(&format!("/api/match/history?token={}&limit=10", token)).unwrap_or_default();
 
     let live_w = json_field(&live_resp, "casual_wins").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
                + json_field(&live_resp, "ranked_wins").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
@@ -3067,7 +3069,65 @@ fn show_profile_screen(
         buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, dim_line); y += 6;
         line(buf, "Wins",   &tat_w.to_string(), y); y += 16;
         line(buf, "Losses", &tat_l.to_string(), y); y += 16;
-        line(buf, "Kills",  &tat_k.to_string(), y);
+        line(buf, "Kills",  &tat_k.to_string(), y); y += 20;
+
+        // Match history
+        if let Some(arr_start) = history_resp.find("\"history\":[") {
+            let arr = &history_resp[arr_start + 11..];
+            if arr.trim_start().starts_with('{') {
+                buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, dim_line); y += 8;
+                draw_str(buf, "RECENT MATCHES", 20, y, Bgra::new(140, 200, 255)); y += 18;
+                buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, dim_line); y += 6;
+
+                // Header row
+                draw_str(buf, "RESULT", 20,  y, label_col);
+                draw_str(buf, "OPPONENT",   130, y, label_col);
+                draw_str(buf, "MODE",   340, y, label_col);
+                draw_str(buf, "KILLS", 440, y, label_col);
+                draw_str(buf, "SCRAP", 530, y, label_col);
+                y += 14;
+                buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, Bgra::new(40, 40, 65)); y += 4;
+
+                let mut depth = 0i32;
+                let mut entry_start = 0usize;
+                for (i, c) in arr.char_indices() {
+                    match c {
+                        '{' => { if depth == 0 { entry_start = i; } depth += 1; }
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 && y < sh - 30 {
+                                let entry = &arr[entry_start..=i];
+                                let result  = json_field(entry, "result").unwrap_or_default();
+                                let opp     = json_field(entry, "opponent").unwrap_or_default();
+                                let mode    = json_field(entry, "mode").unwrap_or_default();
+                                let ranked  = json_field(entry, "ranked").map(|s| s == "true").unwrap_or(false);
+                                let kills   = json_field(entry, "kills").unwrap_or_default();
+                                let scrap   = json_field(entry, "scrap").unwrap_or_else(|| "-".to_string());
+
+                                let (res_str, res_col) = match result.as_str() {
+                                    "win"  => ("WIN",  Bgra::new(80, 220, 100)),
+                                    "loss" => ("LOSS", Bgra::new(220, 80, 80)),
+                                    _      => ("DRAW", Bgra::new(160, 160, 160)),
+                                };
+                                let mode_str = if ranked {
+                                    if mode == "live" { "RANKED LIVE" } else { "RANKED TAT" }
+                                } else {
+                                    if mode == "live" { "LIVE" } else { "TAT" }
+                                };
+                                let opp_display = if opp.is_empty() { "?" } else { &opp };
+                                draw_str(buf, res_str,     20,  y, res_col);
+                                draw_str(buf, opp_display, 130, y, val_col);
+                                draw_str(buf, mode_str,    340, y, label_col);
+                                draw_str(buf, &kills,      440, y, val_col);
+                                draw_str(buf, &scrap,      530, y, Bgra::new(220, 200, 80));
+                                y += 16;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0);
 

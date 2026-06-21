@@ -866,6 +866,17 @@ pub struct CosmeticsScreen {
     col:            usize, // 0=hat 1=uniform 2=boots 3=gun
     cycling:        bool,  // true = A was pressed, dpad cycles; A confirms, B cancels
     cycle_backup:   u8,    // value before entering cycling mode (for B-cancel)
+    token:          String,
+    scrap:          u32,
+    buy_prompt:     Option<BuyPrompt>, // set when A pressed on an unowned item
+    status_msg:     Option<(String, u32)>, // (message, ttl ticks)
+}
+
+struct BuyPrompt {
+    cosm_type: &'static str,
+    cosm_id:   u8,
+    name:      &'static str,
+    cost:      u32,
 }
 
 impl CosmeticsScreen {
@@ -875,26 +886,70 @@ impl CosmeticsScreen {
         owned_guns:     Vec<u8>,
         owned_uniforms: Vec<u8>,
         owned_boots:    Vec<u8>,
+        token:          String,
+        scrap:          u32,
     ) -> Self {
         Self { roster, owned_hats, owned_uniforms, owned_boots, owned_guns,
-               soldier: 0, col: 0, cycling: false, cycle_backup: 0 }
+               soldier: 0, col: 0, cycling: false, cycle_backup: 0,
+               token, scrap, buy_prompt: None, status_msg: None }
     }
 
     pub fn update(&mut self, input: &InputState, buf: &mut WorldBuffer) -> Option<CosmeticsAction> {
-        if self.cycling {
+        if let Some(status) = &mut self.status_msg {
+            status.1 = status.1.saturating_sub(1);
+            if status.1 == 0 { self.status_msg = None; }
+        }
+
+        if self.buy_prompt.is_some() {
             if input.just_pressed(Button::A) {
-                // Confirm selection
-                self.cycling = false;
+                let p = self.buy_prompt.take().unwrap();
+                if self.scrap < p.cost {
+                    self.status_msg = Some(("NOT ENOUGH SCRAP".to_string(), 90));
+                } else {
+                    match crate::game::account::shop_buy(&self.token, p.cosm_type, p.cosm_id) {
+                        Ok(()) => {
+                            self.scrap = self.scrap.saturating_sub(p.cost);
+                            match p.cosm_type {
+                                "hat"       => self.owned_hats.push(p.cosm_id),
+                                "gun_style" => self.owned_guns.push(p.cosm_id),
+                                "uniform"   => self.owned_uniforms.push(p.cosm_id),
+                                "boots"     => self.owned_boots.push(p.cosm_id),
+                                _ => {}
+                            }
+                            self.status_msg = Some((format!("BOUGHT {}!", p.name), 90));
+                        }
+                        Err(e) => { self.status_msg = Some((e.to_uppercase(), 90)); }
+                    }
+                }
             } else if input.just_pressed(Button::B) {
-                // Cancel — restore backup
+                self.buy_prompt = None;
+            }
+        } else if self.cycling {
+            if input.just_pressed(Button::A) {
+                // Confirm: if current item is unowned, trigger buy prompt; else just confirm equip
+                let col = self.col;
+                let si = self.soldier;
+                let cur = self.current_id(col, si);
+                let owned = self.owned_for_col(col);
+                if cur > 0 && !owned.contains(&cur) {
+                    let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
+                    if let Some(&(ct, cid, name, cost)) = crate::game::store::CATALOG.iter()
+                        .find(|&&(ct, cid, _, _)| ct == col_type && cid == cur)
+                    {
+                        self.buy_prompt = Some(BuyPrompt { cosm_type: ct, cosm_id: cid, name, cost });
+                    }
+                } else {
+                    self.cycling = false;
+                }
+            } else if input.just_pressed(Button::B) {
                 let si = self.soldier;
                 let col = self.col;
                 self.set_id(col, si, self.cycle_backup);
                 self.cycling = false;
             } else {
                 let si = self.soldier;
-                if input.just_pressed(Button::Left)  { self.cycle(-1, si); }
-                if input.just_pressed(Button::Right) { self.cycle( 1, si); }
+                if input.just_pressed(Button::Left)  { self.cycle_all(-1, si); }
+                if input.just_pressed(Button::Right) { self.cycle_all( 1, si); }
             }
         } else {
             if input.just_pressed(Button::B) { return Some(CosmeticsAction::Saved(self.roster.clone())); }
@@ -903,12 +958,9 @@ impl CosmeticsScreen {
             if input.just_pressed(Button::Left)  { self.col = self.col.saturating_sub(1); }
             if input.just_pressed(Button::Right) { if self.col < 3 { self.col += 1; } }
             if input.just_pressed(Button::A) {
-                // Enter cycling mode if this slot has owned items
-                let owned = self.owned_for_col(self.col);
-                if !owned.is_empty() {
-                    self.cycle_backup = self.current_id(self.col, self.soldier);
-                    self.cycling = true;
-                }
+                let col = self.col;
+                self.cycle_backup = self.current_id(col, self.soldier);
+                self.cycling = true;
             }
             if input.just_pressed(Button::Start) { return Some(CosmeticsAction::Saved(self.roster.clone())); }
         }
@@ -947,13 +999,14 @@ impl CosmeticsScreen {
         }
     }
 
-    fn cycle(&mut self, dir: i32, si: usize) {
+    fn cycle_all(&mut self, dir: i32, si: usize) {
         let col = self.col;
-        let owned = self.owned_for_col(col);
-        if owned.is_empty() { return; }
-        // Options: 0 (none) + owned ids
+        let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
+        // Options: 0 (none) + all catalog ids for this category
         let mut opts = vec![0u8];
-        opts.extend_from_slice(owned);
+        for &(ct, cid, _, _) in crate::game::store::CATALOG {
+            if ct == col_type { opts.push(cid); }
+        }
         let cur = self.current_id(col, si);
         let pos = opts.iter().position(|&x| x == cur).unwrap_or(0);
         let next = ((pos as i32 + dir).rem_euclid(opts.len() as i32)) as usize;
@@ -1071,14 +1124,60 @@ impl CosmeticsScreen {
             }
         }
 
+        // Status message (purchase feedback)
+        if let Some((msg, _)) = &self.status_msg {
+            let mw = str_width(msg) as i32;
+            draw_str(buf, msg, sw/2 - mw/2, sh - 38, Bgra::new(80, 220, 120));
+        }
+
+        // Scrap balance (always visible)
+        let scrap_str = format!("SCRAP: {}", self.scrap);
+        draw_str(buf, &scrap_str, sw - str_width(&scrap_str) as i32 - 6, 34, Bgra::new(220, 200, 80));
+
         // Hint bar
         buf.fill_rect(0, sh - 22, SCREEN_W, 22, Bgra::new(12, 14, 35));
-        let hint = if self.cycling {
+        let hint = if self.buy_prompt.is_some() {
+            "A=BUY  B=CANCEL"
+        } else if self.cycling {
+            let col = self.col;
+            let si = self.soldier;
+            let cur = self.current_id(col, si);
+            let owned = self.owned_for_col(col);
+            if cur > 0 && !owned.contains(&cur) {
+                let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
+                if let Some(&(_, _, _, cost)) = crate::game::store::CATALOG.iter()
+                    .find(|&&(ct, cid, _, _)| ct == col_type && cid == cur)
+                {
+                    // Show price inline — draw it separately so we can format with cost
+                    let price_str = format!("A=BUY ({} scrap)  B=CANCEL", cost);
+                    draw_str(buf, &price_str, sw/2 - str_width(&price_str)/2, sh - 16, Bgra::new(220, 200, 80));
+                    return; // skip the generic hint below
+                }
+            }
             "DPAD=CYCLE  A=CONFIRM  B=CANCEL"
         } else {
             "ARROWS=NAVIGATE  A=SELECT  START=SAVE  B=BACK"
         };
         draw_str(buf, hint, sw/2 - str_width(hint)/2, sh - 16, Bgra::new(60, 70, 110));
+
+        // Buy prompt overlay
+        if let Some(ref p) = self.buy_prompt {
+            let bw = 360i32; let bh = 80i32;
+            let bx = sw/2 - bw/2; let by = sh/2 - bh/2;
+            buf.fill_rect(bx, by, bw as u32, bh as u32, Bgra::new(10, 12, 30));
+            buf.fill_rect(bx, by, bw as u32, 1, Bgra::new(80, 140, 255));
+            buf.fill_rect(bx, by+bh-1, bw as u32, 1, Bgra::new(80, 140, 255));
+            buf.fill_rect(bx, by, 1, bh as u32, Bgra::new(80, 140, 255));
+            buf.fill_rect(bx+bw-1, by, 1, bh as u32, Bgra::new(80, 140, 255));
+            let title = format!("BUY {}?", p.name.to_uppercase());
+            draw_str_scaled(buf, &title, sw/2 - str_width_scaled(&title, 2)/2, by + 10, Bgra::new(255, 220, 50), 2);
+            let cost_str = format!("Cost: {} scrap  (have: {})", p.cost, self.scrap);
+            let can_afford = self.scrap >= p.cost;
+            let cost_col = if can_afford { Bgra::new(200, 200, 220) } else { Bgra::new(220, 80, 80) };
+            draw_str(buf, &cost_str, sw/2 - str_width(&cost_str)/2, by + 38, cost_col);
+            let confirm = if can_afford { "A=CONFIRM  B=CANCEL" } else { "NEED MORE SCRAP  B=CANCEL" };
+            draw_str(buf, confirm, sw/2 - str_width(confirm)/2, by + 58, Bgra::new(60, 70, 110));
+        }
     }
 }
 

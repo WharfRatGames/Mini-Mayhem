@@ -61,6 +61,9 @@ def init_db(c):
         ("mode",            "TEXT DEFAULT 'tat'"),
         ("p0_weapon_kills",  "TEXT DEFAULT '{}'"),
         ("p1_weapon_kills",  "TEXT DEFAULT '{}'"),
+        ("finished_at",      "INTEGER DEFAULT NULL"),
+        ("p0_scrap",         "INTEGER DEFAULT NULL"),
+        ("p1_scrap",         "INTEGER DEFAULT NULL"),
     ]:
         try: c.execute(f"ALTER TABLE matches ADD COLUMN {col} {defn}")
         except: pass
@@ -825,6 +828,22 @@ def handle(db, sock):
         kills_val = int(data.get("kills", 0))
         scrap_earned = 75 if is_win else 25
         db.execute("UPDATE users SET scrap=scrap+? WHERE id=?", (scrap_earned, uid2))
+        # Record the live match in the matches table for history
+        opp_uid2 = None
+        if opp_username:
+            r = db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (opp_username,)).fetchone()
+            if r: opp_uid2 = r[0]
+        my_slot_live = int(data.get("my_slot", 0))
+        p0_live = uid2 if my_slot_live == 0 else opp_uid2
+        p1_live = opp_uid2 if my_slot_live == 0 else uid2
+        uid_winner_live = uid2 if is_win else opp_uid2
+        p0_kills_live = kills_val if my_slot_live == 0 else 0
+        p1_kills_live = kills_val if my_slot_live == 1 else 0
+        p0_scrap_live = scrap_earned if my_slot_live == 0 else None
+        p1_scrap_live = scrap_earned if my_slot_live == 1 else None
+        now_ts = int(time.time())
+        db.execute("INSERT INTO matches(code,p0,p1,seed,ranked,mode,done,winner,p0_kills,p1_kills,p0_scrap,p1_scrap,finished_at) VALUES(?,?,?,0,?,?,1,?,?,?,?,?,?)",
+                   (f"live_{uid2}_{now_ts}", p0_live, p1_live, 1 if is_ranked else 0, 'live', uid_winner_live, p0_kills_live, p1_kills_live, p0_scrap_live, p1_scrap_live, now_ts))
         db.commit()
         update_challenges(db, uid2, matches=1, wins=1 if is_win else 0, kills=kills_val)
         new_elo = get_elo(uid2)
@@ -874,6 +893,9 @@ def handle(db, sock):
         is_win_tat = (uid2 == uid_winner)
         scrap_earned = 75 if is_win_tat else 25
         db.execute("UPDATE users SET scrap=scrap+? WHERE id=?", (scrap_earned, uid2))
+        my_slot_tat = 0 if uid2 == p0 else 1
+        scrap_col_tat = f"p{my_slot_tat}_scrap"
+        db.execute(f"UPDATE matches SET finished_at=?, {scrap_col_tat}=? WHERE id=?", (int(time.time()), scrap_earned, mid))
         db.commit()
         update_challenges(db, uid2, matches=1, wins=1 if is_win_tat else 0, kills=kills_val)
         new_elo = get_elo(uid2)
@@ -928,6 +950,34 @@ def handle(db, sock):
                               "opponent_worm_names": opp_worm_names,
                               "opponent_hat_ids": opp_hat_ids, "opponent_uniform_color_ids": opp_uniform_ids,
                               "opponent_boot_color_ids": opp_boot_ids, "opponent_gun_style_ids": opp_gun_ids})
+
+    elif method == "GET" and path == "/match/history":
+        uid2 = uid(token)
+        if not uid2: send_json(sock, 401, {"error":"invalid token"}); return
+        limit = min(int(qs_params.get("limit", 20)), 50)
+        rows = db.execute("""
+            SELECT m.id, m.p0, m.p1, m.winner, m.ranked, m.mode,
+                   m.p0_kills, m.p1_kills, m.p0_scrap, m.p1_scrap, m.finished_at,
+                   u0.username, u1.username
+            FROM matches m
+            LEFT JOIN users u0 ON u0.id = m.p0
+            LEFT JOIN users u1 ON u1.id = m.p1
+            WHERE (m.p0=? OR m.p1=?) AND m.done=1 AND m.finished_at IS NOT NULL
+            ORDER BY m.finished_at DESC LIMIT ?
+        """, (uid2, uid2, limit)).fetchall()
+        history = []
+        for r in rows:
+            mid2,p0,p1,winner,is_ranked,mode,p0k,p1k,p0s,p1s,fin,u0name,u1name = r
+            my_slot = 0 if p0 == uid2 else 1
+            opp_name = (u1name or "") if my_slot == 0 else (u0name or "")
+            my_kills = p0k if my_slot == 0 else p1k
+            my_scrap = p0s if my_slot == 0 else p1s
+            result = "win" if winner == uid2 else ("loss" if winner is not None else "draw")
+            history.append({"opponent": opp_name, "result": result,
+                             "kills": my_kills or 0, "scrap": my_scrap,
+                             "ranked": bool(is_ranked), "mode": mode or "tat",
+                             "finished_at": fin})
+        send_json(sock, 200, {"history": history})
 
     elif method == "GET" and path == "/matches/pending":
         uid2 = uid(token)

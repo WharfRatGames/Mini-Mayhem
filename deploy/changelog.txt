@@ -1,3 +1,4 @@
+0.5.4.313  Mine redesign (flat disc); flame flicker fix; faster match start; match history on profile screen; buy cosmetics from equip screen; 9 new backgrounds.
 0.5.4.312  Multiplayer now encrypted with TLS; server reads cert from ~/mayhem-server/tls/.
 0.5.4.311  End screen text uses full screen height; headline larger; mine flat-topped dome shape; torch flames restored; homing missile smoke trail; L1+aim for precision aiming.
 0.5.4.310  Ranked matchmaking built into game server; homing missile locks soldier in place after firing; body colors match bazooka with red nose.
