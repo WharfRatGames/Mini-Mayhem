@@ -148,6 +148,9 @@ impl ServerConn {
                         } else {
                             *latest2.lock().unwrap() = Some(buf);
                         }
+                        // Yield so the main thread can acquire the stream lock
+                        // to send InputMsg before we re-lock for the next read.
+                        thread::sleep(Duration::from_millis(1));
                     }
                     None => break,
                 }

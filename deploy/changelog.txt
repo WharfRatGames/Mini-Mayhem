@@ -1,3 +1,5 @@
+0.5.4.327  FPS optimizations: cut ambient debris particles, halve FX cap; fix weapon cycling in live mode, Dragon Skull scale, TNT/barrel instant-trigger.
+0.5.4.326  Fix live multiplayer frame rate: background reader now yields after each state message so main thread can send input without blocking.
 0.5.4.325  Debug logging for casual lobby investigation.
 0.5.4.324  Fix casual lobby: second player now receives lobby state correctly.
 0.5.4.323  Fix gamepad button mapping on Windows for PlayStation controllers.

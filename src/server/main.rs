@@ -694,13 +694,9 @@ fn broadcast_lobby(lobby: &SharedLobby) {
         color_id:  m.color_id,
         ready:     m.ready,
     }).collect();
-    info!("broadcast_lobby: {} members", lb.members.len());
     for (i, m) in lb.members.iter().enumerate() {
         if let Some(bytes) = encode(&LobbyServerMsg::State { players: players.clone(), your_index: i }) {
-            info!("broadcast_lobby: sending to slot {} ({} players)", i, players.len());
-            let t0 = std::time::Instant::now();
             write_arc(&m.write, &bytes);
-            info!("broadcast_lobby: slot {} write done in {:?}", i, t0.elapsed());
         }
     }
 }
@@ -1212,7 +1208,7 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.325";
+const REQUIRED_VERSION: &str = "0.5.4.327";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
