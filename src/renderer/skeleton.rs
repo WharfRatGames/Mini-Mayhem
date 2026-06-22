@@ -42,15 +42,15 @@ fn rot(x: f32, y: f32, a: f32) -> (f32, f32) {
 fn smoothstep(t: f32) -> f32 { t * t * (3.0 - 2.0 * t) }
 
 /// Compute world (x, y) of each bone endpoint given the hip root position.
-fn compute_positions(root: (f32, f32), bones: &[Bone; N_BONES]) -> [(f32, f32); N_BONES] {
-    let mut origins: [(f32, f32); N_BONES] = [root; N_BONES];
+/// `root_angle` rotates the entire skeleton around the root — applied only to
+/// parentless bones so the whole figure spins without changing local poses.
+fn compute_positions(root: (f32, f32), bones: &[Bone; N_BONES], root_angle: f32) -> [(f32, f32); N_BONES] {
     let mut world_angles = [0f32; N_BONES];
     let mut ends = [(0f32, 0f32); N_BONES];
 
     for i in 0..N_BONES {
         let parent_origin = bones[i].parent.map_or(root, |p| ends[p]);
-        let parent_angle  = bones[i].parent.map_or(0.0,  |p| world_angles[p]);
-        origins[i] = parent_origin;
+        let parent_angle  = bones[i].parent.map_or(root_angle, |p| world_angles[p]);
 
         let world_angle = parent_angle + bones[i].angle;
         world_angles[i] = world_angle;
@@ -125,16 +125,24 @@ fn pose_airborne(bones: &mut [Bone; N_BONES], vel_x: f32, vel_y: f32) {
     bones[ARM_L].angle = lean * 0.5 - 0.4;
 }
 
-fn pose_spin(bones: &mut [Bone; N_BONES], airtime: u32, facing: f32) {
-    use std::f32::consts::{PI, TAU};
-    // Negative facing direction: head tilts backward (away from facing) over legs
-    let angle = -(facing) * airtime as f32 / 18.0 * TAU;
-    bones[TORSO].angle = angle;
-    bones[HEAD].angle  = 0.0;    // local to TORSO → tumbles with it
-    bones[ARM_R].angle =  0.35;  // tucked relative to torso
-    bones[ARM_L].angle = -0.35;
-    bones[LEG_R].angle = PI + angle + 0.12;
-    bones[LEG_L].angle = PI + angle - 0.12;
+/// Returns (root_angle) — the whole-skeleton rotation angle for this airtime tick.
+/// Pose bones hold the tuck shape; root rotation carries them around.
+fn pose_spin(bones: &mut [Bone; N_BONES], airtime: u32, facing: f32) -> f32 {
+    use std::f32::consts::{PI, TAU, FRAC_PI_2};
+    // One full rotation every 18 ticks, direction determined by facing
+    let root_angle = -(facing) * airtime as f32 / 18.0 * TAU;
+
+    // Tuck: torso upright relative to root, legs pulled forward/up, arms hugged in
+    bones[TORSO].angle = 0.0;
+    bones[HEAD].angle  = 0.0;
+    // Legs pulled up into a tuck (thighs forward, calves bent back)
+    bones[LEG_R].angle = PI - 0.55;
+    bones[LEG_L].angle = PI + 0.55;
+    // Arms hugged tight across the chest
+    bones[ARM_R].angle =  FRAC_PI_2 - 0.3;
+    bones[ARM_L].angle = -FRAC_PI_2 + 0.3;
+
+    root_angle
 }
 
 fn pose_dead(bones: &mut [Bone; N_BONES], facing: f32) {
@@ -406,19 +414,19 @@ pub fn draw_soldier_skeletal(
 
     let mut bones = default_bones();
 
-    // Select animation
-    match anim {
+    // Select animation; spin returns a root_angle for whole-skeleton rotation
+    let root_angle = match anim {
         SoldierAnim::Idle =>
-            pose_idle(&mut bones, pos.x * 0.0 + 0.0), // will use game tick passed as part of pos hack — use 0 for now; caller sets via Walking{tick}
+            { pose_idle(&mut bones, pos.x * 0.0 + 0.0); 0.0 }
         SoldierAnim::Walking { tick } =>
-            pose_walk(&mut bones, *tick, f),
+            { pose_walk(&mut bones, *tick, f); 0.0 }
         SoldierAnim::Airborne { vel_x: _, vel_y: _, airtime, spinning: true } =>
             pose_spin(&mut bones, *airtime, f),
         SoldierAnim::Airborne { vel_x, vel_y, .. } =>
-            pose_airborne(&mut bones, *vel_x, *vel_y),
+            { pose_airborne(&mut bones, *vel_x, *vel_y); 0.0 }
         SoldierAnim::Dead =>
-            pose_dead(&mut bones, f),
-    }
+            { pose_dead(&mut bones, f); 0.0 }
+    };
 
     // Override arm angle to track aim when aiming
     if let Some(aim) = aim_angle {
@@ -443,7 +451,7 @@ pub fn draw_soldier_skeletal(
         else        { bones[ARM_L].angle = arm_local; }
     }
 
-    let ends = compute_positions(root, &bones);
+    let ends = compute_positions(root, &bones, root_angle);
 
     let hip       = root;
     let shoulder  = ends[TORSO];
