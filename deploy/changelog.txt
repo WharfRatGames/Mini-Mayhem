@@ -1,3 +1,4 @@
+0.5.4.334  Reduce fire patch DoT: 1 HP every 10 ticks (3 HP/s) down from 1 HP every 5 ticks (6 HP/s).
 0.5.4.333  Backflip animation: root-rotation approach — skeleton spins as a unit, legs tuck up and arms hug in during the flip instead of counter-rotating.
 0.5.4.332  Squad preview screen: foot position and name label adjusted for larger V2 soldier head.
 0.5.4.331  Soldier facial features: ear nub, eyebrow, eye white+pupil+glint, nose dot, chin shadow, downturned mouth; suppressed for face-replacing hats (Viking, Dragon Skull, Luchador).
