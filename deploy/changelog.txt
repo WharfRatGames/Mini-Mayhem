@@ -1,3 +1,9 @@
+0.5.4.324  Fix casual lobby: second player now receives lobby state correctly.
+0.5.4.323  Fix gamepad button mapping on Windows for PlayStation controllers.
+0.5.4.322  Log full TLS login error to /tmp/arty_login_err.txt for debugging.
+0.5.4.321  Fix login TLS: embed ISRG Root YR trust anchor missing from webpki-roots.
+0.5.4.320  Fix login TLS failure caused by new Let's Encrypt root cert (ISRG Root YR).
+0.5.4.319  Login error now shows actual failure reason instead of generic network error.
 0.5.4.318  40 new terrain textures (textures5 atlas).
 0.5.4.317  Windows desktop build; account register/logout on title screen; lobby fix for cross-platform play.
 0.5.4.316  DNS pre-resolved at launch so live connect is instant instead of 15-20s.
