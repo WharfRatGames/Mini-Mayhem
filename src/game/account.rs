@@ -1191,7 +1191,7 @@ impl CosmeticsScreen {
         let slot_w = sw / 4;
         for si in 0..4usize {
             let cx = si as i32 * slot_w + slot_w / 2;
-            let foot_y = sh - 80;
+            let foot_y = sh - 70;
             let pos = WorldPos::new(cx as f32, foot_y as f32);
             draw_soldier_skeletal(
                 buf, pos, si, 1, 100, &SoldierAnim::Idle,
@@ -1203,10 +1203,10 @@ impl CosmeticsScreen {
                 None, 0.0, 0, 0,
             );
 
-            // Soldier name above
+            // Soldier name above — pushed up to clear the bigger V2 head
             let name = &self.roster.worm_names[si];
             let nw = str_width(name) as i32;
-            draw_str(buf, name, cx - nw/2, foot_y - 50, Bgra::new(255, 220, 80));
+            draw_str(buf, name, cx - nw/2, foot_y - 66, Bgra::new(255, 220, 80));
 
             // Cosmetic labels below
             let cosm_type_names = ["hat", "uniform", "boots", "gun_style"];
