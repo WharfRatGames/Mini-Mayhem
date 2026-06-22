@@ -29,6 +29,7 @@ type CasualRegistry = Arc<Mutex<HashMap<String, Arc<CasualSlot>>>>;
 use arty::net::{msg::*, encode};
 use arty::game::net_sync::build_state;
 use log::info;
+use chrono::Local;
 
 // Pull in the real game modules
 use arty::world::{Heightmap, Terrain, WORLD_W};
@@ -59,7 +60,14 @@ fn main() {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .target(env_logger::Target::Pipe(Box::new(log_file)))
-        .format_timestamp_secs()
+        .format(|buf, record| {
+            use std::io::Write;
+            writeln!(buf, "[{}  {}  {}] {}",
+                Local::now().format("%Y-%m-%d %H:%M:%S %Z"),
+                record.level(),
+                record.target(),
+                record.args())
+        })
         .init();
     // ARTY_PORT env var lets the API spawn instances on different ports
     let port: u16 = std::env::var("ARTY_PORT")
@@ -105,18 +113,20 @@ fn main() {
         // ranked match. Drain dead waiters first, then pair if someone else is
         // already waiting, otherwise add this player to the queue.
         if token == RANKED_QUEUE_TOKEN {
+            let username = read_line(&mut *stream.lock().unwrap_or_else(|e| e.into_inner()), 64)
+                .unwrap_or_else(|| "?".to_string());
             // Drain dead waiters, then either pair immediately or enqueue.
             let mut q = ranked_queue.lock().unwrap_or_else(|e| e.into_inner());
             q.retain(|s| stream_alive(s));
             if q.is_empty() {
                 q.push(stream);
-                info!("Ranked: player queued ({} waiting)", q.len());
+                info!("Ranked: {} queued ({} waiting)", username, q.len());
             } else {
                 let s0 = q.remove(0);
                 drop(q); // release lock before spawning
                 let mid = match_id.fetch_add(1, Ordering::Relaxed) + 1;
                 let registry2 = registry.clone();
-                info!("Ranked: pairing match {mid}");
+                info!("Ranked: pairing {} into match {mid}", username);
                 thread::spawn(move || run_ranked_match(mid, s0, stream, registry2));
             }
             continue;
@@ -752,6 +762,7 @@ fn handle_lobby_msg(
         match msg {
             LobbyClientMsg::Join(j) => {
                 if !lb.members.iter().any(|m| m.id == my_id) && lb.members.len() < 4 {
+                    info!("Lobby join: {} ({})", j.username, j.name);
                     lb.members.push(LobbyMember {
                         id: my_id, write: write.clone(), input: input.clone(),
                         disc: disc.clone(), quit: quit.clone(), gen: gen.clone(),
@@ -1145,6 +1156,9 @@ fn read_one_arc(s: &ArcStream, read_buf: &mut Vec<u8>) -> Option<Vec<u8>> {
         let mut tmp = [0u8; 4096];
         let n = {
             let mut guard = s.lock().unwrap_or_else(|e| e.into_inner());
+            // Short timeout keeps the lock window bounded so broadcast_lobby can
+            // acquire the write lock without waiting more than ~5 ms.
+            guard.get_ref().set_read_timeout(Some(Duration::from_millis(5))).ok();
             match guard.read(&mut tmp) {
                 Ok(0) => return None,
                 Ok(n) => n,
@@ -1194,7 +1208,7 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.316";
+const REQUIRED_VERSION: &str = "0.5.4.324";
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.

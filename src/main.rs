@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.318";
+const VERSION: &str = "0.5.4.324";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -449,6 +449,10 @@ fn main() {
                     c.send_raw(b"\n");
                     c.send_raw(session_token.as_bytes());
                     c.send_raw(b"\n");
+                    if live_ranked_match {
+                        c.send_raw(live_username.as_bytes());
+                        c.send_raw(b"\n");
+                    }
                     // Read server response: "OK\n" or "REJECTED:VERSION\n"
                     let resp = c.read_line_blocking();
                     if resp.trim() == "REJECTED:VERSION" {
@@ -1634,6 +1638,8 @@ fn show_my_teams_menu(
 
     const ITEMS: &[&str] = &["ROSTERS", "STORE", "EQUIP", "PROFILE", "LOG OUT"];
     let mut cursor = 0usize;
+    let mut scroll = 0usize;
+    const VISIBLE: usize = 4;
     let username = game::account::load_saved_creds().map(|(u, _)| u).unwrap_or_default();
 
     loop {
@@ -1642,8 +1648,15 @@ fn show_my_teams_menu(
 
         if input.just_pressed(input::Button::B) { return; }
         let n = ITEMS.len();
-        if input.just_pressed(input::Button::Up)   { cursor = (cursor + n - 1) % n; }
-        if input.just_pressed(input::Button::Down) { cursor = (cursor + 1) % n; }
+        if input.just_pressed(input::Button::Up) {
+            cursor = (cursor + n - 1) % n;
+            if cursor < scroll { scroll = cursor; }
+        }
+        if input.just_pressed(input::Button::Down) {
+            cursor = (cursor + 1) % n;
+            if cursor == 0 { scroll = 0; }
+            else if cursor >= scroll + VISIBLE { scroll = cursor + 1 - VISIBLE; }
+        }
 
         if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
             match cursor {
@@ -1677,19 +1690,31 @@ fn show_my_teams_menu(
         }
 
         let start_y = panel_y + 32;
-        for (i, &item) in ITEMS.iter().enumerate() {
-            let iy = start_y + i as i32 * item_h;
+        let visible_items = ITEMS.iter().enumerate().skip(scroll).take(VISIBLE);
+        for (i, &item) in visible_items {
+            let slot = (i - scroll) as i32;
+            let iy = start_y + slot * item_h;
             let iw = str_width_scaled(item, 2);
             let selected = i == cursor;
             if selected {
                 crate::renderer::hud::draw_menu_selection(buf, sw/2 - 155, iy - 4, 310, 28);
             }
             let col = if selected {
-                if i == 4 { Bgra::new(255, 100, 80) } else { Bgra::new(255, 225, 55) }
+                if i == n - 1 { Bgra::new(255, 100, 80) } else { Bgra::new(255, 225, 55) }
             } else {
-                if i == 4 { Bgra::new(180, 70, 60) } else { Bgra::new(0, 0, 0) }
+                if i == n - 1 { Bgra::new(180, 70, 60) } else { Bgra::new(0, 0, 0) }
             };
             draw_str_shadow_scaled(buf, item, sw/2 - iw/2, iy, col, 2);
+        }
+        // scroll indicators
+        if scroll > 0 {
+            let aw = str_width_scaled("▲", 2);
+            draw_str_scaled(buf, "▲", sw/2 - aw/2, start_y - item_h, Bgra::new(150, 150, 180), 2);
+        }
+        if scroll + VISIBLE < n {
+            let slot_y = start_y + VISIBLE as i32 * item_h;
+            let aw = str_width_scaled("▼", 2);
+            draw_str_scaled(buf, "▼", sw/2 - aw/2, slot_y, Bgra::new(150, 150, 180), 2);
         }
         crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0);
 
