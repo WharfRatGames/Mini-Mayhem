@@ -32,6 +32,29 @@ else
     echo "WARNING: deploy/changelog.txt missing — update screen will show stale/empty notes"
 fi
 
+# Deploy dashboard
+if [ -f "deploy/dashboard/index.html" ]; then
+    ssh arty-pi "mkdir -p /var/www/html/arty/dashboard"
+    scp deploy/dashboard/index.html arty-pi:/var/www/html/arty/dashboard/index.html
+    echo "Dashboard deployed → https://crumbonium.duckdns.org/arty/dashboard/"
+fi
+
+# Deploy API
+scp deploy/arty_api.py arty-pi:/home/Grunkus/mayhem-server/arty_api.py
+if [ -f "deploy/arty-api.service" ]; then
+    scp deploy/arty-api.service arty-pi:/home/Grunkus/.config/systemd/user/arty-api.service
+    ssh arty-pi "systemctl --user daemon-reload"
+fi
+ssh arty-pi "systemctl --user restart arty-api" 2>/dev/null || true
+echo "API updated"
+
+# Validate nginx config and reload if needed
+if ssh arty-pi "echo fragtownusa | sudo -S nginx -t 2>&1"; then
+    ssh arty-pi "echo fragtownusa | sudo -S systemctl reload nginx" && echo "nginx reloaded OK"
+else
+    echo "WARNING: nginx config test failed — NOT reloading nginx (fix conflict before reloading)"
+fi
+
 # Generate and serve manifest of app files (including sfx assets)
 DEPLOY_DIR="deploy"
 MANIFEST=""
@@ -143,7 +166,28 @@ fi
 
 # Publish to GitHub Releases (attach deploy/assets.zip; build zip stays on Pi only)
 NOTES=$(head -1 deploy/changelog.txt 2>/dev/null || echo "v$VERSION")
-if gh release create "v$VERSION" "$ZIP" deploy/assets.zip \
+WIN_EXE="target/x86_64-pc-windows-gnu/release/mini-mayhem.exe"
+WIN_ARGS=""
+if [ -f "$WIN_EXE" ]; then
+    WIN_STAGE=$(mktemp -d)
+    mkdir -p "$WIN_STAGE/MiniMayhemWindows"
+    cp "$WIN_EXE" "$WIN_STAGE/MiniMayhemWindows/"
+    cp -r deploy/assets/sfx "$WIN_STAGE/MiniMayhemWindows/"
+    WIN_ZIP="$WIN_STAGE/mini-mayhem-windows-$VERSION.zip"
+    (cd "$WIN_STAGE" && zip -r "$WIN_ZIP" MiniMayhemWindows/ -x "*.DS_Store" > /dev/null)
+    WIN_ARGS="$WIN_ZIP"
+    echo "Windows bundle: $WIN_ZIP ($(du -sh "$WIN_ZIP" | cut -f1))"
+    ssh arty-pi "mkdir -p /var/www/html/arty/builds"
+    if scp "$WIN_ZIP" "arty-pi:/var/www/html/arty/builds/mini-mayhem-windows-$VERSION.zip"; then
+        ssh arty-pi "ls -t /var/www/html/arty/builds/mini-mayhem-windows-*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null"
+        echo "Windows download: http://crumbonium.duckdns.org/arty/builds/mini-mayhem-windows-$VERSION.zip"
+    else
+        echo "WARNING: Windows builds scp to Pi failed"
+    fi
+else
+    echo "WARNING: Windows binary not found at $WIN_EXE — skipping"
+fi
+if gh release create "v$VERSION" "$ZIP" deploy/assets.zip $WIN_ARGS \
     --repo WharfRatGames/Mini-Mayhem \
     --title "v$VERSION" \
     --notes "$NOTES" \
@@ -152,3 +196,4 @@ if gh release create "v$VERSION" "$ZIP" deploy/assets.zip \
 else
     echo "WARNING: GitHub release failed (non-fatal)"
 fi
+[ -n "$WIN_STAGE" ] && rm -rf "$WIN_STAGE"
