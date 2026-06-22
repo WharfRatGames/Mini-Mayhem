@@ -436,56 +436,155 @@ impl Terrain {
         let mut void_shafts = 0usize;   // caverns: vertical entrance shafts into the void
 
         match archetype {
-            0 => { // Rolling hills
-                fade = rnd(&mut rng, 0.40, 0.10);
-                threshold = rnd(&mut rng, 0.49, 0.04);
-                scale_x = rnd(&mut rng, 2.5, 1.5);
-                contrast = 1.25;
-                cliff_bias = rnd(&mut rng, -0.10, 0.20);
-                cave = lcg(&mut rng) % 100 < 25;
+            0 => { // Rolling hills — sub-variants: standard / valley / plateau / twin-peak
+                let sub = lcg(&mut rng) % 4;
+                match sub {
+                    0 => { // Standard rolling hills
+                        fade = rnd(&mut rng, 0.40, 0.12);
+                        threshold = rnd(&mut rng, 0.49, 0.05);
+                        scale_x = rnd(&mut rng, 2.5, 2.0);
+                        contrast = 1.25;
+                        cliff_bias = rnd(&mut rng, -0.10, 0.20);
+                    }
+                    1 => { // Valley: terrain pools in center, rises at edges
+                        fade = rnd(&mut rng, 0.35, 0.10);
+                        threshold = rnd(&mut rng, 0.50, 0.04);
+                        scale_x = rnd(&mut rng, 3.0, 2.0);
+                        contrast = 1.35;
+                        cliff_bias = 0.0; // symmetric
+                        warp_amp = rnd(&mut rng, 0.10, 0.08);
+                    }
+                    2 => { // Plateau: broad flat mesa with drop-offs at sides
+                        fade = rnd(&mut rng, 0.55, 0.08);
+                        threshold = rnd(&mut rng, 0.53, 0.03);
+                        scale_x = rnd(&mut rng, 1.5, 1.0);
+                        contrast = 1.6;
+                        cliff_bias = 0.0;
+                        terrace = Some(3.0);
+                        terrace_mix = 0.50;
+                    }
+                    _ => { // Twin peaks: strong directional bias + high frequency
+                        fade = rnd(&mut rng, 0.38, 0.10);
+                        threshold = rnd(&mut rng, 0.50, 0.04);
+                        scale_x = rnd(&mut rng, 5.0, 2.0);
+                        contrast = 1.45;
+                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
+                        cliff_bias = dir * rnd(&mut rng, 0.14, 0.12);
+                        warp_amp = rnd(&mut rng, 0.12, 0.08);
+                    }
+                }
+                cave = lcg(&mut rng) % 100 < 30;
             }
-            1 => { // Cliffs & overhangs: ridged faces + cantilevered ceiling shelves
-                fade = rnd(&mut rng, 0.30, 0.10);
-                // Higher threshold so the ridged noise doesn't saturate the surface
-                // into a flat solid top — lets valleys/notches cut in for a rolling look.
-                threshold = rnd(&mut rng, 0.52, 0.06);
-                // Higher horizontal frequency → frequent ridges/notches across the top
-                // (breaks the broad flat-mesa silhouette into a craggy rolling skyline).
-                scale_x = rnd(&mut rng, 5.0, 3.0);
-                scale_y = 2.2;
+            1 => { // Cliffs — sub-variants: craggy-face / arch-bridge / one-sided mesa
+                let sub = lcg(&mut rng) % 3;
                 ridged = true;
-                contrast = 1.2;
-                let dir = if lcg(&mut rng) & 1 == 0 { 1.0 } else { -1.0 };
-                cliff_bias = dir * rnd(&mut rng, 0.18, 0.22);
-                // Strong domain warp gives genuinely craggy, leaning faces.
-                warp_amp = rnd(&mut rng, 0.28, 0.14); // 0.28–0.42
                 overhang = true;
+                match sub {
+                    0 => { // Craggy cliff face: standard ridged with strong warp
+                        fade = rnd(&mut rng, 0.30, 0.12);
+                        threshold = rnd(&mut rng, 0.52, 0.06);
+                        scale_x = rnd(&mut rng, 5.0, 4.0);
+                        scale_y = 2.2;
+                        contrast = 1.25;
+                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
+                        cliff_bias = dir * rnd(&mut rng, 0.18, 0.24);
+                        warp_amp = rnd(&mut rng, 0.28, 0.18);
+                    }
+                    1 => { // Arch-bridge: extreme warp + moderate bias → arches and tunnels
+                        fade = rnd(&mut rng, 0.28, 0.10);
+                        threshold = rnd(&mut rng, 0.54, 0.05);
+                        scale_x = rnd(&mut rng, 4.0, 3.0);
+                        scale_y = 1.8;
+                        contrast = 1.15;
+                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
+                        cliff_bias = dir * rnd(&mut rng, 0.10, 0.14);
+                        warp_amp = rnd(&mut rng, 0.42, 0.16); // very strong warp
+                    }
+                    _ => { // One-sided mesa: strong lean, high cliff on one side, slope on other
+                        fade = rnd(&mut rng, 0.40, 0.10);
+                        threshold = rnd(&mut rng, 0.50, 0.05);
+                        scale_x = rnd(&mut rng, 3.5, 2.5);
+                        scale_y = 2.5;
+                        contrast = 1.4;
+                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
+                        cliff_bias = dir * rnd(&mut rng, 0.32, 0.14); // very strong lean
+                        warp_amp = rnd(&mut rng, 0.18, 0.12);
+                        terrace = Some(rnd(&mut rng, 3.0, 2.0).round());
+                        terrace_mix = 0.25;
+                    }
+                }
                 cave = lcg(&mut rng) % 100 < 35;
             }
-            2 => { // Floating islands (radial blob masks)
+            2 => { // Floating islands — sub-variants: archipelago / titan / staircase
                 fade = 0.0;
-                threshold = rnd(&mut rng, 0.28, 0.05);
-                scale_x = rnd(&mut rng, 1.8, 1.0);
-                scale_y = 1.5;
-                contrast = 1.4;
-                warp_amp = 0.16;
                 blob = true;
+                let sub = lcg(&mut rng) % 3;
+                match sub {
+                    0 => { // Archipelago: many medium islands spread wide
+                        threshold = rnd(&mut rng, 0.26, 0.05);
+                        scale_x = rnd(&mut rng, 2.0, 1.0);
+                        scale_y = 1.6;
+                        contrast = 1.4;
+                        warp_amp = rnd(&mut rng, 0.14, 0.08);
+                    }
+                    1 => { // Titan: one or two giant islands dominating the map
+                        threshold = rnd(&mut rng, 0.20, 0.04);
+                        scale_x = rnd(&mut rng, 1.2, 0.6);
+                        scale_y = 1.2;
+                        contrast = 1.6;
+                        warp_amp = rnd(&mut rng, 0.20, 0.10);
+                    }
+                    _ => { // Staircase: islands arranged at varying heights with gaps
+                        threshold = rnd(&mut rng, 0.28, 0.04);
+                        scale_x = rnd(&mut rng, 2.5, 1.5);
+                        scale_y = 2.0;
+                        contrast = 1.3;
+                        warp_amp = rnd(&mut rng, 0.10, 0.06);
+                        terrace = Some(4.0);
+                        terrace_mix = 0.20;
+                    }
+                }
             }
             3 => { // Caverns: fill+carve in Phase 2 below; density-field is skipped
-                // These values are unused (archetype 3 skips the density field phase entirely),
-                // but the compiler requires all branches initialize them.
+                // Unused by density field but required by compiler.
                 fade = 0.0; threshold = 0.5; scale_x = 1.0; contrast = 1.0;
             }
-            _ => { // Canyon / mesa: terraced + vertical trenches
-                fade = rnd(&mut rng, 0.46, 0.10);
-                threshold = rnd(&mut rng, 0.49, 0.04);
-                scale_x = rnd(&mut rng, 2.5, 1.5);
-                contrast = 1.25;
-                let dir = if lcg(&mut rng) & 1 == 0 { 1.0 } else { -1.0 };
-                cliff_bias = dir * rnd(&mut rng, 0.12, 0.16);
-                terrace = Some(rnd(&mut rng, 4.0, 3.0).round());
-                terrace_mix = 0.30;
-                warp_amp = 0.08;
+            _ => { // Canyon / mesa — sub-variants: slot canyon / badlands / fortress
+                let sub = lcg(&mut rng) % 3;
+                match sub {
+                    0 => { // Slot canyon: deep narrow trenches, moderate terracing
+                        fade = rnd(&mut rng, 0.46, 0.10);
+                        threshold = rnd(&mut rng, 0.49, 0.04);
+                        scale_x = rnd(&mut rng, 2.5, 1.5);
+                        contrast = 1.25;
+                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
+                        cliff_bias = dir * rnd(&mut rng, 0.12, 0.16);
+                        terrace = Some(rnd(&mut rng, 4.0, 3.0).round());
+                        terrace_mix = 0.30;
+                        warp_amp = 0.08;
+                    }
+                    1 => { // Badlands: heavy terracing, eroded pillars, strong warp
+                        fade = rnd(&mut rng, 0.42, 0.10);
+                        threshold = rnd(&mut rng, 0.51, 0.04);
+                        scale_x = rnd(&mut rng, 4.0, 2.0);
+                        contrast = 1.50;
+                        cliff_bias = rnd(&mut rng, -0.08, 0.16);
+                        terrace = Some(rnd(&mut rng, 5.0, 3.0).round());
+                        terrace_mix = 0.55;
+                        warp_amp = rnd(&mut rng, 0.14, 0.10);
+                    }
+                    _ => { // Fortress: flat-topped mesa with sheer walls + moat
+                        fade = rnd(&mut rng, 0.52, 0.08);
+                        threshold = rnd(&mut rng, 0.53, 0.03);
+                        scale_x = rnd(&mut rng, 1.8, 1.0);
+                        contrast = 1.70;
+                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
+                        cliff_bias = dir * rnd(&mut rng, 0.20, 0.16);
+                        terrace = Some(2.0); // just two levels: mesa top + ground
+                        terrace_mix = 0.65;
+                        warp_amp = rnd(&mut rng, 0.06, 0.04);
+                    }
+                }
             }
         }
 
@@ -536,10 +635,35 @@ impl Terrain {
             const SKY_FLOOR: i32 = 130; // rock ceiling starts here; sky above
             const CAVE_FLOOR: i32 = 345; // thin solid base above water
 
-            // A — Fill solid rock band
+            // A — Fill solid rock: main rock band (SKY_FLOOR..CAVE_FLOOR) + sealed top zone.
+            // The top zone (0..SKY_FLOOR) uses a noise-varied surface per column so it reads
+            // as rolling terrain rather than a flat rectangular block, while staying fully sealed.
             for y in SKY_FLOOR..CAVE_FLOOR {
                 for x in 0..WORLD_W as i32 {
                     terrain.set_solid(x, y, true);
+                }
+            }
+            // Top seal: noise-driven surface height per column. Air above the surface line,
+            // solid below it — but the bottom of this zone always connects to the solid
+            // SKY_FLOOR band, and the very top row is always solid (no open-sky gap).
+            {
+                let top_amp   = 40.0 + (lcg(&mut rng) % 30) as f64; // 40–70px of terrain variation
+                let top_freq  = 3.0  + (lcg(&mut rng) % 3)  as f64; // 3–5 horizontal cycles
+                let top_freq2 = 7.0  + (lcg(&mut rng) % 4)  as f64; // fine detail layer
+                for x in 0..WORLD_W as i32 {
+                    let nx = x as f64 / WORLD_W as f64;
+                    let wave = cave_a.get([nx * top_freq, 11.7]);   // -1..1
+                    let fine = cave_b.get([nx * top_freq2, 55.3]);  // -1..1
+                    // Surface height: SKY_FLOOR - top_amp/2 ± variation, clamped so at least
+                    // 8px of solid remain at the very top and the base always joins SKY_FLOOR.
+                    let surf_y = (SKY_FLOOR as f64
+                        - top_amp * 0.5
+                        + wave * top_amp * 0.5
+                        + fine * top_amp * 0.15)
+                        .clamp(8.0, (SKY_FLOOR - 8) as f64) as i32;
+                    for y in 0..SKY_FLOOR {
+                        terrain.set_solid(x, y, y >= surf_y);
+                    }
                 }
             }
 
@@ -595,15 +719,15 @@ impl Terrain {
             let ca_passes = 3 + (lcg(&mut rng) % 2);
             for _ in 0..ca_passes {
                 let snap = terrain.solid.clone();
-                for y in SKY_FLOOR + 1..CAVE_FLOOR - 1 {
+                for y in 1..CAVE_FLOOR - 1 {
                     for x in 1..WORLD_W as i32 - 1 {
                         let mut solid_n = 0;
                         for dy in -1..=1 {
                             for dx in -1..=1 {
                                 if dx == 0 && dy == 0 { continue; }
                                 let yy = y + dy;
-                                let s = if yy < SKY_FLOOR || yy >= CAVE_FLOOR {
-                                    true // crust outside the band
+                                let s = if yy < 0 || yy >= CAVE_FLOOR {
+                                    true // outside the band counts as solid
                                 } else {
                                     snap[world_index((x + dx) as u32, yy as u32)]
                                 };
@@ -615,17 +739,36 @@ impl Terrain {
                 }
             }
 
-            // C.5 — Air dilation: widen all air passages so soldiers (14px wide, 20px tall)
+            // C.5 — Jagged ceiling: carve irregular stalactite-like bumps into the
+            // ceiling bottom (the SKY_FLOOR boundary) so it reads as rock, not a
+            // flat cut. Two noise octaves: broad humps (20–40px deep) + fine spikes (5–15px).
+            {
+                let stala_depth_broad = 20.0 + (lcg(&mut rng) % 20) as f64;
+                let stala_depth_fine  = 5.0  + (lcg(&mut rng) % 10) as f64;
+                for x in 0..WORLD_W as i32 {
+                    let nx = x as f64 / WORLD_W as f64;
+                    let broad = cave_a.get([nx * 4.0, 77.3]);  // -1..1
+                    let fine  = cave_b.get([nx * 14.0, 33.1]); // -1..1
+                    let drop = (broad * stala_depth_broad + fine * stala_depth_fine).max(0.0) as i32;
+                    // Carve air into the ceiling below SKY_FLOOR down to SKY_FLOOR+drop.
+                    // Only carve — never expose pixels above SKY_FLOOR (they stay solid rock).
+                    for y in SKY_FLOOR..=(SKY_FLOOR + drop).min(SKY_FLOOR + 45) {
+                        terrain.set_solid(x, y, false);
+                    }
+                }
+            }
+
+            // C.6 — Air dilation: widen all air passages so soldiers (14px wide, 20px tall)
             // can traverse them. Four passes of Moore-neighborhood dilation — each pass
             // expands existing air by 1px on all sides, only within the rock band.
             for _ in 0..4 {
                 let snap = terrain.solid.clone();
-                for y in SKY_FLOOR + 1..CAVE_FLOOR - 1 {
+                for y in 1..CAVE_FLOOR - 1 {
                     for x in 1..WORLD_W as i32 - 1 {
                         if !snap[world_index(x as u32, y as u32)] { continue; }
                         let has_air_neighbor = (-1i32..=1).any(|dy| {
                             let yy = y + dy;
-                            if yy < SKY_FLOOR || yy >= CAVE_FLOOR { return false; }
+                            if yy < 1 || yy >= CAVE_FLOOR { return false; }
                             (-1i32..=1).any(|dx| {
                                 if dx == 0 && dy == 0 { return false; }
                                 let xx = x + dx;
@@ -638,16 +781,17 @@ impl Terrain {
                 }
             }
 
-            // D — Sky entry shafts: vertical tunnels from the rock ceiling into the
-            // upper third. Guarantee surface-spawn candidates and air→sky links so
-            // soldiers can rope in/out of the cave system.
+            // D — Ceiling shafts: tall chimneys punched up through the rock ceiling
+            // into the sealed top, giving tall vertical climbing space and letting
+            // ropes reach high. They stop short of the very top (always enclosed).
             let n_shafts = 3 + (lcg(&mut rng) % 3) as usize;
             let upper_third = SKY_FLOOR + (CAVE_FLOOR - SKY_FLOOR) / 3;
+            let shaft_ceil  = 18; // shafts reach down from y=18 (never punch out)
             for _ in 0..n_shafts {
                 let sx = 100 + (lcg(&mut rng) % (WORLD_W as u64 - 200)) as i32;
-                let drift = (lcg(&mut rng) % 30) as i32 - 15;
-                let shaft_r = 8 + (lcg(&mut rng) % 5) as i32;
-                dig_tunnel(&mut terrain, sx, SKY_FLOOR, sx + drift, upper_third, shaft_r);
+                let drift = (lcg(&mut rng) % 40) as i32 - 20;
+                let shaft_r = 7 + (lcg(&mut rng) % 6) as i32;
+                dig_tunnel(&mut terrain, sx, shaft_ceil, sx + drift, upper_third, shaft_r);
             }
 
             // Water-margin erosion (same as other archetypes): taper rock near world edges
@@ -676,7 +820,7 @@ impl Terrain {
                 let mut visited = vec![false; WORLD_PIXELS];
                 let mut comps: Vec<Vec<(i32, i32)>> = Vec::new();
                 let mut stack: Vec<(i32, i32)> = Vec::new();
-                for sy in SKY_FLOOR..CAVE_FLOOR {
+                for sy in 0..CAVE_FLOOR {
                     for sx in 0..WORLD_W as i32 {
                         let i0 = world_index(sx as u32, sy as u32);
                         if terrain.solid[i0] || visited[i0] { continue; }
@@ -690,7 +834,7 @@ impl Terrain {
                                 let nxp = cxp + dx;
                                 let nyp = cyp + dy;
                                 if nxp < 0 || nxp >= WORLD_W as i32 { continue; }
-                                if nyp < SKY_FLOOR || nyp >= CAVE_FLOOR { continue; }
+                                if nyp < 0 || nyp >= CAVE_FLOOR { continue; }
                                 let j = world_index(nxp as u32, nyp as u32);
                                 if !terrain.solid[j] && !visited[j] {
                                     visited[j] = true;

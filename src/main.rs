@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.329";
+const VERSION: &str = "0.5.4.330";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -2506,22 +2506,10 @@ fn run_tat_game(
             replay_cam.snap_to(game.teams[opp_slot].soldiers[opp_si].pos);
             // Clear messages accumulated during fast-forward — only the live replay's messages should show
             game.messages.clear();
-            // Static black "OPPONENT'S MOVE" screen for 5 seconds before replay begins
+            // Styled "OPPONENT'S MOVE" screen before replay begins
             crate::audio::set_muted(true);
-            {
-                use renderer::Bgra;
-                use renderer::font::{draw_str_shadow_scaled, str_width_scaled};
-                let sw  = crate::world::SCREEN_W as i32;
-                let sh  = crate::world::SCREEN_H as i32;
-                let msg = "OPPONENT'S MOVE";
-                let mw  = str_width_scaled(msg, 2);
-                let mx  = sw / 2 - mw / 2;
-                let my  = sh / 2 - 8;
-                buf.fill_rect(0, 0, sw as u32, sh as u32, Bgra::new(0, 0, 0));
-                draw_str_shadow_scaled(buf, msg, mx, my, Bgra::new(255, 210, 50), 2);
-                buf.blit_to_fb(fb, 0);
-            }
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            draw_msg(buf, fb, "OPPONENT'S MOVE");
+            std::thread::sleep(std::time::Duration::from_millis(2000));
             crate::audio::set_muted(false);
             let mut prev_bits: u16 = 0;
             let input_len = mv.inputs.len();
