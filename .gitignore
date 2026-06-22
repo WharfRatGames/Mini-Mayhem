@@ -8,3 +8,5 @@ deploy/__pycache__/
 assets/
 deploy/assets/
 !deploy/assets.zip
+admin_key.txt
+progress.txt
