@@ -1208,7 +1208,16 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-const REQUIRED_VERSION: &str = "0.5.4.334";
+/// Minimum client version accepted. Only bump when the wire protocol changes
+/// (StateMsg/InputMsg/msg.rs). Cosmetic or gameplay-only deploys leave this alone.
+const MIN_VERSION: &str = "0.5.4.334";
+
+fn version_ok(ver: &str) -> bool {
+    fn patch(v: &str) -> u32 {
+        v.rsplit('.').next().and_then(|s| s.parse().ok()).unwrap_or(0)
+    }
+    patch(ver) >= patch(MIN_VERSION)
+}
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
 /// Returns None on read error.
@@ -1281,8 +1290,8 @@ fn accept_one(listener: &TcpListener, tls_config: &Arc<rustls::ServerConfig>) ->
             Some(v) => v,
             None => { info!("Handshake read failed: {addr}"); continue; }
         };
-        if ver != REQUIRED_VERSION {
-            info!("Rejected wrong version {ver}: {addr}");
+        if !version_ok(&ver) {
+            info!("Rejected old version {ver}: {addr}");
             let _ = tls.write_all(b"REJECTED:VERSION\n");
             continue;
         }
