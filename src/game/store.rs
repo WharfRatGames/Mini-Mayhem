@@ -129,6 +129,19 @@ impl StoreScreen {
         Self { token, balance, items, cursor: 0, scroll: 0, status: String::new(), status_ttl: 0 }
     }
 
+    pub fn set_profile(&mut self, scrap: u32, owned_hats: &[u8], owned_guns: &[u8], owned_uniforms: &[u8], owned_boots: &[u8]) {
+        self.balance = scrap;
+        for item in &mut self.items {
+            item.owned = match item.cosm_type {
+                "hat"       => owned_hats.contains(&item.cosm_id),
+                "gun_style" => owned_guns.contains(&item.cosm_id),
+                "uniform"   => owned_uniforms.contains(&item.cosm_id),
+                "boots"     => owned_boots.contains(&item.cosm_id),
+                _           => false,
+            };
+        }
+    }
+
     pub fn update(&mut self, input: &InputState, buf: &mut WorldBuffer) -> Option<StoreAction> {
         // Input
         if input.just_pressed(Button::B) { return Some(StoreAction::Back); }

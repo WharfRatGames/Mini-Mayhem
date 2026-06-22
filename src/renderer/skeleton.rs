@@ -201,7 +201,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     let scale: f32 = match hat_id {
         22 => 0.75,  // Pirate Tricorn: rescaled sprite reads large, pull back
         28 => 0.80,  // Luchador Mask: slightly smaller
-        36 => 0.40,  // Dragon Skull: scaled to replace the soldier head
+        36 => 0.48,  // Dragon Skull: scaled to replace the soldier head
         _  => 1.0,
     };
     let (w, h) = ((W as f32 * scale) as i32, (H as f32 * scale) as i32);

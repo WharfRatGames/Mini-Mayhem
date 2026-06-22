@@ -5,7 +5,9 @@ use crate::renderer::font::{draw_str, draw_str_scaled, draw_str_shadow_scaled, s
 use crate::renderer::hud::{draw_button_hints, draw_menu_selection};
 use crate::renderer::hud::COLOR_DARK_BG;
 use crate::renderer::keyboard::Keyboard;
+use crate::renderer::skeleton::{draw_soldier_skeletal, SoldierAnim};
 use crate::world::{SCREEN_W, SCREEN_H};
+use crate::world::WorldPos;
 
 // ── Roster ────────────────────────────────────────────────────────────────────
 
@@ -697,7 +699,9 @@ pub fn fetch_profile(token: &str) -> Option<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec
     let guns      = parse_id_arr(&resp, "unlocked_gun_styles");
     let uniforms  = parse_id_arr(&resp, "unlocked_uniforms");
     let boots     = parse_id_arr(&resp, "unlocked_boots");
-    Some((scrap, hats, guns, uniforms, boots))
+    let result = (scrap, hats, guns, uniforms, boots);
+    save_cached_profile(&result);
+    Some(result)
 }
 
 /// POST to `/shop/buy`. Returns Ok(new_scrap_balance) or Err(message).
@@ -713,6 +717,37 @@ pub fn shop_buy(token: &str, cosm_type: &str, cosm_id: u8) -> Result<(), String>
     } else {
         Ok(())
     }
+}
+
+pub type ProfileData = (u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
+
+pub fn save_cached_profile(p: &ProfileData) {
+    let ids = |v: &Vec<u8>| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
+    let s = format!("{}|{}|{}|{}|{}", p.0, ids(&p.1), ids(&p.2), ids(&p.3), ids(&p.4));
+    #[cfg(feature = "desktop")]
+    { let _ = std::fs::write(data_dir().join("profile_cache.txt"), &s); }
+    #[cfg(not(feature = "desktop"))]
+    for path in &["/mnt/SDCARD/App/Arty/profile_cache.txt", "/tmp/arty_profile_cache.txt"] {
+        if std::fs::write(path, &s).is_ok() { break; }
+    }
+}
+
+pub fn load_cached_profile() -> Option<ProfileData> {
+    fn parse_ids(s: &str) -> Vec<u8> {
+        s.split(',').filter_map(|x| x.trim().parse().ok()).collect()
+    }
+    #[cfg(feature = "desktop")]
+    let raw = std::fs::read_to_string(data_dir().join("profile_cache.txt")).ok()?;
+    #[cfg(not(feature = "desktop"))]
+    let raw = ["/mnt/SDCARD/App/Arty/profile_cache.txt", "/tmp/arty_profile_cache.txt"]
+        .iter().find_map(|p| std::fs::read_to_string(p).ok())?;
+    let mut parts = raw.trim().splitn(5, '|');
+    let scrap: u32 = parts.next()?.trim().parse().ok()?;
+    let hats      = parse_ids(parts.next().unwrap_or(""));
+    let guns      = parse_ids(parts.next().unwrap_or(""));
+    let uniforms  = parse_ids(parts.next().unwrap_or(""));
+    let boots     = parse_ids(parts.next().unwrap_or(""));
+    Some((scrap, hats, guns, uniforms, boots))
 }
 
 pub fn fetch_rosters(token: &str) -> Result<Vec<Roster>, String> {
@@ -935,7 +970,10 @@ pub fn load_cached_rosters() -> Vec<Roster> {
 
 fn try_login(username: &str, password: &str) -> Result<(String, String, Vec<Roster>), String> {
     let body = format!("{{\"username\":\"{}\",\"password\":\"{}\"}}", username, password);
-    let resp = http_post("/api/login", &body).map_err(|_| "NETWORK ERROR".to_string())?;
+    let resp = http_post("/api/login", &body).map_err(|e| {
+        let _ = std::fs::write("/tmp/arty_login_err.txt", &e);
+        format!("{}", &e[..e.len().min(50)])
+    })?;
     if let Some(token) = json_field(&resp, "token") {
         let stored_name = json_field(&resp, "username").unwrap_or_else(|| username.to_string());
         save_creds(&stored_name, &token);
@@ -948,7 +986,7 @@ fn try_login(username: &str, password: &str) -> Result<(String, String, Vec<Rost
 
 fn try_register(username: &str, password: &str) -> Result<(String, String, Vec<Roster>), String> {
     let body = format!("{{\"username\":\"{}\",\"password\":\"{}\"}}", username, password);
-    let resp = http_post("/api/register", &body).map_err(|_| "NETWORK ERROR".to_string())?;
+    let resp = http_post("/api/register", &body).map_err(|e| format!("NET: {}", &e[..e.len().min(28)]))?;
     if let Some(token) = json_field(&resp, "token") {
         save_creds(username, &token);
         let rosters = parse_rosters_from_json(&resp);
@@ -980,6 +1018,7 @@ pub struct CosmeticsScreen {
     scrap:          u32,
     buy_prompt:     Option<BuyPrompt>, // set when A pressed on an unowned item
     status_msg:     Option<(String, u32)>, // (message, ttl ticks)
+    preview_mode:   bool,  // Y toggles full-screen soldier preview
 }
 
 struct BuyPrompt {
@@ -1001,10 +1040,26 @@ impl CosmeticsScreen {
     ) -> Self {
         Self { roster, owned_hats, owned_uniforms, owned_boots, owned_guns,
                soldier: 0, col: 0, cycling: false, cycle_backup: 0,
-               token, scrap, buy_prompt: None, status_msg: None }
+               token, scrap, buy_prompt: None, status_msg: None, preview_mode: false }
+    }
+
+    pub fn set_profile(&mut self, scrap: u32, hats: Vec<u8>, guns: Vec<u8>, uniforms: Vec<u8>, boots: Vec<u8>) {
+        self.scrap = scrap;
+        self.owned_hats = hats;
+        self.owned_guns = guns;
+        self.owned_uniforms = uniforms;
+        self.owned_boots = boots;
     }
 
     pub fn update(&mut self, input: &InputState, buf: &mut WorldBuffer) -> Option<CosmeticsAction> {
+        if input.just_pressed(Button::Y) {
+            self.preview_mode = !self.preview_mode;
+        }
+        if self.preview_mode {
+            self.draw_preview(buf);
+            return None;
+        }
+
         if let Some(status) = &mut self.status_msg {
             status.1 = status.1.saturating_sub(1);
             if status.1 == 0 { self.status_msg = None; }
@@ -1123,6 +1178,61 @@ impl CosmeticsScreen {
         self.set_id(col, si, opts[next]);
     }
 
+    fn draw_preview(&self, buf: &mut WorldBuffer) {
+        let sw = SCREEN_W as i32;
+        let sh = SCREEN_H as i32;
+        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(6, 8, 20));
+
+        let title = "SQUAD PREVIEW";
+        let tw = str_width_scaled(title, 2);
+        draw_str_scaled(buf, title, sw/2 - tw/2, 8, Bgra::new(255, 210, 50), 2);
+
+        // 4 soldiers evenly spaced across the screen
+        let slot_w = sw / 4;
+        for si in 0..4usize {
+            let cx = si as i32 * slot_w + slot_w / 2;
+            let foot_y = sh - 80;
+            let pos = WorldPos::new(cx as f32, foot_y as f32);
+            draw_soldier_skeletal(
+                buf, pos, si, 1, 100, &SoldierAnim::Idle,
+                None, false,
+                self.roster.hat_ids[si],
+                self.roster.uniform_color_ids[si],
+                self.roster.boot_color_ids[si],
+                self.roster.gun_style_ids[si],
+                None, 0.0, 0, 0,
+            );
+
+            // Soldier name above
+            let name = &self.roster.worm_names[si];
+            let nw = str_width(name) as i32;
+            draw_str(buf, name, cx - nw/2, foot_y - 50, Bgra::new(255, 220, 80));
+
+            // Cosmetic labels below
+            let cosm_type_names = ["hat", "uniform", "boots", "gun_style"];
+            let ids = [
+                self.roster.hat_ids[si],
+                self.roster.uniform_color_ids[si],
+                self.roster.boot_color_ids[si],
+                self.roster.gun_style_ids[si],
+            ];
+            let mut ly = foot_y + 6;
+            for (ctype, cid) in cosm_type_names.iter().zip(ids.iter()) {
+                if *cid == 0 { ly += 12; continue; }
+                let lbl = crate::game::store::catalog_name(ctype, *cid).unwrap_or("");
+                if lbl.is_empty() { ly += 12; continue; }
+                let lw = str_width(lbl) as i32;
+                draw_str(buf, lbl, cx - lw/2, ly, Bgra::new(160, 170, 210));
+                ly += 12;
+            }
+        }
+
+        let hint = "Y=BACK TO EQUIP";
+        let hw = str_width(hint) as i32;
+        buf.fill_rect(0, sh - 22, SCREEN_W, 22, Bgra::new(12, 14, 35));
+        draw_str(buf, hint, sw/2 - hw/2, sh - 16, Bgra::new(60, 70, 110));
+    }
+
     fn draw(&self, buf: &mut WorldBuffer) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
@@ -1232,6 +1342,7 @@ impl CosmeticsScreen {
                     draw_str(buf, ">", cx + col_w - 10, text_y, arrow_col);
                 }
             }
+
         }
 
         // Status message (purchase feedback)
@@ -1266,7 +1377,7 @@ impl CosmeticsScreen {
             }
             "DPAD=CYCLE  A=CONFIRM  B=CANCEL"
         } else {
-            "ARROWS=NAVIGATE  A=SELECT  START=SAVE  B=BACK"
+            "ARROWS=NAVIGATE  A=SELECT  Y=PREVIEW  START=SAVE  B=BACK"
         };
         draw_str(buf, hint, sw/2 - str_width(hint)/2, sh - 16, Bgra::new(60, 70, 110));
 
