@@ -4861,7 +4861,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 let oy = os.pos.y as i32;
                                 (ix - ox).abs() < crate::renderer::draw_sprites::SOLDIER_W as i32
                                     && iy >= oy - crate::renderer::draw_sprites::SOLDIER_H as i32
-                                    && iy <= oy + 1
+                                    && iy <= oy + crate::renderer::draw_sprites::SOLDIER_H as i32
                             })
                         });
                         if soldier_hit && dy >= 0.0 {

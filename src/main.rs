@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.328";
+const VERSION: &str = "0.5.4.329";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1730,26 +1730,30 @@ fn show_store_screen(
     buf:   &mut WorldBuffer,
     token: &str,
 ) {
-    use game::account::fetch_profile;
+    use game::account::{fetch_profile, load_cached_profile};
     use game::store::{StoreScreen, StoreAction};
 
-    draw_status(buf, fb, "LOADING...");
-
-    let (balance, owned_hats, owned_guns, owned_uniforms, owned_boots) =
-        fetch_profile(token).unwrap_or((0, vec![], vec![], vec![], vec![]));
-
+    let cached = load_cached_profile().unwrap_or_default();
     let mut screen = StoreScreen::new(
         token.to_string(),
-        balance,
-        &owned_hats,
-        &owned_guns,
-        &owned_uniforms,
-        &owned_boots,
+        cached.0,
+        &cached.1,
+        &cached.2,
+        &cached.3,
+        &cached.4,
     );
+
+    // Refresh profile from network in background
+    let tok = token.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || { tx.send(fetch_profile(&tok)).ok(); });
 
     loop {
         let fs = std::time::Instant::now();
         input.poll();
+        if let Ok(Some(p)) = rx.try_recv() {
+            screen.set_profile(p.0, &p.1, &p.2, &p.3, &p.4);
+        }
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 12, 28));
         match screen.update(input, buf) {
             Some(StoreAction::Back) => return,
@@ -1768,18 +1772,9 @@ fn show_equip_screen(
     rosters: &[game::account::Roster],
     token:   &str,
 ) {
-    use game::account::{CosmeticsScreen, CosmeticsAction, fetch_profile, save_cached_rosters};
+    use game::account::{CosmeticsScreen, CosmeticsAction, fetch_profile, load_cached_profile, save_cached_rosters};
 
     if rosters.is_empty() { return; }
-
-    draw_status(buf, fb, "LOADING...");
-    let profile = fetch_profile(token);
-    if profile.is_none() {
-        draw_status(buf, fb, "COULD NOT LOAD - CHECK CONNECTION");
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        return;
-    }
-    let (scrap, owned_hats, owned_guns, owned_uniforms, owned_boots) = profile.unwrap();
 
     // If only one roster, use it directly; otherwise let player pick
     let chosen = if rosters.len() == 1 {
@@ -1790,14 +1785,23 @@ fn show_equip_screen(
 
     let roster = match chosen { Some(r) => r, None => return };
 
+    let cached = load_cached_profile().unwrap_or_default();
     let mut screen = CosmeticsScreen::new(
-        roster, owned_hats, owned_guns, owned_uniforms, owned_boots,
-        token.to_string(), scrap,
+        roster, cached.1, cached.2, cached.3, cached.4,
+        token.to_string(), cached.0,
     );
+
+    // Refresh profile from network in background
+    let tok = token.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || { tx.send(fetch_profile(&tok)).ok(); });
 
     loop {
         let fs = std::time::Instant::now();
         input.poll();
+        if let Ok(Some(p)) = rx.try_recv() {
+            screen.set_profile(p.0, p.1, p.2, p.3, p.4);
+        }
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, COLOR_DARK_BG);
         match screen.update(input, buf) {
             Some(CosmeticsAction::Back) => return,
