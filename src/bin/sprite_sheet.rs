@@ -269,12 +269,48 @@ fn draw_proposed(buf: &mut WorldBuffer, pos: WorldPos, team: usize, facing: i8, 
     buf.fill_rect(hcx - 8, hcy + 1, 16, 1, dark);
     // helmet highlight
     buf.fill_rect(hcx - 3, hcy - 6, 3, 2, hilit);
-    // eyes
-    let eye_x = hcx + f as i32 * 2;
-    buf.fill_circle(eye_x, hcy + 3, 2, dark);
-    buf.fill_circle(eye_x, hcy + 3, 1, Bgra::new(255, 255, 255)); // glint
-    // mouth (tiny grim line)
-    buf.fill_rect(eye_x - 2, hcy + 5, 4, 1, dark);
+
+    let fi = f as i32; // +1 right, -1 left
+    let eye_x = hcx + fi * 2;
+
+    // ear nub (back of head, opposite facing)
+    let ear_x = hcx - fi * 6;
+    buf.fill_rect(ear_x - 1, hcy + 1, 3, 4, skin);
+    buf.fill_rect(ear_x,     hcy + 2, 1, 2, Bgra::new(200, 155, 115)); // inner ear shadow
+
+    // eyebrow (dark bar above eye, just under brim)
+    buf.fill_rect(eye_x - 1, hcy + 1, 4, 1, dark);
+
+    // eye white + pupil
+    buf.fill_circle(eye_x, hcy + 3, 2, Bgra::new(220, 220, 220));
+    buf.set_pixel(eye_x + fi, hcy + 3, dark); // pupil looking forward
+    buf.set_pixel(eye_x,      hcy + 2, Bgra::new(255, 255, 255)); // glint
+
+    // nose dot
+    buf.set_pixel(eye_x + fi * 2, hcy + 5, Bgra::new(180, 135, 100));
+
+    // chin shadow (darkened skin strip at jaw)
+    let chin_col = Bgra::new(190, 148, 108);
+    buf.fill_rect(hcx - 4, hcy + 6, 8, 2, chin_col);
+
+    // mouth — thin line with slight downturn
+    buf.fill_rect(eye_x - 1, hcy + 5, 3, 1, dark);
+    buf.set_pixel(eye_x - 2, hcy + 6, dark); // left corner down
+    buf.set_pixel(eye_x + 2, hcy + 6, dark); // right corner down
+}
+
+/// Same as draw_proposed but passes a hat_id — uses draw_soldier_skeletal for
+/// the hat sprite (image-based) while drawing the proposed body underneath.
+fn draw_proposed_hatted(buf: &mut WorldBuffer, pos: WorldPos, team: usize, facing: i8, hp: u8, anim: &SoldierAnim, hat_id: u8) {
+    draw_proposed(buf, pos, team, facing, hp, anim);
+    // Overdraw with the live skeletal renderer just for the hat — we call it
+    // with hp=0 (no HP badge) and aim_angle=None so it draws a minimal soldier
+    // then we rely on hat being drawn on top. To isolate the hat we clear the
+    // buffer region first with the bg color, draw the full skeletal (V2 active),
+    // then re-draw our proposed body over it — net effect: proposed body + live hat.
+    // Simpler: just call the live renderer which now IS the proposed renderer.
+    draw_soldier_skeletal(buf, pos, team, facing, hp, anim, Some(0.6), false,
+        hat_id, 0, 0, 0, None, 0.0, 0, 0);
 }
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
@@ -313,15 +349,25 @@ impl Canvas {
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
-const CELL_W: u32 = 90;
-const CELL_H: u32 = 90;
-const COLS:   u32 = 5; // idle, walk-a, walk-b, airborne, dead
-const ROWS:   u32 = 4; // team colors
-const GAP:    u32 = 16;
-const HEADER: u32 = 48;
+const CELL_W:  u32 = 90;
+const CELL_H:  u32 = 90;
+const POSE_COLS: u32 = 5;
+const ROWS:    u32 = 4;
+const GAP:     u32 = 16;
+const HEADER:  u32 = 48;
 const LABEL_W: u32 = 50;
-const IMG_W:  u32 = LABEL_W + CELL_W * COLS * 2 + GAP;
-const IMG_H:  u32 = HEADER + CELL_H * ROWS;
+
+// Hat parade: 10 hats per row, 2 rows (current on top, proposed below)
+const HAT_COLS: u32 = 10;
+const HAT_IDS: &[u8] = &[0,1,2,3,4,5,6,7,8,9]; // first 10 hats; 0=no hat
+const HAT_NAMES: &[&str] = &["NONE","HAT1","PROP","HAT3","HAT4","FEZ","HAT6","HAT7","HAT8","HAT9"];
+
+const POSE_W: u32 = LABEL_W + CELL_W * POSE_COLS * 2 + GAP;
+const HAT_W:  u32 = LABEL_W + CELL_W * HAT_COLS;
+const IMG_W:  u32 = if POSE_W > HAT_W { POSE_W } else { HAT_W };
+const POSE_H: u32 = HEADER + CELL_H * ROWS;
+const HAT_H:  u32 = 24 + CELL_H * 2 + 16; // header + current row + proposed row + gap
+const IMG_H:  u32 = POSE_H + 20 + HAT_H;
 
 fn main() {
     let poses: &[(&str, SoldierAnim)] = &[
@@ -336,20 +382,18 @@ fn main() {
     let mut canvas = Canvas::new(IMG_W, IMG_H, (22, 24, 38));
     let mut wbuf = WorldBuffer::new();
 
-    // Section headers
-    let cur_cx = (LABEL_W + CELL_W * COLS / 2) as i32;
-    let new_cx = (LABEL_W + CELL_W * COLS + GAP + CELL_W * COLS / 2) as i32;
+    // ── Pose grid ─────────────────────────────────────────────────────────────
+    let cur_cx = (LABEL_W + CELL_W * POSE_COLS / 2) as i32;
+    let new_cx = (LABEL_W + CELL_W * POSE_COLS + GAP + CELL_W * POSE_COLS / 2) as i32;
     draw_label(&mut canvas, cur_cx - 28, 8, "CURRENT");
     draw_label(&mut canvas, new_cx - 28, 8, "PROPOSED");
 
-    // Divider between sections
-    let div_x = (LABEL_W + CELL_W * COLS + GAP / 2) as i32;
-    canvas.fill_rect(div_x, 0, 2, IMG_H, 70, 72, 100);
+    let div_x = (LABEL_W + CELL_W * POSE_COLS + GAP / 2) as i32;
+    canvas.fill_rect(div_x, 0, 2, POSE_H, 70, 72, 100);
 
-    // Column pose labels
     for (ci, (label, _)) in poses.iter().enumerate() {
         let lx_cur = (LABEL_W + ci as u32 * CELL_W) as i32 + 2;
-        let lx_new = (LABEL_W + CELL_W * COLS + GAP + ci as u32 * CELL_W) as i32 + 2;
+        let lx_new = (LABEL_W + CELL_W * POSE_COLS + GAP + ci as u32 * CELL_W) as i32 + 2;
         draw_label(&mut canvas, lx_cur, 22, label);
         draw_label(&mut canvas, lx_new, 22, label);
     }
@@ -357,17 +401,10 @@ fn main() {
     for (ri, team_name) in teams.iter().enumerate() {
         let cell_top = (HEADER + ri as u32 * CELL_H) as i32;
         let foot_y   = cell_top + CELL_H as i32 - 14;
-
-        // Row label
         draw_label(&mut canvas, 2, cell_top + CELL_H as i32 / 2 - 4, team_name);
-
-        // Row divider
-        if ri > 0 {
-            canvas.line(0, cell_top, IMG_W, 35, 37, 55);
-        }
+        if ri > 0 { canvas.line(0, cell_top, IMG_W, 35, 37, 55); }
 
         for (ci, (_, anim)) in poses.iter().enumerate() {
-            // ── Current ──
             let cx_cur = (LABEL_W + ci as u32 * CELL_W) as i32;
             let foot_x_cur = cx_cur + CELL_W as i32 / 2;
             wbuf.fill_rect(cx_cur, cell_top, CELL_W, CELL_H, Bgra::new(22, 24, 38));
@@ -375,14 +412,47 @@ fn main() {
                 ri, 1, 100, anim, Some(0.6), false, 0, 0, 0, 0, None, 0.0, 0, 0);
             canvas.blit(&wbuf, cx_cur, cell_top, CELL_W, CELL_H, cx_cur, cell_top);
 
-            // ── Proposed ──
-            let cx_new = (LABEL_W + CELL_W * COLS + GAP + ci as u32 * CELL_W) as i32;
+            let cx_new = (LABEL_W + CELL_W * POSE_COLS + GAP + ci as u32 * CELL_W) as i32;
             let foot_x_new = cx_new + CELL_W as i32 / 2;
             wbuf.fill_rect(cx_new, cell_top, CELL_W, CELL_H, Bgra::new(22, 24, 38));
             draw_proposed(&mut wbuf, WorldPos::new(foot_x_new as f32, foot_y as f32),
                 ri, 1, 100, anim);
             canvas.blit(&wbuf, cx_new, cell_top, CELL_W, CELL_H, cx_new, cell_top);
         }
+    }
+
+    // ── Hat parade ────────────────────────────────────────────────────────────
+    let hat_y0 = (POSE_H + 20) as i32;
+    canvas.fill_rect(0, hat_y0 - 2, IMG_W, 2, 50, 52, 75);
+    draw_label(&mut canvas, 2, hat_y0 + 4, "HATS");
+    draw_label(&mut canvas, (LABEL_W + CELL_W * HAT_COLS / 2) as i32 - 28, hat_y0 + 4, "CURRENT");
+    let cur_hat_y = hat_y0 + 24;
+    let new_hat_y = cur_hat_y + CELL_H as i32;
+    draw_label(&mut canvas, 2, new_hat_y + CELL_H as i32 / 2 - 4, "PROP");
+
+    // Render all hat cells into a fixed wbuf region (top-left corner, always in bounds)
+    const BUF_X: i32 = 0;
+    const BUF_Y: i32 = 0;
+    for (ci, (&hat_id, hat_name)) in HAT_IDS.iter().zip(HAT_NAMES.iter()).enumerate() {
+        let dst_cx = (LABEL_W + ci as u32 * CELL_W) as i32;
+        let buf_foot_x = BUF_X + CELL_W as i32 / 2;
+
+        draw_label(&mut canvas, dst_cx + 2, hat_y0 + 12, hat_name);
+
+        // current — render at (BUF_X, BUF_Y) then blit to canvas
+        let cur_foot_y = BUF_Y + CELL_H as i32 - 14;
+        wbuf.fill_rect(BUF_X, BUF_Y, CELL_W, CELL_H, Bgra::new(22, 24, 38));
+        draw_soldier_skeletal(&mut wbuf, WorldPos::new(buf_foot_x as f32, cur_foot_y as f32),
+            0, 1, 100, &SoldierAnim::Idle, Some(0.6), false,
+            hat_id, 0, 0, 0, None, 0.0, 0, 0);
+        canvas.blit(&wbuf, BUF_X, BUF_Y, CELL_W, CELL_H, dst_cx, cur_hat_y);
+
+        // proposed
+        let new_foot_y = BUF_Y + CELL_H as i32 - 14;
+        wbuf.fill_rect(BUF_X, BUF_Y, CELL_W, CELL_H, Bgra::new(22, 24, 38));
+        draw_proposed_hatted(&mut wbuf, WorldPos::new(buf_foot_x as f32, new_foot_y as f32),
+            0, 1, 100, &SoldierAnim::Idle, hat_id);
+        canvas.blit(&wbuf, BUF_X, BUF_Y, CELL_W, CELL_H, dst_cx, new_hat_y);
     }
 
     // Save

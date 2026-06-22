@@ -544,12 +544,34 @@ pub fn draw_soldier_skeletal(
             buf.fill_rect(head_cx - 8, head_cy,     16, 2, dark_col);
             buf.fill_rect(head_cx - 3, head_cy - 6,  3, 2, hilit);
         }
-        // Eye + mouth
+        // Face features — skipped for masks/replacements that cover the whole face
         if hat_id != 28 && hat_id != 15 && hat_id != 36 {
-            let eye_x = head_cx + f as i32 * 2;
-            buf.fill_circle(eye_x, head_cy + 3, 2, dark_col);
-            buf.set_pixel(eye_x, head_cy + 3, Bgra::new(255, 255, 255));
-            buf.fill_rect(eye_x - 2, head_cy + 6, 4, 1, dark_col);
+            let fi = f as i32;
+            let eye_x = head_cx + fi * 2;
+
+            // Ear nub (back of head, opposite facing)
+            let ear_x = head_cx - fi * 6;
+            buf.fill_rect(ear_x - 1, head_cy + 1, 3, 4, skin_col);
+            buf.fill_rect(ear_x,     head_cy + 2, 1, 2, Bgra::new(190, 148, 108));
+
+            // Eyebrow
+            buf.fill_rect(eye_x - 1, head_cy + 1, 4, 1, dark_col);
+
+            // Eye white + pupil + glint
+            buf.fill_circle(eye_x, head_cy + 3, 2, Bgra::new(220, 220, 220));
+            buf.set_pixel(eye_x + fi, head_cy + 3, dark_col);
+            buf.set_pixel(eye_x,      head_cy + 2, Bgra::new(255, 255, 255));
+
+            // Nose dot
+            buf.set_pixel(eye_x + fi * 2, head_cy + 5, Bgra::new(180, 135, 100));
+
+            // Chin shadow
+            buf.fill_rect(head_cx - 4, head_cy + 6, 8, 2, Bgra::new(190, 148, 108));
+
+            // Mouth with downturned corners
+            buf.fill_rect(eye_x - 1, head_cy + 5, 3, 1, dark_col);
+            buf.set_pixel(eye_x - 2,  head_cy + 6, dark_col);
+            buf.set_pixel(eye_x + 2,  head_cy + 6, dark_col);
         }
         if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick, f); }
 
