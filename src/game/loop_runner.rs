@@ -1983,7 +1983,8 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
                     let spy = game.teams[t].soldiers[s].pos.y;
                     let ddx = (px - spx).abs();
                     let ddy = py - spy;
-                    if ddx < 8.0 && ddy > -22.0 && ddy < 2.0 {
+                    let hit_top = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { -30.0 } else { -22.0 };
+                    if ddx < 8.0 && ddy > hit_top && ddy < 2.0 {
                         hits[t][s].0 += PELLET_DMG;
                         hits[t][s].1 += dx * PELLET_FORCE;
                         hits[t][s].2 += dy * PELLET_FORCE;
@@ -2252,8 +2253,9 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
                 let sy2 = game.teams[check_ti].soldiers[check_si].pos.y;
                 // Hit if ray passes through the soldier's body: full width ±10px,
                 // height from foot (sy2) up to head (sy2 - SOLDIER_H).
+                let hit_top_offset = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { 10.0 } else { 2.0 };
                 if (rx - sx2).abs() < 10.0
-                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - 2.0
+                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - hit_top_offset
                     && ry <= sy2 + 4.0
                 {
                     hit_ti = Some(check_ti);
@@ -2391,8 +2393,9 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
                 if !game.teams[check_ti].soldiers[check_si].is_alive() { continue; }
                 let sx2 = game.teams[check_ti].soldiers[check_si].pos.x;
                 let sy2 = game.teams[check_ti].soldiers[check_si].pos.y;
+                let hit_top_offset = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { 10.0 } else { 2.0 };
                 if (rx - sx2).abs() < 10.0
-                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - 2.0
+                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - hit_top_offset
                     && ry <= sy2 + 4.0
                 {
                     hit_ti = Some(check_ti);
@@ -2535,8 +2538,9 @@ fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Op
                 if !game.teams[check_ti].soldiers[check_si].is_alive() { continue; }
                 let sx2 = game.teams[check_ti].soldiers[check_si].pos.x;
                 let sy2 = game.teams[check_ti].soldiers[check_si].pos.y;
+                let hit_top_offset = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { 10.0 } else { 2.0 };
                 if (rx - sx2).abs() < 10.0
-                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - 2.0
+                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - hit_top_offset
                     && ry <= sy2 + 4.0
                 {
                     hit_ti = Some(check_ti);

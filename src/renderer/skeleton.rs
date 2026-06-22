@@ -5,6 +5,9 @@ use super::fb::Bgra;
 use super::draw_sprites::{TEAM_COLOURS, TEAM_COLOURS_DEAD, draw_hp_number_lifted};
 use super::cosmetic_sprites::draw_boot;
 
+// Flip to false to revert to the original soldier style.
+pub const SOLDIER_STYLE_V2: bool = true;
+
 // ── Bone indices ─────────────────────────────────────────────────────────────
 
 const TORSO: usize = 0;
@@ -184,30 +187,48 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     // Per COSMETIC_STYLE_GUIDE.md the sprite's head-anchor pixel is (33,45)
     // of 66x60 -> 5px below sprite centre at this size's ~7px (1.45x);
     // shift the centred blit up so the anchor lands on the head centre.
-    const W: i32 = 40;
-    const H: i32 = 36;
-    const ANCHOR_DY: i32 = 9;
-    // Per-hat vertical nudge (positive = down) for sprites where the art sits
-    // higher or lower than the standard anchor row.
-    let hat_dy: i32 = match hat_id {
-        5  => 5,   // Fez: art sits in the top of sprite, nudge down
-        15 => 11,  // Viking Helm: drop sprite to sit as the head, covering neck join
-        28 => 9,   // Luchador: center sprite on face, not above it
-        33 => 4,   // Pharaoh Headdress: nudge down so lappets sit alongside head
-        36 => 9,   // Dragon Skull: nudge down so cranium covers the head
-        _  => 0,
+    let (w, h, anchor_dy, hat_dy) = if SOLDIER_STYLE_V2 {
+        let base_w = 46i32;
+        let base_h = 42i32;
+        let anchor = 13i32;
+        let dy: i32 = match hat_id {
+            5  => 8,
+            15 => 14,
+            28 => 12,
+            33 => 7,
+            36 => 12,
+            _  => 0,
+        };
+        let scale: f32 = match hat_id {
+            22 => 0.75,
+            28 => 0.80,
+            36 => 0.55,
+            _  => 1.0,
+        };
+        ((base_w as f32 * scale) as i32, (base_h as f32 * scale) as i32, anchor, dy)
+    } else {
+        let base_w = 40i32;
+        let base_h = 36i32;
+        let anchor = 9i32;
+        let dy: i32 = match hat_id {
+            5  => 5,
+            15 => 11,
+            28 => 9,
+            33 => 4,
+            36 => 9,
+            _  => 0,
+        };
+        let scale: f32 = match hat_id {
+            22 => 0.75,
+            28 => 0.80,
+            36 => 0.48,
+            _  => 1.0,
+        };
+        ((base_w as f32 * scale) as i32, (base_h as f32 * scale) as i32, anchor, dy)
     };
-    // Per-hat size scale (default 1.0)
-    let scale: f32 = match hat_id {
-        22 => 0.75,  // Pirate Tricorn: rescaled sprite reads large, pull back
-        28 => 0.80,  // Luchador Mask: slightly smaller
-        36 => 0.48,  // Dragon Skull: scaled to replace the soldier head
-        _  => 1.0,
-    };
-    let (w, h) = ((W as f32 * scale) as i32, (H as f32 * scale) as i32);
     // Dragon Skull (36) flips to face the direction the soldier faces
     let flip = hat_id == 36 && facing < 0.0;
-    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - ANCHOR_DY + hat_dy, w, h, flip);
+    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - anchor_dy + hat_dy, w, h, flip);
 
     // Propeller Hat: the sprite's static propeller bar (source rows 18-26) is
     // skipped by cosmetic_sprites::draw_hat for hat_id 2; draw an animated
@@ -215,7 +236,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     if hat_id == 2 {
         let blade = Bgra::new(230, 230, 230); // sampled from hat_2.png propeller bar
         let hub_x = cx as f32;
-        let hub_y = (cy - ANCHOR_DY - H / 2 + 13) as f32; // centre of skipped band, scaled to render space
+        let hub_y = (cy - anchor_dy - h / 2 + 13) as f32; // centre of skipped band, scaled to render space
         let dir = if wind >= 0.0 { 1.0 } else { -1.0 };
         let speed = 1.0 + wind.abs() * 5.0;
         let frame = (tick as f32 / 4.0).floor() * dir * speed;
@@ -236,9 +257,13 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
 /// adjusted for facing direction). All styles use fwd + perp offset math so
 /// they rotate correctly with the aim angle.
 fn draw_gun_style(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_style_id: u8) -> (f32, f32) {
+    draw_gun_style_len(buf, origin, disp, gun_style_id, 17.0)
+}
+
+fn draw_gun_style_len(buf: &mut WorldBuffer, origin: (f32, f32), disp: f32, gun_style_id: u8, length_px: f32) -> (f32, f32) {
     let fwd = (disp.cos(), -disp.sin());
     let prp = (disp.sin(),  disp.cos());
-    super::cosmetic_sprites::draw_gun_oriented(buf, gun_style_id, origin, fwd, prp, 17.0)
+    super::cosmetic_sprites::draw_gun_oriented(buf, gun_style_id, origin, fwd, prp, length_px)
 }
 
 // ── Held weapon draw ─────────────────────────────────────────────────────────
@@ -466,79 +491,165 @@ pub fn draw_soldier_skeletal(
         (knee_r, leg_r_end, knee_l, leg_l_end)
     };
 
-    // ── Back leg (drawn before body for correct depth) ────────────────────────
-    thick_line(buf, hip.0, hip.1, back_knee.0, back_knee.1, dark_col, 7);
-    thick_line(buf, hip.0, hip.1, back_knee.0, back_knee.1, body_col, 5);
-    thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, dark_col, 7);
-    thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, body_col, 5);
-    draw_boot(buf, boot_color_id, back_foot.0 as i32, back_foot.1 as i32, 5, 4, f < 0.0);
-
-    // ── Back arm (not rendered — hidden behind body) ───────────────────────────
     let fwd_arm = if f >= 0.0 { arm_r_vis } else { arm_l_vis };
 
-    // ── Torso ─────────────────────────────────────────────────────────────────
-    thick_line(buf, hip.0, hip.1, shoulder.0, shoulder.1, dark_col, 7);
-    thick_line(buf, hip.0, hip.1, shoulder.0, shoulder.1, body_col, 5);
-    // Belt stripe
-    let belt = ((hip.0 + shoulder.0) / 2.0, (hip.1 + shoulder.1) / 2.0);
-    let tdx = shoulder.0 - hip.0;
-    let tdy = shoulder.1 - hip.1;
-    let tlen = (tdx * tdx + tdy * tdy).sqrt().max(0.001);
-    let tpx = (-tdy / tlen) * 3.0;
-    let tpy = ( tdx / tlen) * 3.0;
-    buf.draw_line((belt.0 - tpx) as i32, (belt.1 - tpy) as i32,
-                  (belt.0 + tpx) as i32, (belt.1 + tpy) as i32, dark_col);
+    let (btx, bty) = if SOLDIER_STYLE_V2 {
+        // ── V2: cartoony style ────────────────────────────────────────────────
+        let hilit    = Bgra::new(body_col.r.saturating_add(40), body_col.g.saturating_add(30), body_col.b.saturating_add(20));
+        let shadow   = Bgra::new(body_col.r.saturating_sub(40), body_col.g.saturating_sub(35), body_col.b.saturating_sub(25));
+        let belt_col = Bgra::new(60,  50,  35);
+        let buckle   = Bgra::new(200, 170, 60);
+        let boot_col = Bgra::new(50,  38,  25);
+        let boot_hi  = Bgra::new(90,  70,  45);
+        let gun_col  = Bgra::new(80,  80,  85);
 
-    // ── Head ──────────────────────────────────────────────────────────────────
-    // Viking helm and Dragon Skull replace the head — draw no circles under them.
-    if hat_id != 15 && hat_id != 36 {
-        buf.fill_circle(head_cx, head_cy, 5, dark_col);
-        buf.fill_circle(head_cx, head_cy, 4, skin_col);
-    }
-    // Helmet cap — only when no hat equipped (hat replaces it)
-    if hat_id == 0 {
-        for dy in -5..=0i32 {
-            for dx in -4..=4i32 {
-                if dx * dx + dy * dy <= 16 {
-                    buf.set_pixel(head_cx + dx, head_cy + dy, team_col);
+        // Back leg (shadow color so it reads as behind the body)
+        thick_line(buf, hip.0, hip.1, back_knee.0, back_knee.1, dark_col, 7);
+        thick_line(buf, hip.0, hip.1, back_knee.0, back_knee.1, shadow, 5);
+        thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, dark_col, 7);
+        thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, shadow, 5);
+        buf.fill_circle(back_knee.0 as i32, back_knee.1 as i32, 3, dark_col);
+        buf.fill_circle(back_knee.0 as i32, back_knee.1 as i32, 2, shadow);
+        let bfx = back_foot.0 as i32; let bfy = back_foot.1 as i32;
+        buf.fill_rect(bfx - 4, bfy - 3, 8, 5, dark_col);
+        buf.fill_rect(bfx - 3, bfy - 2, 7, 4, boot_col);
+
+        // Torso (wider, with chest highlight + belt)
+        thick_line(buf, hip.0, hip.1, shoulder.0, shoulder.1, dark_col, 11);
+        thick_line(buf, hip.0, hip.1, shoulder.0, shoulder.1, body_col, 9);
+        let chest = (hip.0 + (shoulder.0 - hip.0) * 0.55, hip.1 + (shoulder.1 - hip.1) * 0.55);
+        thick_line(buf, chest.0, chest.1, shoulder.0, shoulder.1, hilit, 5);
+        let belt_pt = (hip.0 + (shoulder.0 - hip.0) * 0.25, hip.1 + (shoulder.1 - hip.1) * 0.25);
+        let bx = belt_pt.0 as i32; let by = belt_pt.1 as i32;
+        buf.fill_rect(bx - 5, by - 1, 10, 3, dark_col);
+        buf.fill_rect(bx - 4, by,      8, 1, belt_col);
+        buf.fill_rect(bx - 1, by - 1,  2, 3, buckle);
+
+        // Head (bigger, helmet brim, eye circle, mouth)
+        if hat_id != 15 && hat_id != 36 {
+            buf.fill_circle(head_cx, head_cy, 8, dark_col);
+            buf.fill_circle(head_cx, head_cy, 7, skin_col);
+        }
+        if hat_id == 0 {
+            for dy in -8..=0i32 {
+                for dx in -7..=7i32 {
+                    if dx * dx + dy * dy <= 49 {
+                        buf.set_pixel(head_cx + dx, head_cy + dy, team_col);
+                    }
                 }
             }
         }
-    }
-    // Eye — suppressed for luchador mask, viking helm, and dragon skull (skull covers/replaces head)
-    if hat_id != 28 && hat_id != 15 && hat_id != 36 {
-        let eye_x = head_cx + f as i32;
-        buf.set_pixel(eye_x,     head_cy + 1, dark_col);
-        buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);
-    }
-    // Hat drawn after head
-    if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick, f); }
+        // Helmet brim
+        if hat_id == 0 {
+            buf.fill_rect(head_cx - 8, head_cy,     16, 2, dark_col);
+            buf.fill_rect(head_cx - 3, head_cy - 6,  3, 2, hilit);
+        }
+        // Eye + mouth
+        if hat_id != 28 && hat_id != 15 && hat_id != 36 {
+            let eye_x = head_cx + f as i32 * 2;
+            buf.fill_circle(eye_x, head_cy + 3, 2, dark_col);
+            buf.set_pixel(eye_x, head_cy + 3, Bgra::new(255, 255, 255));
+            buf.fill_rect(eye_x - 2, head_cy + 6, 4, 1, dark_col);
+        }
+        if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick, f); }
 
-    // ── Front leg (after body for correct depth) ──────────────────────────────
-    thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, dark_col, 7);
-    thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, body_col, 5);
-    thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, dark_col, 7);
-    thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, body_col, 5);
-    draw_boot(buf, boot_color_id, front_foot.0 as i32, front_foot.1 as i32, 5, 4, f < 0.0);
+        // Front leg
+        thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, dark_col, 7);
+        thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, body_col, 5);
+        thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, dark_col, 7);
+        thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, body_col, 5);
+        buf.fill_circle(front_knee.0 as i32, front_knee.1 as i32, 3, dark_col);
+        buf.fill_circle(front_knee.0 as i32, front_knee.1 as i32, 2, body_col);
+        let ffx = front_foot.0 as i32; let ffy = front_foot.1 as i32;
+        buf.fill_rect(ffx - 4, ffy - 3, 9, 5, dark_col);
+        buf.fill_rect(ffx - 3, ffy - 2, 8, 4, boot_col);
+        buf.fill_rect(ffx - 3, ffy - 2, 3, 1, boot_hi);
 
-    // ── Front arm ─────────────────────────────────────────────────────────────
-    thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, dark_col, 5);
-    thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, body_col, 3);
+        // Shoulder ball joint
+        buf.fill_circle(arm_orig.0 as i32, arm_orig.1 as i32, 4, dark_col);
+        buf.fill_circle(arm_orig.0 as i32, arm_orig.1 as i32, 3, body_col);
 
-    // ── Gun / held item ───────────────────────────────────────────────────────
-    let arm_end = fwd_arm;
-    let disp = if f >= 0.0 {
-        aim_angle.unwrap_or(0.0)
+        // Arm (wider)
+        thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, dark_col, 7);
+        thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, body_col, 5);
+
+        // Gun / held item
+        let disp = if f >= 0.0 { aim_angle.unwrap_or(0.0) } else { std::f32::consts::PI - aim_angle.unwrap_or(0.0) };
+        if let Some(weapon) = held_weapon {
+            draw_held_weapon(buf, fwd_arm.0 as i32, fwd_arm.1 as i32, weapon, tick);
+            (fwd_arm.0, fwd_arm.1)
+        } else {
+            // Thicker barrel outline before the cosmetic gun sprite
+            let fwd_dir = (disp.cos(), -disp.sin());
+            let tip = (fwd_arm.0 + fwd_dir.0 * 22.0, fwd_arm.1 + fwd_dir.1 * 22.0);
+            thick_line(buf, fwd_arm.0, fwd_arm.1, tip.0, tip.1, dark_col, 5);
+            let (tx, ty) = draw_gun_style_len(buf, fwd_arm, disp, gun_style_id, 22.0);
+            // Muzzle cap
+            buf.fill_circle(tx as i32, ty as i32, 3, dark_col);
+            buf.fill_circle(tx as i32, ty as i32, 2, gun_col);
+            (tx, ty)
+        }
     } else {
-        std::f32::consts::PI - aim_angle.unwrap_or(0.0)
-    };
-    let (btx, bty) = if let Some(weapon) = held_weapon {
-        let ix = arm_end.0 as i32;
-        let iy = arm_end.1 as i32;
-        draw_held_weapon(buf, ix, iy, weapon, tick);
-        (arm_end.0, arm_end.1)
-    } else {
-        draw_gun_style(buf, arm_end, disp, gun_style_id)
+        // ── V1: original style ────────────────────────────────────────────────
+        // Back leg
+        thick_line(buf, hip.0, hip.1, back_knee.0, back_knee.1, dark_col, 7);
+        thick_line(buf, hip.0, hip.1, back_knee.0, back_knee.1, body_col, 5);
+        thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, dark_col, 7);
+        thick_line(buf, back_knee.0, back_knee.1, back_foot.0, back_foot.1, body_col, 5);
+        draw_boot(buf, boot_color_id, back_foot.0 as i32, back_foot.1 as i32, 5, 4, f < 0.0);
+
+        // Torso
+        thick_line(buf, hip.0, hip.1, shoulder.0, shoulder.1, dark_col, 7);
+        thick_line(buf, hip.0, hip.1, shoulder.0, shoulder.1, body_col, 5);
+        let belt = ((hip.0 + shoulder.0) / 2.0, (hip.1 + shoulder.1) / 2.0);
+        let tdx = shoulder.0 - hip.0;
+        let tdy = shoulder.1 - hip.1;
+        let tlen = (tdx * tdx + tdy * tdy).sqrt().max(0.001);
+        let tpx = (-tdy / tlen) * 3.0;
+        let tpy = ( tdx / tlen) * 3.0;
+        buf.draw_line((belt.0 - tpx) as i32, (belt.1 - tpy) as i32,
+                      (belt.0 + tpx) as i32, (belt.1 + tpy) as i32, dark_col);
+
+        // Head
+        if hat_id != 15 && hat_id != 36 {
+            buf.fill_circle(head_cx, head_cy, 5, dark_col);
+            buf.fill_circle(head_cx, head_cy, 4, skin_col);
+        }
+        if hat_id == 0 {
+            for dy in -5..=0i32 {
+                for dx in -4..=4i32 {
+                    if dx * dx + dy * dy <= 16 {
+                        buf.set_pixel(head_cx + dx, head_cy + dy, team_col);
+                    }
+                }
+            }
+        }
+        if hat_id != 28 && hat_id != 15 && hat_id != 36 {
+            let eye_x = head_cx + f as i32;
+            buf.set_pixel(eye_x,     head_cy + 1, dark_col);
+            buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);
+        }
+        if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick, f); }
+
+        // Front leg
+        thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, dark_col, 7);
+        thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, body_col, 5);
+        thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, dark_col, 7);
+        thick_line(buf, front_knee.0, front_knee.1, front_foot.0, front_foot.1, body_col, 5);
+        draw_boot(buf, boot_color_id, front_foot.0 as i32, front_foot.1 as i32, 5, 4, f < 0.0);
+
+        // Arm
+        thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, dark_col, 5);
+        thick_line(buf, arm_orig.0, arm_orig.1, fwd_arm.0, fwd_arm.1, body_col, 3);
+
+        // Gun / held item
+        let disp = if f >= 0.0 { aim_angle.unwrap_or(0.0) } else { std::f32::consts::PI - aim_angle.unwrap_or(0.0) };
+        if let Some(weapon) = held_weapon {
+            draw_held_weapon(buf, fwd_arm.0 as i32, fwd_arm.1 as i32, weapon, tick);
+            (fwd_arm.0, fwd_arm.1)
+        } else {
+            draw_gun_style(buf, fwd_arm, disp, gun_style_id)
+        }
     };
 
     // ── HP number ─────────────────────────────────────────────────────────────

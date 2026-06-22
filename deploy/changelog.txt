@@ -1,3 +1,4 @@
+0.5.4.330  Cartoony soldier redesign (bigger head, knee joints, shoulder ball joint, belt+buckle, chest highlight, boots, wider arm, bigger gun); hitscan hitboxes match new proportions; cavern maps sealed top with varied terrain instead of flat block; opponent's move screen styled to match other screens, 5s→2s.
 0.5.4.329  Cosmetics equip screen: Y=preview shows full squad with cosmetics; store/equip open instantly from cache; soldier-to-soldier blocking uses full body box; Dragon Skull 20% bigger; wildcard TLS renewal hook.
 0.5.4.328  FPS: replace per-pixel modulo with conditional wrap in sky-band fill; throttle crater cache to 2/frame to kill dip spikes.
 0.5.4.327  FPS optimizations: cut ambient debris particles, halve FX cap; fix weapon cycling in live mode, Dragon Skull scale, TNT/barrel instant-trigger.
