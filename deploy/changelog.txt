@@ -1,3 +1,4 @@
+0.5.4.325  Debug logging for casual lobby investigation.
 0.5.4.324  Fix casual lobby: second player now receives lobby state correctly.
 0.5.4.323  Fix gamepad button mapping on Windows for PlayStation controllers.
 0.5.4.322  Log full TLS login error to /tmp/arty_login_err.txt for debugging.
