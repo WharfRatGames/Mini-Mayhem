@@ -15,7 +15,7 @@ use serde::{Serialize, Deserialize};
 
 /// Hard cap on live effect particles — bounds cost on the Miyoo when several big
 /// explosions overlap.
-pub const FX_MAX: usize = 600;
+pub const FX_MAX: usize = 300;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FxKind {
@@ -47,7 +47,7 @@ fn rf(state: &mut u32) -> f32 { (rng(state) >> 8) as f32 / (1u32 << 24) as f32 }
 /// Seed a PRNG from a position so each burst looks different.
 fn seed_at(pos: WorldPos, salt: u32) -> u32 {
     (pos.x as u32)
-        .wrapping_mul(2654435761)
+        .wrapping_mul(2654435761_u32)
         .wrapping_add((pos.y as u32).wrapping_mul(40503))
         .wrapping_add(salt.wrapping_mul(0x9E3779B9))
         | 1

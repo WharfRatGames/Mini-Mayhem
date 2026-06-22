@@ -476,14 +476,20 @@ pub fn apply_server_state(
             spawn_cam_left: 0.0, // client-only, updated by tick() before plane launches
         });
     }
-    // Sync weapon inventories so ammo counts and selection stay accurate
+    // Sync weapon inventories so ammo counts and selection stay accurate.
+    // For my_team: preserve the locally-managed selection (only clamp if the
+    // list shrank).  For the opponent: use the server's selection (display only).
     for (i, tw) in state.team_weapons.iter().enumerate() {
         if let Some(team) = game.teams.get_mut(i) {
             use crate::physics::projectile::WeaponKind;
             team.weapons = tw.weapons.iter()
                 .map(|&(k, a)| (WeaponKind::from_net_u8(k), if a == 0xFFFF { None } else { Some(a) }))
                 .collect();
-            team.selected_weapon = tw.selected.min(team.weapons.len().saturating_sub(1));
+            if i == my_team {
+                team.selected_weapon = team.selected_weapon.min(team.weapons.len().saturating_sub(1));
+            } else {
+                team.selected_weapon = tw.selected.min(team.weapons.len().saturating_sub(1));
+            }
         }
     }
 }

@@ -128,11 +128,11 @@ struct DebrisStyle {
 /// caverns→dust+embers, canyon→dust.
 fn debris_style(archetype: u8) -> DebrisStyle {
     match archetype {
-        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 600, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow
-        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 500, big_chance: 10, glow_chance: 0,  sway_amp: 0.5, sway_speed: 0.05, spin: 0.04 }, // sea mist
-        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 550, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
-        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 520, big_chance: 12, glow_chance: 0,  sway_amp: 0.4, sway_speed: 0.07, spin: 0.10 }, // canyon dust
-        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 450, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen
+        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 420, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow
+        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 200, big_chance: 10, glow_chance: 0,  sway_amp: 0.5, sway_speed: 0.05, spin: 0.04 }, // sea mist
+        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 220, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
+        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 210, big_chance: 12, glow_chance: 0,  sway_amp: 0.4, sway_speed: 0.07, spin: 0.10 }, // canyon dust
+        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 180, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen
     }
 }
 
@@ -173,7 +173,7 @@ fn spawn(state: &mut u32, style: &DebrisStyle, wind: f32) -> BgParticle {
 /// off-screen particles are recycled and the set is topped up to the target count.
 pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f32, tick: u32) {
     let style = debris_style(terrain.archetype);
-    let mut state = tick.wrapping_mul(2654435761).wrapping_add(0x9E3779B9) | 1;
+    let mut state = tick.wrapping_mul(2654435761_u32).wrapping_add(0x9E3779B9) | 1;
 
     for p in particles.iter_mut() {
         p.vx += wind * style.drift * 0.25;
@@ -220,7 +220,10 @@ pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgPart
             let py = sy + oy;
             if py < 0 || py >= WATER_Y as i32 || px < 0 || px >= SCREEN_W as i32 { return; }
             let wx = cam_x as i32 + px;
-            if terrain.is_solid(wx, py) { return; }
+            // sky_limit[wx] is the first solid row from top; anything at or
+            // below it is in or under terrain — no need for the full is_solid check.
+            if wx < 0 || wx >= WORLD_W as i32 { return; }
+            if py >= terrain.sky_limit[wx as usize] as i32 { return; }
             buf.set_pixel(wx, py, colour);
         };
         put(0, 0);

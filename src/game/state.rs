@@ -858,8 +858,10 @@ impl GameState {
                 }
                 StepResult::Flying | StepResult::Bounced => {
                     let mut hit_soldier = false;
+                    // Main hive passes through soldiers; only bees sting
+                    let is_main_hive = kind == WeaponKind::Blasthive && !proj.is_fragment;
                     let is_bee = kind == WeaponKind::Blasthive && proj.is_fragment;
-                    for &spos in &soldier_boxes {
+                    for &spos in if is_main_hive { &[][..] } else { &soldier_boxes[..] } {
                         let dx = (proj.pos.x - spos.x).abs();
                         let dy = proj.pos.y - spos.y;
                         // Bees use a wider window (above the head + to the sides) so a
@@ -1071,7 +1073,7 @@ impl GameState {
 
         // Separate 15% scrap crate — multiplayer only
         if self.is_multiplayer {
-            let scrap_rng = self.tick.wrapping_mul(2654435761).wrapping_add(1013904223);
+            let scrap_rng = self.tick.wrapping_mul(2654435761_u32).wrapping_add(1013904223);
             if (scrap_rng % 100) < 15 {
                 let amount = 5 + (scrap_rng.wrapping_mul(1664525) % 26) as u32;
                 let sx = ((scrap_rng.wrapping_mul(22695477) % WORLD_W) as f32)
@@ -1315,10 +1317,14 @@ impl GameState {
 
         let mut to_explode: Vec<usize> = Vec::new();
 
-        // Projectile-barrel collision: any live projectile touching a barrel triggers it
+        // Projectile-barrel collision: flying projectiles touching a barrel trigger it.
+        // TNT and landmines are stationary fused weapons — they detonate via the
+        // explosion path (apply_explosion → Triggered), not by proximity contact.
         for (i, barrel) in self.barrels.iter().enumerate() {
             if let BarrelState::Normal = barrel.state {
                 for proj in &self.projectiles {
+                    use crate::physics::projectile::WeaponKind;
+                    if matches!(proj.kind, WeaponKind::Tnt | WeaponKind::Landmine) { continue; }
                     let dx = proj.pos.x - barrel.pos.x;
                     let dy = proj.pos.y - barrel.pos.y;
                     if (dx*dx + dy*dy).sqrt() < 12.0 {

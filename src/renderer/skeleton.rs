@@ -194,14 +194,14 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
         15 => 11,  // Viking Helm: drop sprite to sit as the head, covering neck join
         28 => 9,   // Luchador: center sprite on face, not above it
         33 => 4,   // Pharaoh Headdress: nudge down so lappets sit alongside head
-        36 => 6,   // Dragon Skull: nudge down so cranium covers the head
+        36 => 9,   // Dragon Skull: nudge down so cranium covers the head
         _  => 0,
     };
     // Per-hat size scale (default 1.0)
     let scale: f32 = match hat_id {
         22 => 0.75,  // Pirate Tricorn: rescaled sprite reads large, pull back
         28 => 0.80,  // Luchador Mask: slightly smaller
-        36 => 1.15,  // Dragon Skull: larger to fully cover head
+        36 => 0.40,  // Dragon Skull: scaled to replace the soldier head
         _  => 1.0,
     };
     let (w, h) = ((W as f32 * scale) as i32, (H as f32 * scale) as i32);
@@ -490,8 +490,8 @@ pub fn draw_soldier_skeletal(
                   (belt.0 + tpx) as i32, (belt.1 + tpy) as i32, dark_col);
 
     // ── Head ──────────────────────────────────────────────────────────────────
-    // Viking helm sprite fully replaces the head — draw no circles under it.
-    if hat_id != 15 {
+    // Viking helm and Dragon Skull replace the head — draw no circles under them.
+    if hat_id != 15 && hat_id != 36 {
         buf.fill_circle(head_cx, head_cy, 5, dark_col);
         buf.fill_circle(head_cx, head_cy, 4, skin_col);
     }
