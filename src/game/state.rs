@@ -1611,7 +1611,7 @@ impl GameState {
     pub fn step_fire_patches(&mut self) {
         use crate::world::{WATER_Y, WORLD_W};
         const GRAVITY: f32 = 0.5;
-        const DOT_INTERVAL: u32 = 5; // deal 1 HP every 5 ticks = 6 HP/s
+        const DOT_INTERVAL: u32 = 10; // deal 1 HP every 10 ticks = 3 HP/s
         const DOT_RADIUS: f32 = 10.0;
 
         // Snapshot active soldier HP before the loop so we can detect fire damage after.
