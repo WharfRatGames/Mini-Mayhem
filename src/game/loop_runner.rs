@@ -3244,7 +3244,12 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         lstate.cache_initialized = true;
         lstate.cache_craters_processed = game.crater_log.len();
     }
-    while lstate.cache_craters_processed < game.crater_log.len() {
+    // Process at most 2 crater cache patches per frame so a burst of craters
+    // arriving in one StateMsg doesn't spike frame time.
+    let crater_limit = lstate.cache_craters_processed + 2;
+    while lstate.cache_craters_processed < game.crater_log.len()
+        && lstate.cache_craters_processed < crater_limit
+    {
         let (cx, cy, r) = game.crater_log[lstate.cache_craters_processed];
         crate::renderer::draw_terrain::update_cache_region(
             &mut lstate.world_cache, &game.terrain, cx, cy, r,

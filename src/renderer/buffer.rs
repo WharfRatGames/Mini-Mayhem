@@ -284,11 +284,16 @@ impl WorldBuffer {
                     if let Some((par_x, dst_w)) = par {
                         // Row-major order: iterate rows outer, columns inner so
                         // both src and dst accesses are sequential in memory.
+                        // Use a running src_x + conditional wrap instead of
+                        // per-pixel modulo (% is a division on ARM — expensive).
+                        let src_x0 = (par_x + x) % dst_w;
                         for gy in min_y..y0 {
+                            let mut src_x = src_x0;
                             for rx in x..run_end {
-                                let src_x = (par_x + rx) % dst_w;
                                 let c = bg_cache.get_pixel_unchecked(src_x, gy);
                                 self.set_pixel_unchecked(cam_x + rx, gy, c);
+                                src_x += 1;
+                                if src_x >= dst_w { src_x = 0; }
                             }
                         }
                     }
