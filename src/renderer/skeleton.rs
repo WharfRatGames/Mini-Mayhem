@@ -203,6 +203,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
             1  => -6,
             5  => 14,
             15 => 25,
+            22 => -11,
             26 => 8,
             28 => 21,
             33 => 12,
@@ -211,7 +212,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
         };
         let scale: f32 = match hat_id {
             1  => 0.85,
-            22 => 0.75,
+            22 => 0.35,
             26 => 1.05,
             28 => 0.80,
             34 => 0.50,
@@ -378,7 +379,7 @@ pub fn hat_name_lift(hat_id: u8) -> i32 {
     let (base_h, anchor, head_r) = if SOLDIER_STYLE_V2 { (63.0f32, 16.0f32, 8.0f32) } else { (36.0, 9.0, 5.0) };
     let scale: f32 = match hat_id {
         1  => 0.85,
-        22 => 0.45,
+        22 => 0.35,
         26 => 1.05,
         28 => 0.80,
         34 => 0.50,
@@ -389,6 +390,7 @@ pub fn hat_name_lift(hat_id: u8) -> i32 {
         1  => -6.0,
         5  => 14.0,
         15 => 25.0,
+        22 => -11.0,
         26 =>  8.0,
         28 => 21.0,
         33 => 12.0,

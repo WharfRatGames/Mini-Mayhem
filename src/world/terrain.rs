@@ -760,15 +760,16 @@ impl Terrain {
 
             // C.6 — Air dilation: widen all air passages so soldiers (14px wide, 20px tall)
             // can traverse them. Four passes of Moore-neighborhood dilation — each pass
-            // expands existing air by 1px on all sides, only within the rock band.
+            // expands existing air by 1px on all sides, ONLY within the rock band (SKY_FLOOR
+            // and below). Never touch the sealed top zone (y < SKY_FLOOR).
             for _ in 0..4 {
                 let snap = terrain.solid.clone();
-                for y in 1..CAVE_FLOOR - 1 {
+                for y in SKY_FLOOR..CAVE_FLOOR - 1 {
                     for x in 1..WORLD_W as i32 - 1 {
                         if !snap[world_index(x as u32, y as u32)] { continue; }
                         let has_air_neighbor = (-1i32..=1).any(|dy| {
                             let yy = y + dy;
-                            if yy < 1 || yy >= CAVE_FLOOR { return false; }
+                            if yy < SKY_FLOOR || yy >= CAVE_FLOOR { return false; }
                             (-1i32..=1).any(|dx| {
                                 if dx == 0 && dy == 0 { return false; }
                                 let xx = x + dx;
@@ -886,6 +887,24 @@ impl Terrain {
                             dig_tunnel(&mut terrain, pcx, pcy, best.0, best.1, 10);
                         }
                     }
+                }
+            }
+
+            // F — Final ceiling re-seal: connectivity tunnels may punch through.
+            // Restore the entire top zone (0..SKY_FLOOR) from the same noise parameters
+            // used in step A, guaranteeing the sky crust is solid regardless of what
+            // happened during carving/dilation/connectivity.
+            for x in 0..WORLD_W as i32 {
+                let nx = x as f64 / WORLD_W as f64;
+                let wave = cave_a.get([nx * top_freq, 11.7]);
+                let fine = cave_b.get([nx * top_freq2, 55.3]);
+                let surf_y = (SKY_FLOOR as f64
+                    - top_amp * 0.5
+                    + wave * top_amp * 0.5
+                    + fine * top_amp * 0.15)
+                    .clamp(8.0, (SKY_FLOOR - 8) as f64) as i32;
+                for y in 0..SKY_FLOOR {
+                    terrain.set_solid(x, y, y >= surf_y);
                 }
             }
         }
@@ -1246,10 +1265,9 @@ impl Terrain {
         let mut spawns: Vec<WorldPos> = Vec::with_capacity(count);
         let mut used_x: Vec<i32> = Vec::with_capacity(count);
 
-        // Cave maps: mix surface (top crust) and underground spawns so soldiers
-        // can appear on either level. Alternate preference per slot — even slots
-        // try surface first, odd slots try underground first — then fall back to
-        // the other pool if the preferred one has no valid position.
+        // Cave maps (WA style): all soldiers spawn underground in the cave system.
+        // Surface crust is solid rock — no one starts on top. Fall back to surface
+        // only if the cave system has no valid floors (degenerate seed).
         if self.archetype == 3 {
             let mut surface_cands: Vec<(i32, i32)> = Vec::new();
             let mut cave_cands:    Vec<(i32, i32)> = Vec::new();
@@ -1263,13 +1281,8 @@ impl Terrain {
                 }
                 x += 1;
             }
-            for i in 0..count {
-                let prefer_surface = i % 2 == 0;
-                let pools: [&[(i32, i32)]; 2] = if prefer_surface {
-                    [&surface_cands, &cave_cands]
-                } else {
-                    [&cave_cands, &surface_cands]
-                };
+            for _i in 0..count {
+                let pools: [&[(i32, i32)]; 2] = [&cave_cands, &surface_cands];
                 'slot: for pool in pools {
                     for &(cx, cy) in pool {
                         if used_x.iter().all(|&ux| (ux - cx).abs() >= MIN_SEP) {
