@@ -7,7 +7,8 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.338";
+mod bug_report;
+const VERSION: &str = "0.5.4.339";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -32,6 +33,18 @@ fn main() {
     // aplay can open the ALSA device cleanly for sound effects.
     #[cfg(not(feature = "desktop"))]
     unsafe { for fd in 3i32..=255 { libc::close(fd); } }
+
+    // Tell keymon to stop intercepting the MENU button so we can read KEY_ESC.
+    // Install a panic hook to clean the flag up on crash.
+    #[cfg(not(feature = "desktop"))]
+    {
+        let _ = std::fs::write("/tmp/disable_menu_button", b"");
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = std::fs::remove_file("/tmp/disable_menu_button");
+            prev(info);
+        }));
+    }
 
     // ── Open hardware ─────────────────────────────────────────────────────────
     let mut fb = Framebuffer::open()
@@ -711,9 +724,32 @@ fn main() {
     let mut opponent_left_ticks: u32 = 0; // banner: "OPPONENT DISCONNECTED"
     let mut opponent_abandoned = false;
     let mut opponent_quit_acked = false; // true after player dismisses the quit dialog
+    let mut bug_reporter: Option<bug_report::BugReporter> = None;
     loop {
         let frame_start = Instant::now();
         input.poll();
+
+        // MENU button opens the bug reporter (keymon disabled at startup)
+        if bug_reporter.is_none()
+            && input.just_pressed(input::Button::Menu)
+        {
+            bug_reporter = Some(bug_report::BugReporter::capture(&buf, cam.left_edge()));
+        }
+        if let Some(ref mut reporter) = bug_reporter {
+            let cancelled = reporter.tick(&input);
+            reporter.draw(&mut buf, cam.left_edge());
+            buf.blit_to_fb(&mut fb, cam.left_edge());
+            if cancelled || reporter.is_done() {
+                bug_reporter = None;
+            }
+            // Consume this frame — don't run the rest of the game loop
+            let elapsed = frame_start.elapsed().as_micros() as u64;
+            if elapsed < 33_333 {
+                std::thread::sleep(std::time::Duration::from_micros(33_333 - elapsed));
+            }
+            continue;
+        }
+
         if let Some(ref mut conn) = net_conn {
             // Disconnect detection — reader thread or write failure sets this flag.
             if conn.is_disconnected() {
@@ -1198,6 +1234,9 @@ fn main() {
         }
     } // end inner game loop
     } // end 'game loop
+
+    #[cfg(not(feature = "desktop"))]
+    let _ = std::fs::remove_file("/tmp/disable_menu_button");
 }
 /// Build the default game: human team 0 vs CPU team 1.
 fn build_default_game(seed: u64) -> GameState {

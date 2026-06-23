@@ -63,6 +63,9 @@ impl WorldBuffer {
         Bgra::new(self.data[off + 2], self.data[off + 1], self.data[off])
     }
 
+    /// Raw BGRA data slice — used by the screenshot encoder.
+    pub fn raw_data(&self) -> &[u8] { &self.data }
+
     /// Like `get_pixel`, but skips the bounds check — caller must guarantee
     /// `0 <= x < WORLD_W` and `0 <= y < WORLD_H`. Used in hot per-pixel loops.
     pub fn get_pixel_unchecked(&self, x: u32, y: u32) -> Bgra {

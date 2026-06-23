@@ -6,3 +6,4 @@ pub mod game;
 pub mod audio;
 pub mod net;
 pub mod https;
+pub mod bug_report;

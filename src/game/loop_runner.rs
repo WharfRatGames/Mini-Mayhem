@@ -3486,7 +3486,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     let dark = Bgra::new(0, 0, 0);
                     let nw   = str_width(&soldier.name) + 1; // +1 for bold shift
                     let nx   = soldier.pos.x as i32 - nw / 2;
-                    let hat_lift = if soldier.hat_id > 0 { 21 } else { 0 };
+                    let hat_lift = if soldier.hat_id > 0 { 37 } else { 0 };
                     let ny   = soldier.pos.y as i32 - SOLDIER_H as i32 - 40 - hat_lift;
                     // Shadow pass + single bold pass (was 2 shadow + 2 bold;
                     // halved to cut per-frame glyph draw calls).
@@ -3497,7 +3497,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 // Active-soldier marker: downward triangle, raised above name
                 if ti == active_ti && si == active_si && game.turn.is_acting() {
                     let cx  = soldier.pos.x as i32;
-                    let hat_lift = if soldier.hat_id > 0 { 21 } else { 0 };
+                    let hat_lift = if soldier.hat_id > 0 { 37 } else { 0 };
                     let ty  = soldier.pos.y as i32 - crate::renderer::draw_sprites::SOLDIER_H - 52 - hat_lift;
                     let col = crate::renderer::draw_sprites::TEAM_COLOURS[team.color_id as usize];
                     buf.fill_rect(cx - 6, ty,     13, 2, col);

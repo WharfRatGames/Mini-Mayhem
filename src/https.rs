@@ -193,6 +193,35 @@ pub fn https_get(host: &str, path: &str, connect_timeout: u64, read_timeout: u64
     tls_roundtrip(host, req.as_bytes(), connect_timeout, read_timeout)
 }
 
+/// Multipart POST with a PNG attachment — used by the bug reporter.
+pub fn https_post_multipart(
+    host: &str, path: &str,
+    category: &str, description: &str, png: &[u8],
+    connect_timeout: u64, read_timeout: u64,
+) -> Result<String, String> {
+    let boundary = "MayhemBugBoundary9001";
+
+    let mut body: Vec<u8> = Vec::new();
+    // category field
+    body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"category\"\r\n\r\n{category}\r\n").as_bytes());
+    // description field
+    body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"description\"\r\n\r\n{description}\r\n").as_bytes());
+    // screenshot field
+    body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot.png\"\r\nContent-Type: image/png\r\n\r\n").as_bytes());
+    body.extend_from_slice(png);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let header = format!(
+        "POST {} HTTP/1.0\r\nHost: {}\r\nContent-Type: multipart/form-data; boundary={}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        path, host, boundary, body.len()
+    );
+    let mut req = header.into_bytes();
+    req.extend_from_slice(&body);
+
+    let bytes = tls_roundtrip(host, &req, connect_timeout, read_timeout)?;
+    String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
 pub fn https_post(host: &str, path: &str, body: &str, connect_timeout: u64, read_timeout: u64) -> Result<String, String> {
     let req = format!(
         "POST {} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

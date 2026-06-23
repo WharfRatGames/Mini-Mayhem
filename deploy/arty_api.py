@@ -317,25 +317,50 @@ def gen_code(): return ''.join(random.choices(string.ascii_uppercase, k=6))
 def gen_game_token(): return ''.join(random.choices(string.ascii_letters + string.digits, k=24))
 
 def read_req(s):
-    data = b''
-    s.settimeout(3)
+    # Read headers first
+    header_buf = b''
+    s.settimeout(5)
     try:
-        while True:
+        while b'\r\n\r\n' not in header_buf and b'\n\n' not in header_buf:
             chunk = s.recv(4096)
             if not chunk: break
-            data += chunk
-            if b'\r\n\r\n' in data or b'\n\n' in data: break
+            header_buf += chunk
     except: pass
-    req = data.decode('utf-8', errors='replace')
-    lines = req.split('\n')
+    sep = header_buf.find(b'\r\n\r\n')
+    nl2 = header_buf.find(b'\n\n')
+    if sep == -1 and nl2 == -1: return None, None, None, None
+    if sep == -1 or (nl2 != -1 and nl2 < sep):
+        sep = nl2; hdr_end = sep + 2
+    else:
+        hdr_end = sep + 4
+    header_raw = header_buf[:sep].decode('utf-8', errors='replace')
+    already_body = header_buf[hdr_end:]
+    lines = header_raw.split('\n')
     first = lines[0].strip().split()
     if len(first) < 2: return None, None, None, None
     method, path = first[0], first[1].split('?')[0]
     qs = first[1].split('?')[1] if '?' in first[1] else ''
-    sep = req.find('\r\n\r\n')
-    if sep == -1: sep = req.find('\n\n')
-    body = req[sep+4:].strip() if sep != -1 else ''
-    return method, path, body, qs
+    headers = {}
+    for line in lines[1:]:
+        if ':' in line:
+            k, v = line.split(':', 1)
+            headers[k.strip().lower()] = v.strip()
+    content_length = int(headers.get('content-length', 0))
+    content_type   = headers.get('content-type', '')
+    # Read remaining body bytes
+    body_bytes = already_body
+    s.settimeout(15)
+    try:
+        while len(body_bytes) < content_length:
+            chunk = s.recv(65536)
+            if not chunk: break
+            body_bytes += chunk
+    except: pass
+    # Return raw bytes for multipart, decoded string otherwise
+    if 'multipart' in content_type:
+        return method, path, body_bytes, qs, headers
+    body_str = body_bytes.decode('utf-8', errors='replace').strip()
+    return method, path, body_str, qs, headers
 
 def send_json(s, status, obj):
     body = json.dumps(obj)
@@ -346,9 +371,11 @@ def send_json(s, status, obj):
 # ── Request handler ───────────────────────────────────────────────────────────
 
 def handle(db, sock, peer_ip="?"):
-    method, path, body, qs = read_req(sock)
-    if not method: sock.close(); return
-    try: data = json.loads(body) if body else {}
+    result = read_req(sock)
+    if not result or not result[0]: sock.close(); return
+    method, path, body, qs = result[0], result[1], result[2], result[3]
+    headers = result[4] if len(result) > 4 else {}
+    try: data = json.loads(body) if body and not isinstance(body, bytes) else {}
     except: data = {}
     qs_params = dict(p.split('=', 1) for p in qs.split('&') if '=' in p)
 
@@ -1423,6 +1450,62 @@ def handle(db, sock, peer_ip="?"):
             "ranked_weapon_kills": rnk["weapon_kills"],
             "elo": elo_val,
         })
+
+    elif method == "POST" and path == "/bug_report":
+        import email, email.parser, io as _io
+        WEBHOOK = "https://discord.com/api/webhooks/1518850955083251803/REDACTED"
+        WH_UA   = "DiscordBot (https://github.com/WharfRatGames/Mini-Mayhem, 1.0)"
+        try:
+            ct      = headers.get("Content-Type","")
+            boundary = ""
+            for part in ct.split(";"):
+                part = part.strip()
+                if part.startswith("boundary="):
+                    boundary = part[len("boundary="):].strip('"')
+            if not boundary:
+                send_json(sock, 400, {"error":"no boundary"}); return
+            raw = body if isinstance(body, bytes) else body.encode()
+            # Parse multipart manually
+            parts = {}
+            png_data = None
+            delim = ("--" + boundary).encode()
+            segments = raw.split(delim)
+            for seg in segments[1:]:
+                if seg.strip() in (b"--", b"--\r\n", b""):
+                    continue
+                if b"\r\n\r\n" in seg:
+                    hdr_raw, val = seg.split(b"\r\n\r\n", 1)
+                    val = val.rstrip(b"\r\n--")
+                    hdr_str = hdr_raw.decode(errors="replace")
+                    if 'name="category"' in hdr_str:
+                        parts["category"] = val.decode(errors="replace").strip()
+                    elif 'name="description"' in hdr_str:
+                        parts["description"] = val.decode(errors="replace").strip()
+                    elif 'name="screenshot"' in hdr_str:
+                        png_data = val
+            category    = parts.get("category", "Unknown")
+            description = parts.get("description", "(no description)")
+            # Post to Discord webhook with screenshot
+            import urllib.request as _ur
+            wh_boundary = "DiscordWebhookBoundary12345"
+            payload_json = json.dumps({"content": f"**🐛 Bug Report**\n**Category:** {category}\n**Description:** {description}"}).encode()
+            wh_body = (
+                f"--{wh_boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n"
+            ).encode() + payload_json + b"\r\n"
+            if png_data:
+                wh_body += (
+                    f"--{wh_boundary}\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"screenshot.png\"\r\nContent-Type: image/png\r\n\r\n"
+                ).encode() + png_data + b"\r\n"
+            wh_body += f"--{wh_boundary}--\r\n".encode()
+            wh_req = _ur.Request(WEBHOOK, data=wh_body, method="POST",
+                headers={"Content-Type": f"multipart/form-data; boundary={wh_boundary}", "User-Agent": WH_UA})
+            with _ur.urlopen(wh_req, timeout=10) as r:
+                r.read()
+            print(f"Bug report forwarded: {category}")
+            send_json(sock, 200, {"ok": True})
+        except Exception as e:
+            print(f"Bug report error: {e}")
+            send_json(sock, 500, {"error": str(e)})
 
     else: send_json(sock, 404, {"error":"not found"})
     sock.close()

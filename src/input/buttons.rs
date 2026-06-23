@@ -6,8 +6,8 @@
 //!   L1=18  R1=20   L2=15     R2=14
 //!   Start=28   Select=97
 //!
-//! The MENU button (centre) is intercepted by Onion's keymon daemon
-//! and is NOT available to apps. We do not define it here.
+//! The MENU button (centre) sends KEY_ESC (1) when keymon is disabled via
+//! /tmp/disable_menu_button. We define it here for bug-reporter use.
 //!
 //! Control scheme:
 //!   Move worm:        D-pad left/right
@@ -44,6 +44,8 @@ pub enum Button {
     R2,
     Start,
     Select,
+    /// Miyoo MENU button — only fires when /tmp/disable_menu_button exists.
+    Menu,
 }
 
 impl Button {
@@ -65,6 +67,7 @@ impl Button {
             Self::R2     => 14,
             Self::Start  => 28,
             Self::Select => 97,
+            Self::Menu   => 1,   // KEY_ESC — active only when disable_menu_button flag set
         }
     }
 
@@ -86,6 +89,7 @@ impl Button {
             14  => Self::R2,
             28  => Self::Start,
             97  => Self::Select,
+            1   => Self::Menu,
             _   => return None,
         })
     }
@@ -95,7 +99,7 @@ impl Button {
         Button::Up, Button::Down, Button::Left, Button::Right,
         Button::A,  Button::B,   Button::X,    Button::Y,
         Button::L1, Button::R1,  Button::L2,   Button::R2,
-        Button::Start, Button::Select,
+        Button::Start, Button::Select, Button::Menu,
     ];
 }
 
