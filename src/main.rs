@@ -7,7 +7,7 @@ mod net;
 mod updater;
 mod audio;
 mod https;
-const VERSION: &str = "0.5.4.336";
+const VERSION: &str = "0.5.4.337";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1768,6 +1768,7 @@ fn show_store_screen(
         &cached.2,
         &cached.3,
         &cached.4,
+        cached.5,
     );
 
     // Refresh profile from network in background
@@ -1779,7 +1780,7 @@ fn show_store_screen(
         let fs = std::time::Instant::now();
         input.poll();
         if let Ok(Some(p)) = rx.try_recv() {
-            screen.set_profile(p.0, &p.1, &p.2, &p.3, &p.4);
+            screen.set_profile(p.0, &p.1, &p.2, &p.3, &p.4, p.5);
         }
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 12, 28));
         match screen.update(input, buf) {

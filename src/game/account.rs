@@ -679,10 +679,11 @@ fn parse_roster_obj(obj: &str) -> Option<Roster> {
 
 /// Fetch scrap balance and owned cosmetic IDs from `/profile`.
 /// Returns `(scrap, owned_hats, owned_gun_styles, owned_uniforms, owned_boots)`.
-pub fn fetch_profile(token: &str) -> Option<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)> {
+pub fn fetch_profile(token: &str) -> Option<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, u32)> {
     let path = format!("/api/profile?token={}", token);
     let resp = http_get(&path).ok()?;
-    let scrap: u32 = json_field(&resp, "scrap").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let scrap:    u32 = json_field(&resp, "scrap").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let warbonds: u32 = json_field(&resp, "warbonds").and_then(|s| s.parse().ok()).unwrap_or(0);
 
     fn parse_id_arr(json: &str, key: &str) -> Vec<u8> {
         let search = format!("\"{}\":", key);
@@ -699,7 +700,7 @@ pub fn fetch_profile(token: &str) -> Option<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec
     let guns      = parse_id_arr(&resp, "unlocked_gun_styles");
     let uniforms  = parse_id_arr(&resp, "unlocked_uniforms");
     let boots     = parse_id_arr(&resp, "unlocked_boots");
-    let result = (scrap, hats, guns, uniforms, boots);
+    let result = (scrap, hats, guns, uniforms, boots, warbonds);
     save_cached_profile(&result);
     Some(result)
 }
@@ -719,11 +720,11 @@ pub fn shop_buy(token: &str, cosm_type: &str, cosm_id: u8) -> Result<(), String>
     }
 }
 
-pub type ProfileData = (u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
+pub type ProfileData = (u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, u32);
 
 pub fn save_cached_profile(p: &ProfileData) {
     let ids = |v: &Vec<u8>| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
-    let s = format!("{}|{}|{}|{}|{}", p.0, ids(&p.1), ids(&p.2), ids(&p.3), ids(&p.4));
+    let s = format!("{}|{}|{}|{}|{}|{}", p.0, ids(&p.1), ids(&p.2), ids(&p.3), ids(&p.4), p.5);
     #[cfg(feature = "desktop")]
     { let _ = std::fs::write(data_dir().join("profile_cache.txt"), &s); }
     #[cfg(not(feature = "desktop"))]
@@ -741,13 +742,14 @@ pub fn load_cached_profile() -> Option<ProfileData> {
     #[cfg(not(feature = "desktop"))]
     let raw = ["/mnt/SDCARD/App/Arty/profile_cache.txt", "/tmp/arty_profile_cache.txt"]
         .iter().find_map(|p| std::fs::read_to_string(p).ok())?;
-    let mut parts = raw.trim().splitn(5, '|');
-    let scrap: u32 = parts.next()?.trim().parse().ok()?;
+    let mut parts = raw.trim().splitn(6, '|');
+    let scrap:    u32 = parts.next()?.trim().parse().ok()?;
     let hats      = parse_ids(parts.next().unwrap_or(""));
     let guns      = parse_ids(parts.next().unwrap_or(""));
     let uniforms  = parse_ids(parts.next().unwrap_or(""));
     let boots     = parse_ids(parts.next().unwrap_or(""));
-    Some((scrap, hats, guns, uniforms, boots))
+    let warbonds: u32 = parts.next().unwrap_or("0").trim().parse().unwrap_or(0);
+    Some((scrap, hats, guns, uniforms, boots, warbonds))
 }
 
 pub fn fetch_rosters(token: &str) -> Result<Vec<Roster>, String> {

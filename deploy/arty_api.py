@@ -201,6 +201,12 @@ SHOP_CATALOG = [
     {"type":"hat","id":34,"name":"Demon King Horns",    "cost_scrap":1600,"cost_warbonds":0},
     {"type":"hat","id":35,"name":"Astronaut Helmet",    "cost_scrap":1500,"cost_warbonds":0},
     {"type":"hat","id":36,"name":"Dragon Skull",        "cost_scrap":2000,"cost_warbonds":0},
+    # hat 37 = Ben's Birthday Hat — not in store, granted directly
+    {"type":"hat","id":38,"name":"Cosmic Crown",        "cost_scrap":0,"cost_warbonds":150},
+    {"type":"hat","id":39,"name":"Phoenix Crest",       "cost_scrap":0,"cost_warbonds":120},
+    {"type":"hat","id":40,"name":"Void Wraith Hood",    "cost_scrap":0,"cost_warbonds":200},
+    {"type":"hat","id":41,"name":"Gilded Jester",       "cost_scrap":0,"cost_warbonds":100},
+    {"type":"hat","id":42,"name":"Crimson War Mask",    "cost_scrap":0,"cost_warbonds":200},
     # Gun styles (full shape replacement, not just color)
     {"type":"gun_style","id":1,"name":"Pistol",      "cost_scrap":200,"cost_warbonds":0},
     {"type":"gun_style","id":2,"name":"Shotgun",     "cost_scrap":300,"cost_warbonds":0},
