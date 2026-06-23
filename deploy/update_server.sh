@@ -198,9 +198,19 @@ else
 fi
 [ -n "$WIN_STAGE" ] && rm -rf "$WIN_STAGE"
 
-# Notify Discord bot to post patch notes (bot runs on Pi)
+# Regenerate and push cosmetics gallery images to Pi
+if python3 deploy/make_galleries.py 2>/dev/null; then
+    scp /tmp/hat_galleries/*.png arty-pi:/home/Grunkus/mayhem-server/galleries/ 2>/dev/null \
+        && echo "Cosmetics galleries updated on Pi" \
+        || echo "WARNING: gallery scp failed"
+else
+    echo "WARNING: gallery generation failed (non-fatal)"
+fi
+
+# Notify Discord bot: patch notes + refresh cosmetics gallery
 ssh arty-pi "curl -s -X POST http://127.0.0.1:7779/notify/patch \
     -H 'Content-Type: application/json' \
-    -d '{\"version\":\"$VERSION\"}'" 2>/dev/null \
-    && echo "Discord patch notes notified" \
+    -d '{\"version\":\"$VERSION\"}' && \
+    curl -s -X POST http://127.0.0.1:7779/notify/cosmetics" 2>/dev/null \
+    && echo "Discord notified (patch notes + cosmetics)" \
     || echo "Discord notify skipped (bot not running)"
