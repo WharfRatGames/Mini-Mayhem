@@ -1,9 +1,25 @@
 #!/usr/bin/env python3
-import socket, sqlite3, hashlib, json, time, os, random, string, threading, math, subprocess, secrets
+import socket, sqlite3, hashlib, json, time, os, random, string, threading, math, subprocess, secrets, urllib.request
 PORT = 7778
 DB = os.path.expanduser("~/mayhem-server/arty.db")
 _key_file = os.path.expanduser("~/mayhem-server/admin_key.txt")
 ADMIN_KEY = open(_key_file).read().strip() if os.path.exists(_key_file) else os.environ.get("ARTY_ADMIN_KEY", "changeme")
+
+# ── Discord match result notification ─────────────────────────────────────────
+
+def notify_match_result(mode, ranked, winner_name, loser_name, winner_kills, loser_kills):
+    try:
+        payload = json.dumps({
+            "mode": mode, "ranked": ranked,
+            "winner": winner_name, "loser": loser_name,
+            "winner_kills": winner_kills, "loser_kills": loser_kills,
+        }).encode()
+        r = urllib.request.Request("http://127.0.0.1:7779/notify/match_result",
+            data=payload, method="POST",
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(r, timeout=3)
+    except Exception:
+        pass  # bot may not be running; non-fatal
 
 # ── DB init ────────────────────────────────────────────────────────────────────
 
@@ -535,6 +551,32 @@ def handle(db, sock, peer_ip="?"):
         new_wb = db.execute("SELECT warbonds FROM users WHERE id=?", (target_uid,)).fetchone()[0] or 0
         send_json(sock, 200, {"ok": True, "warbonds_granted": wb_amount, "new_warbond_total": new_wb})
 
+    elif method == "POST" and path == "/admin/grant_all_cosmetics":
+        if data.get("admin_key") != ADMIN_KEY:
+            send_json(sock, 403, {"error":"forbidden"}); return
+        username = data.get("username","").strip()
+        if not username: send_json(sock, 400, {"error":"missing username"}); return
+        row = db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (username,)).fetchone()
+        if not row: send_json(sock, 404, {"error":"user not found"}); return
+        target_uid = row[0]
+        # Grant every catalog item except hat 37 (Ben's Birthday Hat)
+        now = int(time.time())
+        granted = already_owned = 0
+        for item in SHOP_CATALOG:
+            if item["type"] == "hat" and item["id"] == 37:
+                continue
+            existing = db.execute(
+                "SELECT 1 FROM player_cosmetics WHERE user_id=? AND cosm_type=? AND cosm_id=?",
+                (target_uid, item["type"], item["id"])).fetchone()
+            if existing:
+                already_owned += 1
+            else:
+                db.execute("INSERT INTO player_cosmetics(user_id,cosm_type,cosm_id,unlocked_at) VALUES(?,?,?,?)",
+                           (target_uid, item["type"], item["id"], now))
+                granted += 1
+        db.commit()
+        send_json(sock, 200, {"ok": True, "granted": granted, "already_owned": already_owned})
+
     elif method == "POST" and path == "/player/daily_login":
         uid2 = uid(token)
         if not uid2: send_json(sock, 401, {"error":"invalid token"}); return
@@ -935,6 +977,13 @@ def handle(db, sock, peer_ip="?"):
         send_json(sock, 200, {"ok": True, "elo_delta": elo_delta,
                               "new_elo": new_elo, "rank": rank_name(new_elo),
                               "scrap_earned": scrap_earned})
+        # Notify Discord — only the winner's client posts so we get one message per match
+        if is_win:
+            my_name_row = db.execute("SELECT username FROM users WHERE id=?", (uid2,)).fetchone()
+            my_name = my_name_row[0] if my_name_row else "?"
+            mode_label = ("Ranked Live" if is_ranked else "Casual Live")
+            threading.Thread(target=notify_match_result, daemon=True,
+                args=(mode_label, is_ranked, my_name, opp_username, kills_val, 0)).start()
 
     elif method == "POST" and path.endswith("/result"):
         # POST /match/{id}/result  {token, winner_slot}
@@ -987,6 +1036,15 @@ def handle(db, sock, peer_ip="?"):
         send_json(sock, 200, {"ok": True, "elo_delta": my_delta,
                               "new_elo": new_elo, "rank": rank_name(new_elo),
                               "scrap_earned": scrap_earned})
+        # Notify Discord — only the winner's client posts so we get one message per match
+        if is_win_tat:
+            w_name_row = db.execute("SELECT username FROM users WHERE id=?", (uid_winner,)).fetchone()
+            l_name_row = db.execute("SELECT username FROM users WHERE id=?", (uid_loser,)).fetchone()
+            w_name = w_name_row[0] if w_name_row else "?"
+            l_name = l_name_row[0] if l_name_row else "?"
+            mode_label = ("Ranked TAT" if is_ranked else "Casual TAT")
+            threading.Thread(target=notify_match_result, daemon=True,
+                args=(mode_label, is_ranked, w_name, l_name, kills_val, deaths_val)).start()
 
     elif method == "GET" and path.startswith("/match/") and path.endswith("/state"):
         parts = path.strip('/').split('/'); mid = int(parts[1]) if len(parts) > 1 else 0
@@ -1453,10 +1511,12 @@ def handle(db, sock, peer_ip="?"):
 
     elif method == "POST" and path == "/bug_report":
         import email, email.parser, io as _io
-        WEBHOOK = "https://discord.com/api/webhooks/1518850955083251803/REDACTED"
+        WEBHOOK = os.environ.get("DISCORD_BUG_WEBHOOK", "")
+        if not WEBHOOK:
+            send_json(sock, 503, {"error": "bug reporting not configured"}); return
         WH_UA   = "DiscordBot (https://github.com/WharfRatGames/Mini-Mayhem, 1.0)"
         try:
-            ct      = headers.get("Content-Type","")
+            ct      = headers.get("content-type", headers.get("Content-Type",""))
             boundary = ""
             for part in ct.split(";"):
                 part = part.strip()
