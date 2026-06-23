@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.343";
+const VERSION: &str = "0.5.4.344";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1746,16 +1746,13 @@ fn show_my_teams_menu(
         let sh = SCREEN_H as i32;
         let panel_y = 261i32;
         let item_h  = 34i32;
-        let label   = "MY TEAMS";
-        let lw = str_width_scaled(label, 2);
-        draw_str_shadow_scaled(buf, label, sw/2 - lw/2, panel_y + 8, Bgra::new(200, 200, 230), 2);
         if !username.is_empty() {
             use renderer::font::str_width;
             let uw = str_width(&username);
             draw_str(buf, &username, sw/2 - uw/2, panel_y - 14, Bgra::new(110, 115, 165));
         }
 
-        let start_y = panel_y + 32;
+        let start_y = panel_y + 8;
         let visible_items = ITEMS.iter().enumerate().skip(scroll).take(VISIBLE);
         for (i, &item) in visible_items {
             let slot = (i - scroll) as i32;
@@ -2100,7 +2097,7 @@ fn show_match_intro(
         // VS
         let vs = "VS";
         let vw = str_width_scaled(vs, 3);
-        draw_str_scaled(buf, vs, mid - vw/2, sh / 2 - 14, Bgra::new(255, 255, 255), 3);
+        draw_str_scaled(buf, vs, mid - vw/2, sh / 2 - 14, Bgra::new(255, 215, 50), 3);
 
         // Countdown bar
         let filled = (sw * (89i32 - tick as i32) / 89).max(0) as u32;

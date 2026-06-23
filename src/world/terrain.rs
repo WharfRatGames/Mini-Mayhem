@@ -635,35 +635,12 @@ impl Terrain {
             const SKY_FLOOR: i32 = 130; // rock ceiling starts here; sky above
             const CAVE_FLOOR: i32 = 345; // thin solid base above water
 
-            // A — Fill solid rock: main rock band (SKY_FLOOR..CAVE_FLOOR) + sealed top zone.
-            // The top zone (0..SKY_FLOOR) uses a noise-varied surface per column so it reads
-            // as rolling terrain rather than a flat rectangular block, while staying fully sealed.
-            for y in SKY_FLOOR..CAVE_FLOOR {
+            // A — Fill solid rock: entire map above water is solid to start.
+            // The top zone (0..SKY_FLOOR) is pure solid rock — no surface layer, no sky.
+            // WA cavern maps are fully enclosed; everything is underground.
+            for y in 0..CAVE_FLOOR {
                 for x in 0..WORLD_W as i32 {
                     terrain.set_solid(x, y, true);
-                }
-            }
-            // Top seal: noise-driven surface height per column. Air above the surface line,
-            // solid below it — but the bottom of this zone always connects to the solid
-            // SKY_FLOOR band, and the very top row is always solid (no open-sky gap).
-            let top_amp   = 40.0 + (lcg(&mut rng) % 30) as f64; // 40–70px of terrain variation
-            let top_freq  = 3.0  + (lcg(&mut rng) % 3)  as f64; // 3–5 horizontal cycles
-            let top_freq2 = 7.0  + (lcg(&mut rng) % 4)  as f64; // fine detail layer
-            {
-                for x in 0..WORLD_W as i32 {
-                    let nx = x as f64 / WORLD_W as f64;
-                    let wave = cave_a.get([nx * top_freq, 11.7]);   // -1..1
-                    let fine = cave_b.get([nx * top_freq2, 55.3]);  // -1..1
-                    // Surface height: SKY_FLOOR - top_amp/2 ± variation, clamped so at least
-                    // 8px of solid remain at the very top and the base always joins SKY_FLOOR.
-                    let surf_y = (SKY_FLOOR as f64
-                        - top_amp * 0.5
-                        + wave * top_amp * 0.5
-                        + fine * top_amp * 0.15)
-                        .clamp(8.0, (SKY_FLOOR - 8) as f64) as i32;
-                    for y in 0..SKY_FLOOR {
-                        terrain.set_solid(x, y, y >= surf_y);
-                    }
                 }
             }
 
@@ -795,19 +772,10 @@ impl Terrain {
                 dig_tunnel(&mut terrain, sx, shaft_ceil, sx + drift, upper_third, shaft_r);
             }
 
-            // Re-seal top zone: shafts with large radii can punch above surf_y.
-            // Restore every column in 0..SKY_FLOOR to its original noise surface.
-            for x in 0..WORLD_W as i32 {
-                let nx = x as f64 / WORLD_W as f64;
-                let wave = cave_a.get([nx * top_freq, 11.7]);
-                let fine = cave_b.get([nx * top_freq2, 55.3]);
-                let surf_y = (SKY_FLOOR as f64
-                    - top_amp * 0.5
-                    + wave * top_amp * 0.5
-                    + fine * top_amp * 0.15)
-                    .clamp(8.0, (SKY_FLOOR - 8) as f64) as i32;
-                for y in 0..SKY_FLOOR {
-                    terrain.set_solid(x, y, y >= surf_y);
+            // Re-seal: shafts may punch into the top zone. Fill it all solid.
+            for y in 0..SKY_FLOOR {
+                for x in 0..WORLD_W as i32 {
+                    terrain.set_solid(x, y, true);
                 }
             }
 
@@ -891,20 +859,9 @@ impl Terrain {
             }
 
             // F — Final ceiling re-seal: connectivity tunnels may punch through.
-            // Restore the entire top zone (0..SKY_FLOOR) from the same noise parameters
-            // used in step A, guaranteeing the sky crust is solid regardless of what
-            // happened during carving/dilation/connectivity.
-            for x in 0..WORLD_W as i32 {
-                let nx = x as f64 / WORLD_W as f64;
-                let wave = cave_a.get([nx * top_freq, 11.7]);
-                let fine = cave_b.get([nx * top_freq2, 55.3]);
-                let surf_y = (SKY_FLOOR as f64
-                    - top_amp * 0.5
-                    + wave * top_amp * 0.5
-                    + fine * top_amp * 0.15)
-                    .clamp(8.0, (SKY_FLOOR - 8) as f64) as i32;
-                for y in 0..SKY_FLOOR {
-                    terrain.set_solid(x, y, y >= surf_y);
+            for y in 0..SKY_FLOOR {
+                for x in 0..WORLD_W as i32 {
+                    terrain.set_solid(x, y, true);
                 }
             }
         }
@@ -1265,24 +1222,18 @@ impl Terrain {
         let mut spawns: Vec<WorldPos> = Vec::with_capacity(count);
         let mut used_x: Vec<i32> = Vec::with_capacity(count);
 
-        // Cave maps (WA style): all soldiers spawn underground in the cave system.
-        // Surface crust is solid rock — no one starts on top. Fall back to surface
-        // only if the cave system has no valid floors (degenerate seed).
+        // Cave maps (WA style): all soldiers spawn underground. No surface layer exists.
         if self.archetype == 3 {
-            let mut surface_cands: Vec<(i32, i32)> = Vec::new();
-            let mut cave_cands:    Vec<(i32, i32)> = Vec::new();
+            let mut cave_cands: Vec<(i32, i32)> = Vec::new();
             let mut x = lo;
             while x <= hi {
-                if let Some(fy) = self.standable_foot_y(x) {
-                    surface_cands.push((x, fy));
-                }
                 if let Some(fy) = self.standable_cave_foot_y(x) {
                     cave_cands.push((x, fy));
                 }
                 x += 1;
             }
             for _i in 0..count {
-                let pools: [&[(i32, i32)]; 2] = [&cave_cands, &surface_cands];
+                let pools: [&[(i32, i32)]; 1] = [&cave_cands];
                 'slot: for pool in pools {
                     for &(cx, cy) in pool {
                         if used_x.iter().all(|&ux| (ux - cx).abs() >= MIN_SEP) {

@@ -427,22 +427,10 @@ impl TitleScreen {
 
         let item_h = 38i32;
         let n_items  = items.len() as i32;
-        let label_offset = if self.sub != Sub::None && self.sub != Sub::HowToPlay { 32 } else { 8 };
+        let label_offset = 8;
         let panel_h  = n_items * item_h + label_offset + 30;
         let panel_y  = 281i32;
 
-        // Sub-menu label
-        if self.sub != Sub::None && self.sub != Sub::HowToPlay {
-            let label = match self.sub {
-                Sub::SP                          => "SINGLEPLAYER",
-                Sub::MP                          => "MULTIPLAYER",
-                Sub::Live                        => "LIVE GAME",
-                Sub::Tat                         => "TAKE A TURN",
-                _                                => "",
-            };
-            let lw = str_width_scaled(label, 2);
-            draw_str_shadow_scaled(buf, label, sw/2 - lw/2, panel_y + 8, Bgra::new(200, 200, 230), 2);
-        }
 
         // Menu items overlaid directly on image — scroll window keeps cursor visible
         let scroll = self.scroll_offset;
