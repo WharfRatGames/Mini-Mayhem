@@ -285,18 +285,22 @@ impl WorldBuffer {
                 let run_w = run_end - x;
                 if y0 > min_y {
                     if let Some((par_x, dst_w)) = par {
-                        // Row-major order: iterate rows outer, columns inner so
-                        // both src and dst accesses are sequential in memory.
-                        // Use a running src_x + conditional wrap instead of
-                        // per-pixel modulo (% is a division on ARM — expensive).
+                        // Same copy_from_slice pattern as copy_bg_sky_band:
+                        // 1–2 contiguous slice copies per row instead of
+                        // run_w individual per-pixel get/set calls.
                         let src_x0 = (par_x + x) % dst_w;
                         for gy in min_y..y0 {
-                            let mut src_x = src_x0;
-                            for rx in x..run_end {
-                                let c = bg_cache.get_pixel_unchecked(src_x, gy);
-                                self.set_pixel_unchecked(cam_x + rx, gy, c);
-                                src_x += 1;
-                                if src_x >= dst_w { src_x = 0; }
+                            let dst_off = (gy * WORLD_W + cam_x + x) as usize * 4;
+                            let seg1 = (dst_w - src_x0).min(run_w);
+                            let src_off1 = (gy * WORLD_W + src_x0) as usize * 4;
+                            self.data[dst_off..dst_off + seg1 as usize * 4]
+                                .copy_from_slice(&bg_cache.data[src_off1..src_off1 + seg1 as usize * 4]);
+                            if seg1 < run_w {
+                                let seg2 = run_w - seg1;
+                                let src_off2 = (gy * WORLD_W) as usize * 4;
+                                let dst_off2 = dst_off + seg1 as usize * 4;
+                                self.data[dst_off2..dst_off2 + seg2 as usize * 4]
+                                    .copy_from_slice(&bg_cache.data[src_off2..src_off2 + seg2 as usize * 4]);
                             }
                         }
                     }
@@ -319,8 +323,9 @@ impl WorldBuffer {
                 if y0 > min_y {
                     if let Some(src_x) = src_x {
                         for gy in min_y..y0 {
-                            let c = bg_cache.get_pixel_unchecked(src_x, gy);
-                            self.set_pixel_unchecked(wx, gy, c);
+                            let src_off = (gy * WORLD_W + src_x) as usize * 4;
+                            let dst_off = (gy * WORLD_W + wx) as usize * 4;
+                            self.data[dst_off..dst_off + 4].copy_from_slice(&bg_cache.data[src_off..src_off + 4]);
                         }
                     }
                     self.pixel_writes += (y0 - min_y) as u64;
@@ -329,8 +334,9 @@ impl WorldBuffer {
                 for &(ys, ye) in &terrain.solid_runs[wx as usize] {
                     if let Some(src_x) = src_x {
                         for gy in y..ys {
-                            let c = bg_cache.get_pixel_unchecked(src_x, gy);
-                            self.set_pixel_unchecked(wx, gy, c);
+                            let src_off = (gy * WORLD_W + src_x) as usize * 4;
+                            let dst_off = (gy * WORLD_W + wx) as usize * 4;
+                            self.data[dst_off..dst_off + 4].copy_from_slice(&bg_cache.data[src_off..src_off + 4]);
                         }
                     }
                     self.pixel_writes += (ys.saturating_sub(y)) as u64;
@@ -348,8 +354,9 @@ impl WorldBuffer {
                 }
                 if let Some(src_x) = src_x {
                     for gy in y..WATER_Y {
-                        let c = bg_cache.get_pixel_unchecked(src_x, gy);
-                        self.set_pixel_unchecked(wx, gy, c);
+                        let src_off = (gy * WORLD_W + src_x) as usize * 4;
+                        let dst_off = (gy * WORLD_W + wx) as usize * 4;
+                        self.data[dst_off..dst_off + 4].copy_from_slice(&bg_cache.data[src_off..src_off + 4]);
                     }
                 }
                 self.pixel_writes += (WATER_Y.saturating_sub(y)) as u64;
