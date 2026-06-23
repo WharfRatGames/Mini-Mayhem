@@ -88,7 +88,7 @@ static PNGS: [&[u8]; BG_COUNT] = [
 /// Pick which background to use for a map. Deterministic from the seed so client
 /// and server (and every client in a live match) agree.
 pub fn bg_index_for_seed(seed: u64) -> usize {
-    (seed.wrapping_mul(2654435761) >> 33) as usize % BG_COUNT
+    (seed.wrapping_mul(2654435761_u64) >> 33) as usize % BG_COUNT
 }
 
 static DECODED: OnceLock<[Option<Decoded>; BG_COUNT]> = OnceLock::new();
