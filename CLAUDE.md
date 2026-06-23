@@ -74,6 +74,7 @@ interacts with simulate, run `cargo test --test parity` and check that test pass
   don't compile under `cargo test --lib`; the integration test is unaffected.
 - Do not build for the Miyoo device or deploy without explicit instruction; bump
   the `VERSION` string in `src/main.rs` **and** `REQUIRED_VERSION` in
-  `src/server/main.rs` (line ~1211) first — both must match or the server rejects
-  every client. The deploy script does **not** update `REQUIRED_VERSION` automatically.
+  `src/server/main.rs` (line ~1211) first — the server requires an exact version
+  match and rejects every other client. The deploy script does **not** update
+  `REQUIRED_VERSION` automatically.
   Quick check: `grep -n 'VERSION' src/main.rs src/server/main.rs`

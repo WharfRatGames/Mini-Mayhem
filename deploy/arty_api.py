@@ -78,6 +78,8 @@ def init_db(c):
         ("warbonds",        "INTEGER DEFAULT 0"),
         ("last_login_date", "TEXT DEFAULT NULL"),
         ("daily_streak",    "INTEGER DEFAULT 0"),
+        ("last_ip",         "TEXT DEFAULT NULL"),
+        ("last_seen",       "INTEGER DEFAULT NULL"),
         # Legacy — kept so old data isn't lost, no longer written
         ("xp",              "INTEGER DEFAULT 0"),
         ("level",           "INTEGER DEFAULT 1"),
@@ -337,7 +339,7 @@ def send_json(s, status, obj):
 
 # ── Request handler ───────────────────────────────────────────────────────────
 
-def handle(db, sock):
+def handle(db, sock, peer_ip="?"):
     method, path, body, qs = read_req(sock)
     if not method: sock.close(); return
     try: data = json.loads(body) if body else {}
@@ -379,7 +381,7 @@ def handle(db, sock):
         if db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (u,)).fetchone():
             send_json(sock, 409, {"error":"username taken"}); return
         try:
-            db.execute("INSERT INTO users(username,pw_hash,token) VALUES(?,?,?)", (u, hash_pw(p), t))
+            db.execute("INSERT INTO users(username,pw_hash,token,last_ip,last_seen) VALUES(?,?,?,?,?)", (u, hash_pw(p), t, peer_ip, int(time.time())))
             db.commit()
             uid2 = db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (u,)).fetchone()[0]
             ensure_default_roster(db, uid2)
@@ -395,7 +397,7 @@ def handle(db, sock):
             # Transparently upgrade legacy SHA-256 hash to PBKDF2 on login
             if not row2[2].startswith('pbkdf2$'):
                 db.execute("UPDATE users SET pw_hash=? WHERE id=?", (hash_pw(p), uid2))
-            db.execute("UPDATE users SET token=? WHERE id=?", (t, uid2))
+            db.execute("UPDATE users SET token=?, last_ip=?, last_seen=? WHERE id=?", (t, peer_ip, int(time.time()), uid2))
             db.commit()
             n = 1
         else:
@@ -458,6 +460,27 @@ def handle(db, sock):
         db.commit()
         row2 = db.execute("SELECT scrap,warbonds FROM users WHERE id=?", (uid2,)).fetchone()
         send_json(sock, 200, {"ok": True, "new_scrap": row2[0] or 0, "new_warbonds": row2[1] or 0})
+
+    elif method == "POST" and path == "/admin/forfeit_match":
+        if data.get("admin_key") != ADMIN_KEY:
+            send_json(sock, 403, {"error":"forbidden"}); return
+        mid = int(data.get("match_id", 0))
+        row = db.execute("SELECT p0,p1,turn,done,ranked FROM matches WHERE id=?", (mid,)).fetchone()
+        if not row: send_json(sock, 404, {"error":"match not found"}); return
+        p0,p1,turn,done,is_ranked = row
+        if done: send_json(sock, 400, {"error":"match already done"}); return
+        uid_loser  = p0 if turn % 2 == 0 else p1
+        uid_winner = p1 if turn % 2 == 0 else p0
+        db.execute("UPDATE matches SET done=1, winner=? WHERE id=?", (uid_winner, mid))
+        db.execute("DELETE FROM ranked_pool WHERE match_id=?", (mid,))
+        db.execute("DELETE FROM casual_pool WHERE match_id=?", (mid,))
+        if is_ranked and uid_winner and uid_loser:
+            update_elo(db, uid_winner, uid_loser)
+        db.commit()
+        winner_name = db.execute("SELECT username FROM users WHERE id=?", (uid_winner,)).fetchone()
+        loser_name  = db.execute("SELECT username FROM users WHERE id=?", (uid_loser,)).fetchone()
+        send_json(sock, 200, {"winner": winner_name[0] if winner_name else "?",
+                              "loser":  loser_name[0]  if loser_name  else "?"})
 
     elif method == "POST" and path == "/admin/grant_warbonds":
         # Called by the payment backend after a successful purchase.
@@ -1118,6 +1141,241 @@ def handle(db, sock):
         db.commit()
         send_json(sock, 200, {"ok": True})
 
+    elif method == "GET" and path == "/admin/status":
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        import urllib.parse as _up2
+        # Users
+        total_users   = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        active_today  = db.execute("SELECT COUNT(DISTINCT p0) + COUNT(DISTINCT p1) FROM matches WHERE done=1 AND finished_at > ?", (int(time.time()) - 86400,)).fetchone()[0]
+        # Matches
+        total_matches = db.execute("SELECT COUNT(*) FROM matches WHERE done=1").fetchone()[0]
+        active_tat    = db.execute("SELECT COUNT(*) FROM matches WHERE done=0").fetchone()[0]
+        recent = db.execute("""
+            SELECT u0.username, u1.username, m.ranked, m.winner, m.finished_at
+            FROM matches m
+            LEFT JOIN users u0 ON u0.id=m.p0
+            LEFT JOIN users u1 ON u1.id=m.p1
+            WHERE m.done=1 ORDER BY m.finished_at DESC LIMIT 10
+        """).fetchall()
+        recent_list = [{"p0": r[0] or "?", "p1": r[1] or "?", "ranked": bool(r[2]),
+                        "winner": r[3], "finished_at": r[4]} for r in recent]
+        # Queues
+        live_queue_count   = db.execute("SELECT COUNT(*) FROM live_queue WHERE paired_with IS NULL").fetchone()[0]
+        ranked_queue_count = db.execute("SELECT COUNT(*) FROM ranked_pool WHERE match_id IS NULL").fetchone()[0]
+        # Leaderboard top 5
+        top5 = db.execute(
+            "SELECT username, elo FROM users ORDER BY elo DESC LIMIT 5"
+        ).fetchall()
+        # System stats — read from /proc directly (no subprocess, no spike)
+        try:
+            s1 = open("/proc/stat").readline().split()
+            time.sleep(0.1)
+            s2 = open("/proc/stat").readline().split()
+            idle1, total1 = int(s1[4]), sum(int(x) for x in s1[1:])
+            idle2, total2 = int(s2[4]), sum(int(x) for x in s2[1:])
+            cpu = round(100.0 * (1 - (idle2 - idle1) / (total2 - total1)), 1)
+        except:
+            cpu = None
+        try:
+            mi = {k.strip(): v.strip() for k, _, v in
+                  (l.partition(':') for l in open("/proc/meminfo"))}
+            mem_total = int(mi["MemTotal"].split()[0]) // 1024
+            mem_used  = mem_total - int(mi["MemAvailable"].split()[0]) // 1024
+        except:
+            mem_used = mem_total = None
+        try:
+            df = subprocess.check_output(["df","-m","--output=used,size","/"]).decode().splitlines()[1].split()
+            disk_used, disk_total = int(df[0]), int(df[1])
+        except:
+            disk_used = disk_total = None
+        send_json(sock, 200, {
+            "total_users": total_users,
+            "active_today": active_today,
+            "total_matches": total_matches,
+            "active_tat_matches": active_tat,
+            "live_queue": live_queue_count,
+            "ranked_queue": ranked_queue_count,
+            "recent_matches": recent_list,
+            "top5": [{"username": r[0], "elo": r[1]} for r in top5],
+            "cpu_percent": cpu,
+            "mem_used_mb": mem_used,
+            "mem_total_mb": mem_total,
+            "disk_used_mb": disk_used,
+            "disk_total_mb": disk_total,
+            "server_time": int(time.time()),
+        })
+
+    elif method == "GET" and path == "/admin/users":
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        rows = db.execute("""
+            SELECT u.id, u.username, u.elo, u.wins, u.losses, u.scrap, u.warbonds,
+                   COUNT(DISTINCT m.id) as match_count,
+                   MAX(m.finished_at) as last_match,
+                   u.last_ip, u.last_seen
+            FROM users u
+            LEFT JOIN matches m ON (m.p0=u.id OR m.p1=u.id) AND m.done=1
+            GROUP BY u.id
+            ORDER BY u.elo DESC
+        """).fetchall()
+        send_json(sock, 200, [{"id":r[0],"username":r[1],"elo":r[2] or 1000,
+            "wins":r[3] or 0,"losses":r[4] or 0,"scrap":r[5] or 0,
+            "warbonds":r[6] or 0,"matches":r[7] or 0,"last_match":r[8],
+            "last_ip":r[9],"last_seen":r[10]} for r in rows])
+
+    elif method == "GET" and path == "/admin/lobbies":
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        now = int(time.time())
+        # Live games: paired rows (deduplicated by taking lower user_id per pair)
+        live_games = db.execute("""
+            SELECT lq.user_id, u1.username, lq.elo,
+                   lq.paired_with, u2.username, lq2.elo,
+                   lq.game_token, lq.joined_at
+            FROM live_queue lq
+            JOIN users u1 ON u1.id = lq.user_id
+            JOIN users u2 ON u2.id = lq.paired_with
+            JOIN live_queue lq2 ON lq2.user_id = lq.paired_with
+            WHERE lq.paired_with IS NOT NULL AND lq.user_id < lq.paired_with
+        """).fetchall()
+        # Waiting in live queue
+        live_waiting = db.execute("""
+            SELECT lq.user_id, u.username, lq.elo, lq.joined_at
+            FROM live_queue lq JOIN users u ON u.id=lq.user_id
+            WHERE lq.paired_with IS NULL
+        """).fetchall()
+        # Waiting in TAT ranked pool
+        tat_ranked_waiting = db.execute("""
+            SELECT rp.user_id, u.username, rp.elo, rp.joined_at
+            FROM ranked_pool rp JOIN users u ON u.id=rp.user_id
+            WHERE rp.match_id IS NULL AND rp.joined_at > ?
+        """, (now - 300,)).fetchall()
+        # Active TAT matches
+        tat_active = db.execute("""
+            SELECT m.id, u0.username, m.p0, u1.username, m.p1,
+                   m.ranked, m.turn, m.turn_started_at, m.turn_timeout,
+                   m.p0_kills, m.p0_deaths, m.p1_kills, m.p1_deaths
+            FROM matches m
+            LEFT JOIN users u0 ON u0.id=m.p0
+            LEFT JOIN users u1 ON u1.id=m.p1
+            WHERE m.done=0
+            ORDER BY m.id DESC
+        """).fetchall()
+        send_json(sock, 200, {
+            "live_games": [{"p0":r[1],"p0_id":r[0],"p0_elo":r[2],
+                            "p1":r[4],"p1_id":r[3],"p1_elo":r[5],
+                            "port":r[6],"joined_at":r[7]} for r in live_games],
+            "live_waiting": [{"username":r[1],"user_id":r[0],"elo":r[2],"joined_at":r[3]} for r in live_waiting],
+            "tat_ranked_waiting": [{"username":r[1],"user_id":r[0],"elo":r[2],"joined_at":r[3]} for r in tat_ranked_waiting],
+            "tat_active": [{"id":r[0],"p0":r[1],"p0_id":r[2],"p1":r[3],"p1_id":r[4],
+                            "ranked":bool(r[5]),"turn":r[6],"turn_started_at":r[7],
+                            "turn_deadline": (r[7] or 0) + (r[8] or 0),
+                            "whose_turn": r[1] if r[6] % 2 == 0 else r[3],
+                            "p0_kills":r[9],"p0_deaths":r[10],
+                            "p1_kills":r[11],"p1_deaths":r[12]} for r in tat_active],
+        })
+
+    elif method == "GET" and path == "/admin/serverlog":
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        try:
+            n = int(qs_params.get("n", 100))
+            lines = subprocess.check_output(
+                ["tail", f"-{n}", os.path.expanduser("~/mayhem-server/arty-server.log")], text=True
+            ).splitlines()
+            send_json(sock, 200, list(reversed(lines)))
+        except Exception as e:
+            send_json(sock, 500, {"error": str(e)})
+
+    elif method == "GET" and path == "/admin/nginxlog":
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        try:
+            n = int(qs_params.get("n", 100))
+            kind = qs_params.get("kind", "error")
+            log_path = f"/var/log/nginx/{kind}.log"
+            lines = subprocess.check_output(["tail", f"-{n}", log_path], text=True).splitlines()
+            noise = ("Jellyfin", "/Sessions/", "wp-includes", "xmlrpc.php", "wlwmanifest", "favicon.ico")
+            lines = [l for l in lines if not any(s in l for s in noise)]
+            send_json(sock, 200, list(reversed(lines)))
+        except Exception as e:
+            send_json(sock, 500, {"error": str(e)})
+
+    elif method == "GET" and path == "/admin/temp":
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        try:
+            line = subprocess.check_output(["tail", "-1", "/mnt/ramdisk/temp_memory.log"], text=True).strip()
+            # "08:12:26 Temp: 46.7°C Load: 1.22"
+            temp = float(line.split("Temp:")[1].split("°")[0].strip())
+            load = float(line.split("Load:")[1].strip())
+            send_json(sock, 200, {"temp_c": temp, "load": load})
+        except Exception as e:
+            send_json(sock, 500, {"error": str(e)})
+
+    elif method == "GET" and path == "/admin/procs":
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        try:
+            lines = subprocess.check_output(
+                ["ps", "aux", "--sort=-%cpu"], text=True
+            ).splitlines()
+            procs = []
+            for line in lines[1:22]:  # top 20, skip header
+                parts = line.split(None, 10)
+                if len(parts) < 11: continue
+                cmd = parts[10].strip()
+                if 'ps aux' in cmd: continue  # skip the ps command itself
+                procs.append({
+                    "user": parts[0], "pid": int(parts[1]),
+                    "cpu": float(parts[2]), "mem": float(parts[3]),
+                    "cmd": parts[10].strip()
+                })
+            send_json(sock, 200, procs)
+        except Exception as e:
+            send_json(sock, 500, {"error": str(e)})
+
+    elif method == "GET" and path.startswith("/admin/user/"):
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        username = path[len("/admin/user/"):]
+        row = db.execute("""
+            SELECT u.id, u.username, u.elo, u.wins, u.losses, u.scrap, u.warbonds,
+                   u.last_login_date, u.daily_streak, u.last_ip, u.last_seen
+            FROM users u WHERE lower(u.username)=lower(?)
+        """, (username,)).fetchone()
+        if not row: send_json(sock, 404, {"error":"not found"}); return
+        uid = row[0]
+        matches = db.execute("""
+            SELECT m.id, u0.username, u1.username, m.ranked, m.winner, m.finished_at,
+                   CASE WHEN m.p0=? THEN m.p0_kills ELSE m.p1_kills END,
+                   CASE WHEN m.p0=? THEN m.p0_deaths ELSE m.p1_deaths END,
+                   CASE WHEN m.p0=? THEN m.p0_scrap ELSE m.p1_scrap END
+            FROM matches m
+            LEFT JOIN users u0 ON u0.id=m.p0
+            LEFT JOIN users u1 ON u1.id=m.p1
+            WHERE (m.p0=? OR m.p1=?) AND m.done=1
+            ORDER BY m.finished_at DESC LIMIT 20
+        """, (uid, uid, uid, uid, uid)).fetchall()
+        rosters = db.execute("SELECT name, worm_names FROM rosters WHERE user_id=?", (uid,)).fetchall()
+        send_json(sock, 200, {
+            "id": row[0], "username": row[1], "elo": row[2] or 1000,
+            "wins": row[3] or 0, "losses": row[4] or 0,
+            "scrap": row[5] or 0, "warbonds": row[6] or 0,
+            "last_login": row[7], "streak": row[8] or 0,
+            "last_ip": row[9], "last_seen": row[10],
+            "rosters": [{"name": r[0], "worms": r[1]} for r in rosters],
+            "recent_matches": [{"id":m[0],"p0":m[1] or "?","p1":m[2] or "?",
+                "ranked":bool(m[3]),"winner":m[4],"finished_at":m[5],
+                "kills":m[6] or 0,"deaths":m[7] or 0,"scrap":m[8]} for m in matches],
+        })
+
+    elif method == "GET" and path == "/admin/matches":
+        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        limit = int(qs_params.get("limit", 50))
+        rows = db.execute("""
+            SELECT m.id, u0.username, u1.username, m.ranked, m.winner, m.finished_at, m.done
+            FROM matches m
+            LEFT JOIN users u0 ON u0.id=m.p0
+            LEFT JOIN users u1 ON u1.id=m.p1
+            ORDER BY m.id DESC LIMIT ?
+        """, (limit,)).fetchall()
+        send_json(sock, 200, [{"id":r[0],"p0":r[1] or "?","p1":r[2] or "?",
+            "ranked":bool(r[3]),"winner":r[4],"finished_at":r[5],"done":bool(r[6])} for r in rows])
+
     elif method == "GET" and path.startswith("/stats"):
         # GET /stats?mode=live|tat&token=...
         import urllib.parse as _up
@@ -1174,8 +1432,8 @@ def main():
     srv.listen(10)
     print(f"Arty API on :{PORT}")
     while True:
-        s, _ = srv.accept()
-        threading.Thread(target=handle, args=(db, s), daemon=True).start()
+        s, addr = srv.accept()
+        threading.Thread(target=handle, args=(db, s, addr[0]), daemon=True).start()
 
 if __name__ == "__main__":
     main()

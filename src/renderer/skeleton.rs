@@ -196,15 +196,15 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     // of 66x60 -> 5px below sprite centre at this size's ~7px (1.45x);
     // shift the centred blit up so the anchor lands on the head centre.
     let (w, h, anchor_dy, hat_dy) = if SOLDIER_STYLE_V2 {
-        let base_w = 46i32;
-        let base_h = 42i32;
-        let anchor = 13i32;
+        let base_w = 70i32;
+        let base_h = 63i32;
+        let anchor = 16i32;
         let dy: i32 = match hat_id {
-            5  => 8,
-            15 => 14,
-            28 => 12,
-            33 => 7,
-            36 => 12,
+            5  => 14,
+            15 => 25,
+            28 => 21,
+            33 => 12,
+            36 => 21,
             _  => 0,
         };
         let scale: f32 = match hat_id {
@@ -684,7 +684,7 @@ pub fn draw_soldier_skeletal(
 
     // ── HP number ─────────────────────────────────────────────────────────────
     if hp > 0 && show_hp {
-        let hat_lift = if hat_id > 0 { 21 } else { 0 };
+        let hat_lift = if hat_id > 0 { 37 } else { 0 };
         draw_hp_number_lifted(buf, pos.x as i32, pos.y as i32, hp, team, hat_lift);
     }
 
