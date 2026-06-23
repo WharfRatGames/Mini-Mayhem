@@ -210,7 +210,6 @@ fi
 # Notify Discord bot: patch notes + refresh cosmetics gallery
 ssh arty-pi "curl -s -X POST http://127.0.0.1:7779/notify/patch \
     -H 'Content-Type: application/json' \
-    -d '{\"version\":\"$VERSION\"}' && \
-    curl -s -X POST http://127.0.0.1:7779/notify/cosmetics" 2>/dev/null \
-    && echo "Discord notified (patch notes + cosmetics)" \
+    -d '{\"version\":\"$VERSION\"}'" 2>/dev/null \
+    && echo "Discord notified (patch notes)" \
     || echo "Discord notify skipped (bot not running)"

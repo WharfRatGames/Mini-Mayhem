@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini Mayhem — Bot Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0c18; color: #c8cce8; font-family: 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+  header { background: #12163a; border-bottom: 1px solid #2a2f5a; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 18px; color: #a0aaff; letter-spacing: 1px; }
+  header a { color: #5566cc; font-size: 13px; text-decoration: none; }
+  header a:hover { color: #a0aaff; }
+  .container { max-width: 800px; margin: 32px auto; padding: 0 20px; display: flex; flex-direction: column; gap: 24px; }
+  .card { background: #12163a; border: 1px solid #2a2f5a; border-radius: 6px; overflow: hidden; }
+  .card-header { background: #181e48; padding: 12px 18px; font-size: 13px; font-weight: 600; color: #a0aaff; border-bottom: 1px solid #2a2f5a; }
+  .card-body { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  label { font-size: 12px; color: #8890b8; margin-bottom: 4px; display: block; }
+  input, select, textarea { width: 100%; background: #0a0c18; border: 1px solid #2a2f5a; border-radius: 4px; color: #c8cce8; padding: 8px 10px; font-size: 13px; font-family: inherit; outline: none; }
+  input:focus, select:focus, textarea:focus { border-color: #5566cc; }
+  textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
+  .row { display: flex; gap: 12px; }
+  .row > * { flex: 1; }
+  button { background: #2a3580; border: 1px solid #4455cc; color: #c8d0ff; border-radius: 4px; padding: 9px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: background 0.15s; }
+  button:hover { background: #3344a0; }
+  button.danger { background: #3a1a1a; border-color: #aa3333; color: #ffaaaa; }
+  button.danger:hover { background: #552222; }
+  .status { font-size: 12px; padding: 8px 12px; border-radius: 4px; display: none; }
+  .status.ok  { background: #0d2a1a; border: 1px solid #2a6a3a; color: #60cc88; display: block; }
+  .status.err { background: #2a0d0d; border: 1px solid #6a2a2a; color: #cc6060; display: block; }
+  .hint { font-size: 11px; color: #5560a0; margin-top: 2px; }
+  .channels { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .ch-btn { padding: 4px 10px; font-size: 12px; font-weight: 400; background: #0e1230; border-color: #2a2f5a; }
+  .ch-btn:hover { background: #1a2060; border-color: #5566cc; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🤖 Bot Dashboard</h1>
+  <a href="/arty/dashboard/">← Main Dashboard</a>
+</header>
+<div class="container">
+
+  <!-- POST MESSAGE -->
+  <div class="card">
+    <div class="card-header">Post Message</div>
+    <div class="card-body">
+      <div>
+        <label>Channel</label>
+        <input id="post-channel" placeholder="e.g. announcements" />
+        <div class="channels">
+          <button class="ch-btn" onclick="setChannel('post-channel','announcements')">announcements</button>
+          <button class="ch-btn" onclick="setChannel('post-channel','patch-notes')">patch-notes</button>
+          <button class="ch-btn" onclick="setChannel('post-channel','match-results')">match-results</button>
+          <button class="ch-btn" onclick="setChannel('post-channel','leaderboard')">leaderboard</button>
+          <button class="ch-btn" onclick="setChannel('post-channel','general')">general</button>
+          <button class="ch-btn" onclick="setChannel('post-channel','bug-reports')">bug-reports</button>
+        </div>
+      </div>
+      <div>
+        <label>Message (supports Discord markdown)</label>
+        <textarea id="post-content" placeholder="Your message here..."></textarea>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button onclick="postMessage()">Send</button>
+        <div id="post-status" class="status"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDIT MESSAGE -->
+  <div class="card">
+    <div class="card-header">Edit Message</div>
+    <div class="card-body">
+      <div class="row">
+        <div>
+          <label>Channel</label>
+          <input id="edit-channel" placeholder="e.g. announcements" />
+          <div class="channels">
+            <button class="ch-btn" onclick="setChannel('edit-channel','announcements')">announcements</button>
+            <button class="ch-btn" onclick="setChannel('edit-channel','patch-notes')">patch-notes</button>
+            <button class="ch-btn" onclick="setChannel('edit-channel','match-results')">match-results</button>
+            <button class="ch-btn" onclick="setChannel('edit-channel','leaderboard')">leaderboard</button>
+            <button class="ch-btn" onclick="setChannel('edit-channel','general')">general</button>
+            <button class="ch-btn" onclick="setChannel('edit-channel','bug-reports')">bug-reports</button>
+          </div>
+        </div>
+        <div>
+          <label>Message ID</label>
+          <input id="edit-msgid" placeholder="Right-click message → Copy ID" />
+          <p class="hint">Leave blank to edit the last message posted by the bot in that channel this session.</p>
+        </div>
+      </div>
+      <div>
+        <label>New Content</label>
+        <textarea id="edit-content" placeholder="Replacement message..."></textarea>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button onclick="editMessage()">Update</button>
+        <div id="edit-status" class="status"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRIGGER ACTIONS -->
+  <div class="card">
+    <div class="card-header">Trigger Actions</div>
+    <div class="card-body">
+      <div class="row">
+        <div>
+          <label>Post Patch Notes</label>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input id="patch-version" placeholder="e.g. 0.5.4.341 (blank = latest)" style="flex:1" />
+            <button onclick="triggerPatch()">Post</button>
+          </div>
+        </div>
+        <div>
+          <label>Other Actions</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+            <button onclick="trigger('leaderboard')">Post Leaderboard</button>
+            <button onclick="trigger('cosmetics')">Refresh Cosmetics</button>
+          </div>
+        </div>
+      </div>
+      <div id="trigger-status" class="status"></div>
+    </div>
+  </div>
+
+</div>
+<script>
+const BOT = '/bot';
+
+function setChannel(id, name) {
+  document.getElementById(id).value = name;
+}
+
+async function botPost(endpoint, body) {
+  const r = await fetch(`${BOT}/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  return r;
+}
+
+function showStatus(id, ok, msg) {
+  const el = document.getElementById(id);
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+  el.textContent = msg;
+  setTimeout(() => { el.className = 'status'; }, 5000);
+}
+
+async function postMessage() {
+  const channel = document.getElementById('post-channel').value.trim();
+  const content = document.getElementById('post-content').value.trim();
+  if (!channel || !content) return showStatus('post-status', false, 'Channel and message required.');
+  try {
+    const r = await botPost('notify/raw_message', { channel, content });
+    showStatus('post-status', r.ok, r.ok ? 'Message sent.' : `Error ${r.status}`);
+  } catch(e) { showStatus('post-status', false, e.message); }
+}
+
+async function editMessage() {
+  const channel    = document.getElementById('edit-channel').value.trim();
+  const content    = document.getElementById('edit-content').value.trim();
+  const message_id = document.getElementById('edit-msgid').value.trim() || undefined;
+  if (!channel || !content) return showStatus('edit-status', false, 'Channel and message required.');
+  try {
+    const r = await botPost('notify/edit_message', { channel, content, message_id });
+    showStatus('edit-status', r.ok, r.ok ? 'Message updated.' : `Error ${r.status}`);
+  } catch(e) { showStatus('edit-status', false, e.message); }
+}
+
+async function triggerPatch() {
+  const version = document.getElementById('patch-version').value.trim() || undefined;
+  try {
+    const r = await botPost('notify/patch', version ? { version } : {});
+    showStatus('trigger-status', r.ok, r.ok ? 'Patch notes posted.' : `Error ${r.status}`);
+  } catch(e) { showStatus('trigger-status', false, e.message); }
+}
+
+async function trigger(action) {
+  try {
+    const r = await botPost(`notify/${action}`, {});
+    showStatus('trigger-status', r.ok, r.ok ? `${action} triggered.` : `Error ${r.status}`);
+  } catch(e) { showStatus('trigger-status', false, e.message); }
+}
+</script>
+</body>
+</html>

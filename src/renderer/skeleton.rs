@@ -370,9 +370,12 @@ fn draw_held_weapon(buf: &mut WorldBuffer, x: i32, y: i32, weapon: WeaponKind, t
 
 /// How many extra pixels to lift the name/HP label above a hatless soldier's head.
 /// Returns 0 for no hat. Matches the actual rendered hat height so the gap is consistent.
+/// Extra pixels to lift name/HP above a hatted soldier so the gap above the hat
+/// matches the gap above a bare head. Formula: anchor - head_r + h/2 - dy
+/// where h = base_h * scale, anchor=16, head_r=8 (V2).
 pub fn hat_name_lift(hat_id: u8) -> i32 {
     if hat_id == 0 { return 0; }
-    let base_h: f32 = if SOLDIER_STYLE_V2 { 63.0 } else { 36.0 };
+    let (base_h, anchor, head_r) = if SOLDIER_STYLE_V2 { (63.0f32, 16.0f32, 8.0f32) } else { (36.0, 9.0, 5.0) };
     let scale: f32 = match hat_id {
         1  => 0.85,
         22 => 0.45,
@@ -382,7 +385,18 @@ pub fn hat_name_lift(hat_id: u8) -> i32 {
         36 => 0.55,
         _  => 1.0,
     };
-    ((base_h * scale) as i32).max(8)
+    let dy: f32 = match hat_id {
+        1  => -6.0,
+        5  => 14.0,
+        15 => 25.0,
+        26 =>  8.0,
+        28 => 21.0,
+        33 => 12.0,
+        36 => 21.0,
+        _  =>  0.0,
+    };
+    let h = base_h * scale;
+    ((anchor - head_r + h * 0.5 - dy) as i32).max(0)
 }
 
 // ── Public draw function ──────────────────────────────────────────────────────

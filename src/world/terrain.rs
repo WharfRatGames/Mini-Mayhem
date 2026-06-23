@@ -836,7 +836,7 @@ impl Terrain {
                 let mut visited = vec![false; WORLD_PIXELS];
                 let mut comps: Vec<Vec<(i32, i32)>> = Vec::new();
                 let mut stack: Vec<(i32, i32)> = Vec::new();
-                for sy in 0..CAVE_FLOOR {
+                for sy in SKY_FLOOR..CAVE_FLOOR {
                     for sx in 0..WORLD_W as i32 {
                         let i0 = world_index(sx as u32, sy as u32);
                         if terrain.solid[i0] || visited[i0] { continue; }
