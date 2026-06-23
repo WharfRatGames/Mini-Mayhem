@@ -77,8 +77,9 @@ pub const TEAM_COLOURS_DEAD: [Bgra; 4] = [
 
 /// Soldier body width in pixels (used for health bar centering).
 pub const SOLDIER_W: i32 = 14;
-/// Soldier body height in pixels — also used as the collision vertical extent.
-pub const SOLDIER_H: i32 = 20;
+/// Soldier collision height in pixels — matches the skeletal renderer's visual height.
+/// Skeletal: hip at pos.y-11, shoulder at pos.y-24, head center at pos.y-28.
+pub const SOLDIER_H: i32 = 28;
 /// Half-width for centering.
 pub const SOLDIER_HALF_W: i32 = SOLDIER_W / 2;
 

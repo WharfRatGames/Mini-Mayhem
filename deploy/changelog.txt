@@ -1,3 +1,4 @@
+0.5.4.338  Warbond store tab: two-tab shop (Scrap / Warbonds), WB balance in header, premium hat catalog with WB prices, warbond package placeholders; hat catalog now includes hats 37-42.
 0.5.4.337  5 premium warbond hats (38-42): Cosmic Crown, Phoenix Crest, Void Wraith Hood, Gilded Jester, Crimson War Mask; Void Wraith and War Mask replace head; Ben's Birthday Hat (37, exclusive).
 0.5.4.336  Hats scaled up proportionally to match larger V2 soldier head (1.75x: 70x63 base, updated anchor and per-hat offsets); server now requires exact version match.
 0.5.4.335  Update screen: show patch notes at launch instead of auto-downloading; only online modes force the update; server accepts any client >= MIN_VERSION so server rebuild only needed on wire protocol changes.
