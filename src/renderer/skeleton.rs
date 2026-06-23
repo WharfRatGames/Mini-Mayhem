@@ -534,7 +534,7 @@ pub fn draw_soldier_skeletal(
         buf.fill_rect(bx - 1, by - 1,  2, 3, buckle);
 
         // Head (bigger, helmet brim, eye circle, mouth)
-        if hat_id != 15 && hat_id != 36 {
+        if hat_id != 15 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
             buf.fill_circle(head_cx, head_cy, 8, dark_col);
             buf.fill_circle(head_cx, head_cy, 7, skin_col);
         }
@@ -553,7 +553,7 @@ pub fn draw_soldier_skeletal(
             buf.fill_rect(head_cx - 3, head_cy - 6,  3, 2, hilit);
         }
         // Face features — skipped for masks/replacements that cover the whole face
-        if hat_id != 28 && hat_id != 15 && hat_id != 36 {
+        if hat_id != 28 && hat_id != 15 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
             let fi = f as i32;
             let eye_x = head_cx + fi * 2;
 
@@ -641,7 +641,7 @@ pub fn draw_soldier_skeletal(
                       (belt.0 + tpx) as i32, (belt.1 + tpy) as i32, dark_col);
 
         // Head
-        if hat_id != 15 && hat_id != 36 {
+        if hat_id != 15 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
             buf.fill_circle(head_cx, head_cy, 5, dark_col);
             buf.fill_circle(head_cx, head_cy, 4, skin_col);
         }
@@ -654,7 +654,7 @@ pub fn draw_soldier_skeletal(
                 }
             }
         }
-        if hat_id != 28 && hat_id != 15 && hat_id != 36 {
+        if hat_id != 28 && hat_id != 15 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
             let eye_x = head_cx + f as i32;
             buf.set_pixel(eye_x,     head_cy + 1, dark_col);
             buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);

@@ -1,13 +1,13 @@
 /// Hat, gun, and boot cosmetic sprites embedded from deploy/assets/cosmetics/.
-/// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–36 are scrap-purchasable.
+/// Hats:  66×60 px RGBA (22×20 game px @ 3x). IDs 1–36 scrap, 37 Ben-only, 38–42 warbond-premium.
 /// Guns:  138×78 px RGBA (46×26 game px @ 3x). IDs 1–22 are scrap-purchasable.
 /// Boots: 36×27 px RGBA (12×9 game px @ 3x). IDs 1–4 are scrap-purchasable.
 use std::sync::OnceLock;
 use super::buffer::WorldBuffer;
 
-// ── Hat sprites (IDs 1–36) ───────────────────────────────────────────────────
+// ── Hat sprites (IDs 1–42) ───────────────────────────────────────────────────
 
-static HAT_PNGS: [&[u8]; 36] = [
+static HAT_PNGS: [&[u8]; 42] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_2.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_3.png"),
@@ -44,6 +44,12 @@ static HAT_PNGS: [&[u8]; 36] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_34.png"),  // Demon King Horns
     include_bytes!("../../deploy/assets/cosmetics/hat_35.png"),  // Astronaut Helmet
     include_bytes!("../../deploy/assets/cosmetics/hat_36.png"),  // Dragon Skull
+    include_bytes!("../../deploy/assets/cosmetics/hat_37.png"),  // Ben's Birthday Hat (exclusive)
+    include_bytes!("../../deploy/assets/cosmetics/hat_38.png"),  // Cosmic Crown (premium)
+    include_bytes!("../../deploy/assets/cosmetics/hat_39.png"),  // Phoenix Crest (premium)
+    include_bytes!("../../deploy/assets/cosmetics/hat_40.png"),  // Void Wraith Hood (premium, head-replacing)
+    include_bytes!("../../deploy/assets/cosmetics/hat_41.png"),  // Gilded Jester (premium)
+    include_bytes!("../../deploy/assets/cosmetics/hat_42.png"),  // Crimson War Mask (premium, head-replacing)
 ];
 
 static GUN_PNGS: [&[u8]; 23] = [
