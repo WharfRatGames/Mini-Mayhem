@@ -1208,15 +1208,11 @@ fn sanitize_name(s: &str) -> String {
 
 const MAGIC: &[u8; 4] = b"MMAY";
 
-/// Minimum client version accepted. Only bump when the wire protocol changes
-/// (StateMsg/InputMsg/msg.rs). Cosmetic or gameplay-only deploys leave this alone.
-const MIN_VERSION: &str = "0.5.4.334";
+/// Exact client version required. Bump with every release.
+const REQUIRED_VERSION: &str = "0.5.4.336";
 
 fn version_ok(ver: &str) -> bool {
-    fn patch(v: &str) -> u32 {
-        v.rsplit('.').next().and_then(|s| s.parse().ok()).unwrap_or(0)
-    }
-    patch(ver) >= patch(MIN_VERSION)
+    ver == REQUIRED_VERSION
 }
 
 /// Read up to `max` bytes until (and excluding) a `\n`, returning the trimmed string.
