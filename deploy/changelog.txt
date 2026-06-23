@@ -1,3 +1,5 @@
+0.5.4.341  War helm replaces head; pirate tricorn smaller with skull & crossbones; name/HP lift per-hat height; torch tunnels wide enough to walk back through; cavern map ceiling sealed; ceiling shafts wide enough for soldiers; bug report multi-select categories.
+0.5.4.340  Hat sizing fixes: top hat smaller/higher, war helm and demon king horns scaled down, pirate tricorn fully redrawn with detailed tricorn silhouette; dashboard grant-all-cosmetics button with multi-select; Jellyfin traffic filtered from log viewer.
 0.5.4.339  MENU button opens in-game bug reporter: category picker, on-screen keyboard, PNG screenshot attached and sent to Discord; fix soldier name/HP box overlap with hats (hat_lift 21->37).
 0.5.4.338  Warbond store tab: two-tab shop (Scrap / Warbonds), WB balance in header, premium hat catalog with WB prices, warbond package placeholders; hat catalog now includes hats 37-42.
 0.5.4.337  5 premium warbond hats (38-42): Cosmic Crown, Phoenix Crest, Void Wraith Hood, Gilded Jester, Crimson War Mask; Void Wraith and War Mask replace head; Ben's Birthday Hat (37, exclusive).

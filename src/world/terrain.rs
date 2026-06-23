@@ -646,10 +646,10 @@ impl Terrain {
             // Top seal: noise-driven surface height per column. Air above the surface line,
             // solid below it — but the bottom of this zone always connects to the solid
             // SKY_FLOOR band, and the very top row is always solid (no open-sky gap).
+            let top_amp   = 40.0 + (lcg(&mut rng) % 30) as f64; // 40–70px of terrain variation
+            let top_freq  = 3.0  + (lcg(&mut rng) % 3)  as f64; // 3–5 horizontal cycles
+            let top_freq2 = 7.0  + (lcg(&mut rng) % 4)  as f64; // fine detail layer
             {
-                let top_amp   = 40.0 + (lcg(&mut rng) % 30) as f64; // 40–70px of terrain variation
-                let top_freq  = 3.0  + (lcg(&mut rng) % 3)  as f64; // 3–5 horizontal cycles
-                let top_freq2 = 7.0  + (lcg(&mut rng) % 4)  as f64; // fine detail layer
                 for x in 0..WORLD_W as i32 {
                     let nx = x as f64 / WORLD_W as f64;
                     let wave = cave_a.get([nx * top_freq, 11.7]);   // -1..1
@@ -790,8 +790,24 @@ impl Terrain {
             for _ in 0..n_shafts {
                 let sx = 100 + (lcg(&mut rng) % (WORLD_W as u64 - 200)) as i32;
                 let drift = (lcg(&mut rng) % 40) as i32 - 20;
-                let shaft_r = 7 + (lcg(&mut rng) % 6) as i32;
+                let shaft_r = 14 + (lcg(&mut rng) % 5) as i32; // 14–18 → 29–37px wide, fits a soldier
                 dig_tunnel(&mut terrain, sx, shaft_ceil, sx + drift, upper_third, shaft_r);
+            }
+
+            // Re-seal top zone: shafts with large radii can punch above surf_y.
+            // Restore every column in 0..SKY_FLOOR to its original noise surface.
+            for x in 0..WORLD_W as i32 {
+                let nx = x as f64 / WORLD_W as f64;
+                let wave = cave_a.get([nx * top_freq, 11.7]);
+                let fine = cave_b.get([nx * top_freq2, 55.3]);
+                let surf_y = (SKY_FLOOR as f64
+                    - top_amp * 0.5
+                    + wave * top_amp * 0.5
+                    + fine * top_amp * 0.15)
+                    .clamp(8.0, (SKY_FLOOR - 8) as f64) as i32;
+                for y in 0..SKY_FLOOR {
+                    terrain.set_solid(x, y, y >= surf_y);
+                }
             }
 
             // Water-margin erosion (same as other archetypes): taper rock near world edges

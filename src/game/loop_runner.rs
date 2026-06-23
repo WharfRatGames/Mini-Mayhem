@@ -1492,8 +1492,8 @@ fn step_plasma_torch(game: &mut GameState) {
 
     const TORCH_SPEED:    f32 = 2.0;  // px/tick forward
     const TORCH_TIP_DIST: f32 = 18.0; // px ahead where carving leads
-    const TORCH_RADIUS:   f32 = 14.0; // carving circle radius at tip — must be ≥ sqrt(SOLDIER_HALF_W²+10²)≈12.2 to clear full soldier height at tip
-    const BODY_RADIUS:    f32 = 14.0; // carving circle at soldier midpoint — SOLDIER_H=20, tunnel ~28px tall
+    const TORCH_RADIUS:   f32 = 15.0; // r=15 → 30px clear — fits soldier body (14×28) with margin; hats may clip
+    const BODY_RADIUS:    f32 = 15.0; // same at body so tunnel entrance matches
 
     let (dir, fuel) = {
         let t = match game.plasma_torch.as_ref() { Some(t) => t, None => return };
@@ -1512,7 +1512,7 @@ fn step_plasma_torch(game: &mut GameState) {
 
     let sx = game.teams[ti].soldiers[si].pos.x;
     let sy = game.teams[ti].soldiers[si].pos.y;
-    let body_cy = sy - 10.0; // vertical midpoint of soldier (SOLDIER_H/2); r=11 covers full height
+    let body_cy = sy - (crate::renderer::draw_sprites::SOLDIER_H as f32 * 0.5); // true vertical midpoint of soldier body
 
     let tip_x = sx + dx * TORCH_TIP_DIST;
     let tip_y = body_cy + dy * TORCH_TIP_DIST;
@@ -3486,7 +3486,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     let dark = Bgra::new(0, 0, 0);
                     let nw   = str_width(&soldier.name) + 1; // +1 for bold shift
                     let nx   = soldier.pos.x as i32 - nw / 2;
-                    let hat_lift = if soldier.hat_id > 0 { 37 } else { 0 };
+                    let hat_lift = crate::renderer::skeleton::hat_name_lift(soldier.hat_id);
                     let ny   = soldier.pos.y as i32 - SOLDIER_H as i32 - 40 - hat_lift;
                     // Shadow pass + single bold pass (was 2 shadow + 2 bold;
                     // halved to cut per-frame glyph draw calls).
@@ -3497,7 +3497,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 // Active-soldier marker: downward triangle, raised above name
                 if ti == active_ti && si == active_si && game.turn.is_acting() {
                     let cx  = soldier.pos.x as i32;
-                    let hat_lift = if soldier.hat_id > 0 { 37 } else { 0 };
+                    let hat_lift = crate::renderer::skeleton::hat_name_lift(soldier.hat_id);
                     let ty  = soldier.pos.y as i32 - crate::renderer::draw_sprites::SOLDIER_H - 52 - hat_lift;
                     let col = crate::renderer::draw_sprites::TEAM_COLOURS[team.color_id as usize];
                     buf.fill_rect(cx - 6, ty,     13, 2, col);

@@ -200,16 +200,21 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
         let base_h = 63i32;
         let anchor = 16i32;
         let dy: i32 = match hat_id {
+            1  => -6,
             5  => 14,
             15 => 25,
+            26 => 8,
             28 => 21,
             33 => 12,
             36 => 21,
             _  => 0,
         };
         let scale: f32 = match hat_id {
+            1  => 0.85,
             22 => 0.75,
+            26 => 1.05,
             28 => 0.80,
+            34 => 0.50,
             36 => 0.55,
             _  => 1.0,
         };
@@ -361,6 +366,23 @@ fn draw_held_weapon(buf: &mut WorldBuffer, x: i32, y: i32, weapon: WeaponKind, t
         }
         _ => {}
     }
+}
+
+/// How many extra pixels to lift the name/HP label above a hatless soldier's head.
+/// Returns 0 for no hat. Matches the actual rendered hat height so the gap is consistent.
+pub fn hat_name_lift(hat_id: u8) -> i32 {
+    if hat_id == 0 { return 0; }
+    let base_h: f32 = if SOLDIER_STYLE_V2 { 63.0 } else { 36.0 };
+    let scale: f32 = match hat_id {
+        1  => 0.85,
+        22 => 0.45,
+        26 => 1.05,
+        28 => 0.80,
+        34 => 0.50,
+        36 => 0.55,
+        _  => 1.0,
+    };
+    ((base_h * scale) as i32).max(8)
 }
 
 // ── Public draw function ──────────────────────────────────────────────────────
@@ -534,7 +556,7 @@ pub fn draw_soldier_skeletal(
         buf.fill_rect(bx - 1, by - 1,  2, 3, buckle);
 
         // Head (bigger, helmet brim, eye circle, mouth)
-        if hat_id != 15 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
+        if hat_id != 15 && hat_id != 26 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
             buf.fill_circle(head_cx, head_cy, 8, dark_col);
             buf.fill_circle(head_cx, head_cy, 7, skin_col);
         }
@@ -553,7 +575,7 @@ pub fn draw_soldier_skeletal(
             buf.fill_rect(head_cx - 3, head_cy - 6,  3, 2, hilit);
         }
         // Face features — skipped for masks/replacements that cover the whole face
-        if hat_id != 28 && hat_id != 15 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
+        if hat_id != 28 && hat_id != 15 && hat_id != 26 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
             let fi = f as i32;
             let eye_x = head_cx + fi * 2;
 
@@ -641,7 +663,7 @@ pub fn draw_soldier_skeletal(
                       (belt.0 + tpx) as i32, (belt.1 + tpy) as i32, dark_col);
 
         // Head
-        if hat_id != 15 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
+        if hat_id != 15 && hat_id != 26 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
             buf.fill_circle(head_cx, head_cy, 5, dark_col);
             buf.fill_circle(head_cx, head_cy, 4, skin_col);
         }
@@ -654,7 +676,7 @@ pub fn draw_soldier_skeletal(
                 }
             }
         }
-        if hat_id != 28 && hat_id != 15 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
+        if hat_id != 28 && hat_id != 15 && hat_id != 26 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
             let eye_x = head_cx + f as i32;
             buf.set_pixel(eye_x,     head_cy + 1, dark_col);
             buf.set_pixel(eye_x + 1, head_cy + 1, dark_col);
@@ -684,8 +706,7 @@ pub fn draw_soldier_skeletal(
 
     // ── HP number ─────────────────────────────────────────────────────────────
     if hp > 0 && show_hp {
-        let hat_lift = if hat_id > 0 { 37 } else { 0 };
-        draw_hp_number_lifted(buf, pos.x as i32, pos.y as i32, hp, team, hat_lift);
+        draw_hp_number_lifted(buf, pos.x as i32, pos.y as i32, hp, team, hat_name_lift(hat_id));
     }
 
     if aim_angle.is_some() && hp > 0 { Some((btx, bty)) } else { None }

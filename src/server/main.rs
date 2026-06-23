@@ -1209,7 +1209,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.339";
+const REQUIRED_VERSION: &str = "0.5.4.341";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

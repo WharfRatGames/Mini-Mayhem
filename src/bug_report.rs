@@ -21,6 +21,7 @@ const BUG_CATEGORIES: &[&str] = &[
     "Visual Glitch",
     "Gameplay Bug",
     "Network Issue",
+    "Audio Issue",
     "Other",
 ];
 
@@ -60,15 +61,16 @@ enum Phase {
 
 pub struct BugReporter {
     /// Frozen viewport pixels (BGRA, 640×480).
-    screenshot: Vec<u8>,
-    phase:      Phase,
-    cat_idx:    usize,
+    screenshot:  Vec<u8>,
+    phase:       Phase,
+    cat_idx:     usize,
+    cat_selected: [bool; 6],
     description: String,
-    kb_col:     usize,
-    kb_row:     usize,
-    shift:      bool,
-    status_msg: String,
-    send_timer: u32,
+    kb_col:      usize,
+    kb_row:      usize,
+    shift:       bool,
+    status_msg:  String,
+    send_timer:  u32,
 }
 
 impl BugReporter {
@@ -81,15 +83,16 @@ impl BugReporter {
             pixels.extend_from_slice(&world.raw_data()[src..src + SCREEN_W as usize * 4]);
         }
         Self {
-            screenshot: pixels,
-            phase:      Phase::Category,
-            cat_idx:    0,
-            description: String::new(),
-            kb_col:     0,
-            kb_row:     0,
-            shift:      false,
-            status_msg: String::new(),
-            send_timer: 0,
+            screenshot:   pixels,
+            phase:        Phase::Category,
+            cat_idx:      0,
+            cat_selected: [false; 6],
+            description:  String::new(),
+            kb_col:       0,
+            kb_row:       0,
+            shift:        false,
+            status_msg:   String::new(),
+            send_timer:   0,
         }
     }
 
@@ -115,7 +118,14 @@ impl BugReporter {
         if input.just_pressed(Button::Down) && self.cat_idx + 1 < BUG_CATEGORIES.len() {
             self.cat_idx += 1;
         }
-        if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
+        if input.just_pressed(Button::A) {
+            self.cat_selected[self.cat_idx] = !self.cat_selected[self.cat_idx];
+        }
+        if input.just_pressed(Button::Start) {
+            // require at least one selected; if none, select current
+            if !self.cat_selected.iter().any(|&s| s) {
+                self.cat_selected[self.cat_idx] = true;
+            }
             self.phase = Phase::Keyboard;
         }
         false
@@ -168,7 +178,11 @@ impl BugReporter {
         self.status_msg = "Sending...".into();
         self.send_timer = 300;
 
-        let category    = BUG_CATEGORIES[self.cat_idx].to_string();
+        let category: String = BUG_CATEGORIES.iter().enumerate()
+            .filter(|&(i, _)| self.cat_selected[i])
+            .map(|(_, &s)| s)
+            .collect::<Vec<_>>()
+            .join(", ");
         let description = self.description.clone();
         let png         = encode_png(&self.screenshot, SCREEN_W, SCREEN_H);
 
@@ -216,23 +230,31 @@ impl BugReporter {
     }
 
     fn draw_category(&self, buf: &mut WorldBuffer, ox: i32) {
-        draw_str_shadow(buf, "Select category  [Up/Down  A=confirm]",
+        draw_str_shadow(buf, "Select categories  [A=toggle  Start=next]",
                         ox, CAT_Y - 16, Bgra::new(200, 200, 200));
         for (i, &cat) in BUG_CATEGORIES.iter().enumerate() {
             let y = CAT_Y + i as i32 * 14;
-            let (marker, col) = if i == self.cat_idx {
-                ("> ", Bgra::new(255, 220, 80))
+            let cursor  = if i == self.cat_idx { ">" } else { " " };
+            let checked = if self.cat_selected[i]  { "[x]" } else { "[ ]" };
+            let col = if i == self.cat_idx {
+                Bgra::new(255, 220, 80)
+            } else if self.cat_selected[i] {
+                Bgra::new(100, 220, 120)
             } else {
-                ("  ", Bgra::new(180, 180, 180))
+                Bgra::new(180, 180, 180)
             };
-            draw_str_shadow(buf, &format!("{}{}", marker, cat), ox, y, col);
+            draw_str_shadow(buf, &format!("{} {} {}", cursor, checked, cat), ox, y, col);
         }
     }
 
     fn draw_keyboard(&self, buf: &mut WorldBuffer, ox: i32) {
         // Category + description header
-        let cat = BUG_CATEGORIES[self.cat_idx];
-        draw_str_shadow(buf, &format!("Category: {}", cat),
+        let cats: String = BUG_CATEGORIES.iter().enumerate()
+            .filter(|&(i, _)| self.cat_selected[i])
+            .map(|(_, &s)| s)
+            .collect::<Vec<_>>()
+            .join(", ");
+        draw_str_shadow(buf, &format!("Tags: {}", cats),
                         ox, DESC_Y - 28, Bgra::new(160, 200, 255));
 
         // Description box

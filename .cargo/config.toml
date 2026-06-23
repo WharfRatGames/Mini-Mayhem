@@ -1,5 +1,5 @@
 [alias]
-miyoo = "zigbuild --profile miyoo --target armv7-unknown-linux-gnueabihf.2.17"
+miyoo = "zigbuild --profile miyoo --target armv7-unknown-linux-gnueabihf.2.17 --no-default-features"
 
 [target.armv7-unknown-linux-gnueabihf]
 linker = "zig-cc"

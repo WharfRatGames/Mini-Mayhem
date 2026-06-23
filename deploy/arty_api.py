@@ -1382,7 +1382,9 @@ def handle(db, sock, peer_ip="?"):
             kind = qs_params.get("kind", "error")
             log_path = f"/var/log/nginx/{kind}.log"
             lines = subprocess.check_output(["tail", f"-{n}", log_path], text=True).splitlines()
-            noise = ("Jellyfin", "/Sessions/", "wp-includes", "xmlrpc.php", "wlwmanifest", "favicon.ico")
+            noise = ("Jellyfin", "/Sessions/", "wp-includes", "xmlrpc.php", "wlwmanifest",
+                     "favicon.ico", "/Users/", "/Shows/", "/Items/", "/web/", "/System/",
+                     "/Playback", "/Videos/", "crumboniumjelly")
             lines = [l for l in lines if not any(s in l for s in noise)]
             send_json(sock, 200, list(reversed(lines)))
         except Exception as e:
@@ -1510,11 +1512,6 @@ def handle(db, sock, peer_ip="?"):
         })
 
     elif method == "POST" and path == "/bug_report":
-        import email, email.parser, io as _io
-        WEBHOOK = os.environ.get("DISCORD_BUG_WEBHOOK", "")
-        if not WEBHOOK:
-            send_json(sock, 503, {"error": "bug reporting not configured"}); return
-        WH_UA   = "DiscordBot (https://github.com/WharfRatGames/Mini-Mayhem, 1.0)"
         try:
             ct      = headers.get("content-type", headers.get("Content-Type",""))
             boundary = ""
@@ -1525,7 +1522,6 @@ def handle(db, sock, peer_ip="?"):
             if not boundary:
                 send_json(sock, 400, {"error":"no boundary"}); return
             raw = body if isinstance(body, bytes) else body.encode()
-            # Parse multipart manually
             parts = {}
             png_data = None
             delim = ("--" + boundary).encode()
@@ -1545,23 +1541,17 @@ def handle(db, sock, peer_ip="?"):
                         png_data = val
             category    = parts.get("category", "Unknown")
             description = parts.get("description", "(no description)")
-            # Post to Discord webhook with screenshot
-            import urllib.request as _ur
-            wh_boundary = "DiscordWebhookBoundary12345"
-            payload_json = json.dumps({"content": f"**🐛 Bug Report**\n**Category:** {category}\n**Description:** {description}"}).encode()
-            wh_body = (
-                f"--{wh_boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n"
-            ).encode() + payload_json + b"\r\n"
-            if png_data:
-                wh_body += (
-                    f"--{wh_boundary}\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"screenshot.png\"\r\nContent-Type: image/png\r\n\r\n"
-                ).encode() + png_data + b"\r\n"
-            wh_body += f"--{wh_boundary}--\r\n".encode()
-            wh_req = _ur.Request(WEBHOOK, data=wh_body, method="POST",
-                headers={"Content-Type": f"multipart/form-data; boundary={wh_boundary}", "User-Agent": WH_UA})
-            with _ur.urlopen(wh_req, timeout=10) as r:
+            import urllib.request as _ur, base64 as _b64
+            payload = json.dumps({
+                "category": category,
+                "description": description,
+                "png_b64": _b64.b64encode(png_data).decode() if png_data else None,
+            }).encode()
+            bot_req = _ur.Request("http://127.0.0.1:7779/notify/bug_report", data=payload,
+                headers={"Content-Type": "application/json"})
+            with _ur.urlopen(bot_req, timeout=5) as r:
                 r.read()
-            print(f"Bug report forwarded: {category}")
+            print(f"Bug report forwarded to bot: {category}")
             send_json(sock, 200, {"ok": True})
         except Exception as e:
             print(f"Bug report error: {e}")

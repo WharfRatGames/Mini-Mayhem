@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini Mayhem — Server Dashboard</title>
+<link rel="icon" type="image/png" href="/arty/icon.png">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0c14;
+    color: #d0d4e8;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 { color: #ffd232; font-size: 22px; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 4px; }
+  .subtitle { color: #555; font-size: 12px; margin-bottom: 24px; letter-spacing: 1px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card {
+    background: #12151f;
+    border: 1px solid #1e2235;
+    border-radius: 6px;
+    padding: 16px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .card:hover { border-color: #ffd232; }
+  .card.active { border-color: #ffd232; background: #161a28; }
+  .card.no-click { cursor: default; }
+  .card.no-click:hover { border-color: #1e2235; }
+  .card .label { color: #555; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px; }
+  .card .value { color: #ffd232; font-size: 28px; font-weight: bold; }
+  .card .value.green { color: #4ec94e; }
+  .card .value.red   { color: #e05050; }
+  .card .value.blue  { color: #5090e0; }
+  .card .hint { color: #444; font-size: 10px; margin-top: 6px; letter-spacing: 1px; }
+  .section-title {
+    color: #888; font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+    margin-bottom: 10px; margin-top: 24px;
+    border-bottom: 1px solid #1e2235; padding-bottom: 6px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .section-title .close-btn {
+    color: #444; cursor: pointer; font-size: 14px; letter-spacing: 0;
+    padding: 0 6px; border: 1px solid #2a2e40; border-radius: 3px;
+  }
+  .section-title .close-btn:hover { color: #ffd232; border-color: #ffd232; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { color: #555; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; text-align: left; padding: 6px 10px; border-bottom: 1px solid #1e2235; }
+  td { padding: 8px 10px; border-bottom: 1px solid #0f1118; }
+  tr:hover td { background: #12151f; }
+  .ranked-badge { background: #ffd23222; color: #ffd232; border: 1px solid #ffd23255; border-radius: 3px; padding: 1px 6px; font-size: 10px; letter-spacing: 1px; }
+  .casual-badge { background: #5090e022; color: #5090e0; border: 1px solid #5090e055; border-radius: 3px; padding: 1px 6px; font-size: 10px; }
+  .winner { color: #4ec94e; }
+  .bar-wrap { background: #0a0c14; border-radius: 3px; height: 6px; width: 100%; margin-top: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; background: #ffd232; transition: width 0.4s; }
+  .bar-fill.green { background: #4ec94e; }
+  .bar-fill.blue  { background: #5090e0; }
+  .bar-fill.red   { background: #e05050; }
+  .meta { color: #333; font-size: 11px; margin-top: 20px; text-align: right; }
+  .refresh-btn { background: none; border: 1px solid #2a2e40; color: #555; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px; letter-spacing: 1px; margin-left: 12px; }
+  .refresh-btn:hover { border-color: #ffd232; color: #ffd232; }
+  .detail-panel { background: #0d1020; border: 1px solid #ffd23244; border-radius: 6px; padding: 16px; margin-top: 16px; }
+  .auth-wrap { max-width: 340px; margin: 80px auto; text-align: center; }
+  .auth-wrap h2 { color: #ffd232; margin-bottom: 20px; letter-spacing: 2px; }
+  input[type=password] { width: 100%; background: #12151f; border: 1px solid #2a2e40; color: #d0d4e8; padding: 10px 14px; border-radius: 4px; font-family: inherit; font-size: 14px; margin-bottom: 12px; outline: none; }
+  input[type=password]:focus { border-color: #ffd232; }
+  button.primary { width: 100%; background: #ffd232; color: #0a0c14; border: none; padding: 10px; border-radius: 4px; font-family: inherit; font-size: 14px; font-weight: bold; letter-spacing: 2px; cursor: pointer; }
+  button.primary:hover { background: #ffe066; }
+  .error { color: #e05050; font-size: 12px; margin-top: 8px; }
+  #dashboard { display: none; }
+  #auth { display: block; }
+  .grant-btn { background: none; border: 1px solid #ffd23255; color: #ffd232; padding: 2px 8px; border-radius: 3px; cursor: pointer; font-family: inherit; font-size: 11px; }
+  .grant-btn:hover { background: #ffd23222; }
+  .tat-badge { background: #88229922; color: #cc66ff; border: 1px solid #88229955; border-radius: 3px; padding: 1px 6px; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <div class="auth-wrap">
+    <h2>MINI MAYHEM</h2>
+    <p style="color:#555;margin-bottom:20px;font-size:12px;letter-spacing:1px;">SERVER DASHBOARD</p>
+    <input type="password" id="key-input" placeholder="Admin key" autocomplete="current-password">
+    <button class="primary" onclick="doLogin()">ENTER</button>
+    <div class="error" id="auth-error"></div>
+  </div>
+</div>
+
+<div id="dashboard">
+  <h1>⚡ Mini Mayhem</h1>
+  <div class="subtitle" id="last-updated">Loading...</div>
+
+  <div class="grid" id="stat-cards"></div>
+  <div id="stat-detail"></div>
+
+  <div class="section-title">System</div>
+  <div class="grid" id="sys-cards"></div>
+  <div id="sys-detail"></div>
+
+  <div class="section-title">Leaderboard (Top 5)</div>
+  <table id="leaderboard-table">
+    <thead><tr><th>#</th><th>Player</th><th>ELO</th></tr></thead>
+    <tbody id="leaderboard-body"></tbody>
+  </table>
+
+  <div class="section-title">Lobbies &amp; Queues <span id="lobby-count" style="color:#555;font-size:10px"></span></div>
+  <div id="lobbies-panel"></div>
+
+  <div class="section-title">Recent Matches</div>
+  <table>
+    <thead><tr><th>Player 1</th><th>Player 2</th><th>Mode</th><th>Winner</th><th>When</th></tr></thead>
+    <tbody id="matches-body"></tbody>
+  </table>
+
+  <div class="section-title">
+    Game Server Log
+    <span style="display:flex;align-items:center;gap:8px">
+      <span id="log-live-dot" style="width:8px;height:8px;border-radius:50%;background:#4ec94e;display:inline-block"></span>
+      <span style="color:#444;font-size:10px">LIVE</span>
+      <span class="close-btn" onclick="toggleLog()">↕</span>
+    </span>
+  </div>
+  <div id="server-log" style="display:none;background:#080a10;border:1px solid #1e2235;border-radius:4px;padding:12px;font-size:11px;max-height:320px;overflow-y:auto;font-family:monospace"></div>
+
+  <div class="section-title">
+    Nginx Log
+    <span style="display:flex;align-items:center;gap:8px">
+      <select id="nginx-log-kind" onchange="if(nginxLogOpen)loadNginxLog()" style="background:#111;color:#888;border:1px solid #222;font-size:10px;padding:2px 4px">
+        <option value="error">error</option>
+        <option value="access">access</option>
+      </select>
+      <span id="nginx-log-live-dot" style="width:8px;height:8px;border-radius:50%;background:#4ec94e;display:inline-block"></span>
+      <span style="color:#444;font-size:10px">LIVE</span>
+      <span class="close-btn" onclick="toggleNginxLog()">↕</span>
+    </span>
+  </div>
+  <div id="nginx-log" style="display:none;background:#080a10;border:1px solid #1e2235;border-radius:4px;padding:12px;font-size:11px;max-height:320px;overflow-y:auto;font-family:monospace"></div>
+
+  <div class="meta">
+    <button class="refresh-btn" onclick="load()">↻ REFRESH</button>
+    Auto-refreshes every 30s
+  </div>
+</div>
+
+<script>
+let adminKey = '';
+let activeCard = null;
+
+function doLogin() {
+  adminKey = document.getElementById('key-input').value.trim();
+  load();
+}
+
+document.getElementById('key-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+function timeAgo(unix) {
+  if (!unix) return '—';
+  const diff = Math.floor(Date.now() / 1000) - unix;
+  if (diff < 60)    return diff + 's ago';
+  if (diff < 3600)  return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  return Math.floor(diff/86400) + 'd ago';
+}
+
+function bar(pct, cls='') {
+  return `<div class="bar-wrap"><div class="bar-fill ${cls}" style="width:${Math.min(100,pct||0).toFixed(1)}%"></div></div>`;
+}
+
+function apiUrl(path) {
+  return '/api' + path + (path.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(adminKey);
+}
+
+async function showDetail(type) {
+  const panel = document.getElementById('stat-detail');
+  if (activeCard === type) {
+    activeCard = null;
+    panel.innerHTML = '';
+    document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+    return;
+  }
+  activeCard = type;
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+  document.getElementById('card-' + type)?.classList.add('active');
+  await renderDetail(type);
+}
+
+async function renderDetail(type) {
+  const panel = document.getElementById('stat-detail');
+  panel.innerHTML = '<div class="detail-panel" style="color:#444;padding:24px;text-align:center">Loading...</div>';
+
+  if (type === 'players') {
+    const res = await fetch(apiUrl('/admin/users'));
+    const users = await res.json();
+    panel.innerHTML = `
+      <div class="detail-panel">
+        <div class="section-title" style="display:flex;align-items:center;gap:10px">
+          All Players
+          <button class="grant-btn" id="bulk-cosmetics-btn" style="display:none;border-color:#a060ff55;color:#a060ff" onclick="bulkGrantCosmetics()">★ Grant All Cosmetics to Selected</button>
+          <span class="close-btn" onclick="showDetail('players')">✕</span>
+        </div>
+        <table>
+          <thead><tr><th><input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this)"></th><th>Username</th><th>ELO</th><th>W</th><th>L</th><th>Scrap</th><th>Warbonds</th><th>Matches</th><th>Last Login</th><th>IP</th><th></th></tr></thead>
+          <tbody>
+            ${users.map(u => `<tr style="cursor:pointer" onclick="showPlayerDetail('${u.username}')">
+              <td onclick="event.stopPropagation()"><input type="checkbox" class="player-cb" value="${u.username}" onchange="updateBulkBtn()"></td>
+              <td style="color:#d0d4e8">${u.username}</td>
+              <td style="color:#ffd232">${u.elo}</td>
+              <td style="color:#4ec94e">${u.wins}</td>
+              <td style="color:#e05050">${u.losses}</td>
+              <td>${u.scrap}</td>
+              <td style="color:#ffd232">${u.warbonds}</td>
+              <td>${u.matches}</td>
+              <td style="color:#444">${timeAgo(u.last_seen)}</td>
+              <td style="color:#555;font-size:11px">${u.last_ip || '—'}</td>
+              <td><button class="grant-btn" onclick="event.stopPropagation();grantWarbonds('${u.username}')">+ Warbonds</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } else if (type === 'matches') {
+    const res = await fetch(apiUrl('/admin/matches?limit=50'));
+    const matches = await res.json();
+    panel.innerHTML = `
+      <div class="detail-panel">
+        <div class="section-title">All Matches (last 50) <span class="close-btn" onclick="showDetail('matches')">✕</span></div>
+        <table>
+          <thead><tr><th>#</th><th>Player 1</th><th>Player 2</th><th>Mode</th><th>Winner</th><th>Status</th><th>When</th></tr></thead>
+          <tbody>
+            ${matches.map(m => {
+              const badge = m.ranked ? '<span class="ranked-badge">RANKED</span>' : '<span class="casual-badge">CASUAL</span>';
+              const winner = m.winner === null ? '—' : `<span class="winner">${m.winner === 0 ? m.p0 : m.p1}</span>`;
+              const status = m.done ? '' : '<span class="tat-badge">ACTIVE</span>';
+              return `<tr>
+                <td style="color:#333">${m.id}</td>
+                <td>${m.p0}</td><td>${m.p1}</td>
+                <td>${badge}</td>
+                <td>${winner}</td>
+                <td>${status}</td>
+                <td style="color:#444">${timeAgo(m.finished_at)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } else if (type === 'tat') {
+    const res = await fetch(apiUrl('/admin/lobbies'));
+    const d = await res.json();
+    const now = Date.now() / 1000;
+    panel.innerHTML = `
+      <div class="detail-panel">
+        <div class="section-title">Active TAT Matches <span class="close-btn" onclick="showDetail('tat')">✕</span></div>
+        <table>
+          <thead><tr><th>#</th><th>Player 1</th><th>vs</th><th>Player 2</th><th>Mode</th><th>Turn</th><th>Whose Turn</th><th>Turn Age</th><th>Expires</th><th></th></tr></thead>
+          <tbody>
+            ${d.tat_active.map(m => {
+              const badge = m.ranked ? '<span class="ranked-badge">RANKED</span>' : '<span class="casual-badge">CASUAL</span>';
+              const turnAge = now - m.turn_started_at;
+              const ageOld = turnAge > 86400;
+              const expires = m.turn_deadline - now;
+              const expireStr = !m.ranked ? '<span style="color:#333">—</span>'
+                : expires > 0
+                ? (expires < 3600 ? `<span style="color:#e05050">${Math.ceil(expires/60)}m</span>`
+                   : expires < 86400 ? `${Math.ceil(expires/3600)}h`
+                   : `${Math.ceil(expires/86400)}d`)
+                : '<span style="color:#e05050">overdue</span>';
+              const p0kd = `${m.p0_kills}/${m.p0_deaths}`;
+              const p1kd = `${m.p1_kills}/${m.p1_deaths}`;
+              return `<tr>
+                <td style="color:#333">${m.id}</td>
+                <td>${playerLink(m.p0)} <span style="color:#555;font-size:10px">${p0kd}</span></td>
+                <td style="color:#333">vs</td>
+                <td>${playerLink(m.p1)} <span style="color:#555;font-size:10px">${p1kd}</span></td>
+                <td>${badge}</td>
+                <td style="color:#888">${m.turn}</td>
+                <td style="color:#5090e0">${m.whose_turn}</td>
+                <td style="color:${ageOld ? '#e05050' : '#888'}">${timeAgo(m.turn_started_at)}</td>
+                <td>${expireStr}</td>
+                <td><button onclick="forfeitMatch(${m.id},'${m.whose_turn}')" style="background:#3a1a1a;border:1px solid #e05050;color:#e05050;padding:2px 7px;cursor:pointer;font-size:10px;border-radius:3px">Forfeit</button></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } else {
+    panel.innerHTML = '';
+    activeCard = null;
+  }
+}
+
+async function forfeitMatch(matchId, whoseTurn) {
+  if (!confirm(`Forfeit match #${matchId}? ${whoseTurn} will lose (their turn, they forfeit).`)) return;
+  const res = await fetch(apiUrl('/admin/forfeit_match'), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({admin_key: adminKey, match_id: matchId})
+  });
+  const d = await res.json();
+  if (d.winner) alert(`Match #${matchId} forfeited. Winner: ${d.winner}, Loser: ${d.loser}`);
+  else alert('Error: ' + (d.error || 'unknown'));
+  loadLobbies();
+}
+
+async function grantWarbonds(username) {
+  const amount = prompt(`Grant how many warbonds to ${username}?`);
+  if (!amount || isNaN(amount)) return;
+  const res = await fetch('/api/admin/grant_warbonds', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({admin_key: adminKey, username, warbonds: parseInt(amount), reason: 'dashboard grant'})
+  });
+  const d = await res.json();
+  if (d.ok) alert(`Granted ${amount} warbonds to ${username}`);
+  else alert('Error: ' + (d.error || 'unknown'));
+  showDetail('players');
+}
+
+async function load() {
+  try {
+    const res = await fetch(apiUrl('/admin/status'));
+    if (res.status === 403) {
+      document.getElementById('auth-error').textContent = 'Invalid admin key.';
+      return;
+    }
+    const d = await res.json();
+    document.getElementById('auth').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    document.getElementById('last-updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+
+    document.getElementById('stat-cards').innerHTML = `
+      <div class="card" id="card-players" onclick="showDetail('players')">
+        <div class="label">Total Players</div>
+        <div class="value blue">${d.total_users}</div>
+        <div class="hint">↳ click to browse</div>
+      </div>
+      <div class="card no-click">
+        <div class="label">Active Today</div>
+        <div class="value green">${d.active_today}</div>
+      </div>
+      <div class="card" id="card-matches" onclick="showDetail('matches')">
+        <div class="label">Total Matches</div>
+        <div class="value">${d.total_matches}</div>
+        <div class="hint">↳ click to browse</div>
+      </div>
+      <div class="card" id="card-tat" onclick="showDetail('tat')">
+        <div class="label">Active TAT Matches</div>
+        <div class="value ${d.active_tat_matches > 0 ? 'green' : ''}">${d.active_tat_matches}</div>
+        <div class="hint">↳ click to browse</div>
+      </div>
+      <div class="card no-click">
+        <div class="label">Live Queue</div>
+        <div class="value ${d.live_queue > 0 ? 'green' : ''}">${d.live_queue}</div>
+      </div>
+      <div class="card no-click">
+        <div class="label">Ranked Queue</div>
+        <div class="value ${d.ranked_queue > 0 ? 'green' : ''}">${d.ranked_queue}</div>
+      </div>
+    `;
+
+    const cpuPct = d.cpu_percent != null ? d.cpu_percent.toFixed(1) : '?';
+    const memPct = d.mem_total_mb ? (d.mem_used_mb / d.mem_total_mb * 100) : 0;
+    const diskPct = d.disk_total_mb ? (d.disk_used_mb / d.disk_total_mb * 100) : 0;
+    document.getElementById('sys-cards').innerHTML = `
+      <div class="card" id="sys-card-cpu" onclick="toggleSysDetail('cpu')">
+        <div class="label">CPU</div>
+        <div class="value ${d.cpu_percent > 80 ? 'red' : ''}">${cpuPct}%</div>
+        ${bar(d.cpu_percent || 0, d.cpu_percent > 80 ? 'red' : '')}
+        <div class="hint">↳ click for processes</div>
+      </div>
+      <div class="card no-click">
+        <div class="label">Memory</div>
+        <div class="value ${memPct > 85 ? 'red' : ''}">${d.mem_used_mb ?? '?'} / ${d.mem_total_mb ?? '?'} MB</div>
+        ${bar(memPct, memPct > 85 ? 'red' : 'green')}
+      </div>
+      <div class="card no-click">
+        <div class="label">Disk (/)</div>
+        <div class="value ${diskPct > 85 ? 'red' : ''}">${d.disk_used_mb != null ? (d.disk_used_mb/1024).toFixed(1) : '?'} / ${d.disk_total_mb != null ? (d.disk_total_mb/1024).toFixed(1) : '?'} GB</div>
+        ${bar(diskPct, diskPct > 85 ? 'red' : 'blue')}
+      </div>
+    `;
+
+    document.getElementById('leaderboard-body').innerHTML =
+      (d.top5 || []).map((p, i) =>
+        `<tr><td style="color:#555">${i+1}</td><td>${p.username}</td><td style="color:#ffd232">${p.elo}</td></tr>`
+      ).join('');
+
+    document.getElementById('matches-body').innerHTML =
+      (d.recent_matches || []).map(m => {
+        const winner = m.winner === null ? '—' : `<span class="winner">${m.winner === 0 ? m.p0 : m.p1}</span>`;
+        const badge = m.ranked ? '<span class="ranked-badge">RANKED</span>' : '<span class="casual-badge">CASUAL</span>';
+        return `<tr><td>${m.p0}</td><td>${m.p1}</td><td>${badge}</td><td>${winner}</td><td style="color:#444">${timeAgo(m.finished_at)}</td></tr>`;
+      }).join('');
+
+
+  } catch(e) { console.error(e); }
+}
+
+async function showPlayerDetail(username) {
+  const panel = document.getElementById('stat-detail');
+  panel.innerHTML = `<div class="detail-panel" style="color:#444;padding:24px;text-align:center">Loading ${username}...</div>`;
+  activeCard = 'players';
+  try {
+    const res = await fetch(apiUrl(`/admin/user/${encodeURIComponent(username)}`));
+    const u = await res.json();
+    const winRate = (u.wins + u.losses) > 0 ? (u.wins / (u.wins + u.losses) * 100).toFixed(0) : '—';
+    panel.innerHTML = `
+      <div class="detail-panel">
+        <div class="section-title">${u.username} <span class="close-btn" onclick="showDetail('players')">✕</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px">
+          <div class="card no-click"><div class="label">ELO</div><div class="value" style="font-size:22px;color:#ffd232">${u.elo}</div></div>
+          <div class="card no-click"><div class="label">W / L</div><div class="value" style="font-size:22px"><span style="color:#4ec94e">${u.wins}</span> / <span style="color:#e05050">${u.losses}</span></div></div>
+          <div class="card no-click"><div class="label">Win Rate</div><div class="value" style="font-size:22px">${winRate}${winRate!=='—'?'%':''}</div></div>
+          <div class="card no-click"><div class="label">Scrap</div><div class="value" style="font-size:22px;color:#4ec94e">${u.scrap}</div></div>
+          <div class="card no-click"><div class="label">Warbonds</div><div class="value" style="font-size:22px;color:#ffd232">${u.warbonds}</div></div>
+          <div class="card no-click"><div class="label">Login Streak</div><div class="value" style="font-size:22px">${u.streak}d</div></div>
+          <div class="card no-click"><div class="label">Last Seen</div><div class="value" style="font-size:16px;color:#888">${timeAgo(u.last_seen)}</div><div class="hint">${u.last_ip || '—'}</div></div>
+        </div>
+        ${u.rosters.length ? `
+        <div class="section-title" style="margin-top:0">Rosters</div>
+        <div style="margin-bottom:16px;color:#888;font-size:12px">
+          ${u.rosters.map(r => {
+            const worms = JSON.parse(r.worms || '[]');
+            return `<div style="margin-bottom:6px"><span style="color:#d0d4e8">${r.name}</span> — ${worms.join(', ')}</div>`;
+          }).join('')}
+        </div>` : ''}
+        <div class="section-title" style="margin-top:0">Recent Matches</div>
+        <table>
+          <thead><tr><th>#</th><th>vs</th><th>Mode</th><th>Result</th><th>K/D</th><th>Scrap</th><th>When</th></tr></thead>
+          <tbody>
+            ${u.recent_matches.map(m => {
+              const isP0 = m.p0 === u.username;
+              const opp = isP0 ? m.p1 : m.p0;
+              const won = m.winner !== null && ((m.winner === 0 && isP0) || (m.winner === 1 && !isP0));
+              const lost = m.winner !== null && !won;
+              const result = m.winner === null ? '<span style="color:#555">—</span>' : won ? '<span style="color:#4ec94e">WIN</span>' : '<span style="color:#e05050">LOSS</span>';
+              const badge = m.ranked ? '<span class="ranked-badge">RANKED</span>' : '<span class="casual-badge">CASUAL</span>';
+              return `<tr>
+                <td style="color:#333">${m.id}</td>
+                <td style="cursor:pointer;color:#5090e0" onclick="showPlayerDetail('${opp}')">${opp}</td>
+                <td>${badge}</td>
+                <td>${result}</td>
+                <td>${m.kills}/${m.deaths}</td>
+                <td style="color:#4ec94e">${m.scrap != null ? '+'+m.scrap : '—'}</td>
+                <td style="color:#444">${timeAgo(m.finished_at)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+          <button class="grant-btn" onclick="grantWarbonds('${u.username}')">+ Grant Warbonds</button>
+          <button class="grant-btn" onclick="grantAllCosmetics('${u.username}')" style="border-color:#a060ff55;color:#a060ff">★ Grant All Cosmetics</button>
+        </div>
+      </div>`;
+  } catch(e) { panel.innerHTML = ''; }
+}
+
+function toggleSelectAll(cb) {
+  document.querySelectorAll('.player-cb').forEach(el => el.checked = cb.checked);
+  updateBulkBtn();
+}
+
+function updateBulkBtn() {
+  const selected = document.querySelectorAll('.player-cb:checked');
+  const btn = document.getElementById('bulk-cosmetics-btn');
+  if (!btn) return;
+  if (selected.length > 0) {
+    btn.style.display = '';
+    btn.textContent = `★ Grant All Cosmetics to ${selected.length} Selected`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+async function bulkGrantCosmetics() {
+  const selected = [...document.querySelectorAll('.player-cb:checked')].map(el => el.value);
+  if (!selected.length) return;
+  if (!confirm(`Grant ALL cosmetics to ${selected.length} account(s)?\n${selected.join(', ')}\n\n(Excludes hat #37 — Ben's Birthday Hat)`)) return;
+  let results = [];
+  for (const username of selected) {
+    const res = await fetch('/api/admin/grant_all_cosmetics', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({admin_key: adminKey, username})
+    });
+    const d = await res.json();
+    results.push(d.ok ? `${username}: +${d.granted} new` : `${username}: ERROR`);
+  }
+  alert(results.join('\n'));
+  showDetail('players');
+}
+
+async function grantAllCosmetics(username) {
+  if (!confirm(`Grant ALL cosmetics to ${username}?\n(Excludes hat #37 — Ben's Birthday Hat)`)) return;
+  const res = await fetch('/api/admin/grant_all_cosmetics', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({admin_key: adminKey, username})
+  });
+  const d = await res.json();
+  if (d.ok) alert(`Granted ${d.granted} cosmetics to ${username} (${d.already_owned} already owned).`);
+  else alert('Error: ' + (d.error || 'unknown'));
+  showPlayerDetail(username);
+}
+
+setInterval(() => { if (adminKey) load(); }, 30000);
+setInterval(() => { if (adminKey) loadSysStats(); }, 5000);
+setInterval(() => { if (adminKey) loadLobbies(); }, 5000);
+
+function playerLink(username) {
+  return `<span style="color:#5090e0;cursor:pointer" onclick="showPlayerDetail('${username}')">${username}</span>`;
+}
+
+async function loadLobbies() {
+  try {
+    const res = await fetch(apiUrl('/admin/lobbies'));
+    if (!res.ok) return;
+    const d = await res.json();
+    const total = d.live_games.length + d.live_waiting.length + d.tat_active.length + (d.tat_ranked_waiting||[]).length;
+    document.getElementById('lobby-count').textContent = total ? `(${total} active)` : '(none)';
+
+    let html = '';
+
+    if (d.live_games.length) {
+      html += `<div style="color:#555;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Live — In Game</div>`;
+      html += `<table style="margin-bottom:16px"><thead><tr><th>Player 1</th><th>ELO</th><th>vs</th><th>Player 2</th><th>ELO</th><th>Port</th><th>Duration</th></tr></thead><tbody>`;
+      for (const g of d.live_games) {
+        html += `<tr>
+          <td>${playerLink(g.p0)}</td>
+          <td style="color:#ffd232">${g.p0_elo}</td>
+          <td style="color:#333">vs</td>
+          <td>${playerLink(g.p1)}</td>
+          <td style="color:#ffd232">${g.p1_elo}</td>
+          <td style="color:#555">${g.port}</td>
+          <td style="color:#4ec94e">${timeAgo(g.joined_at)}</td>
+        </tr>`;
+      }
+      html += `</tbody></table>`;
+    }
+
+    if ((d.tat_ranked_waiting||[]).length) {
+      html += `<div style="color:#555;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">TAT Ranked — Waiting for Match</div>`;
+      html += `<table style="margin-bottom:16px"><thead><tr><th>Player</th><th>ELO</th><th>Waiting</th></tr></thead><tbody>`;
+      for (const w of d.tat_ranked_waiting) {
+        html += `<tr>
+          <td>${playerLink(w.username)}</td>
+          <td style="color:#ffd232">${w.elo}</td>
+          <td style="color:#888">${timeAgo(w.joined_at)}</td>
+        </tr>`;
+      }
+      html += `</tbody></table>`;
+    }
+
+    if (d.live_waiting.length) {
+      html += `<div style="color:#555;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Live — Waiting for Match</div>`;
+      html += `<table style="margin-bottom:16px"><thead><tr><th>Player</th><th>ELO</th><th>Waiting</th></tr></thead><tbody>`;
+      for (const w of d.live_waiting) {
+        html += `<tr>
+          <td>${playerLink(w.username)}</td>
+          <td style="color:#ffd232">${w.elo}</td>
+          <td style="color:#888">${timeAgo(w.joined_at)}</td>
+        </tr>`;
+      }
+      html += `</tbody></table>`;
+    }
+
+    if (d.tat_active.length) {
+      html += `<div style="color:#555;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">TAT — Active Matches</div>`;
+      html += `<table style="margin-bottom:16px"><thead><tr><th>#</th><th>Player 1</th><th>vs</th><th>Player 2</th><th>Mode</th><th>Turn</th><th>Whose Turn</th><th>Turn Age</th><th>Expires</th><th></th></tr></thead><tbody>`;
+      for (const m of d.tat_active) {
+        const badge = m.ranked ? '<span class="ranked-badge">RANKED</span>' : '<span class="casual-badge">CASUAL</span>';
+        const now = Date.now() / 1000;
+        const turnAge = now - m.turn_started_at;
+        const ageOld = turnAge > 86400;
+        const expires = m.turn_deadline - now;
+        const expireStr = !m.ranked ? `<span style="color:#333">—</span>`
+          : expires > 0
+          ? (expires < 3600 ? `<span style="color:#e05050">${Math.ceil(expires/60)}m</span>`
+             : expires < 86400 ? `${Math.ceil(expires/3600)}h`
+             : `${Math.ceil(expires/86400)}d`)
+          : `<span style="color:#e05050">overdue</span>`;
+        const p0kd = `${m.p0_kills}/${m.p0_deaths}`;
+        const p1kd = `${m.p1_kills}/${m.p1_deaths}`;
+        html += `<tr>
+          <td style="color:#333">${m.id}</td>
+          <td>${playerLink(m.p0)} <span style="color:#555;font-size:10px">${p0kd}</span></td>
+          <td style="color:#333">vs</td>
+          <td>${playerLink(m.p1)} <span style="color:#555;font-size:10px">${p1kd}</span></td>
+          <td>${badge}</td>
+          <td style="color:#888">${m.turn}</td>
+          <td style="color:#5090e0">${m.whose_turn}</td>
+          <td style="color:${ageOld ? '#e05050' : '#888'}">${timeAgo(m.turn_started_at)}</td>
+          <td>${expireStr}</td>
+          <td><button onclick="forfeitMatch(${m.id},'${m.whose_turn}')" style="background:#3a1a1a;border:1px solid #e05050;color:#e05050;padding:2px 7px;cursor:pointer;font-size:10px;border-radius:3px">Forfeit</button></td>
+        </tr>`;
+      }
+      html += `</tbody></table>`;
+    }
+
+    if (!html) html = `<div style="color:#333;font-size:12px;padding:8px 0">No active lobbies or matches.</div>`;
+    document.getElementById('lobbies-panel').innerHTML = html;
+  } catch(e) {}
+}
+
+let logOpen = false;
+function toggleLog() {
+  logOpen = !logOpen;
+  document.getElementById('server-log').style.display = logOpen ? 'block' : 'none';
+  if (logOpen) loadLog();
+}
+setInterval(() => { if (adminKey && logOpen) loadLog(); }, 5000);
+
+async function loadLog() {
+  try {
+    const res = await fetch(apiUrl('/admin/serverlog?n=100'));
+    const lines = await res.json();
+    const el = document.getElementById('server-log');
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    el.innerHTML = lines.map(line => {
+      const color = line.includes('ERROR') || line.includes('Rejected') ? '#e05050'
+                  : line.includes('WARN') ? '#ffd232'
+                  : line.includes('Player') ? '#4ec94e'
+                  : '#555';
+      return `<div style="color:${color};margin-bottom:2px">${line}</div>`;
+    }).join('');
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch(e) {}
+}
+
+let nginxLogOpen = false;
+function toggleNginxLog() {
+  nginxLogOpen = !nginxLogOpen;
+  document.getElementById('nginx-log').style.display = nginxLogOpen ? 'block' : 'none';
+  if (nginxLogOpen) loadNginxLog();
+}
+setInterval(() => { if (adminKey && nginxLogOpen) loadNginxLog(); }, 5000);
+
+async function loadNginxLog() {
+  try {
+    const kind = document.getElementById('nginx-log-kind').value;
+    const res = await fetch(apiUrl(`/admin/nginxlog?n=100&kind=${kind}`));
+    const lines = await res.json();
+    const el = document.getElementById('nginx-log');
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    el.innerHTML = lines.map(line => {
+      const color = line.includes('error') || line.includes('crit') || line.includes('emerg') ? '#e05050'
+                  : line.includes('warn') ? '#ffd232'
+                  : line.includes(' 200 ') ? '#4ec94e'
+                  : line.includes(' 404 ') || line.includes(' 403 ') || line.includes(' 5') ? '#e05050'
+                  : '#555';
+      return `<div style="color:${color};margin-bottom:2px">${line}</div>`;
+    }).join('');
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch(e) {}
+}
+
+let activeSysCard = null;
+
+async function loadSysStats() {
+  try {
+    const [res, tempRes] = await Promise.all([
+      fetch(apiUrl('/admin/status')),
+      fetch(apiUrl('/admin/temp')),
+    ]);
+    if (!res.ok) return;
+    const d = await res.json();
+    const t = tempRes.ok ? await tempRes.json() : null;
+    const cpuPct = d.cpu_percent != null ? d.cpu_percent.toFixed(1) : '?';
+    const memPct = d.mem_total_mb ? (d.mem_used_mb / d.mem_total_mb * 100) : 0;
+    const diskPct = d.disk_total_mb ? (d.disk_used_mb / d.disk_total_mb * 100) : 0;
+    document.getElementById('sys-cards').innerHTML = `
+      <div class="card ${activeSysCard==='cpu'?'active':''}" id="sys-card-cpu" onclick="toggleSysDetail('cpu')">
+        <div class="label">CPU</div>
+        <div class="value ${d.cpu_percent > 80 ? 'red' : ''}">${cpuPct}%</div>
+        ${bar(d.cpu_percent || 0, d.cpu_percent > 80 ? 'red' : '')}
+        <div class="hint">↳ click for processes</div>
+      </div>
+      <div class="card no-click">
+        <div class="label">Memory</div>
+        <div class="value ${memPct > 85 ? 'red' : ''}">${d.mem_used_mb ?? '?'} / ${d.mem_total_mb ?? '?'} MB</div>
+        ${bar(memPct, memPct > 85 ? 'red' : 'green')}
+      </div>
+      <div class="card no-click">
+        <div class="label">Disk (/)</div>
+        <div class="value ${diskPct > 85 ? 'red' : ''}">${d.disk_used_mb != null ? (d.disk_used_mb/1024).toFixed(1) : '?'} / ${d.disk_total_mb != null ? (d.disk_total_mb/1024).toFixed(1) : '?'} GB</div>
+        ${bar(diskPct, diskPct > 85 ? 'red' : 'blue')}
+      </div>
+      ${t ? `<div class="card no-click">
+        <div class="label">Temperature</div>
+        <div class="value ${t.temp_c > 75 ? 'red' : t.temp_c > 60 ? '' : 'green'}">${t.temp_c.toFixed(1)}°C</div>
+        ${bar(t.temp_c / 85 * 100, t.temp_c > 75 ? 'red' : t.temp_c > 60 ? '' : 'green')}
+        <div class="hint" style="font-size:15px;font-weight:bold;color:#aaa">Load: ${t.load.toFixed(2)}</div>
+      </div>` : ''}
+    `;
+  } catch(e) {}
+}
+
+async function toggleSysDetail(type) {
+  const panel = document.getElementById('sys-detail');
+  if (activeSysCard === type) {
+    activeSysCard = null;
+    panel.innerHTML = '';
+    return;
+  }
+  activeSysCard = type;
+  await renderSysDetail(type);
+}
+
+async function renderSysDetail(type) {
+  const panel = document.getElementById('sys-detail');
+  if (type === 'cpu') {
+    panel.innerHTML = '<div class="detail-panel" style="color:#444;padding:16px;text-align:center">Loading processes...</div>';
+    try {
+      const res = await fetch(apiUrl('/admin/procs'));
+      const procs = await res.json();
+      panel.innerHTML = `
+        <div class="detail-panel">
+          <div class="section-title">Top Processes by CPU <span class="close-btn" onclick="toggleSysDetail('cpu')">✕</span></div>
+          <table>
+            <thead><tr><th>PID</th><th>User</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr></thead>
+            <tbody>
+              ${procs.map(p => `<tr>
+                <td style="color:#333">${p.pid}</td>
+                <td style="color:#888">${p.user}</td>
+                <td style="color:${p.cpu > 50 ? '#e05050' : p.cpu > 10 ? '#ffd232' : '#d0d4e8'}">${p.cpu.toFixed(1)}%</td>
+                <td>${p.mem.toFixed(1)}%</td>
+                <td style="color:#888;font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.cmd}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    } catch(e) { panel.innerHTML = ''; }
+  }
+}
+</script>
+</body>
+</html>
