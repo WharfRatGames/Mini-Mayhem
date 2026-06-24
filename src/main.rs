@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.347";
+const VERSION: &str = "0.5.4.348";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -74,7 +74,8 @@ fn main() {
     } else {
         drop(update_tx); // channel disconnected immediately; recv_timeout returns Err right away
     }
-    updater::sync_assets_bg();
+
+    updater::sync_assets_bg(VERSION);
 
     // Splash screen: show wharf.jpg while preloading SFX and warming texture atlas.
     std::thread::spawn(audio::preload);
@@ -601,6 +602,9 @@ fn main() {
             if !p.name.is_empty() { t.name = p.name.clone(); }
             t.avatar_id = p.avatar_id;
         }
+        if i != my_team && !p.username.is_empty() {
+            live_opp_username = p.username.clone();
+        }
     }
     // Test mode: give every team the full weapon set with infinite ammo.
     if is_test {
@@ -726,6 +730,7 @@ fn main() {
     let mut opponent_left_ticks: u32 = 0; // banner: "OPPONENT DISCONNECTED"
     let mut opponent_abandoned = false;
     let mut opponent_quit_acked = false; // true after player dismisses the quit dialog
+    let mut last_state_time = Instant::now(); // detect stalled server (no state + no final result)
     let mut bug_reporter: Option<bug_report::BugReporter> = None;
     loop {
         let frame_start = Instant::now();
@@ -861,6 +866,7 @@ fn main() {
                 }
             }
             let got_state = latest_state.is_some();
+            if got_state { last_state_time = Instant::now(); }
             if let Some(state) = &latest_state {
                 if state.opponent_abandoned { opponent_abandoned = true; opponent_left_ticks = opponent_left_ticks.max(150); }
                 let prev_paused = paused_secs;
@@ -997,6 +1003,15 @@ fn main() {
             } else if input.held(input::Button::R1) {
                 if input.held(input::Button::Left)  { cam.pan(-cam_speed); }
                 if input.held(input::Button::Right) { cam.pan( cam_speed); }
+            } else if let Some(ref hm) = game.homing_missile {
+                if !hm.confirmed {
+                    cam.follow(world::WorldPos::new(hm.render_x, hm.render_y));
+                } else {
+                    let ti = game.turn.current_team();
+                    if let Some(team) = game.teams.get(ti) {
+                        if let Some(s) = team.soldiers.get(team.active) { cam.follow(s.pos); }
+                    }
+                }
             } else if let Some(g) = game.garcia.as_ref() {
                 // Hand of Jerry: track the falling sprite, else the targeting cursor
                 // (mirrors update_camera() so live matches local).
@@ -1074,6 +1089,12 @@ fn main() {
             } else if opponent_left_ticks > 0 {
                 opponent_left_ticks -= 1;
             }
+            // Safety net: if no state has arrived for 15 seconds and we have no
+            // final result, the server has reset without us seeing the win state.
+            // Force exit so the player isn't stuck frozen forever.
+            if final_result.is_none() && last_state_time.elapsed().as_secs() > 15 {
+                mp_quit = true;
+            }
             // Opponent-quit blocking dialog — shown before the game-over screen.
             // The player must acknowledge before we exit.
             if opponent_abandoned && !opponent_quit_acked {
@@ -1107,7 +1128,7 @@ fn main() {
                                 let pairs: Vec<String> = wk.iter().map(|(k,v)| format!(r#""{}":{}"#, k, v)).collect();
                                 format!("{{{}}}", pairs.join(","))
                             };
-                            let body = format!(r#"{{"token":"{}","winner_slot":{},"my_slot":{},"ranked":{},"session_token":"{}","kills":{},"deaths":{},"weapon_kills":{},"seed":{}}}"#, tok, winner_slot, my_team, live_ranked_match, session_token, live_kills, live_deaths, wk_json, game_seed);
+                            let body = format!(r#"{{"token":"{}","winner_slot":{},"my_slot":{},"ranked":{},"session_token":"{}","kills":{},"deaths":{},"weapon_kills":{},"seed":{},"opponent":"{}"}}"#, tok, winner_slot, my_team, live_ranked_match, session_token, live_kills, live_deaths, wk_json, game_seed, live_opp_username);
                             let (dtx, drx) = std::sync::mpsc::channel::<(i32, u32)>();
                             std::thread::spawn(move || {
                                 if let Ok(resp) = http_post("/api/match/live/result", &body) {
@@ -2586,7 +2607,15 @@ fn run_tat_game(
                 game::loop_runner::replay_tick(&mut game, prev_bits, bits);
                 prev_bits = bits;
                 replay_tick += 1;
-                if let Some(p) = game.projectiles.first() {
+                if let Some(ref hm) = game.homing_missile {
+                    replay_cam.follow(world::WorldPos::new(if hm.confirmed { game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.x } else { hm.render_x }, hm.render_y));
+                } else if let Some(ref g) = game.garcia {
+                    if g.falling { replay_cam.follow_always(world::WorldPos::new(g.render_x, g.fall_y.max(0.0))); }
+                    else { let sy = game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.y; replay_cam.follow(world::WorldPos::new(g.render_x, sy)); }
+                } else if let Some(ref air) = game.airstrike {
+                    if !air.active { replay_cam.follow(world::WorldPos::new(air.render_x, air.render_y)); }
+                    else { replay_cam.follow(game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos); }
+                } else if let Some(p) = game.projectiles.first() {
                     replay_cam.follow_always(p.pos);
                 } else if let Some(ex) = game.explosions.last() {
                     replay_cam.follow_always(ex.pos);
@@ -2612,7 +2641,15 @@ fn run_tat_game(
                 // server_tick emits detonation SFX itself (plays locally here).
                 game::loop_runner::server_tick(&mut game, &empty, None);
                 game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
-                if let Some(p) = game.projectiles.first() {
+                if let Some(ref hm) = game.homing_missile {
+                    replay_cam.follow(world::WorldPos::new(if hm.confirmed { game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.x } else { hm.render_x }, hm.render_y));
+                } else if let Some(ref g) = game.garcia {
+                    if g.falling { replay_cam.follow_always(world::WorldPos::new(g.render_x, g.fall_y.max(0.0))); }
+                    else { let sy = game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.y; replay_cam.follow(world::WorldPos::new(g.render_x, sy)); }
+                } else if let Some(ref air) = game.airstrike {
+                    if !air.active { replay_cam.follow(world::WorldPos::new(air.render_x, air.render_y)); }
+                    else { replay_cam.follow(game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos); }
+                } else if let Some(p) = game.projectiles.first() {
                     replay_cam.follow_always(p.pos);
                 } else if let Some(ex) = game.explosions.last() {
                     replay_cam.follow_always(ex.pos);

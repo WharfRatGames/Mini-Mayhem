@@ -36,6 +36,23 @@ Render-time, client-local differences (e.g. hiding the opponent's crate-pickup
 messages in `render_live`) are intentional and are *not* state — the parity test
 compares state only and won't flag them.
 
+## All-modes checklist (required before marking ANY gameplay change done)
+
+Every gameplay change — camera tracking, input handling, visual behavior, per-tick
+logic, weapon behavior, UI overlays — must be verified against **all five paths**:
+
+| Path | Where |
+|---|---|
+| Hotseat / VS CPU | `tick()` + `update_camera()` in `src/game/loop_runner.rs` |
+| Live server | `server_tick()` in `src/game/loop_runner.rs` |
+| Live client | camera + input block in `src/main.rs` ~line 758 |
+| TAT visual replay (opponent's move) | replay loop in `src/main.rs` ~line 2595 |
+| TAT fast-forward (own move) | fast-forward loop in `src/main.rs` ~line 2622 |
+
+Before calling a change done, explicitly ask: *"does this also need to happen in
+live client? TAT replay? TAT fast-forward?"* The default answer is **yes**.
+Missing a path is a silent bug — nothing warns you.
+
 ## TAT replay parity (read before changing tick() or the weapon menu)
 
 TAT (turn-by-turn async) has **five code paths**, not four:

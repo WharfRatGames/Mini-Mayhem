@@ -1,3 +1,4 @@
+0.5.4.348  Match results post to Discord (add opponent name to API); homing missile cursor now scrolls screen in live mode; fix live_opp_username not populated for casual matches.
 0.5.4.347  Fix TLS for Miyoos with wrong system clock (1971 etc) — use fixed timestamp for cert validity check instead of system time.
 0.5.4.346  Fix TLS cert validation for Miyoo clients (embed ISRG Root YR); HTTP fallback for OTA updates when TLS fails; forced update screen when cert is broken (no skip).
 0.5.4.345  arty_api.py: wrap handle() in top-level try/except so unhandled exceptions return 500 instead of closing the socket raw (was causing nginx "upstream prematurely closed connection"); add traceback logging to main accept loop so future crashes appear in journalctl.

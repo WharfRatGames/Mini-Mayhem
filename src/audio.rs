@@ -40,7 +40,10 @@ pub fn update_torch(active: bool) {
 pub fn preload() {
     #[cfg(target_arch = "arm")]
     imp::preload();
+    #[cfg(feature = "desktop")]
+    imp_desktop::preload();
 }
+
 pub fn play_explosion()         { _play_once("bazooka_explosion.wav"); }
 pub fn play_tnt()               { _play_once("tnt.wav"); }
 pub fn play_grenade()           { _play("grenade.wav"); }
@@ -304,39 +307,51 @@ mod imp {
         }
     }
 
+    // True once every required SFX file has been loaded into its OnceLock.
+    static ALL_LOADED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
     fn ensure_loaded() {
-        if EXPLOSION.get().is_none() {
-            if let Some(dir) = sfx_dir() {
-                try_load(&EXPLOSION, &dir, "bazooka_explosion.wav");
-                try_load(&GRENADE,   &dir, "grenade.wav");
-                try_load(&METEOR,    &dir, "meteor.wav");
-                try_load(&MINE,      &dir, "mine.wav");
-                try_load(&MINE_ARM,  &dir, "arm_beep.wav");
-                try_load(&BARREL,    &dir, "barrell.wav");
-                try_load(&REVOLVER,  &dir, "revolver_shot.wav");
-                try_load(&TNT,       &dir, "tnt.wav");
-                try_load(&SHOTGUN,   &dir, "shotgun.wav");
-                try_load(&BAT,       &dir, "bat.wav");
-                try_load(&WET,       &dir, "wet.wav");
-                try_load(&WATER,     &dir, "water.wav");
-                try_load(&HUM,       &dir, "hum.wav");
-                try_load(&TORCH,     &dir, "torch.wav");
-                try_load(&GARCIA,    &dir, "garcia.wav");
-                try_load(&SMASH,       &dir, "smash.wav");
-                try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
-                try_load(&MINIGUN,     &dir, "minigun.wav");
-                try_load_stretched(&UZI, &dir, "mac10.wav", 1.26); // stretch 1.89s → ~2.4s to cover full burst + tail
-                let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
-                    .into_iter().flatten().flatten()
-                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
-                    .filter(|e| e.file_name() != *"garcia.wav")
-                    // load_wav already boosts each sound as loud as it can go without
-                    // clipping, so no extra per-sound dB multipliers here (they would
-                    // push the peak past full scale and re-introduce distortion).
-                    .filter_map(|e| load_wav(&e.path()))
-                    .collect();
-                let _ = DEATHS.set(deaths);
-            }
+        if ALL_LOADED.load(std::sync::atomic::Ordering::Relaxed) { return; }
+        let Some(dir) = sfx_dir() else { return };
+        try_load(&EXPLOSION, &dir, "bazooka_explosion.wav");
+        try_load(&GRENADE,   &dir, "grenade.wav");
+        try_load(&METEOR,    &dir, "meteor.wav");
+        try_load(&MINE,      &dir, "mine.wav");
+        try_load(&MINE_ARM,  &dir, "arm_beep.wav");
+        try_load(&BARREL,    &dir, "barrell.wav");
+        try_load(&REVOLVER,  &dir, "revolver_shot.wav");
+        try_load(&TNT,       &dir, "tnt.wav");
+        try_load(&SHOTGUN,   &dir, "shotgun.wav");
+        try_load(&BAT,       &dir, "bat.wav");
+        try_load(&WET,       &dir, "wet.wav");
+        try_load(&WATER,     &dir, "water.wav");
+        try_load(&HUM,       &dir, "hum.wav");
+        try_load(&TORCH,     &dir, "torch.wav");
+        try_load(&GARCIA,    &dir, "garcia.wav");
+        try_load(&SMASH,       &dir, "smash.wav");
+        try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
+        try_load(&MINIGUN,     &dir, "minigun.wav");
+        try_load_stretched(&UZI, &dir, "mac10.wav", 1.26);
+        if DEATHS.get().is_none() {
+            let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
+                .into_iter().flatten().flatten()
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
+                .filter(|e| e.file_name() != *"garcia.wav")
+                .filter_map(|e| load_wav(&e.path()))
+                .collect();
+            if !deaths.is_empty() { let _ = DEATHS.set(deaths); }
+        }
+        // Mark fully loaded only when every required file is present.
+        if EXPLOSION.get().is_some() && GRENADE.get().is_some() && METEOR.get().is_some()
+            && MINE.get().is_some() && MINE_ARM.get().is_some() && BARREL.get().is_some()
+            && REVOLVER.get().is_some() && TNT.get().is_some() && SHOTGUN.get().is_some()
+            && BAT.get().is_some() && WET.get().is_some() && WATER.get().is_some()
+            && HUM.get().is_some() && TORCH.get().is_some() && GARCIA.get().is_some()
+            && SMASH.get().is_some() && HALLELUJAH.get().is_some() && MINIGUN.get().is_some()
+            && UZI.get().is_some()
+        {
+            ALL_LOADED.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -665,6 +680,24 @@ mod imp_desktop {
             .map(|d| d.subsec_nanos() as usize)
             .unwrap_or(0);
         if nanos % 2 == 0 { play("water.wav"); } else { play("wet.wav"); }
+    }
+
+    pub fn preload() {
+        // Trigger Sink creation (warms up rodio output stream) and try opening
+        // each SFX file so first-play latency is low.
+        let Some(dir) = sfx_dir() else { return };
+        let files = &[
+            "bazooka_explosion.wav","grenade.wav","meteor.wav","mine.wav","arm_beep.wav",
+            "barrell.wav","tnt.wav","shotgun.wav","bat.wav","hum.wav","torch.wav",
+            "garcia.wav","smash.wav","hallelujah.wav","minigun.wav","mac10.wav",
+            "revolver_shot.wav","wet.wav","water.wav",
+        ];
+        for f in files {
+            let path = dir.join(f);
+            if let Ok(file) = std::fs::File::open(&path) {
+                let _ = rodio::Decoder::new(std::io::BufReader::new(file));
+            }
+        }
     }
 }
 

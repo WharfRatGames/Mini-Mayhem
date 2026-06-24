@@ -9,7 +9,7 @@ use crate::renderer::{WorldBuffer, Framebuffer};
 pub fn prior_update_attempted() -> bool { true }
 
 #[cfg(feature = "desktop")]
-pub fn sync_assets_bg() {}
+pub fn sync_assets_bg(_version: &'static str) {}
 
 #[cfg(feature = "desktop")]
 pub fn check_for_update(_current: &str) -> (bool, bool) { (false, false) }
@@ -101,18 +101,25 @@ pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
     if lines.is_empty() { None } else { Some(lines) }
 }
 
+/// Check sfx assets once per version. Runs in background on first launch after
+/// a new binary is installed (direct copy or OTA). No-op on subsequent runs of
+/// the same version. Writes a sentinel like `.sfx_0.5.4.348` when done.
 #[cfg(not(feature = "desktop"))]
-pub fn sync_assets_bg() {
-    std::thread::spawn(|| {
+pub fn sync_assets_bg(version: &'static str) {
+    std::thread::spawn(move || {
         let dest = std::env::current_exe()
             .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/mini-mayhem"));
         let app_dir = dest.parent()
             .unwrap_or(std::path::Path::new("/mnt/SDCARD/App/Arty"))
             .to_path_buf();
-        let manifest = match http_get_body("/arty/manifest.txt", 3).map(|(b,_)| b) {
+        // Skip if sfx are already up-to-date for this version.
+        let sentinel = app_dir.join(format!(".sfx_{}", version));
+        if sentinel.exists() { return; }
+        let manifest = match http_get_body("/arty/manifest.txt", 5).map(|(b,_)| b) {
             Some(m) => m,
             None => return,
         };
+        let mut all_ok = true;
         for line in String::from_utf8_lossy(&manifest).lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() < 2 { continue; }
@@ -120,13 +127,16 @@ pub fn sync_assets_bg() {
             let expected: u64 = parts[1].parse().unwrap_or(0);
             let expected_hash = parts.get(2).copied();
             if !needs_update(&fpath, expected, expected_hash) { continue; }
-            if let Some((data, _)) = http_get_body(&format!("/arty/{}", parts[0]), 10) {
-                if let Some(parent) = fpath.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+            match http_get_body(&format!("/arty/{}", parts[0]), 10) {
+                Some((data, _)) => {
+                    if let Some(parent) = fpath.parent() { let _ = std::fs::create_dir_all(parent); }
+                    if std::fs::write(&fpath, &data).is_err() { all_ok = false; }
                 }
-                let _ = std::fs::write(&fpath, &data);
+                None => { all_ok = false; }
             }
         }
+        // Only stamp sentinel if everything downloaded successfully.
+        if all_ok { let _ = std::fs::write(&sentinel, b""); }
     });
 }
 
