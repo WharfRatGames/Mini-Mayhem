@@ -158,9 +158,10 @@ impl rustls::client::danger::ServerCertVerifier for TimelessVerifier {
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         // Use a fixed time well within our cert's validity window instead of the system clock.
-        // Cert valid: Jun 22 2026 – Sep 20 2026. Pick Aug 1 2026 (1753920000).
+        // Cert valid: Jun 22 2026 – Sep 20 2026. Pick Aug 1 2026 (1785542400).
+        // UPDATE THIS when the cert renews (~Sep 20 2026) — pick a date mid-window.
         let now = rustls::pki_types::UnixTime::since_unix_epoch(
-            std::time::Duration::from_secs(1753920000)
+            std::time::Duration::from_secs(1785542400)
         );
         self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
     }
