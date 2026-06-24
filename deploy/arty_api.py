@@ -223,6 +223,7 @@ SHOP_CATALOG = [
     {"type":"hat","id":40,"name":"Void Wraith Hood",    "cost_scrap":0,"cost_warbonds":200},
     {"type":"hat","id":41,"name":"Gilded Jester",       "cost_scrap":0,"cost_warbonds":100},
     {"type":"hat","id":42,"name":"Crimson War Mask",    "cost_scrap":0,"cost_warbonds":200},
+    {"type":"hat","id":43,"name":"Worm Hat",            "cost_scrap":0,"cost_warbonds":100},
     # Gun styles (full shape replacement, not just color)
     {"type":"gun_style","id":1,"name":"Pistol",      "cost_scrap":200,"cost_warbonds":0},
     {"type":"gun_style","id":2,"name":"Shotgun",     "cost_scrap":300,"cost_warbonds":0},
@@ -387,6 +388,16 @@ def send_json(s, status, obj):
 # ── Request handler ───────────────────────────────────────────────────────────
 
 def handle(db, sock, peer_ip="?"):
+    try:
+        _handle(db, sock, peer_ip)
+    except Exception as e:
+        try: send_json(sock, 500, {"error": str(e)})
+        except: pass
+    finally:
+        try: sock.close()
+        except: pass
+
+def _handle(db, sock, peer_ip="?"):
     result = read_req(sock)
     if not result or not result[0]: sock.close(); return
     method, path, body, qs = result[0], result[1], result[2], result[3]
@@ -423,7 +434,7 @@ def handle(db, sock, peer_ip="?"):
     # ── Auth ──────────────────────────────────────────────────────────────────
 
     if method == "POST" and path == "/register":
-        u = data.get("username","").strip()
+        u = data.get("username","").strip().lower()
         p = data.get("password","")
         if not u or not p: send_json(sock, 400, {"error":"missing fields"}); return
         t = gen_token(u)
@@ -1569,10 +1580,14 @@ def main():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", PORT))
     srv.listen(10)
-    print(f"Arty API on :{PORT}")
+    import traceback
+    print(f"Arty API on :{PORT}", flush=True)
     while True:
-        s, addr = srv.accept()
-        threading.Thread(target=handle, args=(db, s, addr[0]), daemon=True).start()
+        try:
+            s, addr = srv.accept()
+            threading.Thread(target=handle, args=(db, s, addr[0]), daemon=True).start()
+        except Exception:
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main()

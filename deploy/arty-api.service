@@ -1,0 +1,13 @@
+[Unit]
+Description=Mini Mayhem API server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/Grunkus/mayhem-server
+ExecStart=/usr/bin/python3 /home/Grunkus/mayhem-server/arty_api.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

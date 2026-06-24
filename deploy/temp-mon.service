@@ -1,0 +1,12 @@
+[Unit]
+Description=Pi temperature monitor
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/home/Grunkus/temp_mon/temp_mon.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

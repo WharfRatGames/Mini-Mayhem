@@ -1,3 +1,4 @@
+0.5.4.349  Worm Hat cosmetic (warbond); hat 22 + 36 position/scale fixes; player search in dashboard; API error handling; lowercase usernames on register.
 0.5.4.348  Match results post to Discord (add opponent name to API); homing missile cursor now scrolls screen in live mode; fix live_opp_username not populated for casual matches.
 0.5.4.347  Fix TLS for Miyoos with wrong system clock (1971 etc) — use fixed timestamp for cert validity check instead of system time.
 0.5.4.346  Fix TLS cert validation for Miyoo clients (embed ISRG Root YR); HTTP fallback for OTA updates when TLS fails; forced update screen when cert is broken (no skip).

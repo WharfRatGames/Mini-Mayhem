@@ -203,10 +203,15 @@ async function renderDetail(type) {
           <button class="grant-btn" id="bulk-cosmetics-btn" style="display:none;border-color:#a060ff55;color:#a060ff" onclick="bulkGrantCosmetics()">★ Grant All Cosmetics to Selected</button>
           <span class="close-btn" onclick="showDetail('players')">✕</span>
         </div>
+        <div style="margin-bottom:12px">
+          <input type="text" id="player-search" placeholder="Search players..." oninput="filterPlayers(this.value)"
+            style="background:#0a0c14;border:1px solid #2a2e40;color:#d0d4e8;padding:7px 12px;border-radius:4px;font-family:inherit;font-size:13px;width:260px;outline:none"
+            onfocus="this.style.borderColor='#ffd232'" onblur="this.style.borderColor='#2a2e40'">
+        </div>
         <table>
           <thead><tr><th><input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this)"></th><th>Username</th><th>ELO</th><th>W</th><th>L</th><th>Scrap</th><th>Warbonds</th><th>Matches</th><th>Last Login</th><th>IP</th><th></th></tr></thead>
-          <tbody>
-            ${users.map(u => `<tr style="cursor:pointer" onclick="showPlayerDetail('${u.username}')">
+          <tbody id="players-tbody">
+            ${users.map(u => `<tr style="cursor:pointer" onclick="showPlayerDetail('${u.username}')" data-username="${u.username.toLowerCase()}">
               <td onclick="event.stopPropagation()"><input type="checkbox" class="player-cb" value="${u.username}" onchange="updateBulkBtn()"></td>
               <td style="color:#d0d4e8">${u.username}</td>
               <td style="color:#ffd232">${u.elo}</td>
@@ -696,6 +701,13 @@ async function loadSysStats() {
       </div>` : ''}
     `;
   } catch(e) {}
+}
+
+function filterPlayers(query) {
+  const q = query.toLowerCase().trim();
+  document.querySelectorAll('#players-tbody tr').forEach(row => {
+    row.style.display = (!q || row.dataset.username.includes(q)) ? '' : 'none';
+  });
 }
 
 async function toggleSysDetail(type) {

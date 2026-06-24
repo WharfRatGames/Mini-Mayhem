@@ -109,6 +109,7 @@ static WARBOND_HATS: &[(u8, &str, u32)] = &[
     (40, "Void Wraith Hood", 200),
     (41, "Gilded Jester",    100),
     (42, "Crimson War Mask", 200),
+    (43, "Worm Hat",         100),
 ];
 
 // Placeholder warbond packages — not purchasable yet
@@ -352,7 +353,12 @@ impl StoreScreen {
                 let icon_h  = cell_h - 10;
                 match item.cosm_type {
                     "hat" => {
-                        cosmetic_sprites::draw_hat(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h, false);
+                        let (iw, ih) = if item.cosm_id == 26 {
+                            (icon_w / 3, icon_h / 3)
+                        } else {
+                            (icon_w, icon_h)
+                        };
+                        cosmetic_sprites::draw_hat(buf, item.cosm_id, icon_cx, icon_cy, iw, ih, false);
                     }
                     "gun_style" => {
                         cosmetic_sprites::draw_gun(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h);

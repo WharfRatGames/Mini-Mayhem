@@ -7,7 +7,7 @@ use super::buffer::WorldBuffer;
 
 // ── Hat sprites (IDs 1–42) ───────────────────────────────────────────────────
 
-static HAT_PNGS: [&[u8]; 42] = [
+static HAT_PNGS: [&[u8]; 43] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_1.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_2.png"),
     include_bytes!("../../deploy/assets/cosmetics/hat_3.png"),
@@ -50,6 +50,7 @@ static HAT_PNGS: [&[u8]; 42] = [
     include_bytes!("../../deploy/assets/cosmetics/hat_40.png"),  // Void Wraith Hood (premium, head-replacing)
     include_bytes!("../../deploy/assets/cosmetics/hat_41.png"),  // Gilded Jester (premium)
     include_bytes!("../../deploy/assets/cosmetics/hat_42.png"),  // Crimson War Mask (premium, head-replacing)
+    include_bytes!("../../deploy/assets/cosmetics/hat_43.png"),  // Worm Hat (warbond)
 ];
 
 static GUN_PNGS: [&[u8]; 23] = [
@@ -91,7 +92,7 @@ static BOOT_PNGS: [&[u8]; 6] = [
 
 struct Sprite { pub w: usize, pub h: usize, pub px: Vec<[u8; 4]> }
 
-static HAT_SPRITES:  OnceLock<[Option<Sprite>; 36]> = OnceLock::new();
+static HAT_SPRITES:  OnceLock<[Option<Sprite>; 43]> = OnceLock::new();
 static GUN_SPRITES:  OnceLock<[Option<Sprite>; 23]>  = OnceLock::new();
 static BOOT_SPRITES: OnceLock<[Option<Sprite>; 6]>  = OnceLock::new();
 
@@ -111,7 +112,7 @@ fn decode(bytes: &[u8]) -> Option<Sprite> {
     Some(Sprite { w, h, px })
 }
 
-fn hat_sprites() -> &'static [Option<Sprite>; 36] {
+fn hat_sprites() -> &'static [Option<Sprite>; 43] {
     HAT_SPRITES.get_or_init(|| std::array::from_fn(|i| decode(HAT_PNGS[i])))
 }
 
