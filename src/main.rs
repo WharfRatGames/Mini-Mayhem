@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.352";
+const VERSION: &str = "0.5.4.353";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -35,16 +35,18 @@ fn main() {
     unsafe { for fd in 3i32..=255 { libc::close(fd); } }
 
     // Tell keymon to stop intercepting the MENU button so we can read KEY_ESC.
-    // Install a panic hook to clean the flag up on crash.
+    // MenuGuard removes the flag on Drop (normal exit, early return, or panic).
     #[cfg(not(feature = "desktop"))]
-    {
-        let _ = std::fs::write("/tmp/disable_menu_button", b"");
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            let _ = std::fs::remove_file("/tmp/disable_menu_button");
-            prev(info);
-        }));
+    struct MenuGuard;
+    #[cfg(not(feature = "desktop"))]
+    impl Drop for MenuGuard {
+        fn drop(&mut self) { let _ = std::fs::remove_file("/tmp/disable_menu_button"); }
     }
+    #[cfg(not(feature = "desktop"))]
+    let _menu_guard = {
+        let _ = std::fs::write("/tmp/disable_menu_button", b"");
+        MenuGuard
+    };
 
     // ── Open hardware ─────────────────────────────────────────────────────────
     let mut fb = Framebuffer::open()
@@ -1265,8 +1267,6 @@ fn main() {
     } // end inner game loop
     } // end 'game loop
 
-    #[cfg(not(feature = "desktop"))]
-    let _ = std::fs::remove_file("/tmp/disable_menu_button");
 }
 /// Build the default game: human team 0 vs CPU team 1.
 fn build_default_game(seed: u64) -> GameState {

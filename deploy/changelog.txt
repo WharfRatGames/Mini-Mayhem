@@ -1,3 +1,4 @@
+0.5.4.353  Fix Onion OS menu button becoming select after exiting game.
 0.5.4.352  Fix remaining client freeze when opponent quits live match; fix soldiers moving while weapon menu open; dragon skull gap fix; OTA update streams to disk (low-RAM fix).
 0.5.4.351  New accounts must confirm password on registration.
 0.5.4.350  Admin reset-password button on dashboard; login prompts player to choose new password when reset; hat size fixes (26 hats rescaled; dragon skull gap fixed).
