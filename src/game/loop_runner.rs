@@ -120,6 +120,10 @@ pub struct LoopState {
     /// Skeleton barrel tip from the previous render frame — used as the fire
     /// origin for hitscan weapons so shots start exactly where the reticle does.
     pub last_muzzle: Option<(f32, f32)>,
+    /// Smoothed round-trip latency in ms (live mode only). 0 = no sample yet.
+    pub ping_ms: u32,
+    /// Timestamp of the most recent InputMsg send — used to compute ping.
+    pub last_input_sent: Option<std::time::Instant>,
 }
 
 impl LoopState {
@@ -141,6 +145,8 @@ impl LoopState {
             water_strip_tick: u32::MAX,
             water_strip_cam: u32::MAX,
             last_muzzle: None,
+            ping_ms: 0,
+            last_input_sent: None,
         }
     }
 }
@@ -4223,6 +4229,22 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 let ex = av_x + bar_w / 2 - ew / 2;
                 let ey = bar_y + BAR_H + 2;
                 draw_str(buf, &elo_str, ex, ey, TEAM_COLOURS[t.color_id as usize]);
+            }
+
+            // Ping — shown below right avatar (ti == 1) in live mode
+            if ti == 1 && lstate.ping_ms > 0 {
+                use crate::renderer::font::{draw_str, str_width};
+                let ping_colour = match lstate.ping_ms {
+                    0..=80   => Bgra::new(80, 220, 80),   // green
+                    81..=150 => Bgra::new(220, 220, 80),  // yellow
+                    _        => Bgra::new(220, 80, 80),   // red
+                };
+                let ping_str = format!("{}ms", lstate.ping_ms);
+                let pw = str_width(&ping_str);
+                let elo_offset = if t.elo > 0 { 10 } else { 0 };
+                let px = av_x + bar_w / 2 - pw / 2;
+                let py = bar_y + BAR_H + 2 + elo_offset;
+                draw_str(buf, &ping_str, px, py, ping_colour);
             }
         }
     }

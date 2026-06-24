@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.359";
+const VERSION: &str = "0.5.4.360";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -842,7 +842,10 @@ fn main() {
                 }
                 (h, u, b, g, w)
             };
-            if !lstate.paused { conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names, muzzle_x: lstate.last_muzzle.map(|(x,_)| x).unwrap_or(0.0), muzzle_y: lstate.last_muzzle.map(|(_,y)| y).unwrap_or(0.0), quit: false }); }
+            if !lstate.paused {
+                conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names, muzzle_x: lstate.last_muzzle.map(|(x,_)| x).unwrap_or(0.0), muzzle_y: lstate.last_muzzle.map(|(_,y)| y).unwrap_or(0.0), quit: false });
+                lstate.last_input_sent = Some(std::time::Instant::now());
+            }
             // Drain ALL pending state messages:
             //   - sounds collected from every state so no SFX tick is skipped
             //   - first received state's projectiles used for position (avoids the
@@ -875,7 +878,14 @@ fn main() {
                 }
             }
             let got_state = latest_state.is_some();
-            if got_state { last_state_time = Instant::now(); }
+            if got_state {
+                last_state_time = Instant::now();
+                if let Some(sent) = lstate.last_input_sent.take() {
+                    let rtt = sent.elapsed().as_millis() as u32;
+                    // Smooth: 80% old + 20% new sample
+                    lstate.ping_ms = if lstate.ping_ms == 0 { rtt } else { (lstate.ping_ms * 4 / 5).saturating_add(rtt / 5) };
+                }
+            }
             if let Some(state) = &latest_state {
                 if state.opponent_abandoned { opponent_abandoned = true; opponent_left_ticks = opponent_left_ticks.max(150); }
                 let prev_paused = paused_secs;
