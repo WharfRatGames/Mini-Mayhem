@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.345";
+const VERSION: &str = "0.5.4.346";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -68,7 +68,7 @@ fn main() {
     // pre-title gate then finds the result already in the channel instead of
     // racing against the 2s HTTP timeout.
     let skip_update = updater::prior_update_attempted();
-    let (update_tx, update_rx) = std::sync::mpsc::channel::<bool>();
+    let (update_tx, update_rx) = std::sync::mpsc::channel::<(bool, bool)>();
     if !skip_update {
         std::thread::spawn(move || { let _ = update_tx.send(updater::check_for_update(VERSION)); });
     } else {
@@ -114,7 +114,7 @@ fn main() {
     // If an update is found, show the patch notes screen (A=install, B=skip).
     // Skipping keeps update_available=true so online modes will still gate on it.
     if !skip_update {
-        if let Ok(true) = update_rx.recv_timeout(std::time::Duration::from_millis(2500)) {
+        if let Ok((true, tls_broken)) = update_rx.recv_timeout(std::time::Duration::from_millis(2500)) {
             update_available = true;
             use renderer::Bgra;
             use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
@@ -155,20 +155,22 @@ fn main() {
                     }
                     break 'pretitle_update;
                 }
-                if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) {
-                    break 'pretitle_update; // skip — update_available stays true for online gate
+                if !tls_broken && (input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start)) {
+                    break 'pretitle_update; // normal update — skip allowed
                 }
                 buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
                 buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-                let t = "UPDATE AVAILABLE";
+                let t = if tls_broken { "UPDATE REQUIRED" } else { "UPDATE AVAILABLE" };
                 draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255,210,50), 2);
                 let v = format!("VERSION {}", VERSION);
                 draw_str_scaled(&mut buf, &v, sw/2 - str_width_scaled(&v,1)/2, 34, Bgra::new(100,100,140), 1);
                 for (i, line) in changelog.iter().enumerate() {
                     draw_str(&mut buf, line, 18, 54 + i as i32 * 12, Bgra::new(110,130,160));
                 }
-                draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80,220,120), 2);
-                draw_str_scaled(&mut buf, "B = SKIP", sw/2 - str_width_scaled("B = SKIP",2)/2, sh - 38, Bgra::new(140,140,160), 2);
+                draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 38, Bgra::new(80,220,120), 2);
+                if !tls_broken {
+                    draw_str_scaled(&mut buf, "B = SKIP", sw/2 - str_width_scaled("B = SKIP",2)/2, sh - 20, Bgra::new(140,140,160), 1);
+                }
                 buf.blit_to_fb(&mut fb, 0);
                 std::thread::sleep(TICK_DURATION);
             }
@@ -207,7 +209,7 @@ fn main() {
             let frame_start = Instant::now();
             input.poll();
             // Non-blocking poll — cache result once background thread finishes.
-            if !update_available { if let Ok(true) = update_rx.try_recv() { update_available = true; } }
+            if !update_available { if let Ok((true, _)) = update_rx.try_recv() { update_available = true; } }
             if let Some(c) = title.update(&input, &mut buf) { break c; }
             buf.blit_to_fb(&mut fb, 0);
             let elapsed = frame_start.elapsed();
@@ -253,7 +255,7 @@ fn main() {
     // ── Unified update gate: optional for SP, required for MP ────────────────
     // Non-blocking drain — catches results that arrived while in the title loop.
     if !update_available {
-        if let Ok(true) = update_rx.try_recv() { update_available = true; }
+        if let Ok((true, _)) = update_rx.try_recv() { update_available = true; }
     }
     let is_sp_mode = matches!(choice, CHOICE_HOTSEAT | CHOICE_VS_CPU)
         || choice == game::title::CHOICE_TEST;
@@ -265,14 +267,14 @@ fn main() {
     // spawn a fresh dedicated check so SP/MP always gets a live result.
     if (is_sp_mode || is_mp_mode) && !update_available {
         let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
-        if let Ok(true) = got {
+        if let Ok((true, _)) = got {
             update_available = true;
         } else if got == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
             // Background thread still in flight after 500 ms — do a capped blocking wait.
             // Disconnected means the thread already completed (result was Ok(false), consumed
             // by the pre-title recv_timeout); don't spawn a redundant 2-second check in that case.
             let (ftx, frx) = std::sync::mpsc::channel::<bool>();
-            std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION)); });
+            std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); }); // only need bool here
             if let Ok(true) = frx.recv_timeout(std::time::Duration::from_millis(3000)) {
                 update_available = true;
             }

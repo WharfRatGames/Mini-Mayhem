@@ -12,11 +12,11 @@ pub fn prior_update_attempted() -> bool { true }
 pub fn sync_assets_bg() {}
 
 #[cfg(feature = "desktop")]
-pub fn check_for_update(_current: &str) -> bool { false }
+pub fn check_for_update(_current: &str) -> (bool, bool) { (false, false) }
 
 #[cfg(feature = "desktop")]
-pub fn check_for_update_bg(_current: &'static str) -> std::thread::JoinHandle<bool> {
-    std::thread::spawn(|| false)
+pub fn check_for_update_bg(_current: &'static str) -> std::thread::JoinHandle<(bool, bool)> {
+    std::thread::spawn(|| (false, false))
 }
 
 #[cfg(feature = "desktop")]
@@ -63,29 +63,35 @@ fn needs_update(fpath: &std::path::Path, expected_size: u64, expected_hash: Opti
 const UPDATE_HOST: &str = "crumbonium.duckdns.org";
 
 #[cfg(not(feature = "desktop"))]
-fn http_get_body(path: &str, timeout_secs: u64) -> Option<Vec<u8>> {
-    crate::https::https_get(UPDATE_HOST, path, timeout_secs, timeout_secs).ok()
+fn http_get_body(path: &str, timeout_secs: u64) -> Option<(Vec<u8>, bool)> {
+    match crate::https::https_get(UPDATE_HOST, path, timeout_secs, timeout_secs) {
+        Ok(b) => Some((b, false)),
+        Err(_) => crate::https::http_get(UPDATE_HOST, path, timeout_secs, timeout_secs)
+            .ok()
+            .map(|b| (b, true)), // true = TLS failed, fell back to HTTP
+    }
 }
 
 #[cfg(not(feature = "desktop"))]
-#[cfg(not(feature = "desktop"))]
-pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<bool> {
+pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<(bool, bool)> {
     std::thread::spawn(move || check_for_update(current))
 }
 
+/// Returns (update_available, tls_broken).
+/// tls_broken=true means HTTPS failed and we fell back to HTTP — force the update, no skip.
 #[cfg(not(feature = "desktop"))]
-pub fn check_for_update(current: &str) -> bool {
-    let body = match http_get_body("/arty/version.txt", 2) {
-        Some(b) => b,
-        None => return false,
+pub fn check_for_update(current: &str) -> (bool, bool) {
+    let (body, tls_broken) = match http_get_body("/arty/version.txt", 2) {
+        Some(x) => x,
+        None => return (false, false),
     };
     let server_ver = String::from_utf8_lossy(&body).trim().to_string();
-    server_ver != current
+    (server_ver != current, tls_broken)
 }
 
 #[cfg(not(feature = "desktop"))]
 pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
-    let body = http_get_body("/arty/changelog.txt", timeout_secs)?;
+    let (body, _) = http_get_body("/arty/changelog.txt", timeout_secs)?;
     let lines: Vec<String> = String::from_utf8_lossy(&body)
         .lines()
         .map(|l| l.trim_end().to_string())
@@ -103,7 +109,7 @@ pub fn sync_assets_bg() {
         let app_dir = dest.parent()
             .unwrap_or(std::path::Path::new("/mnt/SDCARD/App/Arty"))
             .to_path_buf();
-        let manifest = match http_get_body("/arty/manifest.txt", 3) {
+        let manifest = match http_get_body("/arty/manifest.txt", 3).map(|(b,_)| b) {
             Some(m) => m,
             None => return,
         };
@@ -114,7 +120,7 @@ pub fn sync_assets_bg() {
             let expected: u64 = parts[1].parse().unwrap_or(0);
             let expected_hash = parts.get(2).copied();
             if !needs_update(&fpath, expected, expected_hash) { continue; }
-            if let Some(data) = http_get_body(&format!("/arty/{}", parts[0]), 10) {
+            if let Some((data, _)) = http_get_body(&format!("/arty/{}", parts[0]), 10) {
                 if let Some(parent) = fpath.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -219,7 +225,7 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
     unsafe { libc::chmod(b"/tmp/mini-mayhem_update.sh\0".as_ptr() as *const libc::c_char, 0o755); }
 
     // Fetch updated app files (short timeout — don't block the restart)
-    if let Some(manifest) = http_get_body("/arty/manifest.txt", 2) {
+    if let Some((manifest, _)) = http_get_body("/arty/manifest.txt", 2) {
         let app_dir = std::path::Path::new(dest_str).parent()
             .unwrap_or(std::path::Path::new("/mnt/SDCARD/App/Arty"));
         for line in String::from_utf8_lossy(&manifest).lines() {
@@ -229,7 +235,7 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
             let expected: u64 = parts[1].parse().unwrap_or(0);
             let expected_hash = parts.get(2).copied();
             if needs_update(&fpath, expected, expected_hash) {
-                if let Some(data) = http_get_body(&format!("/arty/{}", parts[0]), 5) {
+                if let Some((data, _)) = http_get_body(&format!("/arty/{}", parts[0]), 5) {
                     if let Some(parent) = fpath.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
@@ -261,7 +267,7 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
 #[cfg(not(feature = "desktop"))]
 pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
     super::draw_msg(buf, fb, "DOWNLOADING UPDATE...");
-    let binary = match http_get_body("/arty/mini-mayhem", 120) {
+    let binary = match http_get_body("/arty/mini-mayhem", 120).map(|(b,_)| b) {
         Some(b) => b,
         None => { super::draw_msg(buf, fb, "FAIL:DOWNLOAD"); std::thread::sleep(std::time::Duration::from_secs(2)); return; }
     };
@@ -304,7 +310,7 @@ pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
         std::thread::sleep(std::time::Duration::from_secs(3));
     }
     // Download extra app files from manifest
-    if let Some(manifest) = http_get_body("/arty/manifest.txt", 10) {
+    if let Some((manifest, _)) = http_get_body("/arty/manifest.txt", 10) {
         let manifest_str = String::from_utf8_lossy(&manifest).to_string();
         let app_dir = std::path::Path::new(&dest_str).parent()
             .unwrap_or(std::path::Path::new("/mnt/SDCARD/App/Arty"));
@@ -317,7 +323,7 @@ pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
             let fpath = app_dir.join(fname);
             if needs_update(&fpath, expected_size, expected_hash) {
                 let url = format!("/arty/{}", fname);
-                if let Some(data) = http_get_body(&url, 30) {
+                if let Some((data, _)) = http_get_body(&url, 30) {
                     if let Some(parent) = fpath.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }

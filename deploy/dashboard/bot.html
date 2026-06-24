@@ -102,6 +102,35 @@
     </div>
   </div>
 
+  <!-- RUN COMMAND -->
+  <div class="card">
+    <div class="card-header">Run Command</div>
+    <div class="card-body">
+      <div class="row">
+        <div>
+          <label>Command</label>
+          <select id="cmd-name" onchange="onCmdChange()">
+            <option value="leaderboard">!leaderboard</option>
+            <option value="version">!version</option>
+            <option value="stats">!stats</option>
+          </select>
+        </div>
+        <div id="cmd-args-wrap">
+          <label>Username</label>
+          <input id="cmd-args" placeholder="e.g. KarateMoses" />
+        </div>
+        <div>
+          <label>Post to Channel</label>
+          <input id="cmd-channel" value="general" />
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
+        <button onclick="runCommand()">Run</button>
+        <div id="cmd-status" class="status"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- TRIGGER ACTIONS -->
   <div class="card">
     <div class="card-header">Trigger Actions</div>
@@ -177,6 +206,24 @@ async function triggerPatch() {
     const r = await botPost('notify/patch', version ? { version } : {});
     showStatus('trigger-status', r.ok, r.ok ? 'Patch notes posted.' : `Error ${r.status}`);
   } catch(e) { showStatus('trigger-status', false, e.message); }
+}
+
+function onCmdChange() {
+  const cmd = document.getElementById('cmd-name').value;
+  document.getElementById('cmd-args-wrap').style.display = cmd === 'stats' ? '' : 'none';
+}
+onCmdChange();
+
+async function runCommand() {
+  const cmd     = document.getElementById('cmd-name').value;
+  const channel = document.getElementById('cmd-channel').value.trim() || 'general';
+  const argsRaw = document.getElementById('cmd-args').value.trim();
+  const args    = cmd === 'stats' && argsRaw ? [argsRaw] : [];
+  if (cmd === 'stats' && !argsRaw) return showStatus('cmd-status', false, 'Username required for !stats.');
+  try {
+    const r = await botPost('notify/command', { cmd, channel, args });
+    showStatus('cmd-status', r.ok, r.ok ? `!${cmd} sent to #${channel}.` : `Error ${r.status}`);
+  } catch(e) { showStatus('cmd-status', false, e.message); }
 }
 
 async function trigger(action) {

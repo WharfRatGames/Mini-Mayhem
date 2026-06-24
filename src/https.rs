@@ -193,6 +193,28 @@ pub fn https_get(host: &str, path: &str, connect_timeout: u64, read_timeout: u64
     tls_roundtrip(host, req.as_bytes(), connect_timeout, read_timeout)
 }
 
+pub fn http_get(host: &str, path: &str, connect_timeout: u64, read_timeout: u64) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Write};
+    let addr = (host, 80u16)
+        .to_socket_addrs()
+        .map_err(|e| e.to_string())?
+        .next()
+        .ok_or("no addr")?;
+    let mut tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(connect_timeout))
+        .map_err(|e| e.to_string())?;
+    tcp.set_read_timeout(Some(Duration::from_secs(read_timeout))).ok();
+    let req = format!("GET {} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", path, host);
+    tcp.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let mut resp = Vec::new();
+    let _ = tcp.read_to_end(&mut resp);
+    if resp.is_empty() { return Err("empty response".into()); }
+    let body_start = resp.windows(4).position(|w| w == b"\r\n\r\n")
+        .map(|i| i + 4)
+        .or_else(|| resp.windows(2).position(|w| w == b"\n\n").map(|i| i + 2))
+        .ok_or("no header separator")?;
+    Ok(resp[body_start..].to_vec())
+}
+
 /// Multipart POST with a PNG attachment — used by the bug reporter.
 pub fn https_post_multipart(
     host: &str, path: &str,
