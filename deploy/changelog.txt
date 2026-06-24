@@ -1,3 +1,4 @@
+0.5.4.354  Fix hat gaps for all 43 hats (scale-corrected dy offsets); fix bug reports not sending (thread was detached before HTTP request completed).
 0.5.4.353  Fix Onion OS menu button becoming select after exiting game.
 0.5.4.352  Fix remaining client freeze when opponent quits live match; fix soldiers moving while weapon menu open; dragon skull gap fix; OTA update streams to disk (low-RAM fix).
 0.5.4.351  New accounts must confirm password on registration.

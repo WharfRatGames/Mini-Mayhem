@@ -34,12 +34,22 @@ fn dim_line() -> Bgra { Bgra::new(40, 44, 70) }
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
-#[derive(PartialEq)]
 enum Phase {
     Category,
     Keyboard,
-    Sending,
+    Sending(std::thread::JoinHandle<bool>),
     Done(bool),
+}
+
+impl PartialEq for Phase {
+    fn eq(&self, other: &Self) -> bool {
+        matches!((self, other),
+            (Phase::Category, Phase::Category) |
+            (Phase::Keyboard, Phase::Keyboard) |
+            (Phase::Sending(_), Phase::Sending(_)) |
+            (Phase::Done(_), Phase::Done(_))
+        )
+    }
 }
 
 pub struct BugReporter {
@@ -78,11 +88,26 @@ impl BugReporter {
 
     pub fn tick(&mut self, input: &InputState) -> bool {
         match &self.phase {
-            Phase::Category => self.tick_category(input),
-            Phase::Keyboard => self.tick_keyboard(input),
-            Phase::Sending  => { self.send_timer = self.send_timer.saturating_sub(1); false }
-            Phase::Done(_)  => { self.send_timer = self.send_timer.saturating_sub(1); false }
+            Phase::Category    => self.tick_category(input),
+            Phase::Keyboard    => self.tick_keyboard(input),
+            Phase::Sending(_)  => self.tick_sending(),
+            Phase::Done(_)     => { self.send_timer = self.send_timer.saturating_sub(1); false }
         }
+    }
+
+    fn tick_sending(&mut self) -> bool {
+        let done = if let Phase::Sending(handle) = &self.phase {
+            handle.is_finished()
+        } else { false };
+        if done {
+            let ok = if let Phase::Sending(handle) = std::mem::replace(&mut self.phase, Phase::Done(false)) {
+                handle.join().unwrap_or(false)
+            } else { false };
+            self.phase = Phase::Done(ok);
+            self.status_msg = if ok { "Report sent! Thank you.".into() } else { "Send failed. Try again.".into() };
+            self.send_timer = 180;
+        }
+        false
     }
 
     fn tick_category(&mut self, input: &InputState) -> bool {
@@ -118,7 +143,6 @@ impl BugReporter {
 
     fn submit(&mut self) {
         self.status_msg = "Sending...".into();
-        self.send_timer = 300;
 
         let category: String = BUG_CATEGORIES.iter().enumerate()
             .filter(|&(i, _)| self.cat_selected[i])
@@ -128,17 +152,21 @@ impl BugReporter {
         let description = self.keyboard.text.clone();
         let png = encode_png(&self.screenshot, SCREEN_W, SCREEN_H);
 
-        let result = std::thread::Builder::new()
+        let handle = std::thread::Builder::new()
             .stack_size(256 * 1024)
             .spawn(move || {
                 crate::https::https_post_multipart(
                     API_HOST, API_PATH, &category, &description, &png, 10, 20,
                 ).is_ok()
             });
-        let _ = result;
-        self.phase = Phase::Done(true);
-        self.status_msg = "Report sent! Thank you.".into();
-        self.send_timer = 180;
+        match handle {
+            Ok(h) => { self.phase = Phase::Sending(h); }
+            Err(_) => {
+                self.phase = Phase::Done(false);
+                self.status_msg = "Send failed. Try again.".into();
+                self.send_timer = 180;
+            }
+        }
     }
 
     pub fn draw(&self, buf: &mut WorldBuffer, cam_x: u32) {
@@ -161,7 +189,7 @@ impl BugReporter {
         match &self.phase {
             Phase::Category => self.draw_category(buf, cam_xi, sw, sh),
             Phase::Keyboard => self.draw_keyboard(buf, cam_xi, sw, sh),
-            Phase::Sending | Phase::Done(_) => self.draw_status(buf, cam_xi, sw, sh),
+            Phase::Sending(_) | Phase::Done(_) => self.draw_status(buf, cam_xi, sw, sh),
         }
     }
 
