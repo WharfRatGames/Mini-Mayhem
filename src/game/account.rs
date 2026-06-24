@@ -57,24 +57,26 @@ pub enum AccountAction {
 
 // ── Login / register screen ───────────────────────────────────────────────────
 
-enum LoginScreen { Choice, Username, Password }
+enum LoginScreen { Choice, Username, Password, ConfirmPassword, ChangePassword { token: String, username: String, rosters: Vec<Roster> } }
 
 pub struct AccountScreen {
-    screen:      LoginScreen,
-    is_register: bool,
-    username:    Keyboard,
-    password:    Keyboard,
-    error:       String,
+    screen:           LoginScreen,
+    is_register:      bool,
+    username:         Keyboard,
+    password:         Keyboard,
+    confirm_password: Keyboard,
+    error:            String,
 }
 
 impl AccountScreen {
     pub fn new() -> Self {
         Self {
-            screen:      LoginScreen::Choice,
-            is_register: false,
-            username:    Keyboard::new(16),
-            password:    Keyboard::new(32),
-            error:       String::new(),
+            screen:           LoginScreen::Choice,
+            is_register:      false,
+            username:         Keyboard::new(16),
+            password:         Keyboard::new(32),
+            confirm_password: Keyboard::new(32),
+            error:            String::new(),
         }
     }
 
@@ -109,22 +111,77 @@ impl AccountScreen {
                     return None;
                 }
                 if self.password.update(input) {
-                    let u = self.username.text.clone();
-                    let p = self.password.text.clone();
-                    let result = if self.is_register {
-                        try_register(&u, &p)
+                    if self.is_register {
+                        self.confirm_password = Keyboard::new(32);
+                        self.screen = LoginScreen::ConfirmPassword;
                     } else {
-                        try_login(&u, &p)
-                    };
-                    match result {
-                        Ok((token, username, rosters)) => {
-                            return Some(AccountAction::LoggedIn { token, username, rosters });
+                        let u = self.username.text.clone();
+                        let p = self.password.text.clone();
+                        match try_login(&u, &p) {
+                            Ok((token, username, rosters, needs_pw_reset)) if needs_pw_reset => {
+                                self.password = Keyboard::new(32);
+                                self.error.clear();
+                                self.screen = LoginScreen::ChangePassword { token, username, rosters };
+                            }
+                            Ok((token, username, rosters, _)) => {
+                                return Some(AccountAction::LoggedIn { token, username, rosters });
+                            }
+                            Err(e) => {
+                                self.error = e;
+                                self.screen = LoginScreen::Choice;
+                                self.username = Keyboard::new(16);
+                                self.password = Keyboard::new(32);
+                            }
                         }
-                        Err(e) => {
-                            self.error = e;
-                            self.screen = LoginScreen::Choice;
-                            self.username = Keyboard::new(16);
-                            self.password = Keyboard::new(32);
+                    }
+                }
+            }
+            LoginScreen::ConfirmPassword => {
+                if input.just_pressed(Button::B) && self.confirm_password.text.is_empty() {
+                    self.screen = LoginScreen::Password;
+                    self.confirm_password = Keyboard::new(32);
+                    return None;
+                }
+                if self.confirm_password.update(input) {
+                    if self.confirm_password.text != self.password.text {
+                        self.error = "PASSWORDS DO NOT MATCH".to_string();
+                        self.password = Keyboard::new(32);
+                        self.confirm_password = Keyboard::new(32);
+                        self.screen = LoginScreen::Password;
+                    } else {
+                        let u = self.username.text.clone();
+                        let p = self.password.text.clone();
+                        match try_register(&u, &p) {
+                            Ok((token, username, rosters, _)) => {
+                                return Some(AccountAction::LoggedIn { token, username, rosters });
+                            }
+                            Err(e) => {
+                                self.error = e;
+                                self.screen = LoginScreen::Choice;
+                                self.username = Keyboard::new(16);
+                                self.password = Keyboard::new(32);
+                                self.confirm_password = Keyboard::new(32);
+                            }
+                        }
+                    }
+                }
+            }
+            LoginScreen::ChangePassword { .. } => {
+                if self.password.update(input) {
+                    let new_pw = self.password.text.clone();
+                    if let LoginScreen::ChangePassword { token, username, rosters } = &self.screen {
+                        match try_change_password(token, &new_pw) {
+                            Ok(()) => {
+                                let token = token.clone();
+                                let username = username.clone();
+                                let rosters = rosters.clone();
+                                save_creds(&username, &token);
+                                return Some(AccountAction::LoggedIn { token, username, rosters });
+                            }
+                            Err(e) => {
+                                self.error = e;
+                                self.password = Keyboard::new(32);
+                            }
                         }
                     }
                 }
@@ -146,9 +203,11 @@ impl AccountScreen {
 
         // Title
         let title = match self.screen {
-            LoginScreen::Choice   => "ACCOUNT",
-            LoginScreen::Username => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
-            LoginScreen::Password => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
+            LoginScreen::Choice               => "ACCOUNT",
+            LoginScreen::Username             => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
+            LoginScreen::Password             => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
+            LoginScreen::ConfirmPassword      => "NEW ACCOUNT",
+            LoginScreen::ChangePassword { .. } => "CHOOSE PASSWORD",
         };
         let tw = str_width_scaled(title, 2);
         draw_str_shadow_scaled(buf, title, cam_x + sw/2 - tw/2, 9, Bgra::new(255, 210, 50), 2);
@@ -156,9 +215,11 @@ impl AccountScreen {
         // Subtitle (username/password step indicator)
         if !matches!(self.screen, LoginScreen::Choice) {
             let sub = match self.screen {
-                LoginScreen::Username => "ENTER USERNAME",
-                LoginScreen::Password => "ENTER PASSWORD",
-                LoginScreen::Choice   => "",
+                LoginScreen::Username            => "ENTER USERNAME",
+                LoginScreen::Password            => "ENTER PASSWORD",
+                LoginScreen::ConfirmPassword     => "CONFIRM PASSWORD",
+                LoginScreen::ChangePassword { .. } => "ADMIN HAS RESET YOUR PASSWORD",
+                LoginScreen::Choice              => "",
             };
             let subw = str_width(sub);
             draw_str(buf, sub, cam_x + sw/2 - subw/2, 42, Bgra::new(120, 120, 160));
@@ -197,6 +258,14 @@ impl AccountScreen {
             LoginScreen::Password => {
                 self.password.draw(buf, cam_x);
                 draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x);
+            }
+            LoginScreen::ConfirmPassword => {
+                self.confirm_password.draw(buf, cam_x);
+                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x);
+            }
+            LoginScreen::ChangePassword { .. } => {
+                self.password.draw(buf, cam_x);
+                draw_button_hints(buf, &[("START", "CONFIRM")], cam_x);
             }
         }
     }
@@ -970,7 +1039,7 @@ pub fn load_cached_rosters() -> Vec<Roster> {
 
 // ── Login / register ──────────────────────────────────────────────────────────
 
-fn try_login(username: &str, password: &str) -> Result<(String, String, Vec<Roster>), String> {
+fn try_login(username: &str, password: &str) -> Result<(String, String, Vec<Roster>, bool), String> {
     let body = format!("{{\"username\":\"{}\",\"password\":\"{}\"}}", username, password);
     let resp = http_post("/api/login", &body).map_err(|e| {
         let _ = std::fs::write("/tmp/arty_login_err.txt", &e);
@@ -978,27 +1047,41 @@ fn try_login(username: &str, password: &str) -> Result<(String, String, Vec<Rost
     })?;
     if let Some(token) = json_field(&resp, "token") {
         let stored_name = json_field(&resp, "username").unwrap_or_else(|| username.to_string());
-        save_creds(&stored_name, &token);
+        let pw_reset = json_field(&resp, "password_reset").map(|v| v == "true").unwrap_or(false);
+        if !pw_reset {
+            save_creds(&stored_name, &token);
+        }
         let rosters = parse_rosters_from_json(&resp);
         save_cached_rosters(&rosters);
-        return Ok((token, stored_name, rosters));
+        return Ok((token, stored_name, rosters, pw_reset));
     }
     Err("WRONG USERNAME OR PASSWORD".to_string())
 }
 
-fn try_register(username: &str, password: &str) -> Result<(String, String, Vec<Roster>), String> {
+fn try_register(username: &str, password: &str) -> Result<(String, String, Vec<Roster>, bool), String> {
     let body = format!("{{\"username\":\"{}\",\"password\":\"{}\"}}", username, password);
     let resp = http_post("/api/register", &body).map_err(|e| format!("NET: {}", &e[..e.len().min(28)]))?;
     if let Some(token) = json_field(&resp, "token") {
         save_creds(username, &token);
         let rosters = parse_rosters_from_json(&resp);
         save_cached_rosters(&rosters);
-        return Ok((token, username.to_string(), rosters));
+        return Ok((token, username.to_string(), rosters, false));
     }
     if resp.contains("username taken") {
         Err("USERNAME ALREADY TAKEN".to_string())
     } else {
         Err("REGISTRATION FAILED".to_string())
+    }
+}
+
+fn try_change_password(token: &str, new_password: &str) -> Result<(), String> {
+    let body = format!("{{\"token\":\"{}\",\"new_password\":\"{}\"}}", token, new_password);
+    let resp = http_post("/api/change_password", &body).map_err(|e| format!("NET: {}", &e[..e.len().min(28)]))?;
+    if resp.contains("\"ok\":true") {
+        Ok(())
+    } else {
+        let msg = json_field(&resp, "error").unwrap_or_else(|| "failed".to_string());
+        Err(msg.to_uppercase())
     }
 }
 

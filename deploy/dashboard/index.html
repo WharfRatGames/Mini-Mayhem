@@ -458,6 +458,7 @@ async function showPlayerDetail(username) {
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
           <button class="grant-btn" onclick="grantWarbonds('${u.username}')">+ Grant Warbonds</button>
           <button class="grant-btn" onclick="grantAllCosmetics('${u.username}')" style="border-color:#a060ff55;color:#a060ff">★ Grant All Cosmetics</button>
+          <button class="grant-btn" onclick="resetPassword('${u.username}')" style="border-color:#e0803055;color:#e08030">⟳ Reset Password</button>
         </div>
       </div>`;
   } catch(e) { panel.innerHTML = ''; }
@@ -509,6 +510,18 @@ async function grantAllCosmetics(username) {
   if (d.ok) alert(`Granted ${d.granted} cosmetics to ${username} (${d.already_owned} already owned).`);
   else alert('Error: ' + (d.error || 'unknown'));
   showPlayerDetail(username);
+}
+
+async function resetPassword(username) {
+  if (!confirm(`Force ${username} to choose a new password on next login?`)) return;
+  const res = await fetch('/api/admin/reset_password', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({admin_key: adminKey, username})
+  });
+  const d = await res.json();
+  if (d.ok) alert(`Password reset flagged for ${username}. They will be prompted to choose a new password on next login.`);
+  else alert('Error: ' + (d.error || 'unknown'));
 }
 
 setInterval(() => { if (adminKey) load(); }, 30000);

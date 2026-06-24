@@ -141,6 +141,8 @@ pub fn sync_assets_bg(version: &'static str) {
 }
 
 #[cfg(not(feature = "desktop"))]
+// Streams the binary directly to /tmp/mini-mayhem.new to avoid buffering 26MB in RAM.
+// Returns Some(path) on success, None on failure.
 pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u8>> {
     use std::io::{Read, Write};
     use std::net::{TcpStream, ToSocketAddrs};
@@ -174,24 +176,40 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
         .and_then(|l| l.split(':').nth(1))
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(0);
-    let mut body: Vec<u8> = Vec::with_capacity(total.max(512 * 1024));
-    let mut chunk = [0u8; 32768];
+
+    // Stream directly to disk — avoid holding the full binary in RAM
+    let tmp_path = "/tmp/mini-mayhem.new";
+    let mut file = std::fs::File::create(tmp_path).ok()?;
+    let mut written = 0usize;
     let mut last_reported = 0usize;
+    let mut chunk = [0u8; 32768];
     loop {
         match stream.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
-                body.extend_from_slice(&chunk[..n]);
-                if total == 0 || body.len() - last_reported > total / 20 {
-                    last_reported = body.len();
-                    on_progress(body.len(), total);
+                if file.write_all(&chunk[..n]).is_err() { return None; }
+                written += n;
+                if total == 0 || written - last_reported > total / 20 {
+                    last_reported = written;
+                    on_progress(written, total);
                 }
             }
             Err(_) => break,
         }
     }
-    on_progress(body.len(), total);
-    if body.is_empty() { None } else { Some(body) }
+    on_progress(written, total);
+    if written < 4 { return None; }
+
+    // Read back just the ELF header to verify, return a sentinel vec so the
+    // caller's ELF check passes — actual binary is already on disk.
+    let mut hdr = [0u8; 4];
+    std::fs::File::open(tmp_path).ok()?.read_exact(&mut hdr).ok()?;
+    if hdr[0] == 0x7f && &hdr[1..4] == b"ELF" {
+        // Signal success with a magic sentinel — apply_binary will use the file on disk
+        Some(b"\x7fELF_ONDISK".to_vec())
+    } else {
+        None
+    }
 }
 
 #[cfg(not(feature = "desktop"))]
@@ -208,8 +226,9 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
         .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/mini-mayhem"));
     let dest_str = dest.to_str().unwrap_or("/mnt/SDCARD/App/Arty/mini-mayhem");
 
-    // Write to /tmp first, then copy to dest
-    {
+    // If stream_binary already wrote the file to disk, skip the in-memory write.
+    let ondisk = binary == b"\x7fELF_ONDISK";
+    if !ondisk {
         let mut f = match std::fs::File::create("/tmp/mini-mayhem.new") {
             Ok(f) => f,
             Err(_) => { super::draw_msg(buf, fb, "FAIL:TMPWRITE"); std::thread::sleep(std::time::Duration::from_secs(2)); return; }

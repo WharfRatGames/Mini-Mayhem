@@ -1,3 +1,6 @@
+0.5.4.352  Fix remaining client freeze when opponent quits live match; fix soldiers moving while weapon menu open; dragon skull gap fix; OTA update streams to disk (low-RAM fix).
+0.5.4.351  New accounts must confirm password on registration.
+0.5.4.350  Admin reset-password button on dashboard; login prompts player to choose new password when reset; hat size fixes (26 hats rescaled; dragon skull gap fixed).
 0.5.4.349  Worm Hat cosmetic (warbond); hat 22 + 36 position/scale fixes; player search in dashboard; API error handling; lowercase usernames on register.
 0.5.4.348  Match results post to Discord (add opponent name to API); homing missile cursor now scrolls screen in live mode; fix live_opp_username not populated for casual matches.
 0.5.4.347  Fix TLS for Miyoos with wrong system clock (1971 etc) — use fixed timestamp for cert validity check instead of system time.

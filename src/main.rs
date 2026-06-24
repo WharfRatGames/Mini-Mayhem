@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.349";
+const VERSION: &str = "0.5.4.352";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -148,7 +148,7 @@ fn main() {
                         buf.blit_to_fb(&mut fb, 0);
                     });
                     match binary {
-                        Some(b) if b.len() > 4 && b[0] == 0x7f && &b[1..4] == b"ELF" => {
+                        Some(b) if b.starts_with(b"\x7fELF") => {
                             draw_msg(&mut buf, &mut fb, "APPLYING UPDATE...");
                             updater::apply_binary(&b, &mut buf, &mut fb);
                         }
@@ -791,6 +791,7 @@ fn main() {
             };
             // Suppress A-HELD when server_fire_grace active (same state used in tick/server_tick).
             let suppress_a_held = game.server_fire_grace > 0;
+            let menu_open = game.weapon_menu_open;
             let held: Vec<NetButton> = [
                 (input::Button::Up,     NetButton::Up),
                 (input::Button::Down,   NetButton::Down),
@@ -803,7 +804,13 @@ fn main() {
                 (input::Button::Select, NetButton::Select),
                 (input::Button::L1,     NetButton::L1),
                 (input::Button::R1,     NetButton::R1),
-            ].iter().filter(|(b,_)| input.held(*b) && !(suppress_a_held && *b == input::Button::A)).map(|(_,n)| *n).collect();
+            ].iter().filter(|(b,_)| {
+                if !input.held(*b) { return false; }
+                if suppress_a_held && *b == input::Button::A { return false; }
+                // Don't send movement while weapon menu is open
+                if menu_open && (*b == input::Button::Left || *b == input::Button::Right) { return false; }
+                true
+            }).map(|(_,n)| *n).collect();
             let pressed: Vec<NetButton> = [
                 (input::Button::Up,     NetButton::Up),
                 (input::Button::Down,   NetButton::Down),

@@ -386,7 +386,12 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
             mboth!(&mut mfile, match_id, "team {qteam} ({name}) forfeited — team {winner} wins");
             let mut state = build_state(&game, tick, last_craters_sent);
             state.result = NetResult::Winner(winner);
-            if let Some(bytes) = encode(&state) { write_team!(winner, &bytes); }
+            if let Some(bytes) = encode(&state) {
+                write_team!(winner, &bytes);
+                let sc = match_slot.conns[winner].lock().unwrap_or_else(|e| e.into_inner());
+                flush_arc(&sc.stream);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
             break;
         }
         // Disconnect detection via read-thread flags
@@ -923,7 +928,9 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
                     state.result = NetResult::Winner(winner);
                     if let Some(bytes) = encode(&state) {
                         write_arc(&members[winner].write, &bytes);
+                        flush_arc(&members[winner].write);
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                     return;
                 } else {
                     eliminated[i] = true;
@@ -1140,6 +1147,11 @@ fn write_arc(s: &ArcStream, bytes: &[u8]) {
     let _ = guard.write_all(bytes);
 }
 
+fn flush_arc(s: &ArcStream) {
+    let mut guard = s.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = guard.flush();
+}
+
 /// Read one complete length-prefixed frame. Holds the lock briefly per chunk so
 /// concurrent writes are never blocked more than ~5 ms.
 fn read_one_arc(s: &ArcStream, read_buf: &mut Vec<u8>) -> Option<Vec<u8>> {
@@ -1209,7 +1221,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.349";
+const REQUIRED_VERSION: &str = "0.5.4.352";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

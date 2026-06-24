@@ -102,6 +102,7 @@ def init_db(c):
         ("coins",           "INTEGER DEFAULT 0"),
         ("gems",            "INTEGER DEFAULT 0"),
         ("last_win_date",   "TEXT DEFAULT NULL"),
+        ("password_reset",  "INTEGER DEFAULT 0"),
     ]:
         try: c.execute(f"ALTER TABLE users ADD COLUMN {col} {defn}")
         except: pass
@@ -451,9 +452,9 @@ def _handle(db, sock, peer_ip="?"):
     elif method == "POST" and path == "/login":
         u = data.get("username","").strip(); p = data.get("password","")
         t = gen_token(u)
-        row2 = db.execute("SELECT id,username,pw_hash FROM users WHERE lower(username)=lower(?)", (u,)).fetchone()
+        row2 = db.execute("SELECT id,username,pw_hash,password_reset FROM users WHERE lower(username)=lower(?)", (u,)).fetchone()
         if row2 and check_pw(p, row2[2]):
-            uid2, u = row2[0], row2[1]
+            uid2, u, pw_reset = row2[0], row2[1], bool(row2[3])
             # Transparently upgrade legacy SHA-256 hash to PBKDF2 on login
             if not row2[2].startswith('pbkdf2$'):
                 db.execute("UPDATE users SET pw_hash=? WHERE id=?", (hash_pw(p), uid2))
@@ -464,8 +465,18 @@ def _handle(db, sock, peer_ip="?"):
             n = 0
         if n == 1:
             ensure_default_roster(db, uid2)
-            send_json(sock, 200, {"token": t, "username": u, "rosters": rosters_for(uid2)})
+            send_json(sock, 200, {"token": t, "username": u, "rosters": rosters_for(uid2), "password_reset": pw_reset})
         else: send_json(sock, 401, {"error":"invalid credentials"})
+
+    elif method == "POST" and path == "/change_password":
+        new_pw = data.get("new_password","")
+        if not new_pw or len(new_pw) < 4:
+            send_json(sock, 400, {"error":"password too short"}); return
+        uid2 = uid(token)
+        if not uid2: send_json(sock, 401, {"error":"invalid token"}); return
+        db.execute("UPDATE users SET pw_hash=?, password_reset=0 WHERE id=?", (hash_pw(new_pw), uid2))
+        db.commit()
+        send_json(sock, 200, {"ok": True})
 
     # ── Profile & leaderboard ─────────────────────────────────────────────────
 
@@ -587,6 +598,17 @@ def _handle(db, sock, peer_ip="?"):
                 granted += 1
         db.commit()
         send_json(sock, 200, {"ok": True, "granted": granted, "already_owned": already_owned})
+
+    elif method == "POST" and path == "/admin/reset_password":
+        if data.get("admin_key") != ADMIN_KEY:
+            send_json(sock, 403, {"error":"forbidden"}); return
+        username = data.get("username","").strip()
+        if not username: send_json(sock, 400, {"error":"missing username"}); return
+        row = db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (username,)).fetchone()
+        if not row: send_json(sock, 404, {"error":"user not found"}); return
+        db.execute("UPDATE users SET password_reset=1 WHERE id=?", (row[0],))
+        db.commit()
+        send_json(sock, 200, {"ok": True})
 
     elif method == "POST" and path == "/player/daily_login":
         uid2 = uid(token)
