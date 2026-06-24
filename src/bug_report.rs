@@ -37,7 +37,7 @@ fn dim_line() -> Bgra { Bgra::new(40, 44, 70) }
 enum Phase {
     Category,
     Keyboard,
-    Sending(std::thread::JoinHandle<bool>),
+    Sending(std::thread::JoinHandle<Result<String, String>>),
     Done(bool),
 }
 
@@ -100,12 +100,16 @@ impl BugReporter {
             handle.is_finished()
         } else { false };
         if done {
-            let ok = if let Phase::Sending(handle) = std::mem::replace(&mut self.phase, Phase::Done(false)) {
-                handle.join().unwrap_or(false)
-            } else { false };
+            let result: Result<String, String> = if let Phase::Sending(handle) = std::mem::replace(&mut self.phase, Phase::Done(false)) {
+                handle.join().unwrap_or(Err("thread panic".into()))
+            } else { Err("internal".into()) };
+            let ok = result.is_ok();
             self.phase = Phase::Done(ok);
-            self.status_msg = if ok { "Report sent! Thank you.".into() } else { "Send failed. Try again.".into() };
-            self.send_timer = 180;
+            self.status_msg = match result {
+                Ok(_) => "Report sent! Thank you.".into(),
+                Err(e) => format!("Send failed: {}", &e[..e.len().min(40)]),
+            };
+            self.send_timer = 360;
         }
         false
     }
@@ -153,18 +157,18 @@ impl BugReporter {
         let png = encode_png(&self.screenshot, SCREEN_W, SCREEN_H);
 
         let handle = std::thread::Builder::new()
-            .stack_size(256 * 1024)
+            .stack_size(2 * 1024 * 1024)
             .spawn(move || {
                 crate::https::https_post_multipart(
                     API_HOST, API_PATH, &category, &description, &png, 10, 20,
-                ).is_ok()
+                )
             });
         match handle {
             Ok(h) => { self.phase = Phase::Sending(h); }
-            Err(_) => {
+            Err(e) => {
                 self.phase = Phase::Done(false);
-                self.status_msg = "Send failed. Try again.".into();
-                self.send_timer = 180;
+                self.status_msg = format!("Send failed: {}", e);
+                self.send_timer = 360;
             }
         }
     }
