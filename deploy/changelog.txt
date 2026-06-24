@@ -1,3 +1,6 @@
+0.5.4.360  Show ping (ms) below opponent avatar in live mode; green/yellow/red by quality.
+0.5.4.359  Airborne soldiers knock back targets they land on.
+0.5.4.358  Hat centering fixes: devil horns (hat_9) raise 4px + shift 1px left; ninja band (hat_11) raise 5px (brim detection was finding tail instead of headband).
 0.5.4.357  Soldier arms never occlude head — draw head/hat last in V2 render order.
 0.5.4.356  Fix TLS cert timestamp (was July 2025, cert renewed June 2026 — broke bug reports and OTA).
 0.5.4.355  Bug report: show actual error message on failure; increase thread stack to 2MB.
@@ -168,6 +171,3 @@
 0.5.4.64  no jump-clip through ground
 v0.5.4.135: static background images (sunset/aurora/jungle/canyon by biome) as new lowest render layer
 v0.5.4.237: live-mode parity infrastructure — emit_fx FX channel, unified net structs, parity test + compile-time field guard
-0.5.4.358  Hat centering fixes: devil horns (hat_9) raise 4px + shift 1px left; ninja band (hat_11) raise 5px (brim detection was finding tail instead of headband).
-0.5.4.359  Airborne soldiers knock back targets they land on.
-0.5.4.360  Show ping (ms) below opponent avatar in live mode; green/yellow/red by quality.
