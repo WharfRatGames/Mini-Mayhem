@@ -1,3 +1,4 @@
+0.5.4.357  Soldier arms never occlude head — draw head/hat last in V2 render order.
 0.5.4.356  Fix TLS cert timestamp (was July 2025, cert renewed June 2026 — broke bug reports and OTA).
 0.5.4.355  Bug report: show actual error message on failure; increase thread stack to 2MB.
 0.5.4.354  Fix hat gaps for all 43 hats (scale-corrected dy offsets); fix bug reports not sending (thread was detached before HTTP request completed).

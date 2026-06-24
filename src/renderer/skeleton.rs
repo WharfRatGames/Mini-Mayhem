@@ -657,56 +657,6 @@ pub fn draw_soldier_skeletal(
         buf.fill_rect(bx - 4, by,      8, 1, belt_col);
         buf.fill_rect(bx - 1, by - 1,  2, 3, buckle);
 
-        // Head (bigger, helmet brim, eye circle, mouth)
-        if hat_id != 15 && hat_id != 26 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
-            buf.fill_circle(head_cx, head_cy, 8, dark_col);
-            buf.fill_circle(head_cx, head_cy, 7, skin_col);
-        }
-        if hat_id == 0 {
-            for dy in -8..=0i32 {
-                for dx in -7..=7i32 {
-                    if dx * dx + dy * dy <= 49 {
-                        buf.set_pixel(head_cx + dx, head_cy + dy, team_col);
-                    }
-                }
-            }
-        }
-        // Helmet brim
-        if hat_id == 0 {
-            buf.fill_rect(head_cx - 8, head_cy,     16, 2, dark_col);
-            buf.fill_rect(head_cx - 3, head_cy - 6,  3, 2, hilit);
-        }
-        // Face features — skipped for masks/replacements that cover the whole face
-        if hat_id != 28 && hat_id != 15 && hat_id != 26 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
-            let fi = f as i32;
-            let eye_x = head_cx + fi * 2;
-
-            // Ear nub (back of head, opposite facing)
-            let ear_x = head_cx - fi * 6;
-            buf.fill_rect(ear_x - 1, head_cy + 1, 3, 4, skin_col);
-            buf.fill_rect(ear_x,     head_cy + 2, 1, 2, Bgra::new(190, 148, 108));
-
-            // Eyebrow
-            buf.fill_rect(eye_x - 1, head_cy + 1, 4, 1, dark_col);
-
-            // Eye white + pupil + glint
-            buf.fill_circle(eye_x, head_cy + 3, 2, Bgra::new(220, 220, 220));
-            buf.set_pixel(eye_x + fi, head_cy + 3, dark_col);
-            buf.set_pixel(eye_x,      head_cy + 2, Bgra::new(255, 255, 255));
-
-            // Nose dot
-            buf.set_pixel(eye_x + fi * 2, head_cy + 5, Bgra::new(180, 135, 100));
-
-            // Chin shadow
-            buf.fill_rect(head_cx - 4, head_cy + 6, 8, 2, Bgra::new(190, 148, 108));
-
-            // Mouth with downturned corners
-            buf.fill_rect(eye_x - 1, head_cy + 5, 3, 1, dark_col);
-            buf.set_pixel(eye_x - 2,  head_cy + 6, dark_col);
-            buf.set_pixel(eye_x + 2,  head_cy + 6, dark_col);
-        }
-        if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick, f); }
-
         // Front leg
         thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, dark_col, 7);
         thick_line(buf, hip.0, hip.1, front_knee.0, front_knee.1, body_col, 5);
@@ -729,7 +679,7 @@ pub fn draw_soldier_skeletal(
 
         // Gun / held item
         let disp = if f >= 0.0 { aim_angle.unwrap_or(0.0) } else { std::f32::consts::PI - aim_angle.unwrap_or(0.0) };
-        if let Some(weapon) = held_weapon {
+        let result = if let Some(weapon) = held_weapon {
             draw_held_weapon(buf, fwd_arm.0 as i32, fwd_arm.1 as i32, weapon, tick);
             (fwd_arm.0, fwd_arm.1)
         } else {
@@ -742,7 +692,45 @@ pub fn draw_soldier_skeletal(
             buf.fill_circle(tx as i32, ty as i32, 3, dark_col);
             buf.fill_circle(tx as i32, ty as i32, 2, gun_col);
             (tx, ty)
+        };
+
+        // Head drawn last so arms never occlude it
+        if hat_id != 15 && hat_id != 26 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
+            buf.fill_circle(head_cx, head_cy, 8, dark_col);
+            buf.fill_circle(head_cx, head_cy, 7, skin_col);
         }
+        if hat_id == 0 {
+            for dy in -8..=0i32 {
+                for dx in -7..=7i32 {
+                    if dx * dx + dy * dy <= 49 {
+                        buf.set_pixel(head_cx + dx, head_cy + dy, team_col);
+                    }
+                }
+            }
+        }
+        if hat_id == 0 {
+            buf.fill_rect(head_cx - 8, head_cy,     16, 2, dark_col);
+            buf.fill_rect(head_cx - 3, head_cy - 6,  3, 2, hilit);
+        }
+        if hat_id != 28 && hat_id != 15 && hat_id != 26 && hat_id != 36 && hat_id != 40 && hat_id != 42 {
+            let fi = f as i32;
+            let eye_x = head_cx + fi * 2;
+            let ear_x = head_cx - fi * 6;
+            buf.fill_rect(ear_x - 1, head_cy + 1, 3, 4, skin_col);
+            buf.fill_rect(ear_x,     head_cy + 2, 1, 2, Bgra::new(190, 148, 108));
+            buf.fill_rect(eye_x - 1, head_cy + 1, 4, 1, dark_col);
+            buf.fill_circle(eye_x, head_cy + 3, 2, Bgra::new(220, 220, 220));
+            buf.set_pixel(eye_x + fi, head_cy + 3, dark_col);
+            buf.set_pixel(eye_x,      head_cy + 2, Bgra::new(255, 255, 255));
+            buf.set_pixel(eye_x + fi * 2, head_cy + 5, Bgra::new(180, 135, 100));
+            buf.fill_rect(head_cx - 4, head_cy + 6, 8, 2, Bgra::new(190, 148, 108));
+            buf.fill_rect(eye_x - 1, head_cy + 5, 3, 1, dark_col);
+            buf.set_pixel(eye_x - 2,  head_cy + 6, dark_col);
+            buf.set_pixel(eye_x + 2,  head_cy + 6, dark_col);
+        }
+        if hat_id > 0 { draw_hat(buf, head_cx, head_cy, hat_id, wind, tick, f); }
+
+        result
     } else {
         // ── V1: original style ────────────────────────────────────────────────
         // Back leg
