@@ -142,15 +142,52 @@ static ISRG_ROOT_YR_DER: &[u8] = &[
     0xdc, 0xda, 0x1a, 0x60,
 ];
 
+// Miyoos have no RTC and boot with a bogus clock (e.g. 1971), which causes rustls to
+// reject certs as "not yet valid". We wrap the real verifier and clamp "now" to a
+// build-time constant so time-based validity checks always pass.
+#[derive(Debug)]
+struct TimelessVerifier(Arc<dyn rustls::client::danger::ServerCertVerifier>);
+
+impl rustls::client::danger::ServerCertVerifier for TimelessVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        // Use a fixed time well within our cert's validity window instead of the system clock.
+        // Cert valid: Jun 22 2026 – Sep 20 2026. Pick Aug 1 2026 (1753920000).
+        let now = rustls::pki_types::UnixTime::since_unix_epoch(
+            std::time::Duration::from_secs(1753920000)
+        );
+        self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+    }
+    fn verify_tls12_signature(&self, msg: &[u8], cert: &rustls::pki_types::CertificateDer<'_>, sig: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.0.verify_tls12_signature(msg, cert, sig)
+    }
+    fn verify_tls13_signature(&self, msg: &[u8], cert: &rustls::pki_types::CertificateDer<'_>, sig: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.0.verify_tls13_signature(msg, cert, sig)
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.supported_verify_schemes()
+    }
+}
+
 pub fn make_tls_config() -> Arc<ClientConfig> {
     let mut root_store = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
     // ISRG Root YR is not yet in webpki-roots; add it manually via its cross-signed cert.
     let _ = root_store.add(rustls::pki_types::CertificateDer::from(ISRG_ROOT_YR_DER));
+    let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store))
+        .build()
+        .expect("verifier");
     Arc::new(
         ClientConfig::builder()
-            .with_root_certificates(root_store)
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(TimelessVerifier(verifier)))
             .with_no_client_auth(),
     )
 }
