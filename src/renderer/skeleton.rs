@@ -195,7 +195,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
     // Per COSMETIC_STYLE_GUIDE.md the sprite's head-anchor pixel is (33,45)
     // of 66x60 -> 5px below sprite centre at this size's ~7px (1.45x);
     // shift the centred blit up so the anchor lands on the head centre.
-    let (w, h, anchor_dy, hat_dy) = if SOLDIER_STYLE_V2 {
+    let (w, h, anchor_dy, hat_dy, hat_dx) = if SOLDIER_STYLE_V2 {
         let base_w = 70i32;
         let base_h = 63i32;
         let anchor = 16i32;
@@ -208,9 +208,9 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
             6  => 11,
             7  => 13,
             8  => 16,
-            9  => 12,
+            9  => 8,
             10 => 12,
-            11 => 10,
+            11 => 15,
             12 => 12,
             13 => 15,
             14 => 15,
@@ -279,7 +279,11 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
             43 => 0.65,
             _  => 1.0,
         };
-        ((base_w as f32 * scale) as i32, (base_h as f32 * scale) as i32, anchor, dy)
+        let dx: i32 = match hat_id {
+            9 => -1, // devil horns: content 1px right of sprite center
+            _  => 0,
+        };
+        ((base_w as f32 * scale) as i32, (base_h as f32 * scale) as i32, anchor, dy, dx)
     } else {
         let base_w = 40i32;
         let base_h = 36i32;
@@ -298,11 +302,11 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
             36 => 0.48,
             _  => 1.0,
         };
-        ((base_w as f32 * scale) as i32, (base_h as f32 * scale) as i32, anchor, dy)
+        ((base_w as f32 * scale) as i32, (base_h as f32 * scale) as i32, anchor, dy, 0i32)
     };
     // Dragon Skull (36) flips to face the direction the soldier faces
     let flip = hat_id == 36 && facing < 0.0;
-    super::cosmetic_sprites::draw_hat(buf, hat_id, cx, cy - anchor_dy + hat_dy, w, h, flip);
+    super::cosmetic_sprites::draw_hat(buf, hat_id, cx + hat_dx, cy - anchor_dy + hat_dy, w, h, flip);
 
     // Propeller Hat: the sprite's static propeller bar (source rows 18-26) is
     // skipped by cosmetic_sprites::draw_hat for hat_id 2; draw an animated
