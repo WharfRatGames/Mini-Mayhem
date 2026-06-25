@@ -1,3 +1,4 @@
+0.5.4.362  Windows auto-update on launch and before multiplayer; fix update check being silently skipped.
 0.5.4.361  Account screen: Up/Down to select LOG IN / NEW ACCOUNT, A to confirm.
 0.5.4.360  Show ping (ms) below opponent avatar in live mode; green/yellow/red by quality.
 0.5.4.359  Airborne soldiers knock back targets they land on.
