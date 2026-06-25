@@ -75,7 +75,7 @@ def _status_refresh_loop():
             }
         except Exception:
             pass
-        time.sleep(29.5)  # 30s total including the 0.5s CPU sample
+        time.sleep(4.5)  # 5s total including the 0.5s CPU sample
 
 def _temp_refresh_loop():
     global _temp_cached
@@ -1148,8 +1148,9 @@ def _handle(db, sock, peer_ip="?"):
         p0_scrap_live = scrap_earned if my_slot_live == 0 else None
         p1_scrap_live = scrap_earned if my_slot_live == 1 else None
         now_ts = int(time.time())
-        db.execute("INSERT INTO matches(code,p0,p1,seed,ranked,mode,done,winner,p0_kills,p1_kills,p0_scrap,p1_scrap,finished_at) VALUES(?,?,?,0,?,?,1,?,?,?,?,?,?)",
-                   (f"live_{uid2}_{now_ts}", p0_live, p1_live, 1 if is_ranked else 0, 'live', uid_winner_live, p0_kills_live, p1_kills_live, p0_scrap_live, p1_scrap_live, now_ts))
+        if is_win:
+            db.execute("INSERT INTO matches(code,p0,p1,seed,ranked,mode,done,winner,p0_kills,p1_kills,p0_scrap,p1_scrap,finished_at) VALUES(?,?,?,0,?,?,1,?,?,?,?,?,?)",
+                       (f"live_{uid2}_{now_ts}", p0_live, p1_live, 1 if is_ranked else 0, 'live', uid_winner_live, p0_kills_live, p1_kills_live, p0_scrap_live, p1_scrap_live, now_ts))
         db.commit()
         update_challenges(db, uid2, matches=1, wins=1 if is_win else 0, kills=kills_val)
         new_elo = get_elo(uid2)
@@ -1537,11 +1538,10 @@ def _handle(db, sock, peer_ip="?"):
         send_json(sock, 200, [{"id":r[0],"p0":r[1] or "?","p1":r[2] or "?",
             "ranked":bool(r[3]),"winner":r[4],"finished_at":r[5],"done":bool(r[6])} for r in rows])
 
-    elif method == "GET" and path.startswith("/stats"):
+    elif method == "GET" and (path.startswith("/stats") or path.startswith("/api/stats")):
         # GET /stats?mode=live|tat&token=...
-        import urllib.parse as _up
-        qs = _up.parse_qs(path.split("?",1)[1] if "?" in path else "")
-        mode_val = (qs.get("mode", ["tat"])[0]).lower()
+        # path has query string stripped by read_req; use qs_params parsed at handler top
+        mode_val = qs_params.get("mode", "tat").lower()
         uid2 = uid(token)
         if not uid2: send_json(sock, 401, {"error":"invalid token"}); return
         # Aggregate stats by ranked flag

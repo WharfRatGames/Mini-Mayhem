@@ -1,3 +1,4 @@
+0.5.4.366  Fix live play unresponsiveness: reader thread held stream mutex during blocking reads, stalling InputMsg sends up to 33ms; cave crate drops now land inside cave boundaries.
 0.5.4.365  Cave map FPS fix: row-major renderer replaces per-pixel stride copies; 30fps on all map types.
 0.5.4.364  Fix 3s freeze when entering multiplayer after an OTA update; fix API SQLite locking under load.
 0.5.4.363  Landmine blast radius 43→55px, trigger radius 25→35px; no knockback from jumps/backflips; horn hat position fix.

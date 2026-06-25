@@ -1030,9 +1030,36 @@ impl GameState {
     pub fn maybe_drop_crate(&mut self, drop_rng: f32, pos_rng: f32, kind_rng: f32) -> bool {
         if drop_rng >= 0.30 { return false; }
 
-        // Pick a random x that has terrain below (not over water-only columns)
+        // Pick a random x and determine the crate's start position.
+        // On cave maps (archetype 3) the surface is the sealed rock cap — crates
+        // dropped from y=0 land on the roof and are unreachable. Instead, find a
+        // standable cave floor and start the crate just above its ceiling so it
+        // falls naturally into the accessible chamber below.
         let x = (pos_rng * WORLD_W as f32) as u32 % WORLD_W;
-        if self.terrain.surface_y_at(x).is_none() { return false; }
+        let start_y = if self.terrain.archetype == 3 {
+            // Use the simple check (no BFS) — standable_cave_foot_y's full
+            // cave_has_escape BFS stalls the server tick for several ms, causing
+            // irregular state delivery to clients (felt as input unresponsiveness).
+            // Crates just need a platform with clearance; escape-route verification
+            // is not needed here.
+            match self.terrain.standable_cave_foot_simple(x as i32) {
+                Some(foot_y) => {
+                    // Find the ceiling above this floor (scan up from head clearance)
+                    // and start the crate just below it so it falls into the chamber.
+                    let head_top = (foot_y - 26).max(0);
+                    let ceiling_y = (0..head_top)
+                        .rev()
+                        .find(|&y| self.terrain.is_solid(x as i32, y))
+                        .map(|y| (y + 2) as f32) // just below the ceiling pixel
+                        .unwrap_or(0.0);
+                    ceiling_y
+                }
+                None => return false, // no standable cave floor at this x
+            }
+        } else {
+            if self.terrain.surface_y_at(x).is_none() { return false; }
+            0.0
+        };
 
         // Type split: 75% weapon, 25% health.
         // Tier drop chances (weapon pool):
@@ -1063,7 +1090,7 @@ impl GameState {
             CrateKind::Weapon(weapon)
         };
         self.crates.push(DroppedCrate {
-            pos: WorldPos::new(x as f32, 0.0),
+            pos: WorldPos::new(x as f32, start_y),
             kind,
             landed: false,
             descent_vy: 1.5,
@@ -1078,16 +1105,29 @@ impl GameState {
                 let amount = 5 + (scrap_rng.wrapping_mul(1664525) % 26) as u32;
                 let sx = ((scrap_rng.wrapping_mul(22695477) % WORLD_W) as f32)
                     .max(8.0).min(WORLD_W as f32 - 8.0);
-                if self.terrain.surface_y_at(sx as u32).is_some() {
-                    self.crates.push(DroppedCrate {
-                        pos: WorldPos::new(sx, 0.0),
-                        kind: CrateKind::Scrap(amount),
-                        landed: false,
-                        descent_vy: 1.5,
-                        damage_this_turn: 0,
-                        fall_ticks: 0,
-                    });
-                }
+                let scrap_start_y = if self.terrain.archetype == 3 {
+                    match self.terrain.standable_cave_foot_simple(sx as i32) {
+                        Some(foot_y) => {
+                            let head_top = (foot_y - 26).max(0);
+                            (0..head_top).rev()
+                                .find(|&y| self.terrain.is_solid(sx as i32, y))
+                                .map(|y| (y + 2) as f32)
+                                .unwrap_or(0.0)
+                        }
+                        None => return true, // skip scrap, main crate already pushed
+                    }
+                } else {
+                    if self.terrain.surface_y_at(sx as u32).is_none() { return true; }
+                    0.0
+                };
+                self.crates.push(DroppedCrate {
+                    pos: WorldPos::new(sx, scrap_start_y),
+                    kind: CrateKind::Scrap(amount),
+                    landed: false,
+                    descent_vy: 1.5,
+                    damage_this_turn: 0,
+                    fall_ticks: 0,
+                });
             }
         }
 

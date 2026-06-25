@@ -1421,7 +1421,7 @@ impl Terrain {
     /// None if no roofed standing spot exists.
     /// Like standable_cave_foot_y but skips the escape-connectivity check.
     /// Used for archetype-3 (cave) spawns where vertical shafts guarantee reachability.
-    fn standable_cave_foot_simple(&self, x: i32) -> Option<i32> {
+    pub fn standable_cave_foot_simple(&self, x: i32) -> Option<i32> {
         use crate::renderer::draw_sprites::SOLDIER_HALF_W;
         const HEAD_H: i32 = 26;
         const CEIL_MAX: i32 = 220;

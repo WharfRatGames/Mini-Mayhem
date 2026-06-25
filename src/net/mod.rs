@@ -139,6 +139,12 @@ impl ServerConn {
         let welcome2      = self.welcome.clone();
         let disconnected2 = self.disconnected.clone();
         thread::spawn(move || {
+            // Short read timeout so the stream mutex isn't held during long blocking
+            // reads — the main thread needs the same lock to send InputMsg each frame.
+            // Without this, conn.send() blocks up to ~33ms waiting for the next
+            // server StateMsg, causing the "unresponsive" feeling in live play.
+            stream2.lock().unwrap_or_else(|e| e.into_inner())
+                .set_read_timeout(Some(Duration::from_millis(5))).ok();
             let mut read_buf: Vec<u8> = Vec::new();
             loop {
                 match read_one_arc(&stream2, &mut read_buf) {
@@ -148,8 +154,6 @@ impl ServerConn {
                         } else {
                             *latest2.lock().unwrap() = Some(buf);
                         }
-                        // Yield so the main thread can acquire the stream lock
-                        // to send InputMsg before we re-lock for the next read.
                         thread::sleep(Duration::from_millis(1));
                     }
                     None => break,

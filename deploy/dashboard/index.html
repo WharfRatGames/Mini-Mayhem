@@ -524,7 +524,7 @@ async function resetPassword(username) {
   else alert('Error: ' + (d.error || 'unknown'));
 }
 
-setInterval(() => { if (adminKey) load(); }, 30000);
+setInterval(() => { if (adminKey) load(); }, 5000);
 setInterval(() => { if (adminKey) loadSysStats(); }, 2000);
 setInterval(() => { if (adminKey) loadLobbies(); }, 5000);
 
