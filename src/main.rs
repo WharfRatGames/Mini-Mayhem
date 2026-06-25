@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.363";
+const VERSION: &str = "0.5.4.364";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -268,20 +268,22 @@ fn main() {
         || choice == game::title::CHOICE_TAT_RANKED;
     // Wait for background thread result; if channel is disconnected (sentinel dropped tx),
     // spawn a fresh dedicated check so SP/MP always gets a live result.
-    if (is_sp_mode || is_mp_mode) && !update_available {
+    if (is_sp_mode || is_mp_mode) && !update_available && !skip_update {
+        // Only do the MP gate check when we haven't already updated this session.
+        // skip_update=true means the sentinel exists (just OTA'd) — we're current.
+        // REJECTED:VERSION handles the rare case where that assumption is wrong.
         let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
         if let Ok((true, _)) = got {
             update_available = true;
-        } else if matches!(got, Err(_)) {
-            // Timeout: thread still in flight. Disconnected: channel was dropped (skip_update
-            // path or thread already finished false). Either way, do a fresh blocking check —
-            // the skip_update fast-path should not suppress the MP version gate.
+        } else if got == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+            // Background thread still in flight — give it a little more time.
             let (ftx, frx) = std::sync::mpsc::channel::<bool>();
             std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); });
-            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_millis(3000)) {
+            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_millis(1500)) {
                 update_available = true;
             }
         }
+        // Disconnected = background thread already finished with false (no update). Proceed.
     }
     if update_available && (is_sp_mode || is_mp_mode) {
         use renderer::Bgra;

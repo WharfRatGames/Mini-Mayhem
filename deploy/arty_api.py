@@ -14,7 +14,8 @@ def _status_refresh_loop():
     global _status_cached
     while True:
         try:
-            db2 = sqlite3.connect(DB)
+            db2 = sqlite3.connect(DB, timeout=2)
+            db2.execute("PRAGMA journal_mode=WAL")
             total_users   = db2.execute("SELECT COUNT(*) FROM users").fetchone()[0]
             active_today  = db2.execute("SELECT COUNT(DISTINCT p0) + COUNT(DISTINCT p1) FROM matches WHERE done=1 AND finished_at > ?", (int(time.time()) - 86400,)).fetchone()[0]
             total_matches = db2.execute("SELECT COUNT(*) FROM matches WHERE done=1").fetchone()[0]
@@ -93,7 +94,8 @@ def _lobbies_refresh_loop():
     while True:
         try:
             now = int(time.time())
-            db2 = sqlite3.connect(DB)
+            db2 = sqlite3.connect(DB, timeout=2)
+            db2.execute("PRAGMA journal_mode=WAL")
             live_games = db2.execute("""
                 SELECT lq.user_id, u1.username, lq.elo,
                        lq.paired_with, u2.username, lq2.elo,
@@ -1629,7 +1631,8 @@ def _handle(db, sock, peer_ip="?"):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    db = sqlite3.connect(DB, check_same_thread=False)
+    db = sqlite3.connect(DB, check_same_thread=False, timeout=10)
+    db.execute("PRAGMA journal_mode=WAL")
     init_db(db)
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
