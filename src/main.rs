@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.364";
+const VERSION: &str = "0.5.4.365";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -832,7 +832,7 @@ fn main() {
                 }
                 (h, u, b, g, w)
             };
-            if !lstate.paused {
+            if !lstate.paused && final_result.is_none() {
                 conn.send(&InputMsg { tick: lstate.tick, held, pressed, released, aim_angle: game.aim.angle, selected_weapon_kind, hat_ids, uniform_color_ids, boot_color_ids, gun_style_ids, worm_names, muzzle_x: lstate.last_muzzle.map(|(x,_)| x).unwrap_or(0.0), muzzle_y: lstate.last_muzzle.map(|(_,y)| y).unwrap_or(0.0), quit: false });
                 lstate.last_input_sent = Some(std::time::Instant::now());
             }
