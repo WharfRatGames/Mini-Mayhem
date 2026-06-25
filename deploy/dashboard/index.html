@@ -525,7 +525,7 @@ async function resetPassword(username) {
 }
 
 setInterval(() => { if (adminKey) load(); }, 30000);
-setInterval(() => { if (adminKey) loadSysStats(); }, 5000);
+setInterval(() => { if (adminKey) loadSysStats(); }, 2000);
 setInterval(() => { if (adminKey) loadLobbies(); }, 5000);
 
 function playerLink(username) {
@@ -624,10 +624,11 @@ async function loadLobbies() {
 }
 
 let logOpen = false;
+let logFirstOpen = true;
 function toggleLog() {
   logOpen = !logOpen;
   document.getElementById('server-log').style.display = logOpen ? 'block' : 'none';
-  if (logOpen) loadLog();
+  if (logOpen) { logFirstOpen = true; loadLog(); }
 }
 setInterval(() => { if (adminKey && logOpen) loadLog(); }, 5000);
 
@@ -644,7 +645,8 @@ async function loadLog() {
                   : '#555';
       return `<div style="color:${color};margin-bottom:2px">${line}</div>`;
     }).join('');
-    if (atBottom) el.scrollTop = el.scrollHeight;
+    if (logFirstOpen) { el.scrollTop = 0; logFirstOpen = false; }
+    else if (atBottom) el.scrollTop = el.scrollHeight;
   } catch(e) {}
 }
 
@@ -706,12 +708,13 @@ async function loadSysStats() {
         <div class="value ${diskPct > 85 ? 'red' : ''}">${d.disk_used_mb != null ? (d.disk_used_mb/1024).toFixed(1) : '?'} / ${d.disk_total_mb != null ? (d.disk_total_mb/1024).toFixed(1) : '?'} GB</div>
         ${bar(diskPct, diskPct > 85 ? 'red' : 'blue')}
       </div>
-      ${t ? `<div class="card no-click">
+      <div class="card no-click">
         <div class="label">Temperature</div>
-        <div class="value ${t.temp_c > 75 ? 'red' : t.temp_c > 60 ? '' : 'green'}">${t.temp_c.toFixed(1)}°C</div>
+        ${t ? `<div class="value ${t.temp_c > 75 ? 'red' : t.temp_c > 60 ? '' : 'green'}">${t.temp_c.toFixed(1)}°C</div>
         ${bar(t.temp_c / 85 * 100, t.temp_c > 75 ? 'red' : t.temp_c > 60 ? '' : 'green')}
-        <div class="hint" style="font-size:15px;font-weight:bold;color:#aaa">Load: ${t.load.toFixed(2)}</div>
-      </div>` : ''}
+        <div class="hint" style="font-size:15px;font-weight:bold;color:#aaa">Load: ${t.load.toFixed(2)}</div>`
+        : `<div class="value" style="color:#666">—</div>${bar(0, '')}<div class="hint" style="color:#555">unavailable</div>`}
+      </div>
     `;
   } catch(e) {}
 }

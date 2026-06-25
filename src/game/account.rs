@@ -66,6 +66,7 @@ pub struct AccountScreen {
     password:         Keyboard,
     confirm_password: Keyboard,
     error:            String,
+    cursor:           usize,  // 0 = LOG IN, 1 = NEW ACCOUNT
 }
 
 impl AccountScreen {
@@ -77,6 +78,7 @@ impl AccountScreen {
             password:         Keyboard::new(32),
             confirm_password: Keyboard::new(32),
             error:            String::new(),
+            cursor:           0,
         }
     }
 
@@ -86,13 +88,11 @@ impl AccountScreen {
                 if input.just_pressed(Button::Start) || input.just_pressed(Button::B) {
                     return Some(AccountAction::Back);
                 }
-                if input.just_pressed(Button::A) {
-                    self.is_register = false;
-                    self.error.clear();
-                    self.screen = LoginScreen::Username;
+                if input.just_pressed(Button::Up) || input.just_pressed(Button::Down) {
+                    self.cursor = 1 - self.cursor;
                 }
-                if input.just_pressed(Button::Y) {
-                    self.is_register = true;
+                if input.just_pressed(Button::A) {
+                    self.is_register = self.cursor == 1;
                     self.error.clear();
                     self.screen = LoginScreen::Username;
                 }
@@ -237,19 +237,21 @@ impl AccountScreen {
             LoginScreen::Choice => {
                 let item_h  = 36i32;
                 let start_y = sh/2 - item_h;
-                let items: &[(&str, &str, Bgra)] = &[
-                    ("A", "LOG IN",      Bgra::new(80, 200, 80)),
-                    ("Y", "NEW ACCOUNT", Bgra::new(100, 160, 255)),
+                let items: &[(&str, Bgra)] = &[
+                    ("LOG IN",      Bgra::new(80, 200, 80)),
+                    ("NEW ACCOUNT", Bgra::new(100, 160, 255)),
                 ];
-                for (i, (btn, label, col)) in items.iter().enumerate() {
+                for (i, (label, col)) in items.iter().enumerate() {
                     let iy = start_y + i as i32 * item_h;
                     let iw = str_width_scaled(label, 2);
                     let ix = cam_x + sw/2 - iw/2;
-                    draw_menu_selection(buf, cam_x + sw/2 - 140, iy - 4, 280, 28);
-                    draw_str_shadow_scaled(buf, btn,   cam_x + sw/2 - 130, iy, *col, 2);
-                    draw_str_shadow_scaled(buf, label, ix, iy, *col, 2);
+                    if i == self.cursor {
+                        draw_menu_selection(buf, cam_x + sw/2 - 140, iy - 4, 280, 28);
+                    }
+                    let text_col = if i == self.cursor { *col } else { Bgra::new(100, 100, 120) };
+                    draw_str_shadow_scaled(buf, label, ix, iy, text_col, 2);
                 }
-                draw_button_hints(buf, &[("A", "LOG IN"), ("Y", "NEW ACCOUNT"), ("B", "BACK")], cam_x);
+                draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], cam_x);
             }
             LoginScreen::Username => {
                 self.username.draw(buf, cam_x);
