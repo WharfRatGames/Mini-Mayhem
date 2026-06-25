@@ -4897,10 +4897,8 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             // on the terrain there. Also knock the hit soldier back.
                             let sw = crate::renderer::draw_sprites::SOLDIER_W as i32;
                             let sh = crate::renderer::draw_sprites::SOLDIER_H as i32;
-                            // Find the soldier we landed on.
+                            // Find the soldier we landed on (need their x to pick slide direction).
                             let mut other_cx = cx;
-                            let mut other_ti = usize::MAX;
-                            let mut other_si = usize::MAX;
                             'find_other: for (oti, oteam) in game.teams.iter().enumerate() {
                                 for (osi, os) in oteam.soldiers.iter().enumerate() {
                                     if (oti == ti && osi == si) || !os.is_alive() { continue; }
@@ -4908,26 +4906,9 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                     let oy = os.pos.y as i32;
                                     if (ix - ox).abs() < sw && iy >= oy - sh && iy <= oy + 1 {
                                         other_cx = os.pos.x;
-                                        other_ti = oti;
-                                        other_si = osi;
                                         break 'find_other;
                                     }
                                 }
-                            }
-                            // Knock the hit soldier back proportional to incoming speed.
-                            if other_ti != usize::MAX {
-                                let spd = (vel.x * vel.x + vel.y * vel.y).sqrt();
-                                let kb_x = if cx >= other_cx { -1.0 } else { 1.0 } * (spd * 0.35).min(6.0).max(1.5);
-                                let kb_y = -(spd * 0.25).min(5.0).max(1.0);
-                                let grounded = !matches!(game.teams[other_ti].soldiers[other_si].state, SoldierState::Airborne { .. });
-                                if grounded {
-                                    let oy = game.teams[other_ti].soldiers[other_si].pos.y;
-                                    game.teams[other_ti].soldiers[other_si].fall.begin_fall(oy);
-                                }
-                                game.teams[other_ti].soldiers[other_si].state = SoldierState::Airborne {
-                                    vel: crate::world::Vec2::new(kb_x, kb_y),
-                                    spinning: false,
-                                };
                             }
                             let dir = if cx >= other_cx { 1.0 } else { -1.0 };
                             // Step sideways until clear of every other living soldier.

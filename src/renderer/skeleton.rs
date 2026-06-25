@@ -208,7 +208,7 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
             6  => 11,
             7  => 13,
             8  => 16,
-            9  => 8,
+            9  => 5,
             10 => 12,
             11 => 15,
             12 => 12,
@@ -279,8 +279,10 @@ fn draw_hat(buf: &mut WorldBuffer, cx: i32, cy: i32, hat_id: u8, wind: f32, tick
             43 => 0.65,
             _  => 1.0,
         };
+        // Horizontal content-offset correction: positive = shift right when facing right.
+        // Negated for left-facing so the correction always tracks with the sprite flip.
         let dx: i32 = match hat_id {
-            9 => -1, // devil horns: content 1px right of sprite center
+            9 => if facing >= 0.0 { -2 } else { 2 }, // devil horns: content slightly right of center
             _  => 0,
         };
         ((base_w as f32 * scale) as i32, (base_h as f32 * scale) as i32, anchor, dy, dx)

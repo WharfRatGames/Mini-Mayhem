@@ -45,7 +45,7 @@ impl WeaponKind {
             Self::Grenade        => 30.0,
             Self::Shotgun        => 12.0,
             Self::ClusterBomb    => 20.0,
-            Self::Landmine       => 43.0,
+            Self::Landmine       => 55.0,
             Self::Tnt            => 75.0,   // 2.5× grenade
             Self::HolyHandGrenade => 80.0,
             Self::AirStrike      => 45.0,

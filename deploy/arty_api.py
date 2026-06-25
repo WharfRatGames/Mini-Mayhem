@@ -1,6 +1,150 @@
 #!/usr/bin/env python3
 import socket, sqlite3, hashlib, json, time, os, random, string, threading, math, subprocess, secrets, urllib.request
 PORT = 7778
+
+# ── Background-cached dashboard data — handlers return instantly ───────────────
+# Each cache is rebuilt by a daemon thread on its own SQLite connection so the
+# main request-handler connection is never blocked by dashboard polling.
+
+_status_cached  = None   # /admin/status  — rebuilt every 30s
+_temp_cached    = None   # /admin/temp    — rebuilt every 5s
+_lobbies_cached = None   # /admin/lobbies — rebuilt every 5s
+
+def _status_refresh_loop():
+    global _status_cached
+    while True:
+        try:
+            db2 = sqlite3.connect(DB)
+            total_users   = db2.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            active_today  = db2.execute("SELECT COUNT(DISTINCT p0) + COUNT(DISTINCT p1) FROM matches WHERE done=1 AND finished_at > ?", (int(time.time()) - 86400,)).fetchone()[0]
+            total_matches = db2.execute("SELECT COUNT(*) FROM matches WHERE done=1").fetchone()[0]
+            active_tat    = db2.execute("SELECT COUNT(*) FROM matches WHERE done=0").fetchone()[0]
+            recent = db2.execute("""
+                SELECT u0.username, u1.username, m.ranked, m.winner, m.finished_at
+                FROM matches m
+                LEFT JOIN users u0 ON u0.id=m.p0
+                LEFT JOIN users u1 ON u1.id=m.p1
+                WHERE m.done=1 ORDER BY m.finished_at DESC LIMIT 10
+            """).fetchall()
+            recent_list = [{"p0": r[0] or "?", "p1": r[1] or "?", "ranked": bool(r[2]),
+                            "winner": r[3], "finished_at": r[4]} for r in recent]
+            live_queue_count   = db2.execute("SELECT COUNT(*) FROM live_queue WHERE paired_with IS NULL").fetchone()[0]
+            ranked_queue_count = db2.execute("SELECT COUNT(*) FROM ranked_pool WHERE match_id IS NULL").fetchone()[0]
+            top5 = db2.execute("SELECT username, elo FROM users ORDER BY elo DESC LIMIT 5").fetchall()
+            db2.close()
+            # CPU
+            try:
+                s1 = open("/proc/stat").readline().split()
+                time.sleep(0.5)
+                s2 = open("/proc/stat").readline().split()
+                idle1, total1 = int(s1[4]), sum(int(x) for x in s1[1:])
+                idle2, total2 = int(s2[4]), sum(int(x) for x in s2[1:])
+                cpu = round(100.0 * (1 - (idle2 - idle1) / (total2 - total1)), 1)
+            except Exception:
+                cpu = None
+            # Memory
+            try:
+                mi = {k.strip(): v.strip() for k, _, v in
+                      (l.partition(':') for l in open("/proc/meminfo"))}
+                mem_total = int(mi["MemTotal"].split()[0]) // 1024
+                mem_used  = mem_total - int(mi["MemAvailable"].split()[0]) // 1024
+            except Exception:
+                mem_used = mem_total = None
+            # Disk
+            try:
+                df = subprocess.check_output(["df","-m","--output=used,size","/"]).decode().splitlines()[1].split()
+                disk_used, disk_total = int(df[0]), int(df[1])
+            except Exception:
+                disk_used = disk_total = None
+            _status_cached = {
+                "total_users": total_users,
+                "active_today": active_today,
+                "total_matches": total_matches,
+                "active_tat_matches": active_tat,
+                "live_queue": live_queue_count,
+                "ranked_queue": ranked_queue_count,
+                "recent_matches": recent_list,
+                "top5": [{"username": r[0], "elo": r[1]} for r in top5],
+                "cpu_percent": cpu,
+                "mem_used_mb": mem_used,
+                "mem_total_mb": mem_total,
+                "disk_used_mb": disk_used,
+                "disk_total_mb": disk_total,
+                "server_time": int(time.time()),
+            }
+        except Exception:
+            pass
+        time.sleep(29.5)  # 30s total including the 0.5s CPU sample
+
+def _temp_refresh_loop():
+    global _temp_cached
+    while True:
+        try:
+            line = subprocess.check_output(["tail", "-1", "/mnt/ramdisk/temp_memory.log"], text=True).strip()
+            temp = float(line.split("Temp:")[1].split("°")[0].strip())
+            load = float(line.split("Load:")[1].strip())
+            _temp_cached = {"temp_c": temp, "load": load}
+        except Exception:
+            _temp_cached = None
+        time.sleep(5)
+
+def _lobbies_refresh_loop():
+    global _lobbies_cached
+    while True:
+        try:
+            now = int(time.time())
+            db2 = sqlite3.connect(DB)
+            live_games = db2.execute("""
+                SELECT lq.user_id, u1.username, lq.elo,
+                       lq.paired_with, u2.username, lq2.elo,
+                       lq.game_token, lq.joined_at
+                FROM live_queue lq
+                JOIN users u1 ON u1.id = lq.user_id
+                JOIN users u2 ON u2.id = lq.paired_with
+                JOIN live_queue lq2 ON lq2.user_id = lq.paired_with
+                WHERE lq.paired_with IS NOT NULL AND lq.user_id < lq.paired_with
+            """).fetchall()
+            live_waiting = db2.execute("""
+                SELECT lq.user_id, u.username, lq.elo, lq.joined_at
+                FROM live_queue lq JOIN users u ON u.id=lq.user_id
+                WHERE lq.paired_with IS NULL
+            """).fetchall()
+            tat_ranked_waiting = db2.execute("""
+                SELECT rp.user_id, u.username, rp.elo, rp.joined_at
+                FROM ranked_pool rp JOIN users u ON u.id=rp.user_id
+                WHERE rp.match_id IS NULL AND rp.joined_at > ?
+            """, (now - 300,)).fetchall()
+            tat_active = db2.execute("""
+                SELECT m.id, u0.username, m.p0, u1.username, m.p1,
+                       m.ranked, m.turn, m.turn_started_at, m.turn_timeout,
+                       m.p0_kills, m.p0_deaths, m.p1_kills, m.p1_deaths
+                FROM matches m
+                LEFT JOIN users u0 ON u0.id=m.p0
+                LEFT JOIN users u1 ON u1.id=m.p1
+                WHERE m.done=0
+                ORDER BY m.id DESC
+            """).fetchall()
+            db2.close()
+            _lobbies_cached = {
+                "live_games": [{"p0":r[1],"p0_id":r[0],"p0_elo":r[2],
+                                "p1":r[4],"p1_id":r[3],"p1_elo":r[5],
+                                "port":r[6],"joined_at":r[7]} for r in live_games],
+                "live_waiting": [{"username":r[1],"user_id":r[0],"elo":r[2],"joined_at":r[3]} for r in live_waiting],
+                "tat_ranked_waiting": [{"username":r[1],"user_id":r[0],"elo":r[2],"joined_at":r[3]} for r in tat_ranked_waiting],
+                "tat_active": [{"id":r[0],"p0":r[1],"p0_id":r[2],"p1":r[3],"p1_id":r[4],
+                                "ranked":bool(r[5]),"turn":r[6],"turn_started_at":r[7],
+                                "turn_deadline": (r[7] or 0) + (r[8] or 0),
+                                "whose_turn": r[1] if r[6] % 2 == 0 else r[3],
+                                "p0_kills":r[9],"p0_deaths":r[10],
+                                "p1_kills":r[11],"p1_deaths":r[12]} for r in tat_active],
+            }
+        except Exception:
+            pass
+        time.sleep(5)
+
+threading.Thread(target=_status_refresh_loop,  daemon=True).start()
+threading.Thread(target=_temp_refresh_loop,    daemon=True).start()
+threading.Thread(target=_lobbies_refresh_loop, daemon=True).start()
 DB = os.path.expanduser("~/mayhem-server/arty.db")
 _key_file = os.path.expanduser("~/mayhem-server/admin_key.txt")
 ADMIN_KEY = open(_key_file).read().strip() if os.path.exists(_key_file) else os.environ.get("ARTY_ADMIN_KEY", "changeme")
@@ -1267,67 +1411,7 @@ def _handle(db, sock, peer_ip="?"):
 
     elif method == "GET" and path == "/admin/status":
         if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
-        import urllib.parse as _up2
-        # Users
-        total_users   = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        active_today  = db.execute("SELECT COUNT(DISTINCT p0) + COUNT(DISTINCT p1) FROM matches WHERE done=1 AND finished_at > ?", (int(time.time()) - 86400,)).fetchone()[0]
-        # Matches
-        total_matches = db.execute("SELECT COUNT(*) FROM matches WHERE done=1").fetchone()[0]
-        active_tat    = db.execute("SELECT COUNT(*) FROM matches WHERE done=0").fetchone()[0]
-        recent = db.execute("""
-            SELECT u0.username, u1.username, m.ranked, m.winner, m.finished_at
-            FROM matches m
-            LEFT JOIN users u0 ON u0.id=m.p0
-            LEFT JOIN users u1 ON u1.id=m.p1
-            WHERE m.done=1 ORDER BY m.finished_at DESC LIMIT 10
-        """).fetchall()
-        recent_list = [{"p0": r[0] or "?", "p1": r[1] or "?", "ranked": bool(r[2]),
-                        "winner": r[3], "finished_at": r[4]} for r in recent]
-        # Queues
-        live_queue_count   = db.execute("SELECT COUNT(*) FROM live_queue WHERE paired_with IS NULL").fetchone()[0]
-        ranked_queue_count = db.execute("SELECT COUNT(*) FROM ranked_pool WHERE match_id IS NULL").fetchone()[0]
-        # Leaderboard top 5
-        top5 = db.execute(
-            "SELECT username, elo FROM users ORDER BY elo DESC LIMIT 5"
-        ).fetchall()
-        # System stats — read from /proc directly (no subprocess, no spike)
-        try:
-            s1 = open("/proc/stat").readline().split()
-            time.sleep(0.1)
-            s2 = open("/proc/stat").readline().split()
-            idle1, total1 = int(s1[4]), sum(int(x) for x in s1[1:])
-            idle2, total2 = int(s2[4]), sum(int(x) for x in s2[1:])
-            cpu = round(100.0 * (1 - (idle2 - idle1) / (total2 - total1)), 1)
-        except:
-            cpu = None
-        try:
-            mi = {k.strip(): v.strip() for k, _, v in
-                  (l.partition(':') for l in open("/proc/meminfo"))}
-            mem_total = int(mi["MemTotal"].split()[0]) // 1024
-            mem_used  = mem_total - int(mi["MemAvailable"].split()[0]) // 1024
-        except:
-            mem_used = mem_total = None
-        try:
-            df = subprocess.check_output(["df","-m","--output=used,size","/"]).decode().splitlines()[1].split()
-            disk_used, disk_total = int(df[0]), int(df[1])
-        except:
-            disk_used = disk_total = None
-        send_json(sock, 200, {
-            "total_users": total_users,
-            "active_today": active_today,
-            "total_matches": total_matches,
-            "active_tat_matches": active_tat,
-            "live_queue": live_queue_count,
-            "ranked_queue": ranked_queue_count,
-            "recent_matches": recent_list,
-            "top5": [{"username": r[0], "elo": r[1]} for r in top5],
-            "cpu_percent": cpu,
-            "mem_used_mb": mem_used,
-            "mem_total_mb": mem_total,
-            "disk_used_mb": disk_used,
-            "disk_total_mb": disk_total,
-            "server_time": int(time.time()),
-        })
+        send_json(sock, 200, _status_cached or {})
 
     elif method == "GET" and path == "/admin/users":
         if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
@@ -1348,54 +1432,7 @@ def _handle(db, sock, peer_ip="?"):
 
     elif method == "GET" and path == "/admin/lobbies":
         if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
-        now = int(time.time())
-        # Live games: paired rows (deduplicated by taking lower user_id per pair)
-        live_games = db.execute("""
-            SELECT lq.user_id, u1.username, lq.elo,
-                   lq.paired_with, u2.username, lq2.elo,
-                   lq.game_token, lq.joined_at
-            FROM live_queue lq
-            JOIN users u1 ON u1.id = lq.user_id
-            JOIN users u2 ON u2.id = lq.paired_with
-            JOIN live_queue lq2 ON lq2.user_id = lq.paired_with
-            WHERE lq.paired_with IS NOT NULL AND lq.user_id < lq.paired_with
-        """).fetchall()
-        # Waiting in live queue
-        live_waiting = db.execute("""
-            SELECT lq.user_id, u.username, lq.elo, lq.joined_at
-            FROM live_queue lq JOIN users u ON u.id=lq.user_id
-            WHERE lq.paired_with IS NULL
-        """).fetchall()
-        # Waiting in TAT ranked pool
-        tat_ranked_waiting = db.execute("""
-            SELECT rp.user_id, u.username, rp.elo, rp.joined_at
-            FROM ranked_pool rp JOIN users u ON u.id=rp.user_id
-            WHERE rp.match_id IS NULL AND rp.joined_at > ?
-        """, (now - 300,)).fetchall()
-        # Active TAT matches
-        tat_active = db.execute("""
-            SELECT m.id, u0.username, m.p0, u1.username, m.p1,
-                   m.ranked, m.turn, m.turn_started_at, m.turn_timeout,
-                   m.p0_kills, m.p0_deaths, m.p1_kills, m.p1_deaths
-            FROM matches m
-            LEFT JOIN users u0 ON u0.id=m.p0
-            LEFT JOIN users u1 ON u1.id=m.p1
-            WHERE m.done=0
-            ORDER BY m.id DESC
-        """).fetchall()
-        send_json(sock, 200, {
-            "live_games": [{"p0":r[1],"p0_id":r[0],"p0_elo":r[2],
-                            "p1":r[4],"p1_id":r[3],"p1_elo":r[5],
-                            "port":r[6],"joined_at":r[7]} for r in live_games],
-            "live_waiting": [{"username":r[1],"user_id":r[0],"elo":r[2],"joined_at":r[3]} for r in live_waiting],
-            "tat_ranked_waiting": [{"username":r[1],"user_id":r[0],"elo":r[2],"joined_at":r[3]} for r in tat_ranked_waiting],
-            "tat_active": [{"id":r[0],"p0":r[1],"p0_id":r[2],"p1":r[3],"p1_id":r[4],
-                            "ranked":bool(r[5]),"turn":r[6],"turn_started_at":r[7],
-                            "turn_deadline": (r[7] or 0) + (r[8] or 0),
-                            "whose_turn": r[1] if r[6] % 2 == 0 else r[3],
-                            "p0_kills":r[9],"p0_deaths":r[10],
-                            "p1_kills":r[11],"p1_deaths":r[12]} for r in tat_active],
-        })
+        send_json(sock, 200, _lobbies_cached or {})
 
     elif method == "GET" and path == "/admin/serverlog":
         if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
@@ -1425,14 +1462,10 @@ def _handle(db, sock, peer_ip="?"):
 
     elif method == "GET" and path == "/admin/temp":
         if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
-        try:
-            line = subprocess.check_output(["tail", "-1", "/mnt/ramdisk/temp_memory.log"], text=True).strip()
-            # "08:12:26 Temp: 46.7°C Load: 1.22"
-            temp = float(line.split("Temp:")[1].split("°")[0].strip())
-            load = float(line.split("Load:")[1].strip())
-            send_json(sock, 200, {"temp_c": temp, "load": load})
-        except Exception as e:
-            send_json(sock, 500, {"error": str(e)})
+        if _temp_cached is not None:
+            send_json(sock, 200, _temp_cached)
+        else:
+            send_json(sock, 500, {"error": "unavailable"})
 
     elif method == "GET" and path == "/admin/procs":
         if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
