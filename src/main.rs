@@ -272,12 +272,12 @@ fn main() {
         let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
         if let Ok((true, _)) = got {
             update_available = true;
-        } else if got == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
-            // Background thread still in flight after 500 ms — do a capped blocking wait.
-            // Disconnected means the thread already completed (result was Ok(false), consumed
-            // by the pre-title recv_timeout); don't spawn a redundant 2-second check in that case.
+        } else if matches!(got, Err(_)) {
+            // Timeout: thread still in flight. Disconnected: channel was dropped (skip_update
+            // path or thread already finished false). Either way, do a fresh blocking check —
+            // the skip_update fast-path should not suppress the MP version gate.
             let (ftx, frx) = std::sync::mpsc::channel::<bool>();
-            std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); }); // only need bool here
+            std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); });
             if let Ok(true) = frx.recv_timeout(std::time::Duration::from_millis(3000)) {
                 update_available = true;
             }
@@ -501,22 +501,10 @@ fn main() {
                     // Read server response: "OK\n" or "REJECTED:VERSION\n"
                     let resp = c.read_line_blocking();
                     if resp.trim() == "REJECTED:VERSION" {
-                        use renderer::Bgra;
-                        use renderer::font::{draw_str_scaled, str_width_scaled};
-                        use world::{SCREEN_W, SCREEN_H};
-                        let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
-                        loop {
-                            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-                            let l1 = "VERSION MISMATCH";
-                            let l2 = "UPDATE CLIENT  (B=BACK)";
-                            draw_str_scaled(&mut buf, l1, sw/2 - str_width_scaled(l1,2)/2, sh/2 - 20, Bgra::new(255,80,80), 2);
-                            draw_str_scaled(&mut buf, l2, sw/2 - str_width_scaled(l2,2)/2, sh/2 + 12, Bgra::new(255,210,50), 2);
-                            buf.blit_to_fb(&mut fb, 0);
-                            input.poll();
-                            if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::A) { break; }
-                            std::thread::sleep(std::time::Duration::from_millis(33));
-                        }
-                        break None;
+                        draw_msg(&mut buf, &mut fb, "UPDATE REQUIRED");
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        update_available = true;
+                        continue 'game;
                     }
                     break Some(c);
                 }

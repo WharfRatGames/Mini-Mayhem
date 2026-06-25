@@ -1,34 +1,110 @@
 use crate::renderer::{WorldBuffer, Framebuffer};
 
-// ── Desktop stubs — no OTA on desktop, update via git pull ───────────────────
-//
-// Returning true from prior_update_attempted() causes main() to skip the
-// update check entirely, so none of the other OTA functions are called.
-
-#[cfg(feature = "desktop")]
+// ── Linux desktop stubs — no OTA, update via git pull ────────────────────────
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
 pub fn prior_update_attempted() -> bool { true }
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
 pub fn sync_assets_bg(_version: &'static str) {}
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
 pub fn check_for_update(_current: &str) -> (bool, bool) { (false, false) }
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
 pub fn check_for_update_bg(_current: &'static str) -> std::thread::JoinHandle<(bool, bool)> {
     std::thread::spawn(|| (false, false))
 }
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
 pub fn fetch_changelog(_timeout_secs: u64) -> Option<Vec<String>> { None }
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
 pub fn stream_binary<F: FnMut(usize, usize)>(_on_progress: F) -> Option<Vec<u8>> { None }
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
 pub fn apply_binary(_binary: &[u8], _buf: &mut WorldBuffer, _fb: &mut Framebuffer) {}
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(target_os = "windows")))]
+pub fn download_and_apply(_buf: &mut WorldBuffer, _fb: &mut Framebuffer) {}
+
+// ── Windows OTA update ────────────────────────────────────────────────────────
+#[cfg(target_os = "windows")]
+const UPDATE_HOST: &str = "crumbonium.duckdns.org";
+
+#[cfg(target_os = "windows")]
+fn http_get_body(path: &str, timeout_secs: u64) -> Option<Vec<u8>> {
+    crate::https::https_get(UPDATE_HOST, path, timeout_secs, timeout_secs)
+        .ok()
+        .or_else(|| crate::https::http_get(UPDATE_HOST, path, timeout_secs, timeout_secs).ok())
+}
+
+#[cfg(target_os = "windows")]
+pub fn prior_update_attempted() -> bool { false }
+
+#[cfg(target_os = "windows")]
+pub fn sync_assets_bg(_version: &'static str) {}
+
+#[cfg(target_os = "windows")]
+pub fn check_for_update(current: &str) -> (bool, bool) {
+    let body = match http_get_body("/arty/version.txt", 3) {
+        Some(b) => b,
+        None => return (false, false),
+    };
+    let server_ver = String::from_utf8_lossy(&body).trim().to_string();
+    (server_ver != current, false)
+}
+
+#[cfg(target_os = "windows")]
+pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<(bool, bool)> {
+    std::thread::spawn(move || check_for_update(current))
+}
+
+#[cfg(target_os = "windows")]
+pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
+    let body = http_get_body("/arty/changelog.txt", timeout_secs)?;
+    let lines: Vec<String> = String::from_utf8_lossy(&body)
+        .lines()
+        .map(|l| l.trim_end().to_string())
+        .filter(|l| !l.trim().is_empty())
+        .take(5)
+        .collect();
+    if lines.is_empty() { None } else { Some(lines) }
+}
+
+#[cfg(target_os = "windows")]
+pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u8>> {
+    use std::io::Write;
+    let body = http_get_body("/arty/mini-mayhem.exe", 120)?;
+    // Must start with MZ (PE header)
+    if body.len() < 2 || body[0] != b'M' || body[1] != b'Z' { return None; }
+    on_progress(body.len(), body.len());
+    let tmp = std::env::temp_dir().join("mini-mayhem.new.exe");
+    std::fs::File::create(&tmp).ok()?.write_all(&body).ok()?;
+    // Sentinel value — actual file is on disk
+    Some(b"MZ_ONDISK".to_vec())
+}
+
+#[cfg(target_os = "windows")]
+pub fn apply_binary(_binary: &[u8], _buf: &mut WorldBuffer, _fb: &mut Framebuffer) {
+    let dest = std::env::current_exe()
+        .unwrap_or_else(|_| std::path::PathBuf::from("mini-mayhem.exe"));
+    let dest_str = dest.to_str().unwrap_or("mini-mayhem.exe");
+    let tmp = std::env::temp_dir().join("mini-mayhem.new.exe");
+    let tmp_str = tmp.to_str().unwrap_or("mini-mayhem.new.exe");
+    // Write a .bat that waits for this process to exit, swaps the exe, relaunches.
+    let bat = format!(
+        "@echo off\r\ntimeout /t 2 /nobreak >nul\r\ncopy /y \"{tmp}\" \"{dest}\" >nul\r\ndel \"{tmp}\" >nul\r\nstart \"\" \"{dest}\"\r\n",
+        tmp = tmp_str, dest = dest_str
+    );
+    let bat_path = std::env::temp_dir().join("mini-mayhem-update.bat");
+    if std::fs::write(&bat_path, bat.as_bytes()).is_err() { return; }
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", "start", "/B", bat_path.to_str().unwrap_or("")])
+        .spawn();
+    std::process::exit(0);
+}
+
+#[cfg(target_os = "windows")]
 pub fn download_and_apply(_buf: &mut WorldBuffer, _fb: &mut Framebuffer) {}
 
 // ── Miyoo implementation ──────────────────────────────────────────────────────

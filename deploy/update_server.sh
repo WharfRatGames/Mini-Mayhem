@@ -169,6 +169,9 @@ NOTES=$(head -1 deploy/changelog.txt 2>/dev/null || echo "v$VERSION")
 WIN_EXE="target/x86_64-pc-windows-gnu/release/mini-mayhem.exe"
 WIN_ARGS=""
 if [ -f "$WIN_EXE" ]; then
+    # Serve raw exe for OTA self-update
+    scp "$WIN_EXE" arty-pi:/var/www/html/arty/mini-mayhem.exe
+    echo "Windows OTA binary deployed"
     WIN_STAGE=$(mktemp -d)
     mkdir -p "$WIN_STAGE/MiniMayhemWindows"
     cp "$WIN_EXE" "$WIN_STAGE/MiniMayhemWindows/"
