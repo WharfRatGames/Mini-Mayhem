@@ -157,12 +157,15 @@ pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<(bo
 /// tls_broken=true means HTTPS failed and we fell back to HTTP — force the update, no skip.
 #[cfg(not(feature = "desktop"))]
 pub fn check_for_update(current: &str) -> (bool, bool) {
-    let (body, tls_broken) = match http_get_body("/arty/version.txt", 6) {
-        Some(x) => x,
-        None => return (false, false),
+    // Version check uses HTTP-only: the file is non-sensitive, TLS adds a full
+    // handshake RTT, and the HTTPS→HTTP fallback doubled the worst-case wait.
+    // HTTP with a short timeout fails fast when offline (~3s vs ~12s before).
+    let body = match crate::https::http_get(UPDATE_HOST, "/arty/version.txt", 3, 3) {
+        Ok(b) => b,
+        Err(_) => return (false, false),
     };
     let server_ver = String::from_utf8_lossy(&body).trim().to_string();
-    (server_ver != current, tls_broken)
+    (server_ver != current, false)
 }
 
 #[cfg(not(feature = "desktop"))]
