@@ -146,8 +146,10 @@ fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
     let mut v = vec![
         (WeaponKind::Bazooka,  None),    // infinite
         (WeaponKind::Grenade,  None),    // infinite
-        (WeaponKind::Shotgun,  Some(2)), // 2 shots
-        (WeaponKind::NinjaRope, Some(3)), // 3 uses; utility tool, doesn't end turn
+        (WeaponKind::Shotgun,  None),    // infinite
+        (WeaponKind::NinjaRope, None),   // infinite; utility tool, doesn't end turn
+        (WeaponKind::Uzi,      Some(2)), // 2 uses (MAC-10)
+        (WeaponKind::MolotovCocktail, None), // infinite
         (WeaponKind::Tnt,          Some(1)), // 1 use; locked until 5 rotations
         (WeaponKind::Landmine,     Some(2)), // 2 uses
         (WeaponKind::BaseballBat,  Some(1)), // 1 use; locked until 3 full cycles
@@ -265,8 +267,11 @@ mod tests {
         let t = team();
         assert_eq!(t.weapons[0], (WeaponKind::Bazooka, None));   // infinite
         assert_eq!(t.weapons[1], (WeaponKind::Grenade, None));   // infinite
-        assert_eq!(t.weapons[2], (WeaponKind::Shotgun, Some(2)));
-        assert_eq!(t.weapons.len(), 8);
+        assert_eq!(t.weapons[2], (WeaponKind::Shotgun, None));   // infinite
+        assert_eq!(t.weapons[5], (WeaponKind::NinjaRope, None)); // infinite
+        assert_eq!(t.weapons[8], (WeaponKind::Uzi, Some(2)));           // MAC-10 x2
+        assert_eq!(t.weapons[9], (WeaponKind::MolotovCocktail, None));  // infinite
+        assert_eq!(t.weapons.len(), 11);
         assert_eq!(t.selected_weapon, 0);
         assert_eq!(t.current_weapon(), WeaponKind::Bazooka);
     }
@@ -281,11 +286,11 @@ mod tests {
     #[test]
     fn consume_limited_weapon_decrements_then_fails() {
         let mut t = team();
-        t.selected_weapon = 2; // Shotgun x2
+        t.selected_weapon = 8; // Uzi (MAC-10) x2
         assert!(t.consume_weapon());
-        assert_eq!(t.weapons[2].1, Some(1));
+        assert_eq!(t.weapons[8].1, Some(1));
         assert!(t.consume_weapon());
-        assert_eq!(t.weapons[2].1, Some(0));
+        assert_eq!(t.weapons[8].1, Some(0));
         assert!(!t.consume_weapon()); // out of ammo
     }
 
@@ -300,21 +305,21 @@ mod tests {
     #[test]
     fn add_weapon_existing_tops_up_ammo() {
         let mut t = team();
-        t.add_weapon(WeaponKind::Shotgun, Some(3)); // starts at 2
-        assert_eq!(t.weapons[2].1, Some(5));
+        t.add_weapon(WeaponKind::Uzi, Some(3)); // starts at 2
+        assert_eq!(t.weapons[8].1, Some(5));
     }
 
     #[test]
     fn add_weapon_upgrades_to_infinite() {
         let mut t = team();
-        t.add_weapon(WeaponKind::Shotgun, None);
-        assert_eq!(t.weapons[2].1, None);
+        t.add_weapon(WeaponKind::Uzi, None);
+        assert_eq!(t.weapons[8].1, None);
     }
 
     #[test]
     fn prune_empty_weapons_drops_zero_ammo() {
         let mut t = team();
-        t.selected_weapon = 2; // Shotgun x2
+        t.selected_weapon = 8; // Uzi (MAC-10) x2
         t.consume_weapon();
         t.consume_weapon(); // now Some(0)
         let before = t.weapons.len();

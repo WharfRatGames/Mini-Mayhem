@@ -1,7 +1,51 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.237
+## Version: 0.5.4.364
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.361–0.5.4.364)
+- **Account login screen cursor (0.5.4.361)** — replaced fixed A=Login / Y=Register
+  button hints with an Up/Down cursor menu; A confirms selection. Uses
+  `draw_menu_selection` highlight.
+- **Windows OTA auto-update (0.5.4.362)** — `updater.rs` split into Linux and Windows
+  paths. Windows: fetches `/arty/version.txt`, downloads `mini-mayhem.exe` to `%TEMP%`,
+  writes a `.bat` swap-and-relaunch (can't replace running .exe on Windows), spawns
+  `cmd /C start /B`, then exits. `deploy/update_server.sh` now SCPs Windows exe to Pi.
+- **MP update gate freeze fix (0.5.4.362 + 0.5.4.364)** — after OTA, sentinel →
+  `skip_update=true` → `update_rx` channel Disconnected → was always hitting the 1.5s
+  fallback check on every MP entry. Fixed by `&& !skip_update` guard on the gate.
+- **Airborne knockback removed (0.5.4.363)** — soldiers landing on others now slide
+  off sideways without launching the target (velocity-proportional launch removed).
+- **Landmine size up (0.5.4.363)** — blast radius 43→55, proximity trigger 25→35.
+- **Horn hat position fixed (0.5.4.363)** — dy 8→5 (raised 3px); dx now
+  facing-aware (-2 right / +2 left) instead of fixed -1.
+- **Admin dashboard API caching (0.5.4.364)** — three background cache threads in
+  `arty_api.py` (status 30s, temp 5s, lobbies 5s). Handlers return cached dict instantly.
+  SQLite WAL mode + timeout=2 on background connections eliminates live-mode latency.
+- **IRC #lobby AutoJoin (0.5.4.364)** — ngircd `[Channel]` block `AutoJoin=yes` puts
+  all IRC clients in #lobby on connect.
+- **Dashboard polish (0.5.4.364)** — log scrolls to top on first open; temperature card
+  always shown; sys-stats poll 5s→2s.
+- **Terrain height variation** — more dramatic hills and valleys: amplitude scale
+  0.528→0.62, o2 (ridges) weight 0.30→0.35, o3 (roughness) 0.10→0.15; valleys
+  increased to 2-4 (was 1-2), depth 0.40-0.60 (was fixed 0.45); hill bumps 6-12
+  (was 4-8), wider range; `TERRAIN_MIN_Y` 160→140 for taller peaks.
+- **Update check before splash** — update thread result is consumed before the
+  splash screen renders (was after 5s splash). Splash shortened to 3s. Preload
+  threads still run in parallel during the update-check wait.
+- **Loadout changes** — Shotgun and Ninja Rope are now infinite ammo; MAC-10 added
+  to starting loadout with 2 uses (`WeaponKind::Uzi`).
+- **IRC ChanServ channel registration** — all four channels (#lobby, #General-Chat,
+  #dicerpg, #zpg) registered with Anope ChanServ; Crumbo auto-opped on all channels
+  via `FLAGS` +AOPf. Workaround required temporary Services Root oper block so
+  CrumboBot could use `OperServ MODE` to self-op before registering, then reverted.
+- **Trivia bot (BenBot) improvements** — 3-second wrong-answer timeout added with
+  immediate channel message on first wrong attempt; A/B/C/D multiple-choice display
+  restored (was overwritten during edits, recovered from Pi backup image via `debugfs`).
+  Question database expanded from 448 → 3,649 questions across 5 categories:
+  General Knowledge, Video Games, Science & Nature, Television, Music
+  (fetched from OpenTrivia DB via session-token paged requests; backup at
+  `local/questions.txt.bak`).
 
 ## Recent changes (0.5.4.237) — live-mode parity infrastructure
 - **`emit_fx` FX channel** — cosmetic particle bursts (explosion fallout, footstep/

@@ -22,6 +22,7 @@ const AI_USABLE_WEAPONS: &[WeaponKind] = &[
     WeaponKind::BananaBomb,
     WeaponKind::Blasthive,
     WeaponKind::BlackHoleBomb,
+    WeaponKind::MolotovCocktail,
 ];
 
 impl CpuState {

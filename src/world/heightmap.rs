@@ -31,10 +31,9 @@ impl Heightmap {
         let mut heights: Vec<f64> = (0..WORLD_W)
             .map(|x| {
                 let nx = x as f64 / WORLD_W as f64;
-                let o1 = perlin.get([nx * 2.2, 0.0, seed as f64 * 0.001]) * 0.65;
-                let o2 = perlin.get([nx * 5.5, 1.5, seed as f64 * 0.001]) * 0.30;
-                // Reduced high-frequency octaves to avoid narrow trapping gaps
-                let o3 = perlin.get([nx * 13.0, 3.0, seed as f64 * 0.001]) * 0.10;
+                let o1 = perlin.get([nx * 2.2, 0.0, seed as f64 * 0.001]) * 0.55;
+                let o2 = perlin.get([nx * 5.5, 1.5, seed as f64 * 0.001]) * 0.35;
+                let o3 = perlin.get([nx * 13.0, 3.0, seed as f64 * 0.001]) * 0.15;
                 let o4 = perlin.get([nx * 28.0, 5.0, seed as f64 * 0.001]) * 0.03;
                 o1 + o2 + o3 + o4
             })
@@ -57,26 +56,27 @@ impl Heightmap {
             }
         }
 
-        // Pass 3: valley punching — wider valleys, fewer narrow traps
-        let n_valleys = 1 + (lcg(&mut rng) % 2) as usize; // 1-2 valleys (was 1-3)
+        // Pass 3: valley punching — wide varied valleys
+        let n_valleys = 2 + (lcg(&mut rng) % 3) as usize; // 2-4 valleys
         for _ in 0..n_valleys {
             let cx   = (lcg(&mut rng) % WORLD_W as u64) as usize;
-            let w    = 100 + (lcg(&mut rng) % 120) as usize; // wider (was 40-120)
+            let w    = 80 + (lcg(&mut rng) % 160) as usize;
             let half = w / 2;
+            let depth = 0.40 + (lcg(&mut rng) % 100) as f64 / 500.0; // 0.40-0.60
             let x0   = cx.saturating_sub(half);
             let x1   = (cx + half).min(WORLD_W as usize - 1);
             for x in x0..=x1 {
                 let d = (x as isize - cx as isize).abs() as f64 / half as f64;
-                heights[x] -= 0.45 * (1.0 - d * d); // shallower (was 0.55)
+                heights[x] -= depth * (1.0 - d * d);
             }
         }
 
         // Pass 4: hill bumps
-        let n_bumps = 4 + (lcg(&mut rng) % 5) as usize;
+        let n_bumps = 6 + (lcg(&mut rng) % 7) as usize; // 6-12 bumps
         for _ in 0..n_bumps {
             let cx    = (lcg(&mut rng) % WORLD_W as u64) as usize;
-            let height = 0.2 + (lcg(&mut rng) % 100) as f64 / 200.0;
-            let w2    = 30 + (lcg(&mut rng) % 100) as usize;
+            let height = 0.20 + (lcg(&mut rng) % 100) as f64 / 180.0; // taller range
+            let w2    = 40 + (lcg(&mut rng) % 120) as usize; // wider variety
             let half2 = w2 / 2;
             let x0b = cx.saturating_sub(half2);
             let x1b = (cx + half2).min(WORLD_W as usize - 1);
@@ -86,10 +86,10 @@ impl Heightmap {
             }
         }
 
-        // Map to Y coords
+        // Map to Y coords — increased amplitude for more dramatic height variation
         let mut surface_y: Vec<u32> = heights.iter()
             .map(|&h| {
-                let y = mid_y + h * terrain_range * 0.528;
+                let y = mid_y + h * terrain_range * 0.62;
                 (y.round() as u32).clamp(TERRAIN_MIN_Y, TERRAIN_MAX_Y)
             })
             .collect();

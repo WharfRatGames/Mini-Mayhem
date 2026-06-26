@@ -79,19 +79,9 @@ fn main() {
 
     updater::sync_assets_bg(VERSION);
 
-    // Splash screen: show wharf.jpg while preloading SFX and warming texture atlas.
+    // Preload SFX and warm texture atlas in background (overlaps update check wait).
     std::thread::spawn(audio::preload);
     std::thread::spawn(|| { crate::renderer::terrain_textures::tile(0); });
-    renderer::splash::draw_splash(&mut buf);
-    buf.blit_to_fb(&mut fb, 0);
-    {
-        let splash_start = Instant::now();
-        while splash_start.elapsed() < std::time::Duration::from_secs(5) {
-            input.poll();
-            if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) { break; }
-            std::thread::sleep(TICK_DURATION);
-        }
-    }
 
     // After a live game ends, return to the MP submenu rather than full title.
     let mut return_to_mp = false;
@@ -112,12 +102,11 @@ fn main() {
     // Cached result from the background update-check thread.
     let mut update_available = false;
 
-    // ── Pre-title update check ───────────────────────────────────────────────
-    // Wait briefly for the background check before showing the title.
-    // If an update is found, show the patch notes screen (A=install, B=skip).
-    // Skipping keeps update_available=true so online modes will still gate on it.
+    // ── Update check (before splash) ────────────────────────────────────────
+    // Wait for the background check to complete, then show the update screen
+    // if needed — all before the splash so the player sees it immediately.
     if !skip_update {
-        if let Ok((true, tls_broken)) = update_rx.recv_timeout(std::time::Duration::from_millis(2500)) {
+        if let Ok((true, tls_broken)) = update_rx.recv_timeout(std::time::Duration::from_millis(3000)) {
             update_available = true;
             use renderer::Bgra;
             use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
@@ -177,6 +166,18 @@ fn main() {
                 buf.blit_to_fb(&mut fb, 0);
                 std::thread::sleep(TICK_DURATION);
             }
+        }
+    }
+
+    // Splash screen: show wharf.jpg briefly before going to the title.
+    renderer::splash::draw_splash(&mut buf);
+    buf.blit_to_fb(&mut fb, 0);
+    {
+        let splash_start = Instant::now();
+        while splash_start.elapsed() < std::time::Duration::from_secs(3) {
+            input.poll();
+            if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) { break; }
+            std::thread::sleep(TICK_DURATION);
         }
     }
 

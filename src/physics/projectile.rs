@@ -35,6 +35,7 @@ pub enum WeaponKind {
     PlasmaTorch,
     Garcia,
     Uzi,
+    MolotovCocktail,
 }
 
 impl WeaponKind {
@@ -67,6 +68,7 @@ impl WeaponKind {
             Self::BlackHoleBomb    => 0.0,    // no crater; gravity well handles range
             Self::PlasmaTorch      => 0.0,    // tunnels terrain; no blast
             Self::Garcia           => 55.0,
+            Self::MolotovCocktail  => 20.0,   // small shattering blast; fire does the work
         }
     }
 
@@ -99,6 +101,7 @@ impl WeaponKind {
             Self::BlackHoleBomb    => 35,    // collapse burst damage
             Self::PlasmaTorch      => 0,     // no explosion
             Self::Garcia           => 45,
+            Self::MolotovCocktail  => 20,    // direct-impact damage; fire patches do the rest
         }
     }
 
@@ -124,6 +127,7 @@ impl WeaponKind {
             Self::BlackHoleBomb  => 5.0,    // collapse burst knockback
             Self::PlasmaTorch    => 0.0,
             Self::Garcia         => 18.0,
+            Self::MolotovCocktail => 3.0,   // fire patches provide knockback; blast is minor
             _                    => 6.0,
         }
     }
@@ -173,6 +177,7 @@ impl WeaponKind {
             Self::BaseballBat     => 14,
             Self::PlasmaTorch     => 15,
             Self::Uzi             => 16,
+            Self::MolotovCocktail => 17,
             // Uncommon
             Self::Blasthive       => 20,
             Self::BananaBomb      => 21,
@@ -210,6 +215,7 @@ impl WeaponKind {
             Self::PlasmaTorch     => "PLASMA TORCH",
             Self::Garcia          => "HAND OF JERRY",
             Self::Uzi             => "MAC-10",
+            Self::MolotovCocktail => "MOLOTOV",
             _                     => "WEAPON",
         }
     }
@@ -247,6 +253,7 @@ impl WeaponKind {
             Self::ConcreteDonkey   => 23,
             Self::SuperSheep       => 24,
             Self::Uzi              => 25,
+            Self::MolotovCocktail  => 26,
         }
     }
 
@@ -277,6 +284,7 @@ impl WeaponKind {
             23 => Self::ConcreteDonkey,
             24 => Self::SuperSheep,
             25 => Self::Uzi,
+            26 => Self::MolotovCocktail,
             _  => Self::Bazooka,
         }
     }
@@ -296,7 +304,8 @@ impl WeaponKind {
             WeaponKind::DeathExplosion | WeaponKind::HolyHandGrenade | WeaponKind::Minigun |
             WeaponKind::FreezeGrenade | WeaponKind::Earthquake | WeaponKind::Drill |
             WeaponKind::HomingMissile | WeaponKind::MineLayer | WeaponKind::ConcreteDonkey |
-            WeaponKind::SuperSheep | WeaponKind::Uzi => k.to_net_u8()
+            WeaponKind::SuperSheep | WeaponKind::Uzi |
+            WeaponKind::MolotovCocktail => k.to_net_u8()
         }
     }
 
@@ -308,6 +317,7 @@ impl WeaponKind {
             self,
             Self::Bazooka
                 | Self::SuperSheep
+                | Self::MolotovCocktail
         )
     }
 }
@@ -628,6 +638,7 @@ mod tests {
             Blasthive, BlackHoleBomb, PlasmaTorch, Garcia, AirStrike,
             DeathExplosion, HolyHandGrenade, Minigun, FreezeGrenade,
             Earthquake, Drill, HomingMissile, MineLayer, ConcreteDonkey, SuperSheep, Uzi,
+            MolotovCocktail,
         ];
         for kind in all {
             assert_eq!(WeaponKind::from_net_u8(kind.to_net_u8()), kind,

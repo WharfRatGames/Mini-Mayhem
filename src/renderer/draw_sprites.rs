@@ -739,6 +739,60 @@ pub fn draw_grenade_projectile(buf: &mut WorldBuffer, pos: WorldPos) {
     let _ = ghi; // suppress unused warning
 }
 
+/// Draw a molotov cocktail in flight — amber bottle body with white rag at neck.
+pub fn draw_molotov_projectile(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::world::Vec2) {
+    let cx = pos.x as i32;
+    let cy = pos.y as i32;
+    // Tumble angle based on velocity direction
+    let speed = (vel.x * vel.x + vel.y * vel.y).sqrt();
+    let nx = if speed > 0.1 { vel.x / speed } else { 1.0 };
+    let ny = if speed > 0.1 { vel.y / speed } else { 0.0 };
+    let px = -ny; let py = nx; // perpendicular
+
+    let pt = |t: f32, p: f32| -> (i32, i32) {
+        ((cx as f32 + nx * t + px * p).round() as i32,
+         (cy as f32 + ny * t + py * p).round() as i32)
+    };
+
+    let glass_dark = Bgra::new(120,  70,  10); // dark amber
+    let glass_mid  = Bgra::new(185, 115,  20); // amber body
+    let glass_hi   = Bgra::new(230, 175,  60); // highlight
+    let neck_col   = Bgra::new(100,  55,   8); // darker neck
+    let rag_col    = Bgra::new(240, 235, 220); // off-white rag
+    let rag_dark   = Bgra::new(170, 160, 145); // rag shadow
+    let flame_col  = Bgra::new(255, 130,  20); // rag tip flame
+
+    // Bottle body (wide oval, -4..+4 along forward, ±3 perpendicular)
+    for t in -4i32..=4 {
+        let (bx, by) = pt(t as f32, 0.0);
+        let (lx, ly) = pt(t as f32, -2.5);
+        let (rx, ry) = pt(t as f32,  2.5);
+        buf.set_pixel(bx, by, glass_mid);
+        buf.set_pixel(lx, ly, glass_dark);
+        buf.set_pixel(rx, ry, glass_dark);
+    }
+    // Body highlight streak (one pixel off-center)
+    let (h0x, h0y) = pt(-3.0, -1.5); let (h1x, h1y) = pt(2.0, -1.5);
+    buf.draw_line(h0x, h0y, h1x, h1y, glass_hi);
+
+    // Neck (narrower, forward of body)
+    let (n0x, n0y) = pt(4.0, -1.0); let (n1x, n1y) = pt(7.0, -1.0);
+    buf.draw_line(n0x, n0y, n1x, n1y, neck_col);
+    let (n2x, n2y) = pt(4.0,  1.0); let (n3x, n3y) = pt(7.0,  1.0);
+    buf.draw_line(n2x, n2y, n3x, n3y, neck_col);
+    let (n4x, n4y) = pt(4.0, 0.0); let (n5x, n5y) = pt(7.0, 0.0);
+    buf.draw_line(n4x, n4y, n5x, n5y, glass_mid);
+
+    // Rag hanging out of neck (3 pixels of cloth, then flame tip)
+    let (r0x, r0y) = pt(7.0,  0.0); buf.set_pixel(r0x, r0y, rag_dark);
+    let (r1x, r1y) = pt(8.5, -0.5); buf.set_pixel(r1x, r1y, rag_col);
+    let (r2x, r2y) = pt(10.0, 0.0); buf.set_pixel(r2x, r2y, rag_col);
+    let (r3x, r3y) = pt(11.5,-0.5); buf.set_pixel(r3x, r3y, rag_dark);
+    // Flame tip
+    let (f0x, f0y) = pt(12.5, 0.0); buf.set_pixel(f0x, f0y, flame_col);
+    let (f1x, f1y) = pt(13.5,-0.5); buf.set_pixel(f1x, f1y, Bgra::new(255, 210, 80));
+}
+
 /// Draw the "?" thinking indicator above a CPU soldier.
 /// Bobs up and down based on `tick` for animation.
 pub fn draw_think_indicator(buf: &mut WorldBuffer, pos: WorldPos, tick: u32) {

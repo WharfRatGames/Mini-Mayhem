@@ -753,6 +753,7 @@ impl GameState {
         let mut meteor_impacts:     Vec<WorldPos> = Vec::new();
         let mut hive_impacts:       Vec<WorldPos> = Vec::new();
         let mut black_hole_spawns:  Vec<WorldPos> = Vec::new();
+        let mut molotov_impacts:    Vec<WorldPos> = Vec::new();
 
         // Collect alive soldier positions for collision (before borrow in retain_mut)
         let soldier_boxes: Vec<WorldPos> = self.teams.iter()
@@ -879,6 +880,8 @@ impl GameState {
                             } else if kind == WeaponKind::BlackHoleBomb {
                                 // Black hole bomb hits soldier: spawn well at impact position
                                 black_hole_spawns.push(proj.pos);
+                            } else if kind == WeaponKind::MolotovCocktail {
+                                molotov_impacts.push(proj.pos);
                             } else if kind == WeaponKind::BananaBomb && !proj.is_fragment {
                                 // Main meteor bomb hits a soldier directly: scatter the 5
                                 // burning fragments just like a terrain impact (was falling
@@ -935,7 +938,9 @@ impl GameState {
                 }
                 StepResult::Explode(pos) | StepResult::FuseExplode(pos) => {
                     // Main meteor bomb: intercept to spawn fragments instead of a normal blast
-                    if kind == WeaponKind::BananaBomb && !proj.is_fragment {
+                    if kind == WeaponKind::MolotovCocktail {
+                        molotov_impacts.push(pos);
+                    } else if kind == WeaponKind::BananaBomb && !proj.is_fragment {
                         meteor_impacts.push(pos);
                     } else if kind == WeaponKind::Blasthive && !proj.is_fragment {
                         hive_impacts.push(pos);
@@ -1020,6 +1025,11 @@ impl GameState {
         for pos in black_hole_spawns {
             self.emit_sound(crate::audio::Sfx::BlackHole);
             self.black_holes.push(BlackHole { pos, lifetime: 150 });
+        }
+
+        // Molotov cocktail: small blast + fire patches
+        for pos in molotov_impacts {
+            self.spawn_molotov_fire(pos);
         }
 
         resolved
@@ -1453,6 +1463,36 @@ impl GameState {
                 crate::world::Vec2::new(spread, -up),
             ));
         }
+    }
+
+    /// Shatter a molotov cocktail: small blast + 7-10 fire patches that spread wide.
+    pub fn spawn_molotov_fire(&mut self, pos: WorldPos) {
+        use crate::world::Vec2;
+        use crate::physics::projectile::WeaponKind;
+        self.apply_explosion(pos, WeaponKind::MolotovCocktail);
+        let mut rng = (pos.x as u64)
+            .wrapping_mul(0x6364136223846885)
+            .wrapping_add((pos.y as u64).wrapping_mul(0x9e3779b97f4a7c15))
+            .wrapping_add(self.tick as u64 * 0x517CC1B727220A95);
+        let count = 7 + (rng % 4) as usize; // 7-10 patches
+        for _ in 0..count {
+            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
+            // Spread across a wide horizontal arc (like liquid splashing)
+            let raw_angle = (rng >> 33) as f32 / (u32::MAX as f32); // 0..1
+            // Bias: mostly outward and slightly downward, wide horizontal scatter
+            let angle = (raw_angle - 0.5) * std::f32::consts::PI * 1.6; // -144°..+144°
+            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
+            let speed = 2.5 + (rng >> 33) as f32 / (u32::MAX as f32) * 5.5;
+            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
+            let life = 180 + (rng >> 33) as u32 % 120; // 6-10 s — longer than barrel fire
+            self.fire_patches.push(FirePatch {
+                pos,
+                vel: Vec2::new(angle.cos() * speed, angle.sin() * speed - 1.5),
+                landed: false,
+                lifetime: life,
+            });
+        }
+        self.emit_sound(crate::audio::Sfx::Explosion);
     }
 
     fn explode_barrel(&mut self, pos: WorldPos) {

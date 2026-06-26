@@ -3032,6 +3032,33 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 6, icon_cy + 5, 4, 8, mdk);
                 buf.fill_rect(icon_cx - 5, icon_cy + 6, 2, 6, mmd);
             }
+            WeaponKind::MolotovCocktail => {
+                // Pixel-art molotov: amber bottle with white rag and flame
+                let gbody  = if selected { Bgra::new(220, 145, 40) } else { Bgra::new(150, 95,  25) };
+                let gdark  = if selected { Bgra::new(140,  80, 15) } else { Bgra::new( 90, 50,  10) };
+                let ghi    = if selected { Bgra::new(255, 215, 100)} else { Bgra::new(200, 150, 60) };
+                let gneck  = if selected { Bgra::new(110,  60, 10) } else { Bgra::new( 70, 38,   8) };
+                let rag    = Bgra::new(230, 225, 210);
+                let flame1 = Bgra::new(255, 140,  20);
+                let flame2 = Bgra::new(255, 230,  60);
+                // Bottle body (rounded-rect, 14px tall, 10px wide)
+                buf.fill_rect(icon_cx - 5, icon_cy - 7,  10, 14, gdark); // outline
+                buf.fill_rect(icon_cx - 4, icon_cy - 6,   8, 12, gbody); // fill
+                buf.fill_rect(icon_cx - 4, icon_cy - 6,   8,  3, ghi);   // top highlight
+                buf.fill_rect(icon_cx - 4, icon_cy - 6,   1, 12, gdark); // left shading
+                // Bottle neck (narrow, above body)
+                buf.fill_rect(icon_cx - 2, icon_cy - 12,  4,  6, gdark);
+                buf.fill_rect(icon_cx - 1, icon_cy - 11,  2,  4, gneck);
+                // Rag (hanging out of neck, white strips)
+                buf.fill_rect(icon_cx - 1, icon_cy - 15,  2,  4, rag);
+                buf.set_pixel(icon_cx - 2, icon_cy - 14, rag);
+                buf.set_pixel(icon_cx + 1, icon_cy - 13, rag);
+                // Flame at rag tip
+                buf.set_pixel(icon_cx,     icon_cy - 16, flame1);
+                buf.set_pixel(icon_cx - 1, icon_cy - 17, flame1);
+                buf.set_pixel(icon_cx + 1, icon_cy - 17, flame1);
+                buf.set_pixel(icon_cx,     icon_cy - 18, flame2);
+            }
             WeaponKind::Uzi => {
                 // Pixel-art Mac-10: boxy receiver, stubby flush barrel, long box mag
                 let mdk = Bgra::new(50, 50, 55);
@@ -3186,6 +3213,7 @@ pub fn draw_weapon_menu(
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
             WeaponKind::Minigun         => "MINIGUN",
             WeaponKind::Uzi             => "MAC-10",
+            WeaponKind::MolotovCocktail => "MOLOTOV",
             WeaponKind::HomingMissile   => "HOMING MISSILE",
             _                          => "WEAPON",
         };
@@ -4049,6 +4077,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         draw_str_scaled(buf, &label, lx,     ly,     Bgra::new(255, 220, 50), 2);
                     }
                 }
+            } else if proj.kind == WeaponKind::MolotovCocktail {
+                crate::renderer::draw_sprites::draw_molotov_projectile(buf, proj.pos, proj.vel);
             } else if proj.kind == WeaponKind::Bazooka {
                 crate::renderer::draw_sprites::draw_bazooka(buf, proj.pos, proj.vel);
             } else if proj.kind == WeaponKind::HomingMissile {
