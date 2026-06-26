@@ -43,6 +43,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                         DeathCause::Fall => 2, DeathCause::Water => 3,
                     }
                 },
+                on_fire_ticks: s.on_fire_ticks.min(255) as u8,
             }
         })).collect(),
         projectiles: game.projectiles.iter().map(|p| {
@@ -199,6 +200,7 @@ pub fn apply_server_state(
                 soldier.has_fired       = ns.has_fired;
                 soldier.airtime         = ns.airtime;
                 soldier.walk_ticks      = ns.walk_ticks;
+                soldier.on_fire_ticks   = ns.on_fire_ticks as u32;
                 // Sync opponent cosmetics and names (local player's own are set from roster at game start)
                 if ns.team != my_team {
                     soldier.hat_id           = ns.hat_id;

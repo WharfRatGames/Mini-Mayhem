@@ -264,6 +264,7 @@ pub struct NetSoldier {
     /// 0=Generic,1=Explosion,2=Fall,3=Water — lets the live client pick the
     /// right death-message flavour pool (it generates the text locally).
     pub death_cause_u8:   u8,
+    pub on_fire_ticks:    u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
