@@ -1,3 +1,4 @@
+0.5.4.372  Fix live input drop: server merges pressed events across frames instead of overwriting; Pistol labelled correctly in weapon menu; soldier can't move while weapon menu is open.
 0.5.4.371  Pistol added: infinite, 6-shot burst ~0.75s apart, 5 dmg/shot; Molotov 2 per loadout, 12 flames on impact; MAC-10 infinite ammo, removed from crate pool.
 0.5.4.370  All-modes parity enforced: aim_angle now passed through server_tick so Up/Down reach cursor-phase weapons (homing missile, airstrike, any future weapon) without special-casing in server code; parity test suite covers all 5 execution paths.
 0.5.4.369  Fire physics: WA-style terrain sliding — flames roll downhill and collect in pits; soldiers squirm + get pushed by fire; squirm now synced to live clients.

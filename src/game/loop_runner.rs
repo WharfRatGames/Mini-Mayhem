@@ -670,7 +670,7 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
             step_airstrike(game, input);
         } else if in_homing_missile {
             step_homing_missile(game, input);
-        } else {
+        } else if !game.weapon_menu_open {
             process_movement(game, input);
             process_aim(game, input, aim_angle_override);
             process_fire(game, input, muzzle_override); // no tick-guard — matches server_tick() exactly
@@ -3369,6 +3369,7 @@ pub fn draw_weapon_menu(
             WeaponKind::Uzi             => "MAC-10",
             WeaponKind::MolotovCocktail => "MOLOTOV",
             WeaponKind::HomingMissile   => "HOMING MISSILE",
+            WeaponKind::Pistol          => "PISTOL",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };

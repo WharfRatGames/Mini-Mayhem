@@ -1127,7 +1127,29 @@ fn read_loop(s: ArcStream, inbox: Arc<Mutex<Option<InputMsg>>>, quit: Arc<Atomic
             Some(frame) => {
                 if let Ok(msg) = bincode::deserialize::<InputMsg>(&frame) {
                     if msg.quit { quit.store(true, Ordering::Relaxed); }
-                    *inbox.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+                    // Merge pressed/released events from the new message into any
+                    // existing inbox entry rather than overwriting it wholesale.
+                    // Without this, if two client frames arrive between server ticks,
+                    // just_pressed events from the first are silently dropped.
+                    let mut guard = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                    match guard.as_mut() {
+                        Some(prev) => {
+                            for b in &msg.pressed  { if !prev.pressed.contains(b)  { prev.pressed.push(*b);  } }
+                            for b in &msg.released { if !prev.released.contains(b) { prev.released.push(*b); } }
+                            prev.held              = msg.held;
+                            prev.aim_angle         = msg.aim_angle;
+                            prev.selected_weapon_kind = msg.selected_weapon_kind;
+                            prev.hat_ids           = msg.hat_ids;
+                            prev.uniform_color_ids = msg.uniform_color_ids;
+                            prev.boot_color_ids    = msg.boot_color_ids;
+                            prev.gun_style_ids     = msg.gun_style_ids;
+                            prev.worm_names        = msg.worm_names;
+                            prev.muzzle_x          = msg.muzzle_x;
+                            prev.muzzle_y          = msg.muzzle_y;
+                            prev.tick              = msg.tick;
+                        }
+                        None => *guard = Some(msg),
+                    }
                 }
             }
             None => break,
@@ -1221,7 +1243,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.371";
+const REQUIRED_VERSION: &str = "0.5.4.372";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION
