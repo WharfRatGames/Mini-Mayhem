@@ -1,3 +1,4 @@
+0.5.4.375  Fix update check missed on slow wifi: HTTP timeout 2s→6s, outer wait 3s→15s; same fix for pre-MP check.
 0.5.4.374  Pistol labelled correctly in HUD; camera locked during pistol burst; OnionOS menu button fixed (exec binary so keymon tracks correct PID); faster Miyoo framebuffer blit (row reversal via cache-local buffer).
 0.5.4.373  Fix casual lobby live input drop (jump/backflip): same pressed-event merge fix applied to casual_conn inline reader, which the 372 fix missed.
 0.5.4.372  Fix live input drop: server merges pressed events across frames instead of overwriting; Pistol labelled correctly in weapon menu; soldier can't move while weapon menu is open.

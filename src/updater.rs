@@ -157,7 +157,7 @@ pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<(bo
 /// tls_broken=true means HTTPS failed and we fell back to HTTP — force the update, no skip.
 #[cfg(not(feature = "desktop"))]
 pub fn check_for_update(current: &str) -> (bool, bool) {
-    let (body, tls_broken) = match http_get_body("/arty/version.txt", 2) {
+    let (body, tls_broken) = match http_get_body("/arty/version.txt", 6) {
         Some(x) => x,
         None => return (false, false),
     };

@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.374";
+const VERSION: &str = "0.5.4.375";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -106,7 +106,7 @@ fn main() {
     // Wait for the background check to complete, then show the update screen
     // if needed — all before the splash so the player sees it immediately.
     if !skip_update {
-        if let Ok((true, tls_broken)) = update_rx.recv_timeout(std::time::Duration::from_millis(3000)) {
+        if let Ok((true, tls_broken)) = update_rx.recv_timeout(std::time::Duration::from_secs(15)) {
             update_available = true;
             use renderer::Bgra;
             use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
@@ -281,7 +281,7 @@ fn main() {
             // In both cases do a fresh check — version.txt may have changed since launch.
             let (ftx, frx) = std::sync::mpsc::channel::<bool>();
             std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); });
-            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_millis(2000)) {
+            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_secs(15)) {
                 update_available = true;
             }
         }
