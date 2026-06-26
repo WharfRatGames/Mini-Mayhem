@@ -1,6 +1,6 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.370
+Current version: 0.5.4.371
 Last updated: 2026-06-26
 
 COMPLETED PHASES
@@ -24,8 +24,9 @@ Phase 2 — Renderer & Input
 
 Phase 3 — Weapons & Turn System
   Turn system: Acting → Watching → Retreat → Ending
-  Loadout weapons: Bazooka, Grenade (variable fuse), Shotgun (∞), MAC-10 (x2),
-    Ninja Rope (∞), TNT, Landmine, Baseball Bat, Plasma Torch, Molotov Cocktail
+  Loadout weapons: Bazooka, Grenade (variable fuse), Pistol (6-shot burst ∞),
+    Shotgun (∞), MAC-10 (∞), Ninja Rope (∞), TNT, Landmine, Baseball Bat,
+    Plasma Torch, Molotov Cocktail (x2, 12 flames)
   Crate-only weapons: Revolver, Blasthive, Meteor Bomb, Sacred Ordnance,
     Garcia, Homing Missile, Air Strike, Black Hole Bomb, Hand of Jerry
   Weapon unlock timers (Bat turn 3, TNT turn 5, Air Strike turn 7)

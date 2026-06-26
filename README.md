@@ -12,7 +12,7 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 - Atmospheric visuals: parallax backgrounds, drifting clouds, wind-driven debris, biome-tinted skies
 
 ### Weapons
-Bazooka, Grenade (variable fuse), Shotgun, MAC-10, TNT, Landmine, Molotov Cocktail, Meteor Bomb, Revolver, Grappling Hook, Baseball Bat, Blasthive (homing bees), Garcia (targeted artillery), Homing Missile, Air Strike, Black Hole Bomb, and more — plus weapon/health/scrap crate drops.
+Bazooka, Grenade (variable fuse), Shotgun, Pistol (6-shot burst), MAC-10 (∞), TNT, Landmine, Molotov Cocktail (2 uses, 12 flames), Meteor Bomb, Revolver, Grappling Hook, Baseball Bat, Blasthive (homing bees), Garcia (targeted artillery), Homing Missile, Air Strike, Black Hole Bomb, and more — plus weapon/health/scrap crate drops.
 
 ### Game Modes
 - **Singleplayer** — VS CPU or local hotseat
