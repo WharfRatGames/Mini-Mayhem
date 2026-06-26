@@ -501,6 +501,10 @@ pub fn apply_server_state(
 // These exhaustively destructure the wire-relevant structs with NO `..`, so
 // adding a field breaks compilation here. That turns a silent live-mode desync
 // into a build error and forces a decision at the one place that matters.
+//
+// For simulation-path parity (hotseat / live server / TAT replay all produce the
+// same synced_snapshot), use `assert_all_paths_in_sync` in tests/parity.rs.
+// Call it in every new gameplay feature test.
 
 /// Adding a field to `GameState` breaks this. SYNC IT BY DEFAULT:
 ///   • Default (synced) → add to `StateMsg` (src/net/msg.rs), set it in

@@ -628,7 +628,7 @@ fn multi_tick_parity_stays_in_sync() {
     let mut cam = Camera::new(0.0);
     let input = InputState::new();
     for tick in 0..50u32 {
-        server_tick(&mut server, &input, None);
+        server_tick(&mut server, &input, None, None);
         let state = build_state(&server, tick, 0);
         apply_server_state(&mut client, &mut cam, &state, 0);
         assert_eq!(
@@ -725,6 +725,210 @@ fn tat_replay_applies_weapon_switch() {
         "TAT replay fired {:?} instead of Grenade", game.projectiles[0].kind);
 }
 
+// ── All-modes cursor parity ───────────────────────────────────────────────────
+// These tests verify that cursor-phase weapons respond to Up/Down across all
+// three execution paths: tick() (hotseat), server_tick() (live server), and
+// replay_tick() (TAT replay). Regression guard for the server/main.rs
+// clear_button(Up)/clear_button(Down) stripping that broke cursor Y in live mode.
+//
+// When adding a new cursor-phase weapon that uses Up/Down, add a test here.
+
+/// Homing missile cursor must move vertically when Up/Down are held, in all paths.
+#[test]
+fn homing_missile_cursor_y_all_paths() {
+    use arty::game::loop_runner::{simulate_with_muzzle, server_tick, replay_tick};
+    use arty::game::state::HomingMissileState;
+    use arty::input::{InputState, Button};
+
+    fn game_with_hm(seed: u64) -> GameState {
+        let mut g = build_game(seed);
+        g.homing_missile = Some(HomingMissileState {
+            cursor_x: 500.0, cursor_y: 250.0,
+            render_x: 500.0, render_y: 250.0,
+            blink_timer: 0, confirmed: false,
+        });
+        g
+    }
+
+    let initial_y = 250.0f32;
+    const TICKS: u32 = 10;
+    const UP_BIT: u16 = 1 << 0; // Button::Up is index 0 in Button::ALL
+
+    // Path 1: simulate_with_muzzle() (hotseat/reference path)
+    let mut g1 = game_with_hm(42);
+    let mut inp = InputState::new(); inp.inject_press(Button::Up);
+    for _ in 0..TICKS { simulate_with_muzzle(&mut g1, &inp, None, None); }
+    let y1 = g1.homing_missile.as_ref().unwrap().cursor_y;
+    assert!(y1 < initial_y, "simulate: Up should decrease cursor_y (was {initial_y}, got {y1})");
+
+    // Path 2: server_tick() (live server) — was broken: Up was stripped unconditionally
+    let mut g2 = game_with_hm(42);
+    let mut srv = InputState::new(); srv.inject_press(Button::Up);
+    for _ in 0..TICKS { server_tick(&mut g2, &srv, None, None); }
+    let y2 = g2.homing_missile.as_ref().unwrap().cursor_y;
+    assert!(y2 < initial_y, "server_tick: Up should decrease cursor_y (was {initial_y}, got {y2})");
+    assert_eq!(y1, y2, "server_tick cursor_y must match simulate");
+
+    // Path 3: replay_tick() (TAT replay)
+    let mut g3 = game_with_hm(42);
+    let mut prev = 0u16;
+    for _ in 0..TICKS { replay_tick(&mut g3, prev, UP_BIT); prev = UP_BIT; }
+    let y3 = g3.homing_missile.as_ref().unwrap().cursor_y;
+    assert_eq!(y1, y3, "replay_tick cursor_y must match simulate");
+}
+
+/// Airstrike cursor must move vertically when Up/Down are held, in all paths.
+#[test]
+fn airstrike_cursor_y_all_paths() {
+    use arty::game::loop_runner::{simulate_with_muzzle, server_tick, replay_tick};
+    use arty::game::state::AirstrikeState;
+    use arty::input::{InputState, Button};
+
+    fn game_with_air(seed: u64) -> GameState {
+        let mut g = build_game(seed);
+        g.airstrike = Some(AirstrikeState {
+            cursor_x: 500.0, cursor_y: 250.0,
+            render_x: 500.0, render_y: 250.0,
+            blink_timer: 0, active: false, // active=false → cursor phase
+            plane_x: 0.0, plane_vx: 0.0,
+            bombs_dropped: 0, direction_right: true, spawn_cam_left: 0.0,
+        });
+        g
+    }
+
+    let initial_y = 250.0f32;
+    const TICKS: u32 = 10;
+    const UP_BIT: u16 = 1 << 0;
+
+    let mut g1 = game_with_air(42);
+    let mut inp = InputState::new(); inp.inject_press(Button::Up);
+    for _ in 0..TICKS { simulate_with_muzzle(&mut g1, &inp, None, None); }
+    let y1 = g1.airstrike.as_ref().unwrap().cursor_y;
+    assert!(y1 < initial_y, "simulate: Up should decrease airstrike cursor_y (got {y1})");
+
+    let mut g2 = game_with_air(42);
+    let mut srv = InputState::new(); srv.inject_press(Button::Up);
+    for _ in 0..TICKS { server_tick(&mut g2, &srv, None, None); }
+    let y2 = g2.airstrike.as_ref().unwrap().cursor_y;
+    assert!(y2 < initial_y, "server_tick: Up should decrease airstrike cursor_y (got {y2})");
+    assert_eq!(y1, y2, "server_tick airstrike cursor_y must match simulate");
+
+    let mut g3 = game_with_air(42);
+    let mut prev = 0u16;
+    for _ in 0..TICKS { replay_tick(&mut g3, prev, UP_BIT); prev = UP_BIT; }
+    let y3 = g3.airstrike.as_ref().unwrap().cursor_y;
+    assert_eq!(y1, y3, "replay_tick airstrike cursor_y must match simulate");
+}
+
+// ── All-paths simulation parity ───────────────────────────────────────────────
+//
+// `assert_all_paths_in_sync` runs the same input sequence through every
+// testable simulation path and asserts `synced_snapshot` matches across all.
+//
+// Use this in every new gameplay feature test. It catches bugs like the
+// server/main.rs Up/Down stripping issue: a missing input-preprocessing step
+// in one path produces a divergent synced_snapshot and fails immediately.
+//
+// Paths covered:
+//   1. simulate_with_muzzle — hotseat/CPU reference
+//   2. server_tick          — live server (library level, excludes server/main.rs preprocessing)
+//   3. replay_tick          — TAT visual replay + fast-forward
+//   4. StateMsg round-trip  — live client (build_state → apply_server_state)
+//
+// `steps` is &[(input_bits: u16, tick_count: usize)]. Each step holds `input_bits`
+// for `tick_count` ticks; bits map to Button::ALL indices (0=Up, 1=Down, 4=A, …).
+
+fn assert_all_paths_in_sync(
+    seed: u64,
+    setup: impl Fn(&mut GameState),
+    steps: &[(u16, usize)],
+) {
+    use arty::game::loop_runner::{simulate_with_muzzle, server_tick, replay_tick};
+    use arty::input::InputState;
+
+    let mut g_sim = { let mut g = build_game(seed); setup(&mut g); g };
+    let mut g_srv = { let mut g = build_game(seed); setup(&mut g); g };
+    let mut g_tat = { let mut g = build_game(seed); setup(&mut g); g };
+
+    for &(bits, n) in steps {
+        let input = InputState::from_bits(0, bits);
+        for _ in 0..n {
+            simulate_with_muzzle(&mut g_sim, &input, None, None);
+            server_tick(&mut g_srv, &input, None, None);
+        }
+        let mut prev = 0u16;
+        for _ in 0..n {
+            replay_tick(&mut g_tat, prev, bits);
+            prev = bits;
+        }
+    }
+
+    assert_eq!(
+        synced_snapshot(&g_sim), synced_snapshot(&g_srv),
+        "simulate vs server_tick diverged",
+    );
+    assert_eq!(
+        synced_snapshot(&g_sim), synced_snapshot(&g_tat),
+        "simulate vs replay_tick (TAT) diverged",
+    );
+    let total_ticks = steps.iter().map(|(_, n)| n).sum::<usize>() as u32;
+    let client = round_trip(&g_sim, total_ticks, 0);
+    assert_eq!(
+        synced_snapshot(&g_sim), synced_snapshot(&client),
+        "simulate vs live client (StateMsg round-trip) diverged",
+    );
+}
+
+// Bit indices matching Button::ALL order: Up=0, Down=1, Left=2, Right=3, A=4
+const UP_BITS:   u16 = 1 << 0;
+const DOWN_BITS: u16 = 1 << 1;
+const A_BITS:    u16 = 1 << 4;
+
+/// Fire a bazooka and let it fly — covers basic projectile physics in all paths.
+#[test]
+fn weapon_sim_parity_bazooka() {
+    assert_all_paths_in_sync(42, |_| {}, &[(A_BITS, 1), (0, 30)]);
+}
+
+/// Grenade: hold A to charge, release, let it bounce and detonate.
+#[test]
+fn weapon_sim_parity_grenade() {
+    use arty::physics::projectile::WeaponKind;
+    assert_all_paths_in_sync(43, |g| {
+        g.teams[0].weapons = vec![(WeaponKind::Grenade, None)];
+        g.teams[0].selected_weapon = 0;
+    }, &[(A_BITS, 20), (0, 90)]);
+}
+
+/// Homing missile cursor phase: Up moves cursor, A confirms, missile flies.
+#[test]
+fn weapon_sim_parity_homing_missile() {
+    use arty::physics::projectile::WeaponKind;
+    use arty::game::state::HomingMissileState;
+    assert_all_paths_in_sync(44, |g| {
+        g.teams[0].weapons = vec![(WeaponKind::HomingMissile, None)];
+        g.teams[0].selected_weapon = 0;
+        g.homing_missile = Some(HomingMissileState {
+            cursor_x: 500.0, cursor_y: 250.0,
+            render_x: 500.0, render_y: 250.0,
+            blink_timer: 0, confirmed: false,
+        });
+    }, &[
+        (UP_BITS, 10),   // move cursor up
+        (A_BITS, 1),     // confirm target
+        (0, 40),         // let missile fly
+    ]);
+}
+
+/// Multiple turn advances with fire each turn — catches wind/turn state drift.
+#[test]
+fn weapon_sim_parity_multi_turn() {
+    assert_all_paths_in_sync(45, |_| {}, &[
+        (A_BITS, 1), (0, 200),  // turn 1: fire + settle
+        (A_BITS, 1), (0, 200),  // turn 2: fire + settle
+    ]);
+}
+
 /// Two sims from the same seed with the same inputs stay identical.
 #[test]
 fn sim_is_deterministic() {
@@ -739,8 +943,8 @@ fn sim_is_deterministic() {
 
     let input = InputState::new();
     for _ in 0..30 {
-        server_tick(&mut a, &input, None);
-        server_tick(&mut b, &input, None);
+        server_tick(&mut a, &input, None, None);
+        server_tick(&mut b, &input, None, None);
     }
 
     assert_eq!(a.crater_log, b.crater_log);

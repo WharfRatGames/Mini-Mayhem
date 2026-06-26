@@ -1,9 +1,9 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.369
+## Version: 0.5.4.370
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.367–0.5.4.369)
+## Recent changes (0.5.4.367–0.5.4.370)
 - **Molotov Cocktail (0.5.4.367)** — new throwable weapon; wind-affected; shatters on
   impact and spawns 7–10 fire patches in a wide arc (-144°..+144°); infinite ammo;
   bottle-with-rag pixel sprite velocity-aligned in flight.
@@ -27,6 +27,10 @@
   petrol bomb behaviour. Airborne fire has strong wind drift + heavy bounce damping (0.25x).
   Soldiers inside fire get a lateral push nudge. `on_fire_ticks` synced to live clients
   via `NetSoldier` so squirm animation now shows in multiplayer.
+- **All-modes parity (0.5.4.370)** — `aim_angle` now passed directly through `server_tick`
+  so Up/Down reach cursor-phase weapons (homing missile, airstrike, any future weapon)
+  without special-casing in server preprocessing. Parity test suite covers all 5 execution
+  paths via `assert_all_paths_in_sync`. New cursor-phase weapons are automatic.
 
 ## Recent changes (0.5.4.361–0.5.4.364)
 - **Account login screen cursor (0.5.4.361)** — replaced fixed A=Login / Y=Register

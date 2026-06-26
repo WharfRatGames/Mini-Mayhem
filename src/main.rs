@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.366";
+const VERSION: &str = "0.5.4.370";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -276,15 +276,15 @@ fn main() {
         let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
         if let Ok((true, _)) = got {
             update_available = true;
-        } else if got == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
-            // Background thread still in flight — give it a little more time.
+        } else {
+            // Either still in flight (Timeout) or already finished with "no update" (Disconnected).
+            // In both cases do a fresh check — version.txt may have changed since launch.
             let (ftx, frx) = std::sync::mpsc::channel::<bool>();
             std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); });
-            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_millis(1500)) {
+            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_millis(2000)) {
                 update_available = true;
             }
         }
-        // Disconnected = background thread already finished with false (no update). Proceed.
     }
     if update_available && (is_sp_mode || is_mp_mode) {
         use renderer::Bgra;
@@ -775,7 +775,7 @@ fn main() {
                 let menu_active = game::loop_runner::process_weapon_menu(&mut game, &input);
                 game::loop_runner::tick_fire_grace(&mut game);
                 if lstate.fire_grace > 0 { lstate.fire_grace -= 1; game.aim.power = 0.0; }
-                if !menu_active { game::loop_runner::process_aim(&mut game, &input); }
+                if !menu_active { game::loop_runner::process_aim(&mut game, &input, None); }
                 // A was consumed by the menu if the menu was open (or just opened) and A was pressed
                 was_open && input.just_pressed(input::Button::A)
             } else {
@@ -2647,7 +2647,7 @@ fn run_tat_game(
             for _ in 0..600 {
                 let frame_start = std::time::Instant::now();
                 // server_tick emits detonation SFX itself (plays locally here).
-                game::loop_runner::server_tick(&mut game, &empty, None);
+                game::loop_runner::server_tick(&mut game, &empty, None, None);
                 game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
                 if let Some(ref hm) = game.homing_missile {
                     replay_cam.follow(world::WorldPos::new(if hm.confirmed { game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.x } else { hm.render_x }, hm.render_y));
@@ -2698,7 +2698,7 @@ fn run_tat_game(
             }
             // 800 < TURN_TICKS(1350): prevents double-advance if break misses
             for _ in 0..800 {
-                game::loop_runner::server_tick(&mut game, &empty, None);
+                game::loop_runner::server_tick(&mut game, &empty, None, None);
                 if matches!(game.turn.phase, TurnPhase::Acting) && game.projectiles.is_empty() && game.turn.current_team() != team { break; }
             }
             crate::audio::set_muted(false);

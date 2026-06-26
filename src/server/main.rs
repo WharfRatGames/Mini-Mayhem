@@ -431,16 +431,18 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
         let inp = if active == 0 { i0 } else { i1 };
         let mut input_state = inp.as_ref().map(msg_to_input).unwrap_or_else(arty::input::InputState::new);
 
-        // Apply client's authoritative aim angle directly; strip Up/Down so
-        // process_aim doesn't double-apply them on top of the received angle.
+        // Pass the client's aim_angle into server_tick so process_aim applies it
+        // directly and skips button-driven adjustment. Up/Down are NOT stripped
+        // here — they flow through to cursor-phase weapons (homing missile,
+        // airstrike, any future weapon) without special-casing.
         let muzzle_override: Option<(f32, f32)>;
+        let aim_angle_override: Option<f32>;
         if let Some(ref msg) = inp {
-            if msg.aim_angle.is_finite() {
-                game.aim.angle = msg.aim_angle.clamp(-std::f32::consts::PI, std::f32::consts::PI);
-            }
-            use arty::input::Button;
-            input_state.clear_button(Button::Up);
-            input_state.clear_button(Button::Down);
+            aim_angle_override = if msg.aim_angle.is_finite() {
+                Some(msg.aim_angle)
+            } else {
+                None
+            };
             use arty::physics::projectile::WeaponKind;
             let kind = WeaponKind::from_net_u8(msg.selected_weapon_kind);
             let ti = game.active_team();
@@ -453,6 +455,7 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
                 None
             };
         } else {
+            aim_angle_override = None;
             muzzle_override = None;
         }
         // Clear one-shot events so pressed/released dont repeat
@@ -468,7 +471,7 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
 
         let msgs_before: std::collections::HashSet<String> =
             game.messages.iter().map(|m| m.text.clone()).collect();
-        arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override);
+        arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override, aim_angle_override);
 
         // Log in-game messages (death phrases, crate pickups, etc.)
         for m in &game.messages {
@@ -980,13 +983,9 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
         let inp = inputs.get(active).cloned().flatten();
         let mut input_state = inp.as_ref().map(msg_to_input).unwrap_or_else(arty::input::InputState::new);
         let muzzle_override2: Option<(f32, f32)>;
+        let aim_angle_override2: Option<f32>;
         if let Some(ref msg) = inp {
-            if msg.aim_angle.is_finite() {
-                game.aim.angle = msg.aim_angle.clamp(-std::f32::consts::PI, std::f32::consts::PI);
-            }
-            use arty::input::Button;
-            input_state.clear_button(Button::Up);
-            input_state.clear_button(Button::Down);
+            aim_angle_override2 = if msg.aim_angle.is_finite() { Some(msg.aim_angle) } else { None };
             use arty::physics::projectile::WeaponKind;
             let kind = WeaponKind::from_net_u8(msg.selected_weapon_kind);
             if let Some(idx) = game.teams[active].weapons.iter().position(|(w, _)| *w == kind) {
@@ -998,13 +997,14 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
                 None
             };
         } else {
+            aim_angle_override2 = None;
             muzzle_override2 = None;
         }
         if let Some(m) = members.get(active) {
             if let Some(ref mut i) = *m.input.lock().unwrap_or_else(|e| e.into_inner()) { i.pressed.clear(); i.released.clear(); }
         }
 
-        arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override2);
+        arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override2, aim_angle_override2);
 
         if !matches!(game.result, arty::game::state::GameResult::Ongoing) {
             if let Some(final_bytes) = encode(&build_state(&game, tick, 0)) {
@@ -1221,7 +1221,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.366";
+const REQUIRED_VERSION: &str = "0.5.4.370";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

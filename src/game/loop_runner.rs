@@ -171,10 +171,10 @@ pub enum SimStep {
 /// before this call. Camera follow and visual-only grave settling live in the
 /// client wrapper (`tick()` / `update_camera()`).
 pub fn simulate(game: &mut GameState, input: &InputState) -> SimStep {
-    simulate_with_muzzle(game, input, None)
+    simulate_with_muzzle(game, input, None, None)
 }
 
-pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_override: Option<(f32, f32)>) -> SimStep {
+pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_override: Option<(f32, f32)>, aim_angle_override: Option<f32>) -> SimStep {
     use super::turn::TurnPhase;
 
     game.sounds.clear(); // per-tick sound event buffer (shipped to live client)
@@ -221,7 +221,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
                 game.teams[ti].soldiers[si].has_fired = true;
                 game.turn.on_fired();
             } else {
-                process_acting_sim(game, input, muzzle_override);
+                process_acting_sim(game, input, muzzle_override, aim_angle_override);
                 if game.active_worm_hit {
                     let ti = game.active_team();
                     let si = game.teams[ti].active;
@@ -627,7 +627,7 @@ pub fn tick(
         if let Some(ref mut air) = game.airstrike {
             if !air.active { air.spawn_cam_left = cam.left_edge_f32(); }
         }
-        let step = simulate_with_muzzle(game, input, lstate.last_muzzle);
+        let step = simulate_with_muzzle(game, input, lstate.last_muzzle, None);
         lstate.prev_turn_number = game.turn.turn_number;
         update_camera(game, cam, input, step, prev_turn);
         render(game, buf, cam, lstate);
@@ -639,7 +639,7 @@ pub fn tick(
 
 /// Acting-phase simulation only — no camera. Camera follow lives in
 /// update_camera() (client). Shared by tick() and server_tick() via simulate().
-fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override: Option<(f32, f32)>) {
+fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override: Option<(f32, f32)>, aim_angle_override: Option<f32>) {
     let has_fired = game.active_team_ref().active_soldier().has_fired;
 
     // Snap idle soldier to surface on every frame
@@ -669,7 +669,7 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
             step_homing_missile(game, input);
         } else {
             process_movement(game, input);
-            process_aim(game, input);
+            process_aim(game, input, aim_angle_override);
             process_fire(game, input, muzzle_override); // no tick-guard — matches server_tick() exactly
         }
     }
@@ -1095,12 +1095,24 @@ pub fn tick_fire_grace(game: &mut GameState) {
 // ── Aim & Fire ────────────────────────────────────────────────────────────────
 
 /// Adjust aim angle and grenade fuse. Public so live client can call it.
-pub fn process_aim(game: &mut GameState, input: &InputState) {
-    // While rope is attached, Up/Down controls rope length (handled in process_fire).
-    if game.rope.as_ref().map_or(false, |r| !r.flying) { return; }
-    let delta = if input.held(Button::L1) { 0.01f32 } else { 0.04f32 };
-    if input.held(Button::Up)   { game.aim.angle += delta; }
-    if input.held(Button::Down) { game.aim.angle -= delta; }
+///
+/// `aim_angle_override`: when `Some(a)`, the server-supplied angle is applied
+/// directly and Up/Down button processing for aim is skipped. Up/Down still
+/// flow through to cursor-phase weapons (homing missile, airstrike, etc.)
+/// because those are handled before this call, in `process_acting_sim`.
+/// Pass `None` for hotseat and TAT, where buttons drive aim.
+pub fn process_aim(game: &mut GameState, input: &InputState, aim_angle_override: Option<f32>) {
+    if let Some(a) = aim_angle_override {
+        // Server-supplied angle: apply directly, skip button-driven adjustment.
+        // Up/Down are not consumed here so cursor-phase weapons see them.
+        game.aim.angle = a.clamp(-std::f32::consts::PI, std::f32::consts::PI);
+    } else {
+        // While rope is attached, Up/Down controls rope length (handled in process_fire).
+        if game.rope.as_ref().map_or(false, |r| !r.flying) { return; }
+        let delta = if input.held(Button::L1) { 0.01f32 } else { 0.04f32 };
+        if input.held(Button::Up)   { game.aim.angle += delta; }
+        if input.held(Button::Down) { game.aim.angle -= delta; }
+    }
 
     use crate::physics::projectile::WeaponKind;
     let ti = game.active_team();
@@ -2090,7 +2102,7 @@ pub fn replay_tick(game: &mut GameState, prev_bits: u16, curr_bits: u16) -> bool
     let input = InputState::from_bits(prev_bits, curr_bits);
     let menu_open = process_weapon_menu(game, &input);
     if !menu_open {
-        server_tick(game, &input, None);
+        server_tick(game, &input, None, None);
         game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
     }
     menu_open
@@ -5332,9 +5344,9 @@ fn update_graves(game: &mut GameState) {
 /// rendering. Thin wrapper over the shared `simulate()` core so live and TAT
 /// play byte-for-byte identically to the local modes. Death explosions, the
 /// crate-watch input hold, and all SFX now come from the same place.
-pub fn server_tick(game: &mut GameState, input: &crate::input::InputState, muzzle: Option<(f32, f32)>) {
+pub fn server_tick(game: &mut GameState, input: &crate::input::InputState, muzzle: Option<(f32, f32)>, aim_angle: Option<f32>) {
     game.tick = game.tick.wrapping_add(1);
-    let _ = simulate_with_muzzle(game, input, muzzle);
+    let _ = simulate_with_muzzle(game, input, muzzle, aim_angle);
 }
 
 pub fn push_active_soldier_out(game: &mut GameState) {
