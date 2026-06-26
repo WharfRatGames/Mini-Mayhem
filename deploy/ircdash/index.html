@@ -96,8 +96,7 @@
 <div class="subtitle">crumbonium.duckdns.org &nbsp;·&nbsp; <a href="/arty/dashboard/">Game Dashboard</a> &nbsp;·&nbsp; <a href="/arty/">/arty</a></div>
 
 <div class="status-bar">
-  <span><span class="dot" id="conn-dot"></span><span id="conn-label">connecting…</span></span>
-  <span id="uptime" class="dim"></span>
+  <span><span class="dot on" id="conn-dot"></span><span id="conn-label">live</span></span>
   <span class="dim" style="margin-left:auto" id="refresh-ts"></span>
 </div>
 
@@ -201,12 +200,6 @@ async function refresh() {
     const res = await fetch("/irc/state");
     const data = await res.json();
 
-    const dot = document.getElementById("conn-dot");
-    dot.className = "dot " + (data.connected ? "on" : "off");
-    document.getElementById("conn-label").textContent =
-      data.connected ? "IRC connected" : "IRC disconnected";
-    document.getElementById("uptime").textContent =
-      data.connected ? `uptime ${fmtUptime(data.uptime_s)}` : "";
     document.getElementById("refresh-ts").textContent =
       "updated " + new Date().toLocaleTimeString();
 

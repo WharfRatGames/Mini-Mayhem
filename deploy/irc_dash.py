@@ -1,159 +1,156 @@
 #!/usr/bin/env python3
-"""IRC Dashboard monitor — connects to ngircd, tracks channels/users/messages,
-serves JSON on port 7781 for the /arty/ircdash/ dashboard."""
+"""IRC Dashboard — reads BenBot's ChannelLogger logs; no IRC connection needed.
+Serves JSON on port 7781 for the /ircdash/ dashboard."""
 
-import ssl, socket, threading, time, json, collections, os, sqlite3
+import os, re, time, json, threading, sqlite3, collections
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-IRC_HOST   = "localhost"
-IRC_PORT   = 6697
-IRC_NICK   = "DashBot"
-IRC_USER   = "dashbot"
-IRC_REAL   = "IRC Dashboard Monitor"
-IRC_PASS   = "alpaca1114"
+LOG_BASE   = os.path.expanduser("~/irc-bots/TriviaBot/logs/ChannelLogger/crumbonium")
 HTTP_PORT  = 7781
-CHANNELS   = ["#lobby", "#General-Chat", "#dicerpg", "#zpg"]
-MAX_MSGS   = 60  # messages kept per channel
+MAX_MSGS   = 60
 ZPG_DB     = os.path.expanduser("~/irc-bots/TriviaBot/data/zpg.db")
 DICERPG_DB = os.path.expanduser("~/irc-bots/TriviaBot/data/dicerpg.db")
 
-# ── Shared state ──────────────────────────────────────────────────────────────
-lock    = threading.Lock()
-users   = {ch: set()  for ch in CHANNELS}   # ch → set of nicks
-msgs    = {ch: collections.deque(maxlen=MAX_MSGS) for ch in CHANNELS}
-irc_connected = False
-connect_time  = 0.0
-irc_sock      = None
+CHANNELS = ["#lobby", "#General-Chat", "#dicerpg", "#zpg"]
 
-def ts():
-    return time.strftime("%H:%M:%S")
+# Log dir names use lowercase channel names
+def log_path(ch):
+    name = ch.lower()
+    return os.path.join(LOG_BASE, name, f"{name}.log")
 
-# ── IRC client ────────────────────────────────────────────────────────────────
-def send(sock, line):
-    try:
-        sock.sendall((line + "\r\n").encode())
-    except Exception:
-        pass
+# ── Regex patterns ─────────────────────────────────────────────────────────────
+RE_MSG  = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s+<([^>]+)>\s+(.+)$')
+RE_JOIN = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+\*\*\*\s+(\S+)\s+<[^>]+>\s+has joined')
+RE_QUIT = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+\*\*\*\s+(\S+)\s+<[^>]+>\s+has (quit|left)')
+RE_KICK = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+\*\*\*\s+(\S+)\s+was kicked')
+RE_NICK = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s+\*\*\*\s+(\S+)\s+is now known as\s+(\S+)')
 
-def irc_thread():
-    global irc_connected, connect_time, irc_sock
-    while True:
+# ── Shared state ───────────────────────────────────────────────────────────────
+lock   = threading.Lock()
+users  = {ch: set()  for ch in CHANNELS}
+msgs   = {ch: collections.deque(maxlen=MAX_MSGS) for ch in CHANNELS}
+last_mtime = {ch: 0.0 for ch in CHANNELS}
+last_size  = {ch: 0   for ch in CHANNELS}
+
+def ts_to_hms(iso):
+    return iso[11:19]  # "HH:MM:SS" from "YYYY-MM-DDTHH:MM:SS"
+
+def rebuild_channel(ch):
+    """Re-read the entire log for a channel to rebuild user list + recent msgs."""
+    path = log_path(ch)
+    if not os.path.exists(path):
+        return
+
+    new_users = set()
+    new_msgs  = collections.deque(maxlen=MAX_MSGS)
+
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            m = RE_MSG.match(line)
+            if m:
+                new_msgs.append({"t": ts_to_hms(m.group(1)), "nick": m.group(2), "msg": m.group(3)})
+                continue
+            mj = RE_JOIN.match(line)
+            if mj:
+                nick = mj.group(1)
+                new_users.add(nick)
+                new_msgs.append({"t": ts_to_hms(line[:19]), "nick": "*", "msg": f"{nick} joined"})
+                continue
+            mq = RE_QUIT.match(line)
+            if mq:
+                nick = mq.group(1)
+                new_users.discard(nick)
+                new_msgs.append({"t": ts_to_hms(line[:19]), "nick": "*", "msg": f"{nick} left"})
+                continue
+            mk = RE_KICK.match(line)
+            if mk:
+                new_users.discard(mk.group(1))
+                continue
+            mn = RE_NICK.match(line)
+            if mn:
+                old, new = mn.group(1), mn.group(2)
+                new_users.discard(old)
+                new_users.add(new)
+
+    with lock:
+        users[ch] = new_users
+        msgs[ch]  = new_msgs
+        last_mtime[ch] = os.path.getmtime(path)
+        last_size[ch]  = os.path.getsize(path)
+
+def append_new_lines(ch, path):
+    """Efficiently read only new lines since last check."""
+    new_msgs_local = []
+    new_users_delta = {}  # nick → "join" or "quit"
+
+    with open(path, encoding="utf-8", errors="replace") as f:
+        f.seek(last_size[ch])
+        for line in f:
+            line = line.rstrip("\n")
+            m = RE_MSG.match(line)
+            if m:
+                new_msgs_local.append({"t": ts_to_hms(m.group(1)), "nick": m.group(2), "msg": m.group(3)})
+                continue
+            mj = RE_JOIN.match(line)
+            if mj:
+                nick = mj.group(1)
+                new_users_delta[nick] = "join"
+                new_msgs_local.append({"t": ts_to_hms(line[:19]), "nick": "*", "msg": f"{nick} joined"})
+                continue
+            mq = RE_QUIT.match(line)
+            if mq:
+                nick = mq.group(1)
+                new_users_delta[nick] = "quit"
+                new_msgs_local.append({"t": ts_to_hms(line[:19]), "nick": "*", "msg": f"{nick} left"})
+                continue
+            mk = RE_KICK.match(line)
+            if mk:
+                new_users_delta[mk.group(1)] = "quit"
+                continue
+            mn = RE_NICK.match(line)
+            if mn:
+                new_users_delta[mn.group(1)] = "quit"
+                new_users_delta[mn.group(2)] = "join"
+
+    with lock:
+        for nick, action in new_users_delta.items():
+            if action == "join":
+                users[ch].add(nick)
+            else:
+                users[ch].discard(nick)
+        for entry in new_msgs_local:
+            msgs[ch].append(entry)
+        last_mtime[ch] = os.path.getmtime(path)
+        last_size[ch]  = os.path.getsize(path)
+
+def poll_loop():
+    # Initial full read of all channels
+    for ch in CHANNELS:
         try:
-            raw = socket.create_connection((IRC_HOST, IRC_PORT), timeout=15)
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode    = ssl.CERT_NONE
-            sock = ctx.wrap_socket(raw, server_hostname=IRC_HOST)
-            irc_sock = sock
-            send(sock, f"PASS {IRC_PASS}")
-            send(sock, f"NICK {IRC_NICK}")
-            send(sock, f"USER {IRC_USER} 0 * :{IRC_REAL}")
-
-            buf = ""
-            logged_in = False
-            while True:
-                chunk = sock.recv(4096).decode(errors="replace")
-                if not chunk:
-                    break
-                buf += chunk
-                while "\r\n" in buf:
-                    line, buf = buf.split("\r\n", 1)
-                    handle_line(sock, line, logged_in)
-                    if not logged_in and (" 001 " in line or " 376 " in line or " 422 " in line):
-                        logged_in = True
-                        with lock:
-                            irc_connected = True
-                            connect_time  = time.time()
-                        for ch in CHANNELS:
-                            send(sock, f"JOIN {ch}")
+            rebuild_channel(ch)
         except Exception as e:
-            print(f"[irc] disconnected: {e}")
-        finally:
-            with lock:
-                irc_connected = False
-                irc_sock = None
-                # Keep user lists and messages — stale data is better than blank
-        time.sleep(10)
+            print(f"[init] {ch}: {e}")
 
-def handle_line(sock, line, logged_in):
-    parts = line.split()
-    if not parts:
-        return
-    if parts[0] == "PING":
-        send(sock, "PONG " + parts[1] if len(parts) > 1 else "PONG")
-        return
+    while True:
+        time.sleep(3)
+        for ch in CHANNELS:
+            try:
+                path = log_path(ch)
+                if not os.path.exists(path):
+                    continue
+                mtime = os.path.getmtime(path)
+                size  = os.path.getsize(path)
+                if mtime != last_mtime[ch] or size != last_size[ch]:
+                    if size < last_size[ch]:
+                        # Log rotated — full rebuild
+                        rebuild_channel(ch)
+                    else:
+                        append_new_lines(ch, path)
+            except Exception as e:
+                print(f"[poll] {ch}: {e}")
 
-    # :nick!user@host prefix
-    prefix = parts[0][1:] if parts[0].startswith(":") else ""
-    nick   = prefix.split("!")[0] if "!" in prefix else prefix
-    cmd    = parts[1] if len(parts) > 1 else ""
-    target = parts[2] if len(parts) > 2 else ""
-
-    if cmd == "353":  # NAMES reply
-        ch = parts[4] if len(parts) > 4 else target
-        ch = ch.lstrip("=@*").strip()
-        nicks_raw = line.split(":", 2)[-1].split()
-        ch_lower = ch.lower()
-        for c in CHANNELS:
-            if c.lower() == ch_lower:
-                with lock:
-                    for n in nicks_raw:
-                        users[c].add(n.lstrip("@+~&!"))
-                break
-
-    elif cmd == "JOIN":
-        ch = target.lstrip(":") if not target.startswith("#") else target
-        ch = parts[2].lstrip(":") if len(parts) > 2 else ch
-        with lock:
-            for c in CHANNELS:
-                if c.lower() == ch.lower():
-                    users[c].add(nick)
-                    msgs[c].append({"t": ts(), "nick": "*", "msg": f"{nick} joined"})
-                    break
-
-    elif cmd == "PART":
-        ch = target
-        with lock:
-            for c in CHANNELS:
-                if c.lower() == ch.lower():
-                    users[c].discard(nick)
-                    msgs[c].append({"t": ts(), "nick": "*", "msg": f"{nick} left"})
-                    break
-
-    elif cmd == "QUIT":
-        reason = " ".join(parts[2:]).lstrip(":") if len(parts) > 2 else ""
-        with lock:
-            for c in CHANNELS:
-                users[c].discard(nick)
-
-    elif cmd == "KICK":
-        ch       = target
-        kicked   = parts[3] if len(parts) > 3 else "?"
-        with lock:
-            for c in CHANNELS:
-                if c.lower() == ch.lower():
-                    users[c].discard(kicked)
-                    msgs[c].append({"t": ts(), "nick": "*", "msg": f"{kicked} was kicked by {nick}"})
-                    break
-
-    elif cmd == "NICK":
-        new_nick = parts[2].lstrip(":") if len(parts) > 2 else "?"
-        with lock:
-            for c in CHANNELS:
-                if nick in users[c]:
-                    users[c].discard(nick)
-                    users[c].add(new_nick)
-
-    elif cmd == "PRIVMSG":
-        ch  = target
-        msg = " ".join(parts[3:]).lstrip(":")
-        with lock:
-            for c in CHANNELS:
-                if c.lower() == ch.lower():
-                    msgs[c].append({"t": ts(), "nick": nick, "msg": msg})
-                    break
-
-# ── ZPG leaderboard ───────────────────────────────────────────────────────────
+# ── RPG leaderboards ───────────────────────────────────────────────────────────
 def zpg_top(n=8):
     try:
         if not os.path.exists(ZPG_DB):
@@ -184,7 +181,7 @@ def dicerpg_top(n=5):
     except Exception:
         return []
 
-# ── HTTP handler ──────────────────────────────────────────────────────────────
+# ── HTTP handler ───────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
@@ -192,8 +189,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/irc/state", "/irc/state/"):
             with lock:
                 data = {
-                    "connected":    irc_connected,
-                    "uptime_s":     int(time.time() - connect_time) if irc_connected else 0,
                     "channels": {
                         ch: {
                             "users": sorted(list(users[ch]), key=str.lower),
@@ -216,6 +211,6 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
 if __name__ == "__main__":
-    threading.Thread(target=irc_thread, daemon=True).start()
+    threading.Thread(target=poll_loop, daemon=True).start()
     print(f"[irc-dash] HTTP on :{HTTP_PORT}")
     HTTPServer(("127.0.0.1", HTTP_PORT), Handler).serve_forever()
