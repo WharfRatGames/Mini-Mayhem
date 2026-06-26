@@ -1,7 +1,27 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.370
+## Version: 0.5.4.371
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.366–0.5.4.371)
+- **Live play unresponsiveness fix (0.5.4.366)** — background reader thread held the
+  stream mutex during blocking `read()` calls (up to 33ms), so `conn.send()` in the main
+  render loop was blocked for up to a full server tick every frame. Fixed by setting a 5ms
+  read timeout on the reader thread so the mutex is released frequently. InputMsg sends now
+  block at most ~5ms.
+- **Cave crate drops (0.5.4.366)** — crates now land inside cave boundaries using
+  `standable_cave_foot_simple` (platform + roof check, no BFS) to find the cave floor, then
+  spawn just below the ceiling above it. Eliminates BFS stalls on server tick and unreachable
+  ceiling drops.
+- **API fixes (0.5.4.366)** — stats mode parameter was re-parsed from the already-stripped
+  path (always empty), defaulting to "tat"; fixed to read from `qs_params`. Duplicate match
+  rows guarded with `if is_win:` check.
+- **Pistol (0.5.4.371)** — new weapon; infinite ammo; 6-shot burst with ~0.75s between
+  shots; 5 dmg/shot hitscan. Fast-firing alternative to Bazooka/Revolver. `WeaponKind`
+  net u8=27.
+- **Molotov 2 per loadout (0.5.4.371)** — starting loadout grants 2 Molotov uses (was 1).
+- **MAC-10 infinite ammo (0.5.4.371)** — MAC-10 is now always available with infinite ammo;
+  removed from crate pool (was a 2-use crate weapon).
 
 ## Recent changes (0.5.4.367–0.5.4.370)
 - **Molotov Cocktail (0.5.4.367)** — new throwable weapon; wind-affected; shatters on

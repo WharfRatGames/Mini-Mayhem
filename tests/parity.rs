@@ -182,6 +182,8 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         retreat_locked:      _, // local camera logic flag
         damage_focus:        _, // local camera focus helper
         server_fire_grace:   _, // server-only fire suppression counter
+        pistol_shots_left:   _, // server-only burst state
+        pistol_fire_timer:   _, // server-only burst timer
         shotgun_shots_left:  _, // server-only multi-shot state
         revolver_shots_left: _, // server-only multi-shot state
         minigun_shots_left:  _, // server-only burst state

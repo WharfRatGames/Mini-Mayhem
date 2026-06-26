@@ -263,14 +263,28 @@ impl Framebuffer {
 
     pub fn blit_row(&mut self, screen_y: u32, src: &[u8]) {
         if screen_y >= self.height { return; }
-        // Miyoo Mini Plus framebuffer is rotated 180 degrees
+        // Miyoo Mini Plus framebuffer is rotated 180°: both axes flipped.
+        // Reverse the row into a cache-local stack buffer (forward-order writes
+        // into L1), then memcpy that whole buffer to mmap in one sequential
+        // burst — much faster than 640 scattered reverse-order writes to mmap.
         let ry = self.height - 1 - screen_y;
         let dst_off = (ry * self.stride) as usize;
         let w = self.width as usize;
-        let dst = &mut self.buf[dst_off..dst_off + w * 4];
-        for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4).rev()) {
-            d.copy_from_slice(s);
+        let row_bytes = w * 4;
+        // Treat pixels as u32 to copy 4 bytes at a time without field indexing.
+        // SAFETY: src is BGRA u8 slice with length >= row_bytes; row is stack-
+        // allocated and aligned to u32 (repr is [u32; 640]).
+        let mut row = [0u32; 640];
+        let src_px = unsafe {
+            std::slice::from_raw_parts(src.as_ptr() as *const u32, w)
+        };
+        for i in 0..w {
+            row[w - 1 - i] = src_px[i];
         }
+        let row_bytes_slice = unsafe {
+            std::slice::from_raw_parts(row.as_ptr() as *const u8, row_bytes)
+        };
+        self.buf[dst_off..dst_off + row_bytes].copy_from_slice(row_bytes_slice);
     }
 
     pub fn screen_w(&self) -> u32 { self.width }

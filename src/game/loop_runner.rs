@@ -453,7 +453,9 @@ fn update_camera(game: &GameState, cam: &mut Camera, input: &InputState, step: S
         }
         SimStep::Normal => match game.turn.phase {
             TurnPhase::Acting => {
-                process_camera_pan(cam, input, game);
+                if game.pistol_shots_left == 0 {
+                    process_camera_pan(cam, input, game);
+                }
                 if !input.held(Button::R1) {
                     let ti = game.active_team();
                     let si = game.teams[ti].active;
@@ -4572,10 +4574,17 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::Revolver    => "REVOLVER",
             WeaponKind::NinjaRope   => "GRAPPLE",
             WeaponKind::BaseballBat => "BAT",
-            WeaponKind::Blasthive     => "BLASTHIVE",
-            WeaponKind::BlackHoleBomb => "BLACK HOLE",
-            WeaponKind::Minigun       => "MINIGUN",
-            WeaponKind::Uzi           => "UZI",
+            WeaponKind::Blasthive       => "BLASTHIVE",
+            WeaponKind::BlackHoleBomb   => "BLACK HOLE",
+            WeaponKind::Minigun         => "MINIGUN",
+            WeaponKind::Uzi             => "MAC-10",
+            WeaponKind::Pistol          => "PISTOL",
+            WeaponKind::PlasmaTorch     => "TORCH",
+            WeaponKind::Garcia          => "HAND OF JERRY",
+            WeaponKind::AirStrike       => "AIR STRIKE",
+            WeaponKind::HolyHandGrenade => "SACRED ORD.",
+            WeaponKind::MolotovCocktail => "MOLOTOV",
+            WeaponKind::HomingMissile   => "HOMING MISSILE",
             _ => "WEAPON",
         };
         // Small box bottom-left, sized to fit the weapon name + hint
