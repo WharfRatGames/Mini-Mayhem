@@ -363,6 +363,10 @@ pub struct GameState {
     pub uzi_shots_left: u8,
     /// Ticks until next uzi bullet fires (counts down each tick).
     pub uzi_fire_timer: u8,
+    /// Pistol burst state: shots remaining this turn; 0 = not firing.
+    pub pistol_shots_left: u8,
+    /// Ticks until next pistol shot fires (counts down each tick).
+    pub pistol_fire_timer: u8,
     /// Bullet trail visuals: (start, end, ttl_ticks). Client-side only — not networked.
     pub bullet_trails: Vec<(WorldPos, WorldPos, u8)>,
     /// Active grappling-hook rope; None = no rope deployed.
@@ -442,6 +446,8 @@ impl GameState {
             minigun_fire_timer: 0,
             uzi_shots_left: 0,
             uzi_fire_timer: 0,
+            pistol_shots_left: 0,
+            pistol_fire_timer: 0,
             bullet_trails: Vec::new(),
             rope: None,
             rope_session: false,
@@ -1073,7 +1079,7 @@ impl GameState {
 
         // Type split: 75% weapon, 25% health.
         // Tier drop chances (weapon pool):
-        //   Common     60%  — Mine, Shotgun, TNT, Grapple, Bat, Torch, Uzi  (equal within tier)
+        //   Common     60%  — Mine, Shotgun, TNT, Grapple, Bat, Torch  (equal within tier)
         //   Uncommon   24%  — Blasthive, Meteor Bomb, Air Strike
         //   Rare       14%  — Black Hole, Revolver, Minigun, Sacred Ordnance
         //   Ultra Rare  2%  — Hand of Jerry
@@ -1082,10 +1088,10 @@ impl GameState {
         } else {
             let w = kind_rng / 0.75; // rescale weapon rng to [0,1)
             let weapon = if w < 0.60 {
-                let slot = (w / 0.60 * 7.0) as usize;
+                let slot = (w / 0.60 * 6.0) as usize;
                 [WeaponKind::Landmine, WeaponKind::Shotgun, WeaponKind::Tnt,
                  WeaponKind::NinjaRope, WeaponKind::BaseballBat,
-                 WeaponKind::PlasmaTorch, WeaponKind::Uzi][slot.min(6)]
+                 WeaponKind::PlasmaTorch][slot.min(5)]
             } else if w < 0.84 {
                 let slot = ((w - 0.60) / 0.24 * 4.0) as usize;
                 [WeaponKind::Blasthive, WeaponKind::BananaBomb,
@@ -1465,7 +1471,7 @@ impl GameState {
         }
     }
 
-    /// Shatter a molotov cocktail: small blast + 7-10 fire patches that spread wide.
+    /// Shatter a molotov cocktail: small blast + 12 fire patches that spread wide.
     pub fn spawn_molotov_fire(&mut self, pos: WorldPos) {
         use crate::world::Vec2;
         use crate::physics::projectile::WeaponKind;
@@ -1474,7 +1480,7 @@ impl GameState {
             .wrapping_mul(0x6364136223846885)
             .wrapping_add((pos.y as u64).wrapping_mul(0x9e3779b97f4a7c15))
             .wrapping_add(self.tick as u64 * 0x517CC1B727220A95);
-        let count = 7 + (rng % 4) as usize; // 7-10 patches
+        let count = 12;
         for _ in 0..count {
             rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
             // Spread across a wide horizontal arc (like liquid splashing)

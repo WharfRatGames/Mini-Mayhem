@@ -322,6 +322,8 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             game.minigun_fire_timer  = 0;
             game.uzi_shots_left      = 0;
             game.uzi_fire_timer      = 0;
+            game.pistol_shots_left   = 0;
+            game.pistol_fire_timer   = 0;
             game.rope                = None;
             game.rope_session        = false;
             game.tnt_placed          = false;
@@ -652,12 +654,13 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
     let in_revolver  = game.revolver_shots_left > 0;
     let in_minigun   = game.minigun_shots_left > 0;
     let in_uzi       = game.uzi_shots_left > 0;
+    let in_pistol    = game.pistol_shots_left > 0;
     let in_rope      = game.rope_session;
     let in_torch     = game.plasma_torch.is_some();
     let in_garcia         = game.garcia.is_some();
     let in_airstrike      = game.airstrike.is_some();
     let in_homing_missile = game.homing_missile.as_ref().map_or(false, |hm| !hm.confirmed);
-    if !has_fired || in_revolver || in_minigun || in_uzi || in_rope || in_torch || in_garcia || in_airstrike || in_homing_missile {
+    if !has_fired || in_revolver || in_minigun || in_uzi || in_pistol || in_rope || in_torch || in_garcia || in_airstrike || in_homing_missile {
         if in_torch {
             process_fire(game, input, muzzle_override); // direction changes only while torching
             step_plasma_torch(game);
@@ -1263,6 +1266,19 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
+    // Pistol auto-burst: fires one shot every 22 ticks (~0.73s at 30 Hz) until 6 shots done.
+    if game.pistol_shots_left > 0 {
+        if game.pistol_fire_timer == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            fire_pistol_shot(game, ti, si, muzzle_override);
+            game.pistol_fire_timer = 21;
+        } else {
+            game.pistol_fire_timer -= 1;
+        }
+        return;
+    }
+
     // Landmine: instant placement on A press — starts arming, turn ends.
     if weapon == WeaponKind::Landmine {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
@@ -1350,6 +1366,17 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             game.uzi_fire_timer = 2;
             game.emit_sound(crate::audio::Sfx::Uzi);
             fire_uzi_shot(game, ti, si, muzzle_override);
+        }
+        return;
+    }
+
+    // Pistol: press A to start the 6-shot burst (one shot every ~0.75s, cannot be interrupted).
+    if weapon == WeaponKind::Pistol {
+        if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            game.pistol_shots_left = 6;
+            game.pistol_fire_timer = 0; // fire first shot immediately
         }
         return;
     }
@@ -2326,6 +2353,100 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
     }
 }
 
+fn fire_pistol_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Option<(f32, f32)>) {
+    game.emit_sound(crate::audio::Sfx::Revolver);
+    use crate::world::Vec2;
+    use crate::game::soldier::{DeathCause, SoldierState};
+
+    const MAX_RANGE: f32 = 700.0;
+    const STEP:      f32 = 1.0;
+    const DAMAGE:    u32 = 5;
+    const KNOCKBACK: f32 = 1.0;
+
+    let fm    = game.teams[ti].soldiers[si].facing as f32;
+    let angle = game.aim.angle;
+    let step_x = angle.cos() * fm * STEP;
+    let step_y = -angle.sin() * STEP;
+
+    let (mut rx, mut ry) = muzzle_override.unwrap_or_else(|| {
+        let x = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 18.0;
+        let y = game.teams[ti].soldiers[si].pos.y - 14.0 - angle.sin() * 18.0;
+        (x, y)
+    });
+    let steps = (MAX_RANGE / STEP) as u32;
+    let mut hit_ti: Option<usize> = None;
+    let mut hit_si_idx: Option<usize> = None;
+
+    'ray: for _ in 0..steps {
+        rx += step_x;
+        ry += step_y;
+        if rx < 0.0 || rx >= crate::world::WORLD_W as f32 { break; }
+        if ry >= crate::world::WATER_Y as f32 { break; }
+        for barrel in &mut game.barrels {
+            if let super::state::BarrelState::Normal = barrel.state {
+                if (barrel.pos.x - rx).abs() < 8.0 && (barrel.pos.y - ry).abs() < 12.0 {
+                    barrel.state = super::state::BarrelState::Triggered { ticks: 6 };
+                    break 'ray;
+                }
+            }
+        }
+        for check_ti in 0..game.teams.len() {
+            for check_si in 0..game.teams[check_ti].soldiers.len() {
+                if check_ti == ti && check_si == si { continue; }
+                if !game.teams[check_ti].soldiers[check_si].is_alive() { continue; }
+                let sx2 = game.teams[check_ti].soldiers[check_si].pos.x;
+                let sy2 = game.teams[check_ti].soldiers[check_si].pos.y;
+                let hit_top_offset = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { 10.0 } else { 2.0 };
+                if (rx - sx2).abs() < 10.0
+                    && ry >= sy2 - crate::renderer::draw_sprites::SOLDIER_H as f32 - hit_top_offset
+                    && ry <= sy2 + 4.0
+                {
+                    hit_ti = Some(check_ti);
+                    hit_si_idx = Some(check_si);
+                    break 'ray;
+                }
+            }
+        }
+        if game.terrain.is_solid(rx as i32, ry as i32) { break; }
+    }
+
+    if let (Some(hti), Some(hsi)) = (hit_ti, hit_si_idx) {
+        let dir_x = step_x / STEP;
+        let dir_y = step_y / STEP;
+        let vx = dir_x * KNOCKBACK;
+        let vy = dir_y * KNOCKBACK - 0.5;
+        let s = &mut game.teams[hti].soldiers[hsi];
+        s.death_cause = DeathCause::Explosion;
+        s.kill_weapon = Some(crate::physics::WeaponKind::Pistol);
+        s.take_damage(DAMAGE);
+        if s.is_alive() {
+            let was_grounded = matches!(s.state, SoldierState::Idle | SoldierState::Walking { .. });
+            s.state = match &s.state {
+                SoldierState::Airborne { vel, spinning } => SoldierState::Airborne {
+                    vel: Vec2::new(vel.x + vx, vel.y + vy),
+                    spinning: *spinning,
+                },
+                _ => { if was_grounded { s.fall.begin_fall(s.pos.y); } SoldierState::Airborne { vel: Vec2::new(vx, vy), spinning: false } },
+            };
+        }
+        game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 75));
+    } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
+           && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
+        if !hitscan_hit_crate(game, rx, ry) {
+            let crater = crate::world::Crater::new(rx, ry, 3.0);
+            crater.carve(&mut game.terrain);
+            game.crater_log.push((rx, ry, 3.0));
+        }
+    }
+
+    game.flush_crate_damage();
+    game.pistol_shots_left = game.pistol_shots_left.saturating_sub(1);
+    if game.pistol_shots_left == 0 {
+        game.teams[ti].soldiers[si].has_fired = true;
+        game.turn.on_fired();
+    }
+}
+
 fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Option<(f32, f32)>) {
     use crate::world::Vec2;
     use crate::game::soldier::{DeathCause, SoldierState};
@@ -3118,6 +3239,27 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 9,  icon_cy + 2,   2, 3, mfin);
                 // Engine exhaust glow
                 buf.fill_rect(icon_cx - 12, icon_cy,       3, 1, mjet);
+            }
+            WeaponKind::Pistol => {
+                // Pixel-art semi-auto pistol: slide body, short barrel, angled grip
+                // Slide (top block, runs most of the width)
+                buf.fill_rect(icon_cx - 4, icon_cy - 6, 18, 6, dark);
+                buf.fill_rect(icon_cx - 3, icon_cy - 5, 16, 4, gray);
+                buf.fill_rect(icon_cx - 3, icon_cy - 5, 16, 1, ghi);
+                // Barrel tip (protrudes slightly right)
+                buf.fill_rect(icon_cx + 14, icon_cy - 4, 4, 3, dark);
+                buf.fill_rect(icon_cx + 15, icon_cy - 3, 3, 1, ghi);
+                // Frame / receiver (slightly wider than grip, below slide)
+                buf.fill_rect(icon_cx - 4, icon_cy, 14, 5, dark);
+                buf.fill_rect(icon_cx - 3, icon_cy + 1, 12, 3, icol);
+                buf.fill_rect(icon_cx - 3, icon_cy + 1, 12, 1, hi);
+                // Trigger guard (open loop below frame)
+                buf.fill_rect(icon_cx + 1, icon_cy + 4, 6, 2, dark);
+                buf.fill_rect(icon_cx,     icon_cy + 5, 1, 4, dark);
+                buf.fill_rect(icon_cx + 7, icon_cy + 5, 1, 4, dark);
+                // Grip (angled down-left from frame)
+                buf.fill_rect(icon_cx - 4, icon_cy + 4, 5, 9, dark);
+                buf.fill_rect(icon_cx - 3, icon_cy + 5, 3, 7, mid);
             }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);

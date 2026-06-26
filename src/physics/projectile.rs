@@ -36,6 +36,7 @@ pub enum WeaponKind {
     Garcia,
     Uzi,
     MolotovCocktail,
+    Pistol,
 }
 
 impl WeaponKind {
@@ -69,6 +70,7 @@ impl WeaponKind {
             Self::PlasmaTorch      => 0.0,    // tunnels terrain; no blast
             Self::Garcia           => 55.0,
             Self::MolotovCocktail  => 20.0,   // small shattering blast; fire does the work
+            Self::Pistol           => 0.0,    // hitscan, no blast
         }
     }
 
@@ -102,6 +104,7 @@ impl WeaponKind {
             Self::PlasmaTorch      => 0,     // no explosion
             Self::Garcia           => 45,
             Self::MolotovCocktail  => 20,    // direct-impact damage; fire patches do the rest
+            Self::Pistol           => 5,     // per bullet
         }
     }
 
@@ -128,6 +131,7 @@ impl WeaponKind {
             Self::PlasmaTorch    => 0.0,
             Self::Garcia         => 18.0,
             Self::MolotovCocktail => 3.0,   // fire patches provide knockback; blast is minor
+            Self::Pistol          => 1.0,
             _                    => 6.0,
         }
     }
@@ -176,6 +180,7 @@ impl WeaponKind {
             Self::NinjaRope       => 13,
             Self::BaseballBat     => 14,
             Self::PlasmaTorch     => 15,
+            Self::Pistol          => 2,   // common — shows right after Bazooka/Grenade
             Self::Uzi             => 16,
             Self::MolotovCocktail => 17,
             // Uncommon
@@ -216,6 +221,7 @@ impl WeaponKind {
             Self::Garcia          => "HAND OF JERRY",
             Self::Uzi             => "MAC-10",
             Self::MolotovCocktail => "MOLOTOV",
+            Self::Pistol          => "PISTOL",
             _                     => "WEAPON",
         }
     }
@@ -254,6 +260,7 @@ impl WeaponKind {
             Self::SuperSheep       => 24,
             Self::Uzi              => 25,
             Self::MolotovCocktail  => 26,
+            Self::Pistol           => 27,
         }
     }
 
@@ -285,6 +292,7 @@ impl WeaponKind {
             24 => Self::SuperSheep,
             25 => Self::Uzi,
             26 => Self::MolotovCocktail,
+            27 => Self::Pistol,
             _  => Self::Bazooka,
         }
     }
@@ -305,7 +313,7 @@ impl WeaponKind {
             WeaponKind::FreezeGrenade | WeaponKind::Earthquake | WeaponKind::Drill |
             WeaponKind::HomingMissile | WeaponKind::MineLayer | WeaponKind::ConcreteDonkey |
             WeaponKind::SuperSheep | WeaponKind::Uzi |
-            WeaponKind::MolotovCocktail => k.to_net_u8()
+            WeaponKind::MolotovCocktail | WeaponKind::Pistol => k.to_net_u8()
         }
     }
 

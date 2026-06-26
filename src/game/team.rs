@@ -145,11 +145,12 @@ impl Team {
 fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
     let mut v = vec![
         (WeaponKind::Bazooka,  None),    // infinite
+        (WeaponKind::Pistol,   None),    // infinite; 6-shot burst per use
         (WeaponKind::Grenade,  None),    // infinite
         (WeaponKind::Shotgun,  None),    // infinite
         (WeaponKind::NinjaRope, None),   // infinite; utility tool, doesn't end turn
-        (WeaponKind::Uzi,      Some(2)), // 2 uses (MAC-10)
-        (WeaponKind::MolotovCocktail, None), // infinite
+        (WeaponKind::Uzi,      None),    // infinite (MAC-10)
+        (WeaponKind::MolotovCocktail, Some(2)), // 2 uses
         (WeaponKind::Tnt,          Some(1)), // 1 use; locked until 5 rotations
         (WeaponKind::Landmine,     Some(2)), // 2 uses
         (WeaponKind::BaseballBat,  Some(1)), // 1 use; locked until 3 full cycles
