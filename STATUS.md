@@ -1,7 +1,32 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.364
+## Version: 0.5.4.369
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.367–0.5.4.369)
+- **Molotov Cocktail (0.5.4.367)** — new throwable weapon; wind-affected; shatters on
+  impact and spawns 7–10 fire patches in a wide arc (-144°..+144°); infinite ammo;
+  bottle-with-rag pixel sprite velocity-aligned in flight.
+- **Loadout changes (0.5.4.367)** — Shotgun and Ninja Rope are now infinite ammo; MAC-10
+  (`WeaponKind::Uzi`) added to starting loadout with 2 uses.
+- **Terrain variation (0.5.4.367)** — more dramatic hills/valleys: amplitude 0.528→0.62,
+  ridges octave 0.30→0.35, roughness 0.10→0.15; valleys 2–4 (was 1–2), depth 0.40–0.60;
+  hill bumps 6–12 (was 4–8); `TERRAIN_MIN_Y` 160→140 for taller peaks.
+- **Update check before splash (0.5.4.367)** — update result consumed before `draw_splash`;
+  splash shortened 5s→3s.
+- **IRC Dashboard (0.5.4.368)** — new page at https://crumbonium.duckdns.org/ircdash/
+  (own URL, separate from /arty/). Reads BenBot's ChannelLogger logs every 3s — no bot
+  connection needed. Shows live user lists + chat feed for all 4 channels; ZPG and
+  DiceRPG leaderboards from SQLite. `irc_dash.py` serves JSON on port 7781; nginx proxies
+  `/irc/`. Systemd user service `irc-dash.service`. Retains last-known state on disconnect.
+- **Discord dedup (0.5.4.368)** — `mayhem_bot.py` records posted versions to
+  `posted_versions.txt`; refuses to re-post the same version. Version-specific search
+  added so changelog rotation is no longer needed to trigger notifications.
+- **WA-style fire physics (0.5.4.369)** — grounded flames now slide downhill one pixel
+  per tick (down → down-left → down-right) and collect in pits, matching Worms Armageddon
+  petrol bomb behaviour. Airborne fire has strong wind drift + heavy bounce damping (0.25x).
+  Soldiers inside fire get a lateral push nudge. `on_fire_ticks` synced to live clients
+  via `NetSoldier` so squirm animation now shows in multiplayer.
 
 ## Recent changes (0.5.4.361–0.5.4.364)
 - **Account login screen cursor (0.5.4.361)** — replaced fixed A=Login / Y=Register

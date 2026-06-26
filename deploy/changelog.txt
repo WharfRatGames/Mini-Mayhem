@@ -1,3 +1,6 @@
+0.5.4.369  Fire physics: WA-style terrain sliding — flames roll downhill and collect in pits; soldiers squirm + get pushed by fire; squirm now synced to live clients.
+0.5.4.368  IRC channel dashboard at /ircdash/ — live user lists, chat feed, ZPG and DiceRPG leaderboards; reads BenBot logs, no bot connection needed.
+0.5.4.367  Molotov Cocktail added; MAC-10 starts with 2 uses; Shotgun and Ninja Rope infinite ammo; more varied terrain; update check before splash.
 0.5.4.366  Fix live play unresponsiveness: reader thread held stream mutex during blocking reads, stalling InputMsg sends up to 33ms; cave crate drops now land inside cave boundaries.
 0.5.4.365  Cave map FPS fix: row-major renderer replaces per-pixel stride copies; 30fps on all map types.
 0.5.4.364  Fix 3s freeze when entering multiplayer after an OTA update; fix API SQLite locking under load.
