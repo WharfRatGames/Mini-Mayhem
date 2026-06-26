@@ -713,7 +713,7 @@ fn broadcast_lobby(lobby: &SharedLobby) {
 /// relays lobby messages, and once the match starts keeps feeding InputMsg.
 fn casual_conn(stream: ArcStream, lobby: SharedLobby, match_id: Arc<AtomicU64>, casual_registry: CasualRegistry) {
     let write   = stream;
-    let input   = Arc::new(Mutex::new(None));
+    let input: Arc<Mutex<Option<InputMsg>>> = Arc::new(Mutex::new(None));
     let disc    = Arc::new(AtomicBool::new(false));
     let quit    = Arc::new(AtomicBool::new(false));
     let gen     = Arc::new(AtomicU64::new(0));
@@ -731,7 +731,25 @@ fn casual_conn(stream: ArcStream, lobby: SharedLobby, match_id: Arc<AtomicU64>, 
         if started.load(Ordering::Relaxed) {
             if let Ok(inp) = bincode::deserialize::<InputMsg>(&buf) {
                 if inp.quit { quit.store(true, Ordering::Relaxed); }
-                *input.lock().unwrap_or_else(|e| e.into_inner()) = Some(inp);
+                let mut guard = input.lock().unwrap_or_else(|e| e.into_inner());
+                match guard.as_mut() {
+                    Some(prev) => {
+                        for b in &inp.pressed  { if !prev.pressed.contains(b)  { prev.pressed.push(*b);  } }
+                        for b in &inp.released { if !prev.released.contains(b) { prev.released.push(*b); } }
+                        prev.held              = inp.held;
+                        prev.aim_angle         = inp.aim_angle;
+                        prev.selected_weapon_kind = inp.selected_weapon_kind;
+                        prev.hat_ids           = inp.hat_ids;
+                        prev.uniform_color_ids = inp.uniform_color_ids;
+                        prev.boot_color_ids    = inp.boot_color_ids;
+                        prev.gun_style_ids     = inp.gun_style_ids;
+                        prev.worm_names        = inp.worm_names;
+                        prev.muzzle_x          = inp.muzzle_x;
+                        prev.muzzle_y          = inp.muzzle_y;
+                        prev.tick              = inp.tick;
+                    }
+                    None => *guard = Some(inp),
+                }
             }
         } else if let Ok(m) = bincode::deserialize::<LobbyClientMsg>(&buf) {
             handle_lobby_msg(&lobby, &match_id, my_id, &write, &input, &disc, &quit, &gen, &started, casual_registry.clone(), m);
@@ -1243,7 +1261,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.372";
+const REQUIRED_VERSION: &str = "0.5.4.373";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION
