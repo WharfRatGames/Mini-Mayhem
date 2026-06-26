@@ -1690,11 +1690,17 @@ impl GameState {
 
     pub fn step_fire_patches(&mut self) {
         use crate::world::{WATER_Y, WORLD_W};
-        const GRAVITY: f32 = 0.5;
-        const DOT_INTERVAL: u32 = 10; // deal 1 HP every 10 ticks = 3 HP/s
-        const DOT_RADIUS: f32 = 10.0;
+        const GRAVITY:      f32 = 0.4;
+        const WIND_AIR:     f32 = 0.18; // strong wind influence while airborne
+        const WIND_GROUND:  f32 = 0.01; // almost none once settled
+        const BOUNCE_DAMP:  f32 = 0.25; // velocity multiplier on terrain impact
+        const DOT_INTERVAL: u32 = 10;   // 1 HP every 10 ticks = 3 HP/s
+        const DOT_RADIUS:   f32 = 10.0;
+        const PUSH_FORCE:   f32 = 0.4;  // lateral shove applied to soldiers in fire
 
-        // Snapshot active soldier HP before the loop so we can detect fire damage after.
+        let wind = self.wind.value() * 0.05;
+
+        // Snapshot active soldier HP before the loop so we can detect fire damage.
         let ati = self.active_team();
         let asi = self.teams[ati].active;
         let active_hp_before = self.teams[ati].soldiers[asi].hp;
@@ -1706,42 +1712,98 @@ impl GameState {
             patch.lifetime -= 1;
 
             if !patch.landed {
+                // ── Airborne: full gravity + strong wind ────────────────────
+                patch.vel.x += wind * WIND_AIR;
                 patch.vel.y = (patch.vel.y + GRAVITY).min(12.0);
+
                 let nx = patch.pos.x + patch.vel.x;
                 let ny = patch.pos.y + patch.vel.y;
+
                 if ny >= WATER_Y as f32 { to_remove.push(i); continue; }
-                let hit = nx >= 0.0 && nx < WORLD_W as f32
-                    && self.terrain.is_solid(nx as i32, ny as i32);
-                if hit {
-                    patch.landed = true;
-                    patch.vel = crate::world::Vec2::new(0.0, 0.0);
+
+                let nx_c = nx.clamp(0.0, (WORLD_W as f32) - 1.0);
+                if self.terrain.is_solid(nx_c as i32, ny as i32) {
+                    // Bounce with heavy damping (WA: velocity *= 0.3 on impact)
+                    patch.vel.x *= BOUNCE_DAMP;
+                    patch.vel.y *= -BOUNCE_DAMP;
+                    // If speed is now negligible, settle immediately
+                    if patch.vel.x.abs() < 0.3 && patch.vel.y.abs() < 0.3 {
+                        patch.landed = true;
+                        patch.vel = crate::world::Vec2::new(0.0, 0.0);
+                    }
+                    // Stay at last valid position (don't push into terrain)
                 } else {
-                    patch.pos.x = nx.clamp(0.0, (WORLD_W as f32) - 1.0);
+                    patch.pos.x = nx_c;
                     patch.pos.y = ny;
                 }
             } else {
-                // If terrain beneath the patch was destroyed, let it fall.
+                // ── Grounded: WA-style terrain sliding ──────────────────────
+                // Gravity + tiny wind keep pulling; fire walks downhill into pits.
+                patch.vel.x += wind * WIND_GROUND;
+                patch.vel.y = (patch.vel.y + GRAVITY).min(6.0);
+
                 let px = patch.pos.x as i32;
                 let py = patch.pos.y as i32;
-                let has_support = self.terrain.is_solid(px, py)
-                    || self.terrain.is_solid(px, py + 1)
+
+                // Check if support has been blown away — resume falling
+                let has_support = self.terrain.is_solid(px,     py)
+                    || self.terrain.is_solid(px,     py + 1)
                     || self.terrain.is_solid(px - 2, py)
                     || self.terrain.is_solid(px + 2, py);
                 if !has_support {
                     patch.landed = false;
-                    patch.vel = crate::world::Vec2::new(0.0, 1.0);
+                    // keep vel so it continues sliding
+                    patch.vel.y = patch.vel.y.max(1.0);
+                } else {
+                    // Try to slide one pixel in the direction gravity + vel wants.
+                    // Priority: straight down → down-left → down-right → stay.
+                    let candidates: [(i32, i32); 3] = [
+                        (px,     py + 1),   // straight down
+                        (px - 1, py + 1),   // down-left
+                        (px + 1, py + 1),   // down-right
+                    ];
+                    let mut moved = false;
+                    for &(cx, cy) in &candidates {
+                        if cx < 0 || cx >= WORLD_W as i32 { continue; }
+                        if cy >= WATER_Y as i32 { to_remove.push(i); moved = true; break; }
+                        if !self.terrain.is_solid(cx, cy) {
+                            patch.pos.x = cx as f32;
+                            patch.pos.y = cy as f32;
+                            moved = true;
+                            break;
+                        }
+                    }
+                    if !moved {
+                        // Completely blocked — settled in a pit, zero velocity
+                        patch.vel = crate::world::Vec2::new(0.0, 0.0);
+                    }
                 }
 
-                // Squirm animation: any soldier standing in the fire visibly reacts,
-                // even between damage ticks. Active soldier immediately loses control.
+                // Squirm + push: soldiers inside fire react and get nudged
+                let fire_dir = patch.vel.x.signum();
                 for s in self.teams.iter_mut().flat_map(|t| t.soldiers.iter_mut()) {
                     if !s.is_alive() { continue; }
                     let dx = s.pos.x - patch.pos.x;
                     let dy = s.pos.y - patch.pos.y;
                     if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
                         s.on_fire_ticks = 10;
+                        // Tiny lateral push — launch grounded soldiers into the air
+                        use super::soldier::SoldierState;
+                        match &mut s.state {
+                            SoldierState::Airborne { vel, .. } => {
+                                vel.x += fire_dir * PUSH_FORCE;
+                            }
+                            SoldierState::Idle | SoldierState::Walking { .. } => {
+                                s.state = SoldierState::Airborne {
+                                    vel: crate::world::Vec2::new(fire_dir * PUSH_FORCE, -0.5),
+                                    spinning: false,
+                                };
+                            }
+                            _ => {}
+                        }
                     }
                 }
+
                 // DoT tick
                 if patch.lifetime % DOT_INTERVAL == 0 {
                     for team in &mut self.teams {
@@ -1755,7 +1817,6 @@ impl GameState {
                             }
                         }
                     }
-                    // Fire actually touching a barrel (within ~5px = barrel body edge) triggers it
                     for barrel in &mut self.barrels {
                         if let BarrelState::Normal = barrel.state {
                             let dx = barrel.pos.x - patch.pos.x;
@@ -1779,7 +1840,6 @@ impl GameState {
             }
         }
 
-        // If the active soldier took fire damage this tick, flag it so the turn ends.
         if self.teams[ati].soldiers[asi].hp < active_hp_before {
             self.active_worm_hit = true;
         }
