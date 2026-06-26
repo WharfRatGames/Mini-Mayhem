@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini Mayhem — IRC Dashboard</title>
+<link rel="icon" type="image/png" href="/arty/icon.png">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0c14;
+    color: #d0d4e8;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 { color: #ffd232; font-size: 22px; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 4px; }
+  .subtitle { color: #555; font-size: 12px; margin-bottom: 20px; letter-spacing: 1px; }
+  .status-bar {
+    display: flex; gap: 16px; align-items: center;
+    margin-bottom: 20px; padding: 8px 12px;
+    background: #12151f; border: 1px solid #1e2235; border-radius: 4px;
+    font-size: 12px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; display: inline-block; margin-right: 6px; }
+  .dot.on { background: #3ddc84; box-shadow: 0 0 6px #3ddc84; }
+  .dot.off { background: #e05252; }
+  .dim { color: #555; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 600px)  { .layout { grid-template-columns: 1fr; } }
+  .channel-card {
+    background: #12151f;
+    border: 1px solid #1e2235;
+    border-radius: 6px;
+    display: flex; flex-direction: column;
+    min-height: 340px;
+  }
+  .ch-header {
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid #1e2235;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .ch-name { color: #ffd232; font-size: 14px; letter-spacing: 1px; }
+  .ch-count { color: #555; font-size: 11px; }
+  .ch-body { display: flex; flex-direction: column; flex: 1; }
+  .ch-users {
+    padding: 8px 14px;
+    border-bottom: 1px solid #1e2235;
+    display: flex; flex-wrap: wrap; gap: 4px;
+    min-height: 40px;
+  }
+  .user-pill {
+    background: #1a1e2e; border: 1px solid #2a2e45;
+    border-radius: 3px; padding: 1px 7px;
+    font-size: 11px; color: #a0b0cc;
+  }
+  .user-pill.bot { color: #ffd232; border-color: #443820; background: #1c1a12; }
+  .ch-msgs {
+    flex: 1; padding: 8px 14px; overflow-y: auto;
+    max-height: 200px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .msg-line { display: flex; gap: 6px; line-height: 1.45; }
+  .msg-ts { color: #333; font-size: 10px; white-space: nowrap; padding-top: 2px; }
+  .msg-nick { color: #7090c0; white-space: nowrap; min-width: 0; }
+  .msg-nick.system { color: #444; font-style: italic; }
+  .msg-nick.self { color: #3ddc84; }
+  .msg-text { color: #b0bcd4; word-break: break-word; }
+  .msg-text.system { color: #444; font-style: italic; }
+  .rpg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+  @media (max-width: 600px) { .rpg-row { grid-template-columns: 1fr; } }
+  .rpg-card {
+    background: #12151f; border: 1px solid #1e2235; border-radius: 6px; padding: 14px;
+  }
+  .rpg-title { color: #ffd232; font-size: 13px; letter-spacing: 1px; margin-bottom: 10px; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { color: #555; text-align: left; padding: 3px 6px; border-bottom: 1px solid #1e2235; font-weight: normal; text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
+  td { padding: 4px 6px; border-bottom: 1px solid #141720; color: #b0bcd4; }
+  tr:last-child td { border-bottom: none; }
+  td.rank { color: #555; width: 22px; }
+  td.name { color: #d0d4e8; }
+  td.hl { color: #ffd232; }
+  .hp-bar { width: 60px; height: 6px; background: #1e2235; border-radius: 3px; display: inline-block; vertical-align: middle; position: relative; overflow: hidden; }
+  .hp-fill { height: 100%; background: #3ddc84; border-radius: 3px; transition: width 0.3s; }
+  .hp-fill.low { background: #e05252; }
+  .faction-tag { font-size: 10px; color: #7070aa; }
+  a { color: #ffd232; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  footer { color: #333; font-size: 11px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<h1>⚡ IRC Dashboard</h1>
+<div class="subtitle">crumbonium.duckdns.org &nbsp;·&nbsp; <a href="/arty/dashboard/">Game Dashboard</a> &nbsp;·&nbsp; <a href="/arty/">/arty</a></div>
+
+<div class="status-bar">
+  <span><span class="dot" id="conn-dot"></span><span id="conn-label">connecting…</span></span>
+  <span id="uptime" class="dim"></span>
+  <span class="dim" style="margin-left:auto" id="refresh-ts"></span>
+</div>
+
+<div class="layout" id="channels"></div>
+
+<div class="rpg-row">
+  <div class="rpg-card">
+    <div class="rpg-title">⚔ ZPG Leaderboard</div>
+    <table><thead><tr><th>#</th><th>Nick</th><th>Lvl</th><th>HP</th><th>Tacos</th><th>Faction</th></tr></thead>
+    <tbody id="zpg-tbody"><tr><td colspan="6" style="color:#333">loading…</td></tr></tbody></table>
+  </div>
+  <div class="rpg-card">
+    <div class="rpg-title">🎲 DiceRPG Kills</div>
+    <table><thead><tr><th>#</th><th>Nick</th><th>Kills</th><th>HP</th><th>Tacos</th></tr></thead>
+    <tbody id="dice-tbody"><tr><td colspan="5" style="color:#333">loading…</td></tr></tbody></table>
+  </div>
+</div>
+
+<footer>Refreshes every 5 s. Bot nicks appear in <span style="color:#ffd232">yellow</span>.</footer>
+
+<script>
+const BOT_NICKS = new Set(["BenBot","DashBot","ChanServ","NickServ","OperServ"]);
+const CHANNEL_ORDER = ["#lobby","#General-Chat","#dicerpg","#zpg"];
+
+function fmtUptime(s) {
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`;
+  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+}
+
+function renderChannels(data) {
+  const el = document.getElementById("channels");
+  let html = "";
+  for (const ch of CHANNEL_ORDER) {
+    const info = data.channels[ch] || { users: [], msgs: [] };
+    const userHtml = info.users.length
+      ? info.users.map(u => `<span class="user-pill${BOT_NICKS.has(u)?' bot':''}">${esc(u)}</span>`).join("")
+      : `<span class="dim">—</span>`;
+    const msgHtml = info.msgs.length
+      ? [...info.msgs].reverse().map(m => {
+          const sys = m.nick === "*";
+          return `<div class="msg-line">
+            <span class="msg-ts">${esc(m.t)}</span>
+            <span class="msg-nick${sys?' system':''}">${sys?'':esc(m.nick)+':'}</span>
+            <span class="msg-text${sys?' system':''}">${esc(m.msg)}</span>
+          </div>`;
+        }).join("")
+      : `<div class="dim" style="padding-top:4px">No messages yet.</div>`;
+
+    html += `<div class="channel-card">
+      <div class="ch-header">
+        <span class="ch-name">${esc(ch)}</span>
+        <span class="ch-count">${info.users.length} user${info.users.length!==1?'s':''}</span>
+      </div>
+      <div class="ch-body">
+        <div class="ch-users">${userHtml}</div>
+        <div class="ch-msgs">${msgHtml}</div>
+      </div>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function renderZpg(rows) {
+  const tb = document.getElementById("zpg-tbody");
+  if (!rows || !rows.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#333">No data</td></tr>'; return; }
+  tb.innerHTML = rows.map((r,i) => {
+    const pct = r.max_hp ? Math.round(r.hp/r.max_hp*100) : 0;
+    return `<tr>
+      <td class="rank">${i+1}</td>
+      <td class="name">${esc(r.nick)}</td>
+      <td class="hl">${r.level}</td>
+      <td><div class="hp-bar"><div class="hp-fill${pct<30?' low':''}" style="width:${pct}%"></div></div></td>
+      <td>${r.tacos??0}</td>
+      <td class="faction-tag">${esc(r.faction||'—')}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderDice(rows) {
+  const tb = document.getElementById("dice-tbody");
+  if (!rows || !rows.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#333">No data</td></tr>'; return; }
+  tb.innerHTML = rows.map((r,i) => {
+    const pct = r.max_hp ? Math.round(r.hp/r.max_hp*100) : 0;
+    return `<tr>
+      <td class="rank">${i+1}</td>
+      <td class="name">${esc(r.nick)}</td>
+      <td class="hl">${r.kills??0}</td>
+      <td><div class="hp-bar"><div class="hp-fill${pct<30?' low':''}" style="width:${pct}%"></div></div></td>
+      <td>${r.tacos??0}</td>
+    </tr>`;
+  }).join("");
+}
+
+function esc(s) {
+  return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/irc/state");
+    const data = await res.json();
+
+    const dot = document.getElementById("conn-dot");
+    dot.className = "dot " + (data.connected ? "on" : "off");
+    document.getElementById("conn-label").textContent =
+      data.connected ? "IRC connected" : "IRC disconnected";
+    document.getElementById("uptime").textContent =
+      data.connected ? `uptime ${fmtUptime(data.uptime_s)}` : "";
+    document.getElementById("refresh-ts").textContent =
+      "updated " + new Date().toLocaleTimeString();
+
+    renderChannels(data);
+    renderZpg(data.zpg_top);
+    renderDice(data.dicerpg_top);
+  } catch(e) {
+    document.getElementById("conn-label").textContent = "API unreachable";
+    document.getElementById("conn-dot").className = "dot off";
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

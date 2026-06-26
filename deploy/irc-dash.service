@@ -1,0 +1,11 @@
+[Unit]
+Description=IRC Dashboard Monitor
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/Grunkus/mayhem-server/irc_dash.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

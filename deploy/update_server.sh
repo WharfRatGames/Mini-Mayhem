@@ -39,6 +39,20 @@ if [ -f "deploy/dashboard/index.html" ]; then
     echo "Dashboard deployed → https://crumbonium.duckdns.org/arty/dashboard/"
 fi
 
+# Deploy IRC dashboard
+if [ -f "deploy/ircdash/index.html" ]; then
+    ssh arty-pi "mkdir -p /var/www/html/ircdash"
+    scp deploy/ircdash/index.html arty-pi:/var/www/html/ircdash/index.html
+    scp deploy/irc_dash.py arty-pi:/home/Grunkus/mayhem-server/irc_dash.py
+    scp deploy/irc-dash.service arty-pi:/home/Grunkus/.config/systemd/user/irc-dash.service
+    ssh arty-pi "systemctl --user daemon-reload && systemctl --user enable irc-dash && systemctl --user restart irc-dash"
+    # Add nginx proxy for /irc/ → localhost:7781 if not already present
+    ssh arty-pi "grep -q 'irc/state' /etc/nginx/sites-available/default || \
+        echo fragtownusa | sudo -S sed -i 's|location / {|location /irc/ { proxy_pass http://127.0.0.1:7781/irc/; proxy_read_timeout 5s; }\n\tlocation / {|' \
+        /etc/nginx/sites-available/default"
+    echo "IRC dashboard deployed → https://crumbonium.duckdns.org/ircdash/"
+fi
+
 # Deploy API
 scp deploy/arty_api.py arty-pi:/home/Grunkus/mayhem-server/arty_api.py
 if [ -f "deploy/arty-api.service" ]; then
