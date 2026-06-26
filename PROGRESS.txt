@@ -1,0 +1,107 @@
+Mini Mayhem — Development Progress
+====================================
+Current version: 0.5.4.370
+Last updated: 2026-06-26
+
+COMPLETED PHASES
+----------------
+
+Phase 1 — Terrain & Physics
+  Perlin heightmap generation, 5 map archetypes (hills/cliffs/islands/caves/canyon)
+  Destructible terrain (crater carving persists)
+  Projectile ballistics (Euler integration, wind, gravity, bounce/friction)
+  Water death zone
+
+Phase 2 — Renderer & Input
+  Framebuffer rendering (/dev/fb0, BGRA) for Miyoo Mini Plus
+  evdev button input
+  8x8 pixel font
+  Camera follow + free pan
+  Hotseat local multiplayer
+  Soldier skeletal animation (walk cycle, backflip, airborne lean)
+  Team color rendering
+  Parallax backgrounds, clouds, biome sky tints, wind debris
+
+Phase 3 — Weapons & Turn System
+  Turn system: Acting → Watching → Retreat → Ending
+  Loadout weapons: Bazooka, Grenade (variable fuse), Shotgun (∞), MAC-10 (x2),
+    Ninja Rope (∞), TNT, Landmine, Baseball Bat, Plasma Torch, Molotov Cocktail
+  Crate-only weapons: Revolver, Blasthive, Meteor Bomb, Sacred Ordnance,
+    Garcia, Homing Missile, Air Strike, Black Hole Bomb, Hand of Jerry
+  Weapon unlock timers (Bat turn 3, TNT turn 5, Air Strike turn 7)
+  Adjustable grenade fuse (L1/R1)
+  Crate drops: weapon, health, scrap — with rarity tiers
+  Barrel chain reactions, fall damage, drown death
+  Graves, headstones, blood splats
+  WA-style fire physics: flames slide downhill, pool in pits, push soldiers
+
+Phase 4 — Dedicated Server & Live Multiplayer
+  Authoritative server (clients send inputs; server runs all physics)
+  TCP game server on Raspberry Pi 4
+  Live 1v1 real-time matches
+  Take a Turn (TAT) async matches
+  Version handshake (client/server must match exactly)
+  Reconnect window (3-minute grace, both casual and ranked)
+  Opponent quit notification
+  OTA auto-update on launch and before multiplayer
+  IRC channel dashboard at /ircdash/ (live chat, ZPG/DiceRPG leaderboards)
+  Parity system — three enforcement layers:
+    1. Compile-time: _gamestate_parity_checklist forces field classification
+    2. Architecture: aim_angle flows through server_tick; Up/Down never stripped;
+       new cursor-phase weapons are automatic in all 5 paths
+    3. Runtime: assert_all_paths_in_sync in tests/parity.rs covers all 5 paths
+
+Phase 5 — Accounts, ELO & Economy
+  Account registration and login
+  ELO rating (K=32, floor 100), ranked + casual queues (TAT and Live)
+  Leaderboard (top wins + top kills, per mode)
+  Scrap (soft currency) earned from matches, login, challenges
+  Warbonds (premium currency)
+  Daily and weekly challenges
+  Shop: hats, gun styles, uniform colors, boot colors, headstones
+  Daily login rewards + streak bonuses
+  Cosmetic sync in live multiplayer (opponent hats/uniforms/guns visible)
+  Roster editor with per-soldier cosmetics
+  Python/SQLite REST API with nginx reverse proxy + TLS
+
+IN PROGRESS / NEAR TERM
+------------------------
+  Scrap earned shown on game-over screen
+  Profile screen (owned cosmetics, balance, win/loss record)
+  Roster editor live preview
+  Port 443 / HTTPS (router port-forward; nginx + cert ready)
+
+PLANNED — Phase 6
+------------------
+  Spectator mode
+  Replay system (save + replay matches locally)
+  Additional crate-only weapons
+  More map archetypes
+  Server monitoring dashboard
+  API rate limiting (per-IP on /register and /login)
+  Input stream logging for replay/anti-cheat
+  4-player live matches
+  Tournament brackets
+  Seasonal ELO resets with reward cosmetics
+
+DEPLOYMENT
+----------
+  Device:  Miyoo Mini Plus (ARMv7 cross-compiled via cargo miyoo)
+  Server:  Raspberry Pi 4, TCP port 7777
+  API:     Pi port 7778, nginx /api/ proxy, TLS via DuckDNS
+  OTA:     https://crumbonium.duckdns.org/arty/version.txt + mini-mayhem binary
+  IRC:     crumbonium.duckdns.org IRC dashboard at /ircdash/
+  Discord: MayhemBot posts match results, patch notes, leaderboard to Discord server
+  GitHub:  https://github.com/WharfRatGames/Mini-Mayhem
+
+KEY ARCHITECTURE NOTES
+-----------------------
+  simulate_with_muzzle(game, input, muzzle, aim_angle) — single sim function
+    called by all 5 paths. aim_angle: Option<f32> lets server pass received angle
+    directly; Up/Down buttons are never stripped and flow to all weapons.
+  StateMsg round-trip — live client rebuilds state from server's StateMsg each tick.
+    Never runs simulate. Enforced by compile-time checklists in net_sync.rs.
+  emit_fx / emit_sound — all particle FX and sounds go through these channels
+    to auto-replicate to live clients. Never call fx functions directly from sim.
+  assert_all_paths_in_sync — parity test helper in tests/parity.rs. Call for
+    every new gameplay feature test.

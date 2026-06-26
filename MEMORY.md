@@ -16,11 +16,18 @@
    as of v0.5.4.120; the hand-mirroring caused the live death-explosion bug.)
 
 ## Simulation architecture (loop_runner.rs — search the fn names)
-- simulate() — shared core: phase dispatch (Acting/Watching/Retreating/Ending) +
-  end-of-tick cleanup + crate-watch + death explosions + SFX + grave settling +
-  visual decay. Returns SimStep (Normal/MenuOpen/CrateWatch). No camera/render.
-- tick() = client preamble (pause/menu-render/game-over/fire-grace) → simulate()
-  → update_camera() → render(). server_tick() = game.tick+=1 → simulate().
+- simulate_with_muzzle(game, input, muzzle, aim_angle) — shared core: phase dispatch
+  (Acting/Watching/Retreating/Ending) + end-of-tick cleanup + crate-watch + death
+  explosions + SFX + grave settling + visual decay. Returns SimStep. No camera/render.
+  aim_angle: Option<f32> — when Some, applied directly in process_aim (server path);
+  when None, buttons drive aim (hotseat/TAT). Up/Down are NEVER stripped — they flow
+  to cursor-phase weapons (homing missile, airstrike) via process_acting_sim.
+- tick() = client preamble (pause/menu/game-over/fire-grace) → process_weapon_menu()
+  → simulate_with_muzzle(aim=None) → update_camera() → render().
+- server_tick(game, input, muzzle, aim_angle) = game.tick+=1 → simulate_with_muzzle().
+  Server passes aim_angle=Some(msg.aim_angle); all other paths pass None.
+- replay_tick(game, prev_bits, curr_bits) = process_weapon_menu() → server_tick(aim=None).
+  Both TAT paths in main.rs call this.
 - update_camera() (client-only) re-derives the follow target post-sim; snaps on
   turn change via lstate.prev_turn_number.
 - update_visuals() = LIVE-CLIENT-ONLY per-frame stepper (the live client never

@@ -57,7 +57,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Version handshake (client/server must match)
 - [x] Reconnect window (3-minute grace period for disconnects — both casual and ranked)
 - [x] Opponent quit notification with blocking confirmation
-- [x] Live-mode parity system (compile-time checklists + integration tests)
+- [x] Live-mode parity system (compile-time checklists + integration tests + all-paths test helper)
 - [x] OTA (over-the-air) auto-update on launch
 - [x] Python/SQLite REST API (accounts, match history, leaderboard)
 
@@ -106,4 +106,9 @@ A living document of what's shipped, what's in progress, and what's coming.
 
 ## Technical Notes
 
-The game server is authoritative — clients cannot influence positions, HP, or match outcomes. All simulation runs server-side in live multiplayer. A compile-time parity checklist in `src/game/net_sync.rs` forces every new `GameState` field to be explicitly classified as synced or unsynced before it can ship.
+The game server is authoritative — clients cannot influence positions, HP, or match outcomes. All simulation runs server-side in live multiplayer.
+
+Parity is enforced at three layers:
+1. **Compile-time** — `_gamestate_parity_checklist` in `src/game/net_sync.rs` forces every new `GameState` field to be classified synced or unsynced before the code compiles.
+2. **Architecture** — `aim_angle: Option<f32>` flows through `server_tick` so Up/Down buttons reach cursor-phase weapons without special-casing in server preprocessing. New weapons added to `simulate_with_muzzle` are automatic in all 5 execution paths.
+3. **Runtime tests** — `assert_all_paths_in_sync` in `tests/parity.rs` runs any input sequence through hotseat, server, TAT replay, and live client paths and asserts `synced_snapshot` matches across all of them.

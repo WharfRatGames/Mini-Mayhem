@@ -19,9 +19,9 @@ works in hotseat / vs-CPU / TAT.
   spawn via `game.emit_fx(...)`. It auto-replicates to live clients through the
   `fx_events` channel — same pattern as `emit_sound`/`sounds`.
 - **New sound**: route through `game.emit_sound(Sfx)` (see `src/game/state.rs`).
-- **Cover it:** `tests/parity.rs` round-trips a perturbed game through the netcode
-  and fails if a synced field is dropped. Add an assertion there for the new
-  field. Run `cargo test --test parity`.
+- **Cover it:** write a test using `assert_all_paths_in_sync` in `tests/parity.rs`.
+  It runs your input sequence through all 5 paths and asserts `synced_snapshot`
+  matches across all of them. Run `cargo test --test parity`.
 - **Compile-time forcing function:** adding a field to `GameState` or `InputMsg`
   breaks the exhaustiveness checklists in `src/game/net_sync.rs`
   (`_gamestate_parity_checklist` / `_inputmsg_parity_checklist`). You can't compile
@@ -46,36 +46,47 @@ logic, weapon behavior, UI overlays — must be verified against **all five path
 | Hotseat / VS CPU | `tick()` + `update_camera()` in `src/game/loop_runner.rs` |
 | Live server | `server_tick()` in `src/game/loop_runner.rs` |
 | Live client | camera + input block in `src/main.rs` ~line 758 |
-| TAT visual replay (opponent's move) | replay loop in `src/main.rs` ~line 2595 |
-| TAT fast-forward (own move) | fast-forward loop in `src/main.rs` ~line 2622 |
+| TAT visual replay (opponent's move) | `replay_tick()` call in `src/main.rs` ~line 2611 |
+| TAT fast-forward (own move) | `server_tick()` call in `src/main.rs` ~line 2650 |
 
 Before calling a change done, explicitly ask: *"does this also need to happen in
 live client? TAT replay? TAT fast-forward?"* The default answer is **yes**.
 Missing a path is a silent bug — nothing warns you.
 
+## Automatic parity for simulation features
+
+Gameplay logic added inside `simulate_with_muzzle` is **automatically correct in all
+paths** — all five paths call it. The previous risk of silent divergence from
+server-side input preprocessing (button stripping) is eliminated:
+
+- `server_tick` takes `aim_angle: Option<f32>`; the server passes `Some(msg.aim_angle)`.
+- `process_aim` applies it directly when `Some` and skips Up/Down button processing.
+- **Up/Down are never stripped** — they reach cursor-phase weapons (homing missile,
+  airstrike, any future weapon) without any special-casing in server code.
+- Adding a new cursor-phase weapon: implement it in `simulate_with_muzzle`. Done.
+
+The only remaining manual step is `StateMsg` classification (compile checklist catches it).
+
 ## TAT replay parity (read before changing tick() or the weapon menu)
 
-TAT (turn-by-turn async) has **five code paths**, not four:
+TAT has **five code paths**:
 
 | Path | Where |
 |---|---|
 | Hotseat / VS CPU | `tick()` in `loop_runner.rs` |
 | Live server | `server_tick()` in `loop_runner.rs` |
 | Live client (state rebuild) | `build_state` + `apply_server_state` in `net_sync.rs` |
-| TAT visual replay (opponent's move) | `src/main.rs` ~line 2441 |
-| TAT fast-forward (own move) | `src/main.rs` ~line 2507 |
+| TAT visual replay (opponent's move) | `src/main.rs` ~line 2611 |
+| TAT fast-forward (own move) | `src/main.rs` ~line 2650 |
 
 **The invariant:** anything `tick()` does *before* calling `simulate_with_muzzle`
 must also be done in both TAT replay loops. Currently that means
-`process_weapon_menu` — called first, with `server_tick` skipped when it returns
-`true` (menu open). If you ever add another pre-simulate step to `tick()`, add it
-to the TAT paths too.
+`process_weapon_menu` — called first in both `tick()` and `replay_tick()`, with
+`server_tick` skipped when it returns `true` (menu open). If you ever add another
+pre-simulate step to `tick()`, add it to `replay_tick()` too.
 
-**Why this is easy to miss:** the parity checklists and `round_trip_preserves_synced_state`
-only guard the live-mode state round-trip. TAT divergence is silent — the replay
-just plays the wrong weapon. The `tat_replay_applies_weapon_switch` test in
-`tests/parity.rs` catches regressions here. If you change how the weapon menu
-interacts with simulate, run `cargo test --test parity` and check that test passes.
+The `tat_replay_applies_weapon_switch` test in `tests/parity.rs` catches regressions
+here. Run `cargo test --test parity` when changing the weapon menu or pre-simulate flow.
 
 ## Message structs are shared
 
@@ -85,13 +96,13 @@ interacts with simulate, run `cargo test --test parity` and check that test pass
 
 ## Build / test
 
-- `cargo build --bin arty` (client), `cargo build --bin server` (server).
+- `cargo build` (all binaries), `cargo build --bin server` (server only).
 - `cargo test --test parity` runs the parity guard. NB: some inline
   `#[cfg(test)]` modules are stale (reference an old `Soldier.weapons` API) and
   don't compile under `cargo test --lib`; the integration test is unaffected.
 - Do not build for the Miyoo device or deploy without explicit instruction; bump
   the `VERSION` string in `src/main.rs` **and** `REQUIRED_VERSION` in
-  `src/server/main.rs` (line ~1211) first — the server requires an exact version
+  `src/server/main.rs` (line ~1224) first — the server requires an exact version
   match and rejects every other client. The deploy script does **not** update
   `REQUIRED_VERSION` automatically.
   Quick check: `grep -n 'VERSION' src/main.rs src/server/main.rs`

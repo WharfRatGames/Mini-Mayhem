@@ -12,7 +12,7 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 - Atmospheric visuals: parallax backgrounds, drifting clouds, wind-driven debris, biome-tinted skies
 
 ### Weapons
-Bazooka, Grenade (variable fuse), Shotgun, TNT, Landmine, Meteor Bomb, Revolver, Grappling Hook, Baseball Bat, Blasthive (homing bees), and Black Hole Bomb — plus weapon/health crate drops.
+Bazooka, Grenade (variable fuse), Shotgun, MAC-10, TNT, Landmine, Molotov Cocktail, Meteor Bomb, Revolver, Grappling Hook, Baseball Bat, Blasthive (homing bees), Garcia (targeted artillery), Homing Missile, Air Strike, Black Hole Bomb, and more — plus weapon/health/scrap crate drops.
 
 ### Game Modes
 - **Singleplayer** — VS CPU or local hotseat
@@ -21,13 +21,14 @@ Bazooka, Grenade (variable fuse), Shotgun, TNT, Landmine, Meteor Bomb, Revolver,
 
 ## Architecture
 
-- `src/main.rs` — entry point, title screen, connection handling
-- `src/game/loop_runner.rs` — shared `simulate()` core driving both local (`tick()`) and server/live (`server_tick()`) updates, weapon/physics logic, visuals
-- `src/game/` — state, team/loadout, lobby, title, account screens
+- `src/main.rs` — entry point, title/lobby/account screens, live client loop, TAT replay
+- `src/game/loop_runner.rs` — shared `simulate_with_muzzle()` core; `tick()` (hotseat), `server_tick()` (live+TAT), and `replay_tick()` (TAT replay) are thin wrappers. All 5 execution paths produce identical results — enforced by `assert_all_paths_in_sync` in tests.
+- `src/game/net_sync.rs` — `build_state`/`apply_server_state` for live client state rebuild; compile-time parity checklists
+- `src/game/` — state, team/loadout, turn system, soldier animation
 - `src/physics/` — projectile/weapon definitions, collision and bounce outcomes
-- `src/renderer/` — sprites, terrain, backgrounds, FX
-- `src/net/` — shared network message structs (`msg.rs`)
-- `src/server/` — live game server (authoritative `simulate()`)
+- `src/renderer/` — sprites, terrain, backgrounds, particle FX
+- `src/net/` — shared network message structs (`msg.rs`, `InputMsg`, `StateMsg`)
+- `src/server/` — authoritative game server binary
 - `src/api/` — REST API for accounts, matches, leaderboards (SQLite-backed)
 
 ## Building
