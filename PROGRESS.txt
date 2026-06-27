@@ -1,6 +1,6 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.376
+Current version: 0.5.4.378
 Last updated: 2026-06-27
 
 COMPLETED PHASES

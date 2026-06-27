@@ -1020,7 +1020,7 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
 
         if game.weapon_menu_open {
             let n    = game.teams[ti].weapons.len();
-            const COLS: usize = 3;
+            const COLS: usize = 4;
             // Column-major layout: weapons fill each column top-to-bottom before moving right.
             // idx → (row = idx % rows, col = idx / rows)
             let rows = (n + COLS - 1) / COLS;
@@ -2758,8 +2758,8 @@ pub fn draw_weapon_menu(
     use crate::physics::projectile::WeaponKind;
     use crate::world::{SCREEN_W, SCREEN_H};
 
-    let cols: i32 = 3;
-    let cell_w: i32 = 120;
+    let cols: i32 = 4;
+    let cell_w: i32 = 100;
     let cell_h: i32 = 64;
     const MAX_ROWS: i32 = 6;
     // Column-major: weapons fill down each column before moving right.
@@ -3263,6 +3263,44 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 4, icon_cy + 4, 5, 9, dark);
                 buf.fill_rect(icon_cx - 3, icon_cy + 5, 3, 7, mid);
             }
+            WeaponKind::ClusterBomb => {
+                // Red grenade body with tapered/pointed top (W:A cluster bomb look)
+                let cbody = Bgra::new(40, 40, 180);  // red body
+                let chi   = Bgra::new(90, 80, 220);  // highlight
+                let cdark = Bgra::new(15, 15, 80);   // shadow
+                let cband = Bgra::new(30, 160, 220); // orange band (same as projectile)
+                // Oval body (slightly smaller than grenade)
+                buf.fill_rect(icon_cx - 4,  icon_cy - 6,   8, 2, dark);
+                buf.fill_rect(icon_cx - 7,  icon_cy - 4,  14, 2, dark);
+                buf.fill_rect(icon_cx - 8,  icon_cy - 2,  16, 7, dark);
+                buf.fill_rect(icon_cx - 7,  icon_cy + 5,  14, 2, dark);
+                buf.fill_rect(icon_cx - 4,  icon_cy + 7,   8, 2, dark);
+                buf.fill_rect(icon_cx - 3,  icon_cy - 5,   6, 2, cbody);
+                buf.fill_rect(icon_cx - 6,  icon_cy - 3,  12, 2, cbody);
+                buf.fill_rect(icon_cx - 7,  icon_cy - 1,  14, 7, cbody);
+                buf.fill_rect(icon_cx - 6,  icon_cy + 6,  12, 2, cbody);
+                buf.fill_rect(icon_cx - 3,  icon_cy + 8,   6, 1, cbody);
+                // Highlight top-left
+                buf.fill_rect(icon_cx - 5,  icon_cy - 3,   4, 2, chi);
+                buf.fill_rect(icon_cx - 6,  icon_cy - 1,   3, 3, chi);
+                // Shadow lower-right
+                buf.fill_rect(icon_cx + 3,  icon_cy + 3,   3, 3, cdark);
+                // Orange equator band
+                buf.fill_rect(icon_cx - 7,  icon_cy,      14, 2, cband);
+                // Collar at top
+                buf.fill_rect(icon_cx - 3,  icon_cy - 7,   6, 3, gray);
+                buf.fill_rect(icon_cx - 2,  icon_cy - 6,   4, 1, ghi);
+                // Tapered top (pyramid / pointed cap)
+                buf.fill_rect(icon_cx - 2,  icon_cy - 10,  4, 3, dark);
+                buf.fill_rect(icon_cx - 1,  icon_cy - 9,   2, 2, gray);
+                buf.fill_rect(icon_cx,      icon_cy - 12,  1, 2, gray);
+                buf.fill_rect(icon_cx - 1,  icon_cy - 12,  1, 1, dark);
+                buf.fill_rect(icon_cx + 1,  icon_cy - 12,  1, 1, dark);
+                // Pin lever (same as grenade)
+                buf.fill_rect(icon_cx - 5,  icon_cy - 16,  10, 2, gray);
+                buf.fill_rect(icon_cx - 5,  icon_cy - 16,   2, 4, gray);
+                buf.fill_rect(icon_cx + 3,  icon_cy - 16,   2, 4, gray);
+            }
             _ => {
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
                 buf.fill_rect(icon_cx - 5, icon_cy - 3, 10, 6, icol);
@@ -3354,7 +3392,7 @@ pub fn draw_weapon_menu(
             WeaponKind::Bazooka     => "BAZOOKA",
             WeaponKind::Grenade     => "GRENADE",
             WeaponKind::Shotgun     => "SHOTGUN",
-            WeaponKind::ClusterBomb => "CLUSTER",
+            WeaponKind::ClusterBomb => "CLUMP BOMB",
             WeaponKind::Landmine    => "MINE",
             WeaponKind::Tnt         => "TNT",
             WeaponKind::BananaBomb  => "METEOR BOMB",
@@ -3935,16 +3973,18 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 let cx = proj.pos.x as i32;
                 let cy = proj.pos.y as i32;
                 if proj.is_fragment {
-                    // 5px round fragment with orange band
+                    // 7px oval fragment with orange band
                     let body = Bgra::new(55, 120, 45);
                     let dark = Bgra::new(25, 60, 20);
                     let band = Bgra::new(30, 130, 200); // orange stripe (BGR)
-                    buf.fill_rect(cx - 1, cy - 2, 2, 1, dark);
-                    buf.fill_rect(cx - 2, cy - 1, 4, 3, dark);
-                    buf.fill_rect(cx - 1, cy + 2, 2, 1, dark);
-                    buf.fill_rect(cx - 1, cy - 1, 2, 1, body);
-                    buf.fill_rect(cx - 1, cy,     2, 1, band);
-                    buf.fill_rect(cx - 1, cy + 1, 2, 1, body);
+                    buf.fill_rect(cx - 2, cy - 3, 4, 1, dark);
+                    buf.fill_rect(cx - 3, cy - 2, 6, 5, dark);
+                    buf.fill_rect(cx - 2, cy + 3, 4, 1, dark);
+                    buf.fill_rect(cx - 1, cy - 2, 2, 1, body);
+                    buf.fill_rect(cx - 2, cy - 1, 4, 1, body);
+                    buf.fill_rect(cx - 2, cy,     4, 1, band);
+                    buf.fill_rect(cx - 2, cy + 1, 4, 1, body);
+                    buf.fill_rect(cx - 1, cy + 2, 2, 1, body);
                 } else {
                     draw_grenade_projectile(buf, proj.pos);
                     // Orange band over seam to distinguish from plain grenade
@@ -4598,7 +4638,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::Bazooka     => "BAZOOKA",
             WeaponKind::Grenade     => "GRENADE",
             WeaponKind::Shotgun     => "SHOTGUN",
-            WeaponKind::ClusterBomb => "CLUSTER",
+            WeaponKind::ClusterBomb => "CLUMP BOMB",
             WeaponKind::Tnt         => "TNT",
             WeaponKind::Landmine    => "MINE",
             WeaponKind::BananaBomb  => "METEOR BOMB",

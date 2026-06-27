@@ -206,7 +206,7 @@ impl WeaponKind {
             Self::Bazooka        => "BAZOOKA",
             Self::Grenade        => "GRENADE",
             Self::Shotgun        => "SHOTGUN",
-            Self::ClusterBomb    => "CLUSTER BOMB",
+            Self::ClusterBomb    => "CLUMP BOMB",
             Self::Landmine       => "MINE",
             Self::Tnt            => "TNT",
             Self::HolyHandGrenade => "SACRED ORDNANCE",
