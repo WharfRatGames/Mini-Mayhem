@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.380";
+const VERSION: &str = "0.5.4.381";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -616,11 +616,14 @@ fn main() {
             (WeaponKind::Bazooka,     None),
             (WeaponKind::Grenade,     None),
             (WeaponKind::Shotgun,     None),
+            (WeaponKind::Pistol,      None),
             (WeaponKind::NinjaRope,   None),
             (WeaponKind::Tnt,         None),
             (WeaponKind::Landmine,    None),
             (WeaponKind::BaseballBat, None),
             (WeaponKind::BananaBomb,  None),
+            (WeaponKind::ClusterBomb,     None),
+            (WeaponKind::MolotovCocktail, None),
             (WeaponKind::Revolver,      None),
             (WeaponKind::Blasthive,     None),
             (WeaponKind::BlackHoleBomb, None),

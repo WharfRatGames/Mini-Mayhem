@@ -1,3 +1,4 @@
+0.5.4.381  Weapon menu 5 columns (was 4); test mode now includes Pistol, Clump Bomb, Molotov Cocktail.
 0.5.4.380  Fix auto-update reliability: boot check timeout 5s→8s; live/TAT always checks (ignores sentinel); shows "CHECKING FOR UPDATES..." before live/TAT entry; fresh-check timeout 5s→6s.
 0.5.4.379  Fix auto-update on Miyoo: fall back to local Pi IP (10.0.0.123) when router hairpin NAT blocks public hostname.
 0.5.4.378  Clump Bomb: bigger fragments (blast 35px, 45dmg), red tapered-top icon, renamed to "CLUMP BOMB"; fix pistol sound (_play_once skips if busy — no retry delay); .110 sound investigation.

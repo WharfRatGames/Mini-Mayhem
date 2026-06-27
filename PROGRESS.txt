@@ -24,17 +24,20 @@ Phase 2 — Renderer & Input
 
 Phase 3 — Weapons & Turn System
   Turn system: Acting → Watching → Retreat → Ending
-  Loadout weapons: Bazooka, Grenade (variable fuse), Pistol (6-shot burst ∞),
-    Shotgun (∞), MAC-10 (∞), Ninja Rope (∞), TNT, Landmine, Baseball Bat,
-    Plasma Torch, Molotov Cocktail (x2, 12 flames)
+  Loadout weapons (13): Bazooka, Grenade (variable fuse, L1/R1), Pistol (6-shot burst ∞),
+    Shotgun (∞), MAC-10 (∞), Ninja Rope (∞), Clump Bomb (x2, 5 fragments flower pattern),
+    Molotov Cocktail (x2, 12 flames), TNT (x1), Landmine (x2), Baseball Bat (x1),
+    Plasma Torch (x3), Homing Missile (x1)
   Crate-only weapons: Revolver, Blasthive, Meteor Bomb, Sacred Ordnance,
-    Garcia, Homing Missile, Air Strike, Black Hole Bomb, Hand of Jerry
-  Weapon unlock timers (Bat turn 3, TNT turn 5, Air Strike turn 7)
-  Adjustable grenade fuse (L1/R1)
+    Garcia, Air Strike, Black Hole Bomb, Hand of Jerry
+  Common crate pool: Landmine, Shotgun, TNT, Ninja Rope, Baseball Bat, Plasma Torch, Clump Bomb
+  Weapon unlock timers (Bat turn 3, TNT turn 5, Homing Missile turn 2, Air Strike turn 7)
+  Adjustable grenade/clump bomb fuse (L1/R1)
   Crate drops: weapon, health, scrap — with rarity tiers
   Barrel chain reactions, fall damage, drown death
   Graves, headstones, blood splats
   WA-style fire physics: flames slide downhill, pool in pits, push soldiers
+  Weapon menu: 4-column grid layout
 
 Phase 4 — Dedicated Server & Live Multiplayer
   Authoritative server (clients send inputs; server runs all physics)
@@ -44,9 +47,10 @@ Phase 4 — Dedicated Server & Live Multiplayer
   Version handshake (client/server must match exactly)
   Reconnect window (3-minute grace, both casual and ranked)
   Opponent quit notification
-  OTA auto-update on launch and before multiplayer
+  OTA auto-update: boot check (8s timeout), LAN fallback for hairpin NAT,
+    forced "CHECKING FOR UPDATES..." screen before live/TAT entry
   IRC channel dashboard at /ircdash/ (live chat, ZPG/DiceRPG leaderboards)
-  IRC channels: #lobby, #general, #dicerpg, #zpg (renamed from #General-Chat → #general)
+  IRC channels: #lobby, #general, #dicerpg, #zpg
   Parity system — three enforcement layers:
     1. Compile-time: _gamestate_parity_checklist forces field classification
     2. Architecture: aim_angle flows through server_tick; Up/Down never stripped;
@@ -60,7 +64,7 @@ Phase 5 — Accounts, ELO & Economy
   Scrap (soft currency) earned from matches, login, challenges
   Warbonds (premium currency)
   Daily and weekly challenges
-  Shop: hats, gun styles, uniform colors, boot colors, headstones
+  Shop: hats (43 total), gun styles, uniform colors, boot colors, headstones
   Daily login rewards + streak bonuses
   Cosmetic sync in live multiplayer (opponent hats/uniforms/guns visible)
   Roster editor with per-soldier cosmetics
@@ -68,11 +72,13 @@ Phase 5 — Accounts, ELO & Economy
 
 IN PROGRESS / NEAR TERM
 ------------------------
+  v0.5.4.381 (uncommitted): Test mode weapon list fixed — Pistol, Clump Bomb, Molotov Cocktail
+    now appear in test mode (were missing despite being in default loadout)
   Scrap earned shown on game-over screen
   Profile screen (owned cosmetics, balance, win/loss record)
   Roster editor live preview
-  Port 443 / HTTPS (router port-forward; nginx + cert ready)
-  Ping display fix (live mode, Miyoo) — RTT was always 0ms due to send/drain ordering; fixed in v0.5.4.377 (pending deploy)
+  Pistol sound reliability on Miyoo (ALSA busy drops; .110 audio investigation pending)
+  .110 manual push pending (device offline, missed v0.5.4.377-380)
 
 PLANNED — Phase 6
 ------------------
@@ -93,6 +99,7 @@ DEPLOYMENT
   Server:  Raspberry Pi 4, TCP port 7777
   API:     Pi port 7778, nginx /api/ proxy, TLS via DuckDNS
   OTA:     https://crumbonium.duckdns.org/arty/version.txt + mini-mayhem binary
+           LAN fallback: 10.0.0.123 with Host header (bypasses hairpin NAT)
   IRC:     crumbonium.duckdns.org IRC dashboard at /ircdash/
   Discord: MayhemBot posts match results, patch notes, leaderboard to Discord server
   GitHub:  https://github.com/WharfRatGames/Mini-Mayhem

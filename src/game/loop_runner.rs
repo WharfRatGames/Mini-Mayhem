@@ -1020,7 +1020,7 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
 
         if game.weapon_menu_open {
             let n    = game.teams[ti].weapons.len();
-            const COLS: usize = 4;
+            const COLS: usize = 5;
             // Column-major layout: weapons fill each column top-to-bottom before moving right.
             // idx → (row = idx % rows, col = idx / rows)
             let rows = (n + COLS - 1) / COLS;
@@ -2758,8 +2758,8 @@ pub fn draw_weapon_menu(
     use crate::physics::projectile::WeaponKind;
     use crate::world::{SCREEN_W, SCREEN_H};
 
-    let cols: i32 = 4;
-    let cell_w: i32 = 100;
+    let cols: i32 = 5;
+    let cell_w: i32 = 80;
     let cell_h: i32 = 64;
     const MAX_ROWS: i32 = 6;
     // Column-major: weapons fill down each column before moving right.
