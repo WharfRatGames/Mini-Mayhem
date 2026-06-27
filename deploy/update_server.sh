@@ -69,6 +69,18 @@ else
     echo "WARNING: nginx config test failed — NOT reloading nginx (fix conflict before reloading)"
 fi
 
+# Sync assets/sfx/ → deploy/assets/sfx/ (rename spaces to underscores).
+# This keeps deploy/assets/sfx/ from drifting out of sync with the source files.
+mkdir -p deploy/assets/sfx
+for src in assets/sfx/*.wav assets/sfx/*.mp3; do
+    [ -f "$src" ] || continue
+    fname=$(basename "$src")
+    dst="deploy/assets/sfx/${fname// /_}"
+    if [ ! -f "$dst" ] || ! cmp -s "$src" "$dst"; then
+        cp "$src" "$dst"
+    fi
+done
+
 # Generate and serve manifest of app files (including sfx assets)
 DEPLOY_DIR="deploy"
 MANIFEST=""
