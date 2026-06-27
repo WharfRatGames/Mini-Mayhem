@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.379";
+const VERSION: &str = "0.5.4.380";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -106,7 +106,7 @@ fn main() {
     // Wait for the background check to complete, then show the update screen
     // if needed — all before the splash so the player sees it immediately.
     if !skip_update {
-        if let Ok((true, tls_broken)) = update_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        if let Ok((true, tls_broken)) = update_rx.recv_timeout(std::time::Duration::from_secs(8)) {
             update_available = true;
             use renderer::Bgra;
             use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
@@ -269,10 +269,20 @@ fn main() {
         || choice == game::title::CHOICE_TAT_RANKED;
     // Wait for background thread result; if channel is disconnected (sentinel dropped tx),
     // spawn a fresh dedicated check so SP/MP always gets a live result.
-    if (is_sp_mode || is_mp_mode) && !update_available && !skip_update {
-        // Only do the MP gate check when we haven't already updated this session.
-        // skip_update=true means the sentinel exists (just OTA'd) — we're current.
-        // REJECTED:VERSION handles the rare case where that assumption is wrong.
+    // MP/TAT always checks regardless of skip_update — the sentinel only prevents retry
+    // loops at boot; for multiplayer entry we must know the current version even if a
+    // prior update attempt failed and we're stuck on the old binary.
+    if (is_sp_mode && !skip_update || is_mp_mode) && !update_available {
+        if is_mp_mode {
+            use renderer::Bgra;
+            use renderer::font::{draw_str_scaled, str_width_scaled};
+            use world::{SCREEN_W, SCREEN_H};
+            let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
+            let t = "CHECKING FOR UPDATES...";
+            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
+            draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t, 2)/2, sh/2 - 8, Bgra::new(140, 140, 180), 2);
+            buf.blit_to_fb(&mut fb, 0);
+        }
         let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
         if let Ok((true, _)) = got {
             update_available = true;
@@ -281,7 +291,7 @@ fn main() {
             // In both cases do a fresh check — version.txt may have changed since launch.
             let (ftx, frx) = std::sync::mpsc::channel::<bool>();
             std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); });
-            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_secs(5)) {
+            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_secs(6)) {
                 update_available = true;
             }
         }
