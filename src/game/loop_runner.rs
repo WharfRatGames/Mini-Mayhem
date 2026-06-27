@@ -2759,7 +2759,7 @@ pub fn draw_weapon_menu(
     use crate::world::{SCREEN_W, SCREEN_H};
 
     let cols: i32 = 5;
-    let cell_w: i32 = 80;
+    let cell_w: i32 = 92;
     let cell_h: i32 = 64;
     const MAX_ROWS: i32 = 6;
     // Column-major: weapons fill down each column before moving right.
