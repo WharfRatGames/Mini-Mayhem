@@ -11,7 +11,7 @@ MAX_MSGS   = 60
 ZPG_DB     = os.path.expanduser("~/irc-bots/TriviaBot/data/zpg.db")
 DICERPG_DB = os.path.expanduser("~/irc-bots/TriviaBot/data/dicerpg.db")
 
-CHANNELS = ["#lobby", "#General-Chat", "#dicerpg", "#zpg"]
+CHANNELS = ["#lobby", "#general", "#dicerpg", "#zpg"]
 
 # Log dir names use lowercase channel names
 def log_path(ch):

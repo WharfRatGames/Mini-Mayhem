@@ -757,6 +757,7 @@ impl GameState {
         let mut resolved = false;
         let mut explosions: Vec<(WorldPos, WeaponKind)> = Vec::new();
         let mut meteor_impacts:     Vec<WorldPos> = Vec::new();
+        let mut cluster_impacts:    Vec<WorldPos> = Vec::new();
         let mut hive_impacts:       Vec<WorldPos> = Vec::new();
         let mut black_hole_spawns:  Vec<WorldPos> = Vec::new();
         let mut molotov_impacts:    Vec<WorldPos> = Vec::new();
@@ -874,8 +875,12 @@ impl GameState {
                         // Bees use a wider window (above the head + to the sides) so a
                         // bee hovering near a soldier still stings instead of loitering
                         // until its fuse runs out; the sting snaps to the body centre.
+                        let is_rocket = kind == WeaponKind::Bazooka || kind == WeaponKind::HomingMissile;
                         let hit = if is_bee {
                             dx < 14.0 && dy > -32.0 && dy < 4.0
+                        } else if is_rocket {
+                            // Wider box so missiles flying at head height still detonate on impact
+                            dx < 12.0 && dy > -34.0 && dy < 4.0
                         } else {
                             dx < 8.0 && dy > -22.0 && dy < 2.0
                         };
@@ -888,6 +893,10 @@ impl GameState {
                                 black_hole_spawns.push(proj.pos);
                             } else if kind == WeaponKind::MolotovCocktail {
                                 molotov_impacts.push(proj.pos);
+                            } else if kind == WeaponKind::ClusterBomb && !proj.is_fragment {
+                                cluster_impacts.push(proj.pos);
+                                resolved = true;
+                                hit_soldier = true;
                             } else if kind == WeaponKind::BananaBomb && !proj.is_fragment {
                                 // Main meteor bomb hits a soldier directly: scatter the 5
                                 // burning fragments just like a terrain impact (was falling
@@ -946,6 +955,8 @@ impl GameState {
                     // Main meteor bomb: intercept to spawn fragments instead of a normal blast
                     if kind == WeaponKind::MolotovCocktail {
                         molotov_impacts.push(pos);
+                    } else if kind == WeaponKind::ClusterBomb && !proj.is_fragment {
+                        cluster_impacts.push(pos);
                     } else if kind == WeaponKind::BananaBomb && !proj.is_fragment {
                         meteor_impacts.push(pos);
                     } else if kind == WeaponKind::Blasthive && !proj.is_fragment {
@@ -981,32 +992,68 @@ impl GameState {
             self.apply_explosion(pos, kind);
         }
 
-        // Meteor Bomb main impact: large crash + scatter 5 burning fragments
+        // Meteor Bomb main impact: large crash + scatter 6 fragments in radial burst
         self.meteor_chain = true;
         for pos in meteor_impacts {
             self.emit_sound(crate::audio::Sfx::Meteor);
-            // Initial impact: TNT profile at 60% radius+damage (reduced 40%) with
-            // gentle knockback; the 5 fragments do the rest of the work.
+            // Initial impact: TNT profile at 60% radius+damage with gentle knockback.
             self.apply_explosion_scaled(pos, WeaponKind::Tnt, 9.0, 0.6, 0.6);
             let seed = (pos.x as u32)
                 .wrapping_mul(0x9E3779B9)
                 .wrapping_add(pos.y as u32)
                 .wrapping_add(self.tick.wrapping_mul(0x6B5A6B5A));
-            for i in 0..5u32 {
-                let ra = seed.wrapping_mul(i.wrapping_mul(0xDEAD).wrapping_add(0xBEEF));
-                let rs = seed.wrapping_mul(i.wrapping_mul(0xCAFE).wrapping_add(0xBABE));
-                // Fountain upward: horizontal scatter + strong upward kick (-y is up)
-                let spread = (ra as f32 / u32::MAX as f32 - 0.5) * 5.0; // ±2.5 px/tick horizontal
-                let up     = 5.0 + (rs as f32 / u32::MAX as f32) * 4.0; // 5..9 px/tick upward
+            // Evenly-spaced radial base angles (degrees, screen: 90°=up, 270°=down)
+            const BASE_ANGLES_DEG: [f32; 6] = [90.0, 45.0, 135.0, 225.0, 315.0, 270.0];
+            for (i, &base_deg) in BASE_ANGLES_DEG.iter().enumerate() {
+                let ra = seed.wrapping_mul((i as u32).wrapping_mul(0xDEAD).wrapping_add(0xBEEF));
+                let rs = seed.wrapping_mul((i as u32).wrapping_mul(0xCAFE).wrapping_add(0xBABE));
+                // ±25° jitter so every throw looks different
+                let jitter = (ra as f32 / u32::MAX as f32 - 0.5) * 50.0;
+                let rad = (base_deg + jitter).to_radians();
+                let speed = 5.0 + (rs as f32 / u32::MAX as f32) * 4.0; // 5..9 px/tick
+                let vx =  rad.cos() * speed;
+                let vy = -rad.sin() * speed; // -y is up in screen space
                 use crate::physics::projectile::Projectile;
                 self.projectiles.push(Projectile::new_meteor_fragment(
                     pos,
-                    crate::world::Vec2::new(spread, -up),
+                    crate::world::Vec2::new(vx, vy),
                 ));
             }
         }
 
         self.meteor_chain = false;
+
+        // Cluster bomb: small burst + scatter 5 fragments in W:A flower pattern
+        for pos in cluster_impacts {
+            self.emit_sound(crate::audio::Sfx::Grenade);
+            self.apply_explosion(pos, WeaponKind::ClusterBomb);
+            // Base angles (degrees, screen-space: 90° = straight up):
+            //   upper-left=135, straight-up=90, upper-right=45, lower-left=225, lower-right=315
+            const BASE_ANGLES_DEG: [f32; 5] = [135.0, 90.0, 45.0, 225.0, 315.0];
+            let seed = (pos.x as u32)
+                .wrapping_mul(0x9E3779B9)
+                .wrapping_add(pos.y as u32)
+                .wrapping_add(self.tick.wrapping_mul(0x6B5A6B5A));
+            use crate::physics::projectile::Projectile as Proj;
+            for (i, &base_deg) in BASE_ANGLES_DEG.iter().enumerate() {
+                let ra = seed.wrapping_mul((i as u32).wrapping_mul(0xDEAD).wrapping_add(0xBEEF));
+                let rs = seed.wrapping_mul((i as u32).wrapping_mul(0xCAFE).wrapping_add(0xBABE));
+                // ±20° random variation around base
+                let jitter = (ra as f32 / u32::MAX as f32 - 0.5) * 40.0;
+                let deg = base_deg + jitter;
+                let rad = deg.to_radians();
+                // Upper fragments faster (more airtime); lower fragments slower
+                let speed_base = if base_deg < 180.0 { 5.5 } else { 3.5 };
+                let speed = speed_base + (rs as f32 / u32::MAX as f32) * 2.0;
+                // In screen coords: +x = right, +y = down, so vx=cos(rad), vy=-sin(rad)
+                let vx =  rad.cos() * speed;
+                let vy = -rad.sin() * speed;
+                self.projectiles.push(Proj::new_cluster_fragment(
+                    pos,
+                    crate::world::Vec2::new(vx, vy),
+                ));
+            }
+        }
 
         // Beehive impact: small burst + spawn 6 homing bees
         for pos in hive_impacts {
@@ -1079,7 +1126,7 @@ impl GameState {
 
         // Type split: 75% weapon, 25% health.
         // Tier drop chances (weapon pool):
-        //   Common     60%  — Mine, Shotgun, TNT, Grapple, Bat, Torch  (equal within tier)
+        //   Common     60%  — Mine, Shotgun, TNT, Grapple, Bat, Torch, Cluster  (equal within tier)
         //   Uncommon   24%  — Blasthive, Meteor Bomb, Air Strike
         //   Rare       14%  — Black Hole, Revolver, Minigun, Sacred Ordnance
         //   Ultra Rare  2%  — Hand of Jerry
@@ -1088,10 +1135,10 @@ impl GameState {
         } else {
             let w = kind_rng / 0.75; // rescale weapon rng to [0,1)
             let weapon = if w < 0.60 {
-                let slot = (w / 0.60 * 6.0) as usize;
+                let slot = (w / 0.60 * 7.0) as usize;
                 [WeaponKind::Landmine, WeaponKind::Shotgun, WeaponKind::Tnt,
                  WeaponKind::NinjaRope, WeaponKind::BaseballBat,
-                 WeaponKind::PlasmaTorch][slot.min(5)]
+                 WeaponKind::PlasmaTorch, WeaponKind::ClusterBomb][slot.min(6)]
             } else if w < 0.84 {
                 let slot = ((w - 0.60) / 0.24 * 4.0) as usize;
                 [WeaponKind::Blasthive, WeaponKind::BananaBomb,

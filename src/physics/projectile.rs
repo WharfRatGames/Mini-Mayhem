@@ -418,6 +418,19 @@ impl Projectile {
         }
     }
 
+    /// Create a cluster fragment (ClusterBomb sub-munition) with a 1-second fuse.
+    pub fn new_cluster_fragment(pos: WorldPos, vel: Vec2) -> Self {
+        Self {
+            pos,
+            vel,
+            kind: WeaponKind::ClusterBomb,
+            age_ticks: 0,
+            fuse: FuseState::Burning(30), // ~1 s to bounce before exploding
+            is_fragment: true,
+            homing_target: None,
+        }
+    }
+
     /// Create a homing bee (Blasthive sub-munition) with a 6-second lifetime fuse.
     pub fn new_bee(pos: WorldPos, vel: Vec2) -> Self {
         Self {

@@ -66,6 +66,7 @@ pub fn play_death_water()       { _play_death_water(); }
 pub fn play_holy_hand_grenade() { _play_once("hallelujah.wav"); }
 pub fn play_minigun()           { _play_once("minigun.wav"); } // deploy/assets/sfx/hallelujah.wav required
 pub fn play_uzi()               { _play("mac10.wav"); }
+pub fn play_pistol()            { _play_once("pistol.wav"); }
 
 /// Identifies a sound effect so it can be recorded during simulation and
 /// shipped to the live client (which runs no simulation of its own and would
@@ -94,6 +95,7 @@ pub enum Sfx {
     HolyHandGrenade = 17,
     Minigun         = 18,
     Uzi             = 19,
+    Pistol          = 20,
 }
 
 impl Sfx {
@@ -110,6 +112,7 @@ impl Sfx {
             17 => Sfx::HolyHandGrenade,
             18 => Sfx::Minigun,
             19 => Sfx::Uzi,
+            20 => Sfx::Pistol,
             _ => return None,
         })
     }
@@ -125,7 +128,8 @@ impl Sfx {
             Sfx::BlackHole | Sfx::Mine | Sfx::MineArm | Sfx::Barrel |
             Sfx::Revolver | Sfx::Shotgun | Sfx::Bat | Sfx::CrateDrop |
             Sfx::PlasmaTorch | Sfx::Garcia | Sfx::Smash | Sfx::Death |
-            Sfx::DeathWater | Sfx::HolyHandGrenade | Sfx::Minigun | Sfx::Uzi => {}
+            Sfx::DeathWater | Sfx::HolyHandGrenade | Sfx::Minigun | Sfx::Uzi |
+            Sfx::Pistol => {}
         }
     }
 }
@@ -154,6 +158,7 @@ pub fn play(s: Sfx) {
         Sfx::HolyHandGrenade => play_holy_hand_grenade(),
         Sfx::Minigun         => play_minigun(),
         Sfx::Uzi             => play_uzi(),
+        Sfx::Pistol          => play_pistol(),
     }
 }
 
@@ -189,6 +194,7 @@ mod imp {
     static HALLELUJAH:  OnceLock<Vec<i16>> = OnceLock::new();
     static MINIGUN:     OnceLock<Vec<i16>> = OnceLock::new();
     static UZI:         OnceLock<Vec<i16>> = OnceLock::new();
+    static PISTOL:      OnceLock<Vec<i16>> = OnceLock::new();
     static DEATHS:      OnceLock<Vec<Vec<i16>>> = OnceLock::new();
 
     // ── WAV → 48kHz mono i16 ─────────────────────────────────────────────────
@@ -333,6 +339,7 @@ mod imp {
         try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
         try_load(&MINIGUN,     &dir, "minigun.wav");
         try_load_stretched(&UZI, &dir, "mac10.wav", 1.26);
+        try_load(&PISTOL, &dir, "pistol.wav");
         if DEATHS.get().is_none() {
             let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
                 .into_iter().flatten().flatten()
@@ -569,6 +576,7 @@ mod imp {
             "hallelujah.wav"        => HALLELUJAH.get().cloned(),
             "minigun.wav"           => MINIGUN.get().cloned(),
             "mac10.wav"             => UZI.get().or_else(|| MINIGUN.get()).cloned(),
+            "pistol.wav"            => PISTOL.get().cloned(),
             _ => None,
         }
     }
@@ -690,7 +698,7 @@ mod imp_desktop {
             "bazooka_explosion.wav","grenade.wav","meteor.wav","mine.wav","arm_beep.wav",
             "barrell.wav","tnt.wav","shotgun.wav","bat.wav","hum.wav","torch.wav",
             "garcia.wav","smash.wav","hallelujah.wav","minigun.wav","mac10.wav",
-            "revolver_shot.wav","wet.wav","water.wav",
+            "revolver_shot.wav","wet.wav","water.wav","pistol.wav",
         ];
         for f in files {
             let path = dir.join(f);

@@ -1140,8 +1140,8 @@ pub fn process_aim(game: &mut GameState, input: &InputState, aim_angle_override:
         }
     }
 
-    // Grenade fuse: L1 = shorter, R1 = longer (1-5 s in 1-s steps at 30 Hz)
-    if ck == WeaponKind::Grenade {
+    // Grenade / Cluster Bomb fuse: L1 = shorter, R1 = longer (1-5 s in 1-s steps at 30 Hz)
+    if ck == WeaponKind::Grenade || ck == WeaponKind::ClusterBomb {
         if input.just_pressed(Button::L1) { game.aim.fuse_ticks = game.aim.fuse_ticks.saturating_sub(30).max(30); }
         if input.just_pressed(Button::R1) { game.aim.fuse_ticks = (game.aim.fuse_ticks + 30).min(150); }
     }
@@ -1928,7 +1928,7 @@ fn fire_weapon(game: &mut GameState) {
     let vel   = Vec2::new(angle.cos() * power * fm, -angle.sin() * power);
 
     let mut proj = Projectile::new(spawn, vel, kind);
-    if kind == WeaponKind::Grenade {
+    if kind == WeaponKind::Grenade || kind == WeaponKind::ClusterBomb {
         proj.fuse = FuseState::Burning(game.aim.fuse_ticks);
     }
     if kind == WeaponKind::HomingMissile {
@@ -2356,7 +2356,7 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
 }
 
 fn fire_pistol_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Option<(f32, f32)>) {
-    game.emit_sound(crate::audio::Sfx::Revolver);
+    game.emit_sound(crate::audio::Sfx::Pistol);
     use crate::world::Vec2;
     use crate::game::soldier::{DeathCause, SoldierState};
 
@@ -3929,6 +3929,37 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     let ly = proj.pos.y as i32 - 20;
                     draw_str_scaled(buf, &label, lx + 1, ly + 1, Bgra::new(0, 0, 0), 2);
                     draw_str_scaled(buf, &label, lx,     ly,     Bgra::yellow(), 2);
+                }
+            } else if proj.kind == WeaponKind::ClusterBomb {
+                // Main bomb: grenade body with orange stripe; fragment: smaller dot
+                let cx = proj.pos.x as i32;
+                let cy = proj.pos.y as i32;
+                if proj.is_fragment {
+                    // 5px round fragment with orange band
+                    let body = Bgra::new(55, 120, 45);
+                    let dark = Bgra::new(25, 60, 20);
+                    let band = Bgra::new(30, 130, 200); // orange stripe (BGR)
+                    buf.fill_rect(cx - 1, cy - 2, 2, 1, dark);
+                    buf.fill_rect(cx - 2, cy - 1, 4, 3, dark);
+                    buf.fill_rect(cx - 1, cy + 2, 2, 1, dark);
+                    buf.fill_rect(cx - 1, cy - 1, 2, 1, body);
+                    buf.fill_rect(cx - 1, cy,     2, 1, band);
+                    buf.fill_rect(cx - 1, cy + 1, 2, 1, body);
+                } else {
+                    draw_grenade_projectile(buf, proj.pos);
+                    // Orange band over seam to distinguish from plain grenade
+                    let band = Bgra::new(30, 130, 200); // orange (BGR)
+                    buf.fill_rect(cx - 2, cy - 1, 4, 1, band);
+                    // Fuse countdown
+                    if let FuseState::Burning(ticks) = proj.fuse {
+                        use crate::renderer::font::{draw_str_scaled, str_width_scaled};
+                        let secs = ((ticks + 29) / 30).min(9);
+                        let label = format!("{}", secs);
+                        let lx = proj.pos.x as i32 - str_width_scaled(&label, 2) / 2;
+                        let ly = proj.pos.y as i32 - 20;
+                        draw_str_scaled(buf, &label, lx + 1, ly + 1, Bgra::new(0, 0, 0), 2);
+                        draw_str_scaled(buf, &label, lx,     ly,     Bgra::new(30, 165, 255), 2);
+                    }
                 }
             } else if proj.kind == WeaponKind::HolyHandGrenade {
                 // Sacred Ordnance: large golden body with tumbling cross

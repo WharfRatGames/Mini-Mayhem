@@ -1,7 +1,7 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.371
-Last updated: 2026-06-26
+Current version: 0.5.4.376
+Last updated: 2026-06-27
 
 COMPLETED PHASES
 ----------------
@@ -46,6 +46,7 @@ Phase 4 — Dedicated Server & Live Multiplayer
   Opponent quit notification
   OTA auto-update on launch and before multiplayer
   IRC channel dashboard at /ircdash/ (live chat, ZPG/DiceRPG leaderboards)
+  IRC channels: #lobby, #general, #dicerpg, #zpg (renamed from #General-Chat → #general)
   Parity system — three enforcement layers:
     1. Compile-time: _gamestate_parity_checklist forces field classification
     2. Architecture: aim_angle flows through server_tick; Up/Down never stripped;
@@ -71,6 +72,7 @@ IN PROGRESS / NEAR TERM
   Profile screen (owned cosmetics, balance, win/loss record)
   Roster editor live preview
   Port 443 / HTTPS (router port-forward; nginx + cert ready)
+  Ping display fix (live mode, Miyoo) — RTT was always 0ms due to send/drain ordering; fixed in v0.5.4.377 (pending deploy)
 
 PLANNED — Phase 6
 ------------------

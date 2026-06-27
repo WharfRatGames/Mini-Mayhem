@@ -150,6 +150,7 @@ fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
         (WeaponKind::Shotgun,  None),    // infinite
         (WeaponKind::NinjaRope, None),   // infinite; utility tool, doesn't end turn
         (WeaponKind::Uzi,      None),    // infinite (MAC-10)
+        (WeaponKind::ClusterBomb,     Some(2)), // 2 uses
         (WeaponKind::MolotovCocktail, Some(2)), // 2 uses
         (WeaponKind::Tnt,          Some(1)), // 1 use; locked until 5 rotations
         (WeaponKind::Landmine,     Some(2)), // 2 uses
