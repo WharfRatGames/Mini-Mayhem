@@ -1,3 +1,4 @@
+0.5.4.379  Fix auto-update on Miyoo: fall back to local Pi IP (10.0.0.123) when router hairpin NAT blocks public hostname.
 0.5.4.378  Clump Bomb: bigger fragments (blast 35px, 45dmg), red tapered-top icon, renamed to "CLUMP BOMB"; fix pistol sound (_play_once skips if busy — no retry delay); .110 sound investigation.
 0.5.4.377  Cluster Bomb added (2x loadout, common crate) — 5 fragments in W/A flower pattern, 1s fuse; Banana Bomb reworked to 6 radial fragments that explode on contact; pistol shot sound (pistol.wav).
 0.5.4.376  Fix slow startup / lobby timeout: version check now HTTP-only (3s max, no TLS handshake, no double-wait on failure); outer wait 5s.

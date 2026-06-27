@@ -232,8 +232,15 @@ pub fn https_get(host: &str, path: &str, connect_timeout: u64, read_timeout: u64
 }
 
 pub fn http_get(host: &str, path: &str, connect_timeout: u64, read_timeout: u64) -> Result<Vec<u8>, String> {
+    http_get_via(host, host, path, connect_timeout, read_timeout)
+}
+
+/// HTTP GET where `connect_host` is the TCP target (IP or hostname) and `host_header` is the
+/// HTTP Host header. Allows bypassing DNS when hairpin NAT prevents reaching the public hostname
+/// from the local network — connect directly to the LAN IP with the original Host header.
+pub fn http_get_via(connect_host: &str, host_header: &str, path: &str, connect_timeout: u64, read_timeout: u64) -> Result<Vec<u8>, String> {
     use std::io::{Read, Write};
-    let addr = (host, 80u16)
+    let addr = (connect_host, 80u16)
         .to_socket_addrs()
         .map_err(|e| e.to_string())?
         .next()
@@ -241,7 +248,7 @@ pub fn http_get(host: &str, path: &str, connect_timeout: u64, read_timeout: u64)
     let mut tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(connect_timeout))
         .map_err(|e| e.to_string())?;
     tcp.set_read_timeout(Some(Duration::from_secs(read_timeout))).ok();
-    let req = format!("GET {} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", path, host);
+    let req = format!("GET {} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", path, host_header);
     tcp.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
     let mut resp = Vec::new();
     let _ = tcp.read_to_end(&mut resp);

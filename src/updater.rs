@@ -137,15 +137,24 @@ fn needs_update(fpath: &std::path::Path, expected_size: u64, expected_hash: Opti
 
 #[cfg(not(feature = "desktop"))]
 const UPDATE_HOST: &str = "crumbonium.duckdns.org";
+/// Fallback LAN IP for when the router doesn't support hairpin NAT (Miyoos on home network).
+/// http_get_body tries this if the public hostname TCP connect fails.
+const UPDATE_HOST_LAN: &str = "10.0.0.123";
 
 #[cfg(not(feature = "desktop"))]
 fn http_get_body(path: &str, timeout_secs: u64) -> Option<(Vec<u8>, bool)> {
     match crate::https::https_get(UPDATE_HOST, path, timeout_secs, timeout_secs) {
-        Ok(b) => Some((b, false)),
-        Err(_) => crate::https::http_get(UPDATE_HOST, path, timeout_secs, timeout_secs)
-            .ok()
-            .map(|b| (b, true)), // true = TLS failed, fell back to HTTP
+        Ok(b) => return Some((b, false)),
+        Err(_) => {}
     }
+    // HTTPS failed; try plain HTTP via public hostname, then fall back to direct LAN IP
+    // (preserving the Host header so nginx serves the right vhost).
+    if let Ok(b) = crate::https::http_get(UPDATE_HOST, path, timeout_secs, timeout_secs) {
+        return Some((b, true));
+    }
+    crate::https::http_get_via(UPDATE_HOST_LAN, UPDATE_HOST, path, timeout_secs, timeout_secs)
+        .ok()
+        .map(|b| (b, true))
 }
 
 #[cfg(not(feature = "desktop"))]
@@ -160,7 +169,11 @@ pub fn check_for_update(current: &str) -> (bool, bool) {
     // Version check uses HTTP-only: the file is non-sensitive, TLS adds a full
     // handshake RTT, and the HTTPS→HTTP fallback doubled the worst-case wait.
     // HTTP with a short timeout fails fast when offline (~3s vs ~12s before).
-    let body = match crate::https::http_get(UPDATE_HOST, "/arty/version.txt", 3, 3) {
+    // Falls back to the LAN IP when the router doesn't do hairpin NAT.
+    let body =
+        crate::https::http_get(UPDATE_HOST, "/arty/version.txt", 3, 3)
+        .or_else(|_| crate::https::http_get_via(UPDATE_HOST_LAN, UPDATE_HOST, "/arty/version.txt", 3, 3));
+    let body = match body {
         Ok(b) => b,
         Err(_) => return (false, false),
     };
@@ -219,6 +232,21 @@ pub fn sync_assets_bg(version: &'static str) {
     });
 }
 
+/// HTTP fallback for stream_binary: downloads via LAN IP over plain HTTP.
+/// Used when the HTTPS connect to the public hostname fails (router hairpin NAT absent).
+#[cfg(not(feature = "desktop"))]
+fn stream_binary_http<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u8>> {
+    use std::io::Write;
+    let body = crate::https::http_get_via(UPDATE_HOST_LAN, UPDATE_HOST, "/arty/mini-mayhem", 10, 120).ok()?;
+    if body.len() < 4 { return None; }
+    let tmp_path = "/tmp/mini-mayhem.new";
+    let mut f = std::fs::File::create(tmp_path).ok()?;
+    f.write_all(&body).ok()?;
+    on_progress(body.len(), body.len());
+    if body[0] != 0x7f || body[1] != b'E' { return None; }
+    Some(b"\x7fELF_ONDISK".to_vec())
+}
+
 #[cfg(not(feature = "desktop"))]
 // Streams the binary directly to /tmp/mini-mayhem.new to avoid buffering 26MB in RAM.
 // Returns Some(path) on success, None on failure.
@@ -228,8 +256,14 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
     use rustls::pki_types::ServerName;
 
     let req = format!("GET /arty/mini-mayhem HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", UPDATE_HOST);
-    let addr = (UPDATE_HOST, 443u16).to_socket_addrs().ok()?.next()?;
-    let tcp = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)).ok()?;
+    let addr = match (UPDATE_HOST, 443u16).to_socket_addrs().ok().and_then(|mut a| a.next()) {
+        Some(a) => a,
+        None => return stream_binary_http(on_progress), // DNS failed, go straight to LAN HTTP
+    };
+    let tcp = match TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)) {
+        Ok(t) => t,
+        Err(_) => return stream_binary_http(on_progress), // TCP failed (hairpin NAT), try LAN HTTP
+    };
     tcp.set_read_timeout(Some(std::time::Duration::from_secs(120))).ok();
 
     let config = crate::https::make_tls_config();
