@@ -1,3 +1,4 @@
+0.5.4.383  Miyoo framebuffer blit optimisation: batch all row reversal into a heap buffer, flush to mmap in one copy instead of 480 separate writes.
 0.5.4.382  Weapon menu cells wider (80→92px) so names don't overlap.
 0.5.4.381  Weapon menu 5 columns (was 4); test mode now includes Pistol, Clump Bomb, Molotov Cocktail.
 0.5.4.380  Fix auto-update reliability: boot check timeout 5s→8s; live/TAT always checks (ignores sentinel); shows "CHECKING FOR UPDATES..." before live/TAT entry; fresh-check timeout 5s→6s.

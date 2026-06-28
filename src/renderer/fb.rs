@@ -195,8 +195,9 @@ struct FbVarScreenInfo {
 
 #[cfg(not(feature = "desktop"))]
 pub struct Framebuffer {
-    fd:     libc::c_int,
-    buf:    &'static mut [u8],
+    fd:       libc::c_int,
+    buf:      &'static mut [u8],
+    flip_buf: Vec<u8>,
     pub width:  u32,
     pub height: u32,
     stride: u32,
@@ -239,7 +240,7 @@ impl Framebuffer {
         }
 
         let buf = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) };
-        Ok(Self { fd, buf, width, height, stride })
+        Ok(Self { fd, buf, flip_buf: vec![0u8; size], width, height, stride })
     }
 
     #[inline(always)]
@@ -264,34 +265,34 @@ impl Framebuffer {
     pub fn blit_row(&mut self, screen_y: u32, src: &[u8]) {
         if screen_y >= self.height { return; }
         // Miyoo Mini Plus framebuffer is rotated 180°: both axes flipped.
-        // Reverse the row into a cache-local stack buffer (forward-order writes
-        // into L1), then memcpy that whole buffer to mmap in one sequential
-        // burst — much faster than 640 scattered reverse-order writes to mmap.
+        // Write the reversed row into flip_buf (heap, cache-warm); present()
+        // flushes the whole frame to mmap in one copy instead of 480 separate
+        // mmap writes.
         let ry = self.height - 1 - screen_y;
         let dst_off = (ry * self.stride) as usize;
         let w = self.width as usize;
         let row_bytes = w * 4;
-        // Treat pixels as u32 to copy 4 bytes at a time without field indexing.
-        // SAFETY: src is BGRA u8 slice with length >= row_bytes; row is stack-
-        // allocated and aligned to u32 (repr is [u32; 640]).
-        let mut row = [0u32; 640];
+        let dst_px = unsafe {
+            std::slice::from_raw_parts_mut(
+                self.flip_buf[dst_off..dst_off + row_bytes].as_mut_ptr() as *mut u32,
+                w,
+            )
+        };
         let src_px = unsafe {
             std::slice::from_raw_parts(src.as_ptr() as *const u32, w)
         };
         for i in 0..w {
-            row[w - 1 - i] = src_px[i];
+            dst_px[w - 1 - i] = src_px[i];
         }
-        let row_bytes_slice = unsafe {
-            std::slice::from_raw_parts(row.as_ptr() as *const u8, row_bytes)
-        };
-        self.buf[dst_off..dst_off + row_bytes].copy_from_slice(row_bytes_slice);
     }
 
     pub fn screen_w(&self) -> u32 { self.width }
     pub fn screen_h(&self) -> u32 { self.height }
 
-    /// No-op on Miyoo — writes are visible immediately via mmap.
-    pub fn present(&mut self) {}
+    /// Flush the completed frame from flip_buf to mmap in one contiguous copy.
+    pub fn present(&mut self) {
+        self.buf.copy_from_slice(&self.flip_buf);
+    }
 
     pub fn is_open(&self) -> bool { true }
 }

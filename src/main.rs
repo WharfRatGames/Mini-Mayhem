@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.382";
+const VERSION: &str = "0.5.4.383";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -35,18 +35,14 @@ fn main() {
     unsafe { for fd in 3i32..=255 { libc::close(fd); } }
 
     // Tell keymon to stop intercepting the MENU button so we can read KEY_ESC.
-    // MenuGuard removes the flag on Drop (normal exit, early return, or panic).
+    // Written just before the inner game loop and removed on Drop (including on
+    // `continue 'game` back to title). Title screen gets normal OS Menu behaviour.
     #[cfg(not(feature = "desktop"))]
     struct MenuGuard;
     #[cfg(not(feature = "desktop"))]
     impl Drop for MenuGuard {
         fn drop(&mut self) { let _ = std::fs::remove_file("/tmp/disable_menu_button"); }
     }
-    #[cfg(not(feature = "desktop"))]
-    let _menu_guard = {
-        let _ = std::fs::write("/tmp/disable_menu_button", b"");
-        MenuGuard
-    };
 
     // ── Open hardware ─────────────────────────────────────────────────────────
     let mut fb = Framebuffer::open()
@@ -738,6 +734,10 @@ fn main() {
     let mut opponent_quit_acked = false; // true after player dismisses the quit dialog
     let mut last_state_time = Instant::now(); // detect stalled server (no state + no final result)
     let mut bug_reporter: Option<bug_report::BugReporter> = None;
+    // Enable Menu→KEY_ESC for the bug reporter during gameplay only.
+    // Dropped on any `continue 'game` so the title screen gets normal OS Menu.
+    #[cfg(not(feature = "desktop"))]
+    let _menu_guard = { let _ = std::fs::write("/tmp/disable_menu_button", b""); MenuGuard };
     loop {
         let frame_start = Instant::now();
         input.poll();
