@@ -32,6 +32,11 @@
   .channels { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
   .ch-btn { padding: 4px 10px; font-size: 12px; font-weight: 400; background: #0e1230; border-color: #2a2f5a; }
   .ch-btn:hover { background: #1a2060; border-color: #5566cc; }
+  #login-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 12px; }
+  #login-screen input { background: #12151f; border: 1px solid #2a2e45; color: #d0d4e8; padding: 8px 14px; font-family: inherit; font-size: 14px; border-radius: 4px; width: 260px; }
+  #login-screen button { background: #ffd232; color: #0a0c14; border: none; padding: 8px 24px; font-family: inherit; font-size: 13px; font-weight: bold; border-radius: 4px; cursor: pointer; }
+  #auth-error { color: #e05252; font-size: 12px; min-height: 16px; }
+  #main-content { display: none; }
 </style>
 </head>
 <body>
@@ -39,6 +44,14 @@
   <h1>🤖 Bot Dashboard</h1>
   <a href="/arty/dashboard/">← Main Dashboard</a>
 </header>
+
+<div id="login-screen">
+  <input type="password" id="key-input" placeholder="Admin key" autocomplete="current-password">
+  <button onclick="doLogin()">Login</button>
+  <div id="auth-error"></div>
+</div>
+
+<div id="main-content">
 <div class="container">
 
   <!-- POST MESSAGE -->
@@ -156,19 +169,50 @@
   </div>
 
 </div>
+</div>
 <script>
 const BOT = '/bot';
+let adminKey = localStorage.getItem("bot_admin_key") || "";
+
+function doLogin() {
+  adminKey = document.getElementById("key-input").value.trim();
+  verifyKey();
+}
+
+async function verifyKey() {
+  try {
+    const r = await fetch('/api/admin/status?key=' + encodeURIComponent(adminKey));
+    if (r.status === 403) {
+      document.getElementById("auth-error").textContent = "Invalid admin key.";
+      adminKey = "";
+      return;
+    }
+    localStorage.setItem("bot_admin_key", adminKey);
+    document.getElementById("login-screen").style.display = "none";
+    document.getElementById("main-content").style.display = "block";
+  } catch(e) {
+    document.getElementById("auth-error").textContent = e.message;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("key-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") doLogin();
+  });
+  if (adminKey) verifyKey();
+});
 
 function setChannel(id, name) {
   document.getElementById(id).value = name;
 }
 
 async function botPost(endpoint, body) {
-  const r = await fetch(`${BOT}/${endpoint}`, {
+  const r = await fetch(`${BOT}/${endpoint}?key=` + encodeURIComponent(adminKey), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
+  if (r.status === 403) { localStorage.removeItem("bot_admin_key"); location.reload(); }
   return r;
 }
 
