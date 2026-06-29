@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.383";
+const VERSION: &str = "0.5.4.384";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -282,9 +282,8 @@ fn main() {
         let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
         if let Ok((true, _)) = got {
             update_available = true;
-        } else {
-            // Either still in flight (Timeout) or already finished with "no update" (Disconnected).
-            // In both cases do a fresh check — version.txt may have changed since launch.
+        } else if is_mp_mode {
+            // MP only: re-check in case version changed since boot. SP skips to avoid blocking.
             let (ftx, frx) = std::sync::mpsc::channel::<bool>();
             std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); });
             if let Ok(true) = frx.recv_timeout(std::time::Duration::from_secs(6)) {

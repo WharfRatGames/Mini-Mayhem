@@ -2,7 +2,7 @@
 """IRC Dashboard — reads BenBot's ChannelLogger logs; no IRC connection needed.
 Serves JSON on port 7781 for the /ircdash/ dashboard."""
 
-import os, re, time, json, threading, sqlite3, collections
+import os, re, time, json, threading, sqlite3, collections, hmac
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 LOG_BASE   = os.path.expanduser("~/irc-bots/TriviaBot/logs/ChannelLogger/crumbonium")
@@ -12,6 +12,9 @@ ZPG_DB     = os.path.expanduser("~/irc-bots/TriviaBot/data/zpg.db")
 DICERPG_DB = os.path.expanduser("~/irc-bots/TriviaBot/data/dicerpg.db")
 
 CHANNELS = ["#lobby", "#general", "#dicerpg", "#zpg"]
+
+_key_file  = os.path.expanduser("~/mayhem-server/admin_key.txt")
+ADMIN_KEY  = open(_key_file).read().strip() if os.path.exists(_key_file) else os.environ.get("ARTY_ADMIN_KEY", "changeme")
 
 # Log dir names use lowercase channel names
 def log_path(ch):
@@ -185,8 +188,18 @@ def dicerpg_top(n=5):
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
+    def _check_auth(self):
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        return hmac.compare_digest(params.get("key", ""), ADMIN_KEY)
+
     def do_GET(self):
-        if self.path in ("/irc/state", "/irc/state/"):
+        if not self._check_auth():
+            self.send_response(403)
+            self.end_headers()
+            return
+        path = self.path.split("?", 1)[0]
+        if path in ("/irc/state", "/irc/state/"):
             with lock:
                 data = {
                     "channels": {

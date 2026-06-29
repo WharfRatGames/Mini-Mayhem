@@ -1457,7 +1457,7 @@ def _handle(db, sock, peer_ip="?"):
             lines = subprocess.check_output(["tail", f"-{n}", log_path], text=True).splitlines()
             noise = ("Jellyfin", "/Sessions/", "wp-includes", "xmlrpc.php", "wlwmanifest",
                      "favicon.ico", "/Users/", "/Shows/", "/Items/", "/web/", "/System/",
-                     "/Playback", "/Videos/", "crumboniumjelly")
+                     "/Playback", "/Videos/", "crumboniumjelly", "/zan/")
             lines = [l for l in lines if not any(s in l for s in noise)]
             send_json(sock, 200, list(reversed(lines)))
         except Exception as e:

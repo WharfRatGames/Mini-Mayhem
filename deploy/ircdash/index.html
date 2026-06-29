@@ -89,9 +89,34 @@
   a { color: #ffd232; text-decoration: none; }
   a:hover { text-decoration: underline; }
   footer { color: #333; font-size: 11px; margin-top: 20px; }
+  #login-screen {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 60vh; gap: 12px;
+  }
+  #login-screen input {
+    background: #12151f; border: 1px solid #2a2e45; color: #d0d4e8;
+    padding: 8px 14px; font-family: inherit; font-size: 14px;
+    border-radius: 4px; width: 260px;
+  }
+  #login-screen button {
+    background: #ffd232; color: #0a0c14; border: none;
+    padding: 8px 24px; font-family: inherit; font-size: 13px;
+    font-weight: bold; border-radius: 4px; cursor: pointer;
+  }
+  #auth-error { color: #e05252; font-size: 12px; min-height: 16px; }
+  #main-content { display: none; }
 </style>
 </head>
 <body>
+
+<div id="login-screen">
+  <h1>⚡ IRC Dashboard</h1>
+  <input type="password" id="key-input" placeholder="Admin key" autocomplete="current-password">
+  <button onclick="doLogin()">Login</button>
+  <div id="auth-error"></div>
+</div>
+
+<div id="main-content">
 <h1>⚡ IRC Dashboard</h1>
 <div class="subtitle">crumbonium.duckdns.org &nbsp;·&nbsp; <a href="/arty/dashboard/">Game Dashboard</a> &nbsp;·&nbsp; <a href="/arty/">/arty</a></div>
 
@@ -116,10 +141,25 @@
 </div>
 
 <footer>Refreshes every 5 s. Bot nicks appear in <span style="color:#ffd232">yellow</span>.</footer>
+</div>
 
 <script>
 const BOT_NICKS = new Set(["BenBot","DashBot","ChanServ","NickServ","OperServ"]);
 const CHANNEL_ORDER = ["#lobby","#general","#dicerpg","#zpg"];
+let adminKey = localStorage.getItem("irc_admin_key") || "";
+let refreshTimer = null;
+
+function doLogin() {
+  adminKey = document.getElementById("key-input").value.trim();
+  refresh(true);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("key-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") doLogin();
+  });
+  if (adminKey) refresh(true);
+});
 
 function fmtUptime(s) {
   if (s < 60) return `${s}s`;
@@ -195,10 +235,21 @@ function esc(s) {
   return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-async function refresh() {
+async function refresh(isLogin) {
   try {
-    const res = await fetch("/irc/state");
+    const res = await fetch("/irc/state?key=" + encodeURIComponent(adminKey));
+    if (res.status === 403) {
+      document.getElementById("auth-error").textContent = "Invalid admin key.";
+      return;
+    }
     const data = await res.json();
+
+    if (isLogin) {
+      localStorage.setItem("irc_admin_key", adminKey);
+      document.getElementById("login-screen").style.display = "none";
+      document.getElementById("main-content").style.display = "block";
+      if (!refreshTimer) refreshTimer = setInterval(refresh, 5000);
+    }
 
     document.getElementById("refresh-ts").textContent =
       "updated " + new Date().toLocaleTimeString();
@@ -211,9 +262,6 @@ async function refresh() {
     document.getElementById("conn-dot").className = "dot off";
   }
 }
-
-refresh();
-setInterval(refresh, 5000);
 </script>
 </body>
 </html>

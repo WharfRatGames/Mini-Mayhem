@@ -1,7 +1,7 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.380
-Last updated: 2026-06-27
+Current version: 0.5.4.383 (deployed 2026-06-28)
+Last updated: 2026-06-28
 
 COMPLETED PHASES
 ----------------
@@ -25,9 +25,9 @@ Phase 2 — Renderer & Input
 Phase 3 — Weapons & Turn System
   Turn system: Acting → Watching → Retreat → Ending
   Loadout weapons (13): Bazooka, Grenade (variable fuse, L1/R1), Pistol (6-shot burst ∞),
-    Shotgun (∞), MAC-10 (∞), Ninja Rope (∞), Clump Bomb (x2, 5 fragments flower pattern),
-    Molotov Cocktail (x2, 12 flames), TNT (x1), Landmine (x2), Baseball Bat (x1),
-    Plasma Torch (x3), Homing Missile (x1)
+    Shotgun (∞), MAC-10 (∞), Ninja Rope (x5), Clump Bomb (x2, 5 fragments flower pattern,
+    main blast 20 dmg, fragments 15 dmg), Molotov Cocktail (x2, 12 flames), TNT (x1),
+    Landmine (x2), Baseball Bat (x1), Plasma Torch (x3), Homing Missile (x1)
   Crate-only weapons: Revolver, Blasthive, Meteor Bomb, Sacred Ordnance,
     Garcia, Air Strike, Black Hole Bomb, Hand of Jerry
   Common crate pool: Landmine, Shotgun, TNT, Ninja Rope, Baseball Bat, Plasma Torch, Clump Bomb
@@ -37,7 +37,7 @@ Phase 3 — Weapons & Turn System
   Barrel chain reactions, fall damage, drown death
   Graves, headstones, blood splats
   WA-style fire physics: flames slide downhill, pool in pits, push soldiers
-  Weapon menu: 4-column grid layout
+  Weapon menu: 5-column grid layout (cell_w=92px)
 
 Phase 4 — Dedicated Server & Live Multiplayer
   Authoritative server (clients send inputs; server runs all physics)
@@ -47,8 +47,10 @@ Phase 4 — Dedicated Server & Live Multiplayer
   Version handshake (client/server must match exactly)
   Reconnect window (3-minute grace, both casual and ranked)
   Opponent quit notification
-  OTA auto-update: boot check (8s timeout), LAN fallback for hairpin NAT,
-    forced "CHECKING FOR UPDATES..." screen before live/TAT entry
+  OTA auto-update: HTTPS first (2s timeout), HTTP fallback, LAN fallback for hairpin NAT;
+    test mode skips fresh update check (instant entry); live/TAT still re-checks
+  OTA sfx integrity: deploy script auto-syncs assets/sfx/ → deploy/assets/sfx/
+    (spaces→underscores) on every deploy; manifest rebuilt each time
   IRC channel dashboard at /ircdash/ (live chat, ZPG/DiceRPG leaderboards)
   IRC channels: #lobby, #general, #dicerpg, #zpg
   Parity system — three enforcement layers:
@@ -72,13 +74,33 @@ Phase 5 — Accounts, ELO & Economy
 
 IN PROGRESS / NEAR TERM
 ------------------------
-  v0.5.4.381 (uncommitted): Test mode weapon list fixed — Pistol, Clump Bomb, Molotov Cocktail
-    now appear in test mode (were missing despite being in default loadout)
   Scrap earned shown on game-over screen
   Profile screen (owned cosmetics, balance, win/loss record)
   Roster editor live preview
-  Pistol sound reliability on Miyoo (ALSA busy drops; .110 audio investigation pending)
-  .110 manual push pending (device offline, missed v0.5.4.377-380)
+
+INFRASTRUCTURE CHANGES (2026-06-28)
+-------------------------------------
+  Firewall: Pi port 9000 (TheLounge) restricted to LAN + home IP + VPN IP; port 22 LAN-only
+  SSH LAN-only enforced on Pi, laptop (Lappy/10.0.0.118), Windows PC (10.0.0.106)
+  SSH key (arty_pi) added to laptop; username is lowercase mike
+  IRC: #general-chat permanently blocked (invite-only in ngircd.conf)
+  IRC: Anope must be restarted after ngircd or NickServ/ChanServ go offline
+  dusty (10.0.0.45): ESTABLISHED,RELATED iptables INPUT rule added + persisted to
+    /etc/iptables/rules.v4 (allows return traffic for outbound SSH from dusty)
+  Windows (10.0.0.106): OpenSSH inbound firewall rule added (profile=any, port 22)
+  Backup script: deploy/backup_arty.ps1 (PowerShell, runs on Windows, pulls from dusty);
+    keeps 5 unique backups (SHA256 dedup); dest D:\misc\backups\arty\arty-code\
+  Port reference doc: assets/ports.txt
+
+RECENT CHANGES (v0.5.4.383, 2026-06-28)
+-----------------------------------------
+  Miyoo framebuffer blit: batch all row-reversal into heap flip_buf, flush to
+    mmap in one copy instead of 480 separate writes (performance)
+  Clump Bomb fragment damage reduced: main blast 20 dmg (was 30), fragments 15 dmg (was 30)
+  OTA update check: HTTPS first (2s timeout), HTTP fallback, LAN fallback
+  Test mode: no longer blocks on fresh update check at entry (instant)
+  SRB2Kart http_source changed to https://
+  Discord patch-note 0.5.4.379 redacted LAN IP, reposted 379–383 in order
 
 PLANNED — Phase 6
 ------------------
@@ -99,7 +121,7 @@ DEPLOYMENT
   Server:  Raspberry Pi 4, TCP port 7777
   API:     Pi port 7778, nginx /api/ proxy, TLS via DuckDNS
   OTA:     https://crumbonium.duckdns.org/arty/version.txt + mini-mayhem binary
-           LAN fallback: 10.0.0.123 with Host header (bypasses hairpin NAT)
+           LAN fallback with Host header (bypasses hairpin NAT, no IP in public docs)
   IRC:     crumbonium.duckdns.org IRC dashboard at /ircdash/
   Discord: MayhemBot posts match results, patch notes, leaderboard to Discord server
   GitHub:  https://github.com/WharfRatGames/Mini-Mayhem
@@ -115,3 +137,5 @@ KEY ARCHITECTURE NOTES
     to auto-replicate to live clients. Never call fx functions directly from sim.
   assert_all_paths_in_sync — parity test helper in tests/parity.rs. Call for
     every new gameplay feature test.
+  Framebuffer blit (Miyoo): rows reversed into heap flip_buf, flushed to mmap
+    in one copy per frame. Screen is 640x480, rotated 180° in hardware.

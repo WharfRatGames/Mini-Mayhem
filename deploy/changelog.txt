@@ -1,8 +1,9 @@
+0.5.4.384  IRC dashboard: admin key auth; IRC server restricts channel creation to opers only.
 0.5.4.383  Miyoo framebuffer blit optimisation: batch all row reversal into a heap buffer, flush to mmap in one copy instead of 480 separate writes.
 0.5.4.382  Weapon menu cells wider (80→92px) so names don't overlap.
 0.5.4.381  Weapon menu 5 columns (was 4); test mode now includes Pistol, Clump Bomb, Molotov Cocktail.
 0.5.4.380  Fix auto-update reliability: boot check timeout 5s→8s; live/TAT always checks (ignores sentinel); shows "CHECKING FOR UPDATES..." before live/TAT entry; fresh-check timeout 5s→6s.
-0.5.4.379  Fix auto-update on Miyoo: fall back to local Pi IP (10.0.0.123) when router hairpin NAT blocks public hostname.
+0.5.4.379  Fix auto-update on Miyoo: fall back to LAN address when router hairpin NAT blocks public hostname.
 0.5.4.378  Clump Bomb: bigger fragments (blast 35px, 45dmg), red tapered-top icon, renamed to "CLUMP BOMB"; fix pistol sound (_play_once skips if busy — no retry delay); .110 sound investigation.
 0.5.4.377  Cluster Bomb added (2x loadout, common crate) — 5 fragments in W/A flower pattern, 1s fuse; Banana Bomb reworked to 6 radial fragments that explode on contact; pistol shot sound (pistol.wav).
 0.5.4.376  Fix slow startup / lobby timeout: version check now HTTP-only (3s max, no TLS handshake, no double-wait on failure); outer wait 5s.

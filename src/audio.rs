@@ -66,7 +66,7 @@ pub fn play_death_water()       { _play_death_water(); }
 pub fn play_holy_hand_grenade() { _play_once("hallelujah.wav"); }
 pub fn play_minigun()           { _play_once("minigun.wav"); } // deploy/assets/sfx/hallelujah.wav required
 pub fn play_uzi()               { _play("mac10.wav"); }
-pub fn play_pistol()            { _play_once("pistol.wav"); }
+pub fn play_pistol()            { _play("pistol.wav"); }
 
 /// Identifies a sound effect so it can be recorded during simulation and
 /// shipped to the live client (which runs no simulation of its own and would

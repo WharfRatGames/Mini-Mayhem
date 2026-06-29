@@ -756,8 +756,9 @@ impl GameState {
         let wind_val = self.wind.value();
         let mut resolved = false;
         let mut explosions: Vec<(WorldPos, WeaponKind)> = Vec::new();
-        let mut meteor_impacts:     Vec<WorldPos> = Vec::new();
-        let mut cluster_impacts:    Vec<WorldPos> = Vec::new();
+        let mut meteor_impacts:        Vec<WorldPos> = Vec::new();
+        let mut cluster_impacts:       Vec<WorldPos> = Vec::new();
+        let mut cluster_frag_explosions: Vec<WorldPos> = Vec::new();
         let mut hive_impacts:       Vec<WorldPos> = Vec::new();
         let mut black_hole_spawns:  Vec<WorldPos> = Vec::new();
         let mut molotov_impacts:    Vec<WorldPos> = Vec::new();
@@ -915,7 +916,11 @@ impl GameState {
                                 } else {
                                     proj.pos
                                 };
-                                explosions.push((exp_pos, kind));
+                                if kind == WeaponKind::ClusterBomb && proj.is_fragment {
+                                    cluster_frag_explosions.push(exp_pos);
+                                } else {
+                                    explosions.push((exp_pos, kind));
+                                }
                                 resolved = true;
                                 hit_soldier = true;
                                 // Blood splat: directional spray from blast direction,
@@ -963,6 +968,8 @@ impl GameState {
                         hive_impacts.push(pos);
                     } else if kind == WeaponKind::BlackHoleBomb {
                         black_hole_spawns.push(pos);
+                    } else if kind == WeaponKind::ClusterBomb && proj.is_fragment {
+                        cluster_frag_explosions.push(pos);
                     } else {
                         explosions.push((pos, kind));
                     }
@@ -1026,7 +1033,7 @@ impl GameState {
         // Cluster bomb: small burst + scatter 5 fragments in W:A flower pattern
         for pos in cluster_impacts {
             self.emit_sound(crate::audio::Sfx::Grenade);
-            self.apply_explosion(pos, WeaponKind::ClusterBomb);
+            self.apply_explosion_scaled(pos, WeaponKind::ClusterBomb, 1.0, 1.0, 20.0 / 30.0);
             // Base angles (degrees, screen-space: 90° = straight up):
             //   upper-left=135, straight-up=90, upper-right=45, lower-left=225, lower-right=315
             const BASE_ANGLES_DEG: [f32; 5] = [135.0, 90.0, 45.0, 225.0, 315.0];
@@ -1053,6 +1060,11 @@ impl GameState {
                     crate::world::Vec2::new(vx, vy),
                 ));
             }
+        }
+
+        // Cluster bomb fragments: reduced damage (15 vs 20 for main burst)
+        for pos in cluster_frag_explosions {
+            self.apply_explosion_scaled(pos, WeaponKind::ClusterBomb, 1.0, 1.0, 15.0 / 30.0);
         }
 
         // Beehive impact: small burst + spawn 6 homing bees

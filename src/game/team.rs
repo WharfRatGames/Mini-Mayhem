@@ -148,7 +148,7 @@ fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
         (WeaponKind::Pistol,   None),    // infinite; 6-shot burst per use
         (WeaponKind::Grenade,  None),    // infinite
         (WeaponKind::Shotgun,  None),    // infinite
-        (WeaponKind::NinjaRope, None),   // infinite; utility tool, doesn't end turn
+        (WeaponKind::NinjaRope, Some(5)), // 5 uses per loadout; utility tool, doesn't end turn
         (WeaponKind::Uzi,      None),    // infinite (MAC-10)
         (WeaponKind::ClusterBomb,     Some(2)), // 2 uses
         (WeaponKind::MolotovCocktail, Some(2)), // 2 uses
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(t.weapons[0], (WeaponKind::Bazooka, None));   // infinite
         assert_eq!(t.weapons[1], (WeaponKind::Grenade, None));   // infinite
         assert_eq!(t.weapons[2], (WeaponKind::Shotgun, None));   // infinite
-        assert_eq!(t.weapons[5], (WeaponKind::NinjaRope, None)); // infinite
+        assert_eq!(t.weapons[5], (WeaponKind::NinjaRope, Some(5))); // 5 uses
         assert_eq!(t.weapons[8], (WeaponKind::Uzi, Some(2)));           // MAC-10 x2
         assert_eq!(t.weapons[9], (WeaponKind::MolotovCocktail, None));  // infinite
         assert_eq!(t.weapons.len(), 11);

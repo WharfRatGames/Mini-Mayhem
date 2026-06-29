@@ -166,13 +166,11 @@ pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<(bo
 /// tls_broken=true means HTTPS failed and we fell back to HTTP — force the update, no skip.
 #[cfg(not(feature = "desktop"))]
 pub fn check_for_update(current: &str) -> (bool, bool) {
-    // Version check uses HTTP-only: the file is non-sensitive, TLS adds a full
-    // handshake RTT, and the HTTPS→HTTP fallback doubled the worst-case wait.
-    // HTTP with a short timeout fails fast when offline (~3s vs ~12s before).
-    // Falls back to the LAN IP when the router doesn't do hairpin NAT.
+    // HTTPS first; fall back to HTTP (port 80) then LAN IP for hairpin-NAT routers.
     let body =
-        crate::https::http_get(UPDATE_HOST, "/arty/version.txt", 3, 3)
-        .or_else(|_| crate::https::http_get_via(UPDATE_HOST_LAN, UPDATE_HOST, "/arty/version.txt", 3, 3));
+        crate::https::https_get(UPDATE_HOST, "/arty/version.txt", 2, 2)
+        .or_else(|_| crate::https::http_get(UPDATE_HOST, "/arty/version.txt", 2, 2))
+        .or_else(|_| crate::https::http_get_via(UPDATE_HOST_LAN, UPDATE_HOST, "/arty/version.txt", 2, 2));
     let body = match body {
         Ok(b) => b,
         Err(_) => return (false, false),

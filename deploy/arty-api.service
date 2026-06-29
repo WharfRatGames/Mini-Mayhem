@@ -5,9 +5,11 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/Grunkus/mayhem-server
-ExecStart=/usr/bin/python3 /home/Grunkus/mayhem-server/arty_api.py
+ExecStart=/usr/bin/python3 -u /home/Grunkus/mayhem-server/arty_api.py
 Restart=always
 RestartSec=5
+StandardOutput=append:/home/Grunkus/mayhem-server/arty-api.log
+StandardError=append:/home/Grunkus/mayhem-server/arty-api.log
 
 [Install]
 WantedBy=default.target
