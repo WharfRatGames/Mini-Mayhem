@@ -1,4 +1,4 @@
-0.5.4.384  IRC dashboard: admin key auth; IRC server restricts channel creation to opers only.
+0.5.4.384  Internal update.
 0.5.4.383  Miyoo framebuffer blit optimisation: batch all row reversal into a heap buffer, flush to mmap in one copy instead of 480 separate writes.
 0.5.4.382  Weapon menu cells wider (80→92px) so names don't overlap.
 0.5.4.381  Weapon menu 5 columns (was 4); test mode now includes Pistol, Clump Bomb, Molotov Cocktail.
