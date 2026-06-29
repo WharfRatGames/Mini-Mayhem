@@ -1,7 +1,7 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.383 (deployed 2026-06-28)
-Last updated: 2026-06-28
+Current version: 0.5.4.384 (deployed 2026-06-29)
+Last updated: 2026-06-29
 
 COMPLETED PHASES
 ----------------
@@ -78,29 +78,35 @@ IN PROGRESS / NEAR TERM
   Profile screen (owned cosmetics, balance, win/loss record)
   Roster editor live preview
 
-INFRASTRUCTURE CHANGES (2026-06-28)
--------------------------------------
+INFRASTRUCTURE CHANGES (2026-06-28 through 2026-06-29)
+--------------------------------------------------------
   Firewall: Pi port 9000 (TheLounge) restricted to LAN + home IP + VPN IP; port 22 LAN-only
   SSH LAN-only enforced on Pi, laptop (Lappy/10.0.0.118), Windows PC (10.0.0.106)
   SSH key (arty_pi) added to laptop; username is lowercase mike
   IRC: #general-chat permanently blocked (invite-only in ngircd.conf)
+  IRC: channel creation restricted to opers only (PredefChannelsOnly = yes in ngircd.conf)
   IRC: Anope must be restarted after ngircd or NickServ/ChanServ go offline
   dusty (10.0.0.45): ESTABLISHED,RELATED iptables INPUT rule added + persisted to
     /etc/iptables/rules.v4 (allows return traffic for outbound SSH from dusty)
   Windows (10.0.0.106): OpenSSH inbound firewall rule added (profile=any, port 22)
-  Backup script: deploy/backup_arty.ps1 (PowerShell, runs on Windows, pulls from dusty);
-    keeps 5 unique backups (SHA256 dedup); dest D:\misc\backups\arty\arty-code\
+  Backup: deploy/backup_arty.ps1 (PowerShell) runs ON Windows via Task Scheduler (hourly),
+    pulls from dusty via scp; SHA256 dedup, keeps 5 most recent; dest D:\misc\backups\arty\arty-code\
+  IRC dashboard (/ircdash/) and bot dashboard (/arty/dashboard/bot.html) now require admin key
+  Bot server (mayhem_bot.py): all /notify/* endpoints gated by ?key= admin key check
   Port reference doc: assets/ports.txt
+
+RECENT CHANGES (v0.5.4.384, 2026-06-29)
+-----------------------------------------
+  Bot dashboard: admin key login screen (localStorage, same key as other dashboards)
+  Bot server: auth check on all /notify/* endpoints (403 on bad key)
+  IRC: PredefChannelsOnly = yes — users cannot create new channels
 
 RECENT CHANGES (v0.5.4.383, 2026-06-28)
 -----------------------------------------
   Miyoo framebuffer blit: batch all row-reversal into heap flip_buf, flush to
     mmap in one copy instead of 480 separate writes (performance)
-  Clump Bomb fragment damage reduced: main blast 20 dmg (was 30), fragments 15 dmg (was 30)
   OTA update check: HTTPS first (2s timeout), HTTP fallback, LAN fallback
   Test mode: no longer blocks on fresh update check at entry (instant)
-  SRB2Kart http_source changed to https://
-  Discord patch-note 0.5.4.379 redacted LAN IP, reposted 379–383 in order
 
 PLANNED — Phase 6
 ------------------
