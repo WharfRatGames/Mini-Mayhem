@@ -925,9 +925,8 @@ impl Terrain {
                         // fast enough (>4px/px) that walking can't auto-climb it — you
                         // must jump/backflip — so there are no long flat walkable stretches.
                         let relief = hill.get([nx * hill_freq,       0.7])
-                                   + 0.6  * hill.get([nx * hill_freq * 4.0, 3.1])
-                                   + 0.35 * hill.get([nx * hill_freq * 9.0, 9.4]);
-                        d += (relief / 1.95) * HILL_AMP;
+                                   + 0.30 * hill.get([nx * hill_freq * 4.0, 3.1]);
+                        d += (relief / 1.30) * HILL_AMP;
                     }
                     d
                 };
@@ -969,7 +968,7 @@ impl Terrain {
         // keeps thin bridges / small stepping-stone islands that sit above threshold
         // solid — only their edges round — instead of eroding them away.
         // Islands use a gentler radius (their blobs are smaller and already rounded).
-        let r: i32 = if blob { 2 } else { 3 };
+        let r: i32 = if blob { 6 } else { 10 };
         let mut tmp = vec![0.0f64; region_w * region_h];
         // Horizontal pass: clamp x at the region edges (terrain continues sideways).
         for ry in 0..region_h {
@@ -1008,7 +1007,7 @@ impl Terrain {
         // threshold slightly: the blur pulls a small blob's contour inward, so this
         // keeps the smallest stepping-stones above threshold (and above the
         // min_frag=50 cleanup floor) instead of vanishing.
-        let thr = if blob { threshold - 0.015 } else { threshold };
+        let thr = if blob { threshold - 0.03 } else { threshold - 0.02 };
         for ry in 0..region_h {
             let y = TERRAIN_MIN_Y as usize + ry;
             for x in 0..region_w {

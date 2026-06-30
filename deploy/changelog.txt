@@ -1,3 +1,4 @@
+0.5.4.386  Terrain rounded much further — hills, cliffs, islands and canyons are now smooth organic blobs. Caves unchanged.
 0.5.4.385  Smoother, more natural terrain: hills, cliffs, islands and canyons are now rounded and organic instead of jagged. Caves unchanged.
 0.5.4.384  Internal update.
 0.5.4.383  Miyoo framebuffer blit optimisation: batch all row reversal into a heap buffer, flush to mmap in one copy instead of 480 separate writes.
