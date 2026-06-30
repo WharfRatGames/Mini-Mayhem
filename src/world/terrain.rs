@@ -867,6 +867,16 @@ impl Terrain {
         }
 
         if archetype != 3 {
+        // Continuous density buffer for the terrain region [TERRAIN_MIN_Y, WATER_Y).
+        // We fill this per-pixel below, then box-blur it before thresholding so the
+        // silhouette comes out smooth/organic instead of following every noise wiggle.
+        // 0.0 doubles as the AIR pad value for out-of-region neighbours (it sits well
+        // below `threshold` ≈ 0.5). Deterministic f64 math, no RNG draws → identical
+        // on client and server for a given seed.
+        let region_w = WORLD_W as usize;
+        let region_h = (WATER_Y - TERRAIN_MIN_Y) as usize;
+        let mut dens = vec![0.0f64; region_w * region_h];
+
         for y in TERRAIN_MIN_Y as usize..WATER_Y as usize {
             let ny = y as f64 / WORLD_H as f64;
             let ty = (y as f64 - TERRAIN_MIN_Y as f64) / terrain_range_f;
@@ -948,7 +958,61 @@ impl Terrain {
                     }
                 }
 
-                terrain.set_solid(x as i32, y as i32, density >= threshold);
+                dens[(y - TERRAIN_MIN_Y as usize) * region_w + x] = density;
+            }
+        }
+
+        // ── Phase 2c: Separable box blur of the density field, then threshold ─────
+        // Rounds the contour where the field crosses `threshold` (metaball-style),
+        // killing sub-~14px jaggedness while leaving the ≥104px relief that forces
+        // jump/backflip intact. Blurring the CONTINUOUS field (not the binary mask)
+        // keeps thin bridges / small stepping-stone islands that sit above threshold
+        // solid — only their edges round — instead of eroding them away.
+        // Islands use a gentler radius (their blobs are smaller and already rounded).
+        let r: i32 = if blob { 2 } else { 3 };
+        let mut tmp = vec![0.0f64; region_w * region_h];
+        // Horizontal pass: clamp x at the region edges (terrain continues sideways).
+        for ry in 0..region_h {
+            let row = ry * region_w;
+            for rx in 0..region_w as i32 {
+                let mut sum = 0.0;
+                let mut cnt = 0.0;
+                for dx in -r..=r {
+                    let xx = (rx + dx).clamp(0, region_w as i32 - 1) as usize;
+                    sum += dens[row + xx];
+                    cnt += 1.0;
+                }
+                tmp[row + rx as usize] = sum / cnt;
+            }
+        }
+        // Vertical pass: rows outside [0, region_h) read as AIR (0.0) so the top
+        // tapers to sky and the bottom to water rather than smearing solid.
+        for rx in 0..region_w {
+            for ry in 0..region_h as i32 {
+                let mut sum = 0.0;
+                let mut cnt = 0.0;
+                for dy in -r..=r {
+                    let yy = ry + dy;
+                    let v = if yy < 0 || yy >= region_h as i32 {
+                        0.0
+                    } else {
+                        tmp[yy as usize * region_w + rx]
+                    };
+                    sum += v;
+                    cnt += 1.0;
+                }
+                dens[ry as usize * region_w + rx] = sum / cnt;
+            }
+        }
+        // Threshold the smoothed field into the solid bitmap. Islands drop the
+        // threshold slightly: the blur pulls a small blob's contour inward, so this
+        // keeps the smallest stepping-stones above threshold (and above the
+        // min_frag=50 cleanup floor) instead of vanishing.
+        let thr = if blob { threshold - 0.015 } else { threshold };
+        for ry in 0..region_h {
+            let y = TERRAIN_MIN_Y as usize + ry;
+            for x in 0..region_w {
+                terrain.set_solid(x as i32, y as i32, dens[ry * region_w + x] >= thr);
             }
         }
         } // end if archetype != 3
