@@ -282,68 +282,6 @@ impl Terrain {
         terrain
     }
 
-    /// Generate Worms-style terrain using full 2D Perlin noise.
-    ///
-    /// Each pixel is independently solid/air based on layered noise + a depth
-    /// bias that keeps sky at top and ground at bottom. Caves and overhangs
-    /// emerge naturally from the 2D nature of the noise.
-    pub fn generate_worms(seed: u64) -> Self {
-        let mut terrain = Self::empty();
-        let p_large  = Perlin::new(seed as u32);
-        let p_medium = Perlin::new(seed.wrapping_add(1337) as u32);
-        let p_detail = Perlin::new(seed.wrapping_add(2674) as u32);
-        let p_cave   = Perlin::new(seed.wrapping_add(9999) as u32);
-
-        let w = WORLD_W as f64;
-        let h = WORLD_H as f64;
-        // Y where depth_bias = 0 (50/50 solid/air by noise alone)
-        let mid_y = TERRAIN_MIN_Y as f64 + (TERRAIN_MAX_Y - TERRAIN_MIN_Y) as f64 * 0.45;
-        // Half-range: at mid ± scale we're fully air or fully solid
-        let scale  = (TERRAIN_MAX_Y - TERRAIN_MIN_Y) as f64 * 0.55;
-
-        for y in TERRAIN_MIN_Y..WATER_Y {
-            for x in 0..WORLD_W {
-                let nx = x as f64 / w;
-                let ny = y as f64 / h;
-
-                // Layered 2D noise: large shapes + medium caves + surface roughness
-                let large  = p_large .get([nx * 2.8,  ny * 2.2 ]) * 0.55;
-                let medium = p_medium.get([nx * 7.5,  ny * 6.0 ]) * 0.30;
-                let detail = p_detail.get([nx * 18.0, ny * 14.0]) * 0.10;
-                let noise  = large + medium + detail;
-
-                // Depth bias — creates sky/ground separation
-                let depth  = ((y as f64) - mid_y) / scale;
-
-                let solid = noise + depth > 0.0;
-
-                if solid {
-                    // Optional cave punch: carve holes inside solid ground
-                    // Caves only form when well below surface (not near the top)
-                    let cave = p_cave.get([nx * 6.0, ny * 5.0]);
-                    let above_mid = ((y as f64) - mid_y) / scale; // >0 = below mid
-                    let cave_solid = cave < 0.45 || above_mid < 0.15;
-                    terrain.set_solid(x as i32, y as i32, cave_solid);
-                }
-            }
-        }
-
-        // Guarantee: every column has solid ground somewhere in the lower half
-        // (prevents floating-only islands from breaking spawning)
-        let floor_y = mid_y as u32 + (scale * 0.7) as u32;
-        for x in 0..WORLD_W {
-            if terrain.surface_y_at(x).is_none() {
-                // Column is all air — fill a strip at the floor line
-                for y in floor_y..(floor_y + 20).min(WATER_Y) {
-                    terrain.set_solid(x as i32, y as i32, true);
-                }
-            }
-        }
-
-        terrain.texture = Some(Self::generate_dirt_texture(seed));
-        terrain
-    }
-
     /// Multi-pass tactical terrain with 4 archetype-based landform styles.
     /// 0=hills  1=cliffs/overhangs  2=floating islands  3=caverns  4=canyon/mesa
     /// Phases 6 & 7 (smoothing + spawn guarantee) are always applied.
