@@ -585,7 +585,7 @@ pub fn tick(
         // Timer always ticks — pause menu doesn't freeze the clock
         game.turn.tick();
         render(game, buf, cam, lstate);
-        draw_pause_menu(buf, lstate.pause_cursor as u8, cam.left_edge() as i32);
+        draw_pause_menu(buf, lstate.pause_cursor as u8, cam.left_edge() as i32, cam.top_edge());
         return true;
     }
     // Open the pause menu this frame. The weapon menu has input priority (mirrors
@@ -606,7 +606,7 @@ pub fn tick(
         let wa = winner.and_then(|w| game.teams.get(w)).map(|t| t.avatar_id).unwrap_or(0);
         let (kills, hp_left, memo) = match_end_stats(game);
         let wc = winner.and_then(|w| game.teams.get(w)).map(|t| t.color_id).unwrap_or(0);
-        draw_game_over(buf, winner, my_team, cam.left_edge() as i32, wa, 0, 0, kills, hp_left, &memo, wc);
+        draw_game_over(buf, winner, my_team, cam.left_edge() as i32, cam.top_edge(), wa, 0, 0, kills, hp_left, &memo, wc);
         if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
             return false;
         }
@@ -625,7 +625,7 @@ pub fn tick(
         // Menu is open: skip the sim tick, just render + overlay.
         render(game, buf, cam, lstate);
         let ti = game.active_team();
-        draw_weapon_menu(buf, &game.teams[ti].weapons, game.weapon_menu_cursor, cam.left_edge() as i32, game.aim.fuse_ticks, game.turn.turn_number, game.teams.len());
+        draw_weapon_menu(buf, &game.teams[ti].weapons, game.weapon_menu_cursor, cam.left_edge() as i32, cam.top_edge() as i32, game.aim.fuse_ticks, game.turn.turn_number, game.teams.len());
     } else {
         // Keep spawn_cam_left current while the player is targeting the airstrike.
         if let Some(ref mut air) = game.airstrike {
@@ -693,12 +693,16 @@ fn process_camera_pan(cam: &mut Camera, input: &InputState, game: &GameState) {
     if input.held(Button::R1) {
         if input.held(Button::Left)  { cam.pan(-speed); }
         if input.held(Button::Right) { cam.pan( speed); }
+        if input.held(Button::Up)    { cam.pan_y(-speed); }
+        if input.held(Button::Down)  { cam.pan_y( speed); }
     }
     // L1 + dpad: free pan that stays when L1 is released (no snap-back).
     // snap_to() on turn change clears the pan flag, resuming soldier follow.
     if input.held(Button::L1) {
         if input.held(Button::Left)  { cam.pan(-speed); }
         if input.held(Button::Right) { cam.pan( speed); }
+        if input.held(Button::Up)    { cam.pan_y(-speed); }
+        if input.held(Button::Down)  { cam.pan_y( speed); }
     }
 }
 
@@ -1114,9 +1118,11 @@ pub fn process_aim(game: &mut GameState, input: &InputState, aim_angle_override:
     } else {
         // While rope is attached, Up/Down controls rope length (handled in process_fire).
         if game.rope.as_ref().map_or(false, |r| !r.flying) { return; }
-        let delta = if input.held(Button::L1) { 0.01f32 } else { 0.04f32 };
-        if input.held(Button::Up)   { game.aim.angle += delta; }
-        if input.held(Button::Down) { game.aim.angle -= delta; }
+        // L1 is reserved for camera pan — don't adjust aim angle while it's held.
+        if !input.held(Button::L1) {
+            if input.held(Button::Up)   { game.aim.angle += 0.04; }
+            if input.held(Button::Down) { game.aim.angle -= 0.04; }
+        }
     }
 
     use crate::physics::projectile::WeaponKind;
@@ -1758,7 +1764,7 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
         g.cursor_y = (g.cursor_y - CURSOR_SPEED).max(12.0);
     }
     if input.held(Button::Down) {
-        g.cursor_y = (g.cursor_y + CURSOR_SPEED).min(400.0);
+        g.cursor_y = (g.cursor_y + CURSOR_SPEED).min(crate::world::WATER_Y as f32 - 5.0);
     }
     // Smooth render_x/render_y toward cursor_x/cursor_y
     g.render_x += (g.cursor_x - g.render_x) * 0.25;
@@ -1814,7 +1820,7 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
         if input.held(Button::Left)  { s.cursor_x = (s.cursor_x - CURSOR_SPEED).max(0.0); }
         if input.held(Button::Right) { s.cursor_x = (s.cursor_x + CURSOR_SPEED).min(WORLD_W as f32 - 1.0); }
         if input.held(Button::Up)    { s.cursor_y = (s.cursor_y - CURSOR_SPEED).max(12.0); }
-        if input.held(Button::Down)  { s.cursor_y = (s.cursor_y + CURSOR_SPEED).min(400.0); }
+        if input.held(Button::Down)  { s.cursor_y = (s.cursor_y + CURSOR_SPEED).min(crate::world::WATER_Y as f32 - 5.0); }
         if input.just_pressed(Button::L1) { s.direction_right = false; }
         if input.just_pressed(Button::R1) { s.direction_right = true;  }
         s.render_x += (s.cursor_x - s.render_x) * 0.25;
@@ -2749,6 +2755,7 @@ pub fn draw_weapon_menu(
     weapons: &[(crate::physics::projectile::WeaponKind, Option<u32>)],
     cursor: usize,
     cam_x:  i32,
+    cam_y:  i32,
     fuse_ticks: u32,
     turn_number: u32,
     num_teams: usize,
@@ -2759,7 +2766,7 @@ pub fn draw_weapon_menu(
     use crate::world::{SCREEN_W, SCREEN_H};
 
     let cols: i32 = 5;
-    let cell_w: i32 = 92;
+    let cell_w: i32 = 120;
     let cell_h: i32 = 64;
     const MAX_ROWS: i32 = 6;
     // Column-major: weapons fill down each column before moving right.
@@ -2775,7 +2782,7 @@ pub fn draw_weapon_menu(
     let win_w = (cols * cell_w + 20) as u32;
     let win_h = (visible_rows * cell_h + 44) as u32;
     let wx = cam_x + (SCREEN_W as i32 - win_w as i32) / 2;
-    let wy = (SCREEN_H as i32 - win_h as i32) / 2;
+    let wy = cam_y + (SCREEN_H as i32 - win_h as i32) / 2;
 
     // Window background + border
     buf.fill_rect(wx, wy, win_w, win_h, Bgra::new(8, 10, 24));
@@ -3408,7 +3415,7 @@ pub fn draw_weapon_menu(
             WeaponKind::Minigun         => "MINIGUN",
             WeaponKind::Uzi             => "MAC-10",
             WeaponKind::MolotovCocktail => "MOLOTOV",
-            WeaponKind::HomingMissile   => "HOMING MISSILE",
+            WeaponKind::HomingMissile   => "HOMING MSL.",
             WeaponKind::Pistol          => "PISTOL",
             _                          => "WEAPON",
         };
@@ -3449,6 +3456,7 @@ pub fn render_live(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate
 
 fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate: &mut LoopState, my_team: Option<usize>) {
     let cam_x = cam.left_edge() as u32;
+    let cam_y = cam.top_edge() as u32;
     let sw    = crate::world::SCREEN_W as i32;
     let sh    = crate::world::SCREEN_H as i32;
 
@@ -3492,23 +3500,24 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // 1b. Atmospheric background (behind terrain): clouds, hills, seed landform,
     //     wind debris — all driven by a shared gusting wind so they breathe together.
     use crate::renderer::background;
-    crate::renderer::bg_image::copy_bg_viewport(buf, &lstate.bg_cache, &game.terrain, game.map_seed, cam_x);
+    crate::renderer::bg_image::copy_bg_viewport(buf, &lstate.bg_cache, &game.terrain, game.map_seed, cam_x, cam_y);
     mark!("bg_sky");
     let gw = background::gust_wind(game.wind.value(), lstate.tick);
-    background::draw_backdrop(buf, &game.terrain, cam_x);
+    background::draw_backdrop(buf, &game.terrain, cam_x, cam_y);
     mark!("backdrop");
     background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
 
-    buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, &game.terrain, &lstate.bg_cache, game.map_seed);
+    buf.copy_viewport_from_sky_aware(&lstate.world_cache, cam_x, cam_y, &game.terrain, &lstate.bg_cache, game.map_seed);
     mark!("terrain_copy");
-    background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, lstate.tick);
+    crate::renderer::scenery::draw_scenery(buf, &game.terrain, cam_x as i32, cam_y as i32);
+    background::draw_debris(buf, &game.terrain, &lstate.bg_debris, cam_x, cam_y, lstate.tick);
     mark!("debris");
 
     // 2. Water ripple — cached strip, regenerated every tick (30 Hz).
     {
         use crate::renderer::draw_sprites::{render_water_strip, WATER_STRIP_H};
         render_water_strip(&mut lstate.water_strip, game.tick, cam_x);
-        buf.blit_water_strip(&lstate.water_strip, cam_x);
+        buf.blit_water_strip(&lstate.water_strip, cam_x, cam_y);
         let _ = WATER_STRIP_H;
     }
     mark!("water");
@@ -4465,7 +4474,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             } else {
                 cam_x as i32 + sw - AV as i32 - 4
             };
-            let av_y = 4i32;
+            let av_y = cam_y as i32 + 4;
             draw_avatar(buf, av_x, av_y, AV, t.avatar_id);
 
             // Health meter: total current HP / (soldiers.len() * 100)
@@ -4620,7 +4629,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // previous frame's camera position before redrawing the HUD this frame.
     buf.fill_deep_water_band();
 
-    draw_hud_world(buf, cam_x, &game.wind, game.turn.secs_remaining(),
+    draw_hud_world(buf, cam_x, cam_y, &game.wind, game.turn.secs_remaining(),
         game.turn.turn_number, active_color, &team_alive, &team_hp);
 
     mark!("hud");
@@ -4655,12 +4664,12 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::AirStrike       => "AIR STRIKE",
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
             WeaponKind::MolotovCocktail => "MOLOTOV",
-            WeaponKind::HomingMissile   => "HOMING MISSILE",
+            WeaponKind::HomingMissile   => "HOMING MSL.",
             _ => "WEAPON",
         };
         // Small box bottom-left, sized to fit the weapon name + hint
         let bx = cam_x as i32 + 6;
-        let by = SCREEN_H as i32 - 24;
+        let by = cam_y as i32 + SCREEN_H as i32 - 24;
         let hint = "[SEL]";
         let name_w = str_width(name);
         let hint_w = str_width(hint);
@@ -4688,7 +4697,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let label = format!("SEED {:016X}  {}", game.map_seed, arch_name);
         let w = str_width_scaled(&label, 2);
         let x = cam_x as i32 + SCREEN_W as i32 - w - 6;
-        let y = 6;
+        let y = cam_y as i32 + 6;
         buf.fill_rect(x - 3, y - 2, (w + 6) as u32, 18, Bgra::new(10, 10, 25));
         draw_str_scaled(buf, &label, x, y, Bgra::new(180, 220, 120), 2);
     }
@@ -4701,7 +4710,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         use crate::renderer::fb::Bgra;
         let fps_str = format!("{} FPS", lstate.display_fps);
         let x = cam_x as i32 + sw - str_width(&fps_str) - 6;
-        let y = crate::renderer::HUD_Y - 12;
+        let y = cam_y as i32 + crate::renderer::HUD_Y - 12;
         draw_str(buf, &fps_str, x, y, Bgra::new(200, 200, 200));
     }
     mark!("fps_counter");
@@ -4715,7 +4724,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let mut sorted = pixel_stats.clone();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
         let total_pw: u64 = sorted.iter().map(|(_, n)| n).sum();
-        let mut y = 28;
+        let mut y = cam_y as i32 + 28;
         {
             let text = format!("{:<14}{:>7}", "TOTAL", total_pw);
             let w = str_width_scaled(&text, 1);
@@ -4741,6 +4750,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 fn draw_hud_world(
     buf:         &mut WorldBuffer,
     cam_x:       u32,
+    cam_y:       u32,
     wind:        &crate::physics::Wind,
     turn_secs:   u32,
     turn_number: u32,
@@ -4752,7 +4762,7 @@ fn draw_hud_world(
     use crate::renderer::draw_sprites::TEAM_COLOURS;
 
     let ox    = cam_x as i32;
-    let hud_y = crate::renderer::HUD_Y;
+    let hud_y = cam_y as i32 + crate::renderer::HUD_Y;
     let sw    = crate::world::SCREEN_W as i32;
 
     // Background bar
@@ -5388,11 +5398,11 @@ pub fn match_end_stats(game: &GameState) -> ([u32; 2], [u32; 2], String) {
     ([kills0, kills1], [hp0, hp1], candidates.swap_remove(pick))
 }
 
-pub fn draw_weapon_menu_overlay(game: &GameState, buf: &mut WorldBuffer, cam_x: i32) {
+pub fn draw_weapon_menu_overlay(game: &GameState, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32) {
     if !game.weapon_menu_open { return; }
     let ti = game.active_team();
     let si = game.teams[ti].active;
-    draw_weapon_menu(buf, &game.teams[ti].weapons, game.weapon_menu_cursor, cam_x, game.aim.fuse_ticks, game.turn.turn_number, game.teams.len());
+    draw_weapon_menu(buf, &game.teams[ti].weapons, game.weapon_menu_cursor, cam_x, cam_y, game.aim.fuse_ticks, game.turn.turn_number, game.teams.len());
 }
 
 /// Scan for soldiers that just died this tick and record a grave for each.

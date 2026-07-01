@@ -1,3 +1,7 @@
+0.5.4.390  Scenery objects: each map now has themed decorations on the terrain surface — flowers/mushrooms/rocks on hills, pine trees/boulders/crates on cliffs, palm trees/barrels/tents on islands, crystals/skulls/torches in caverns, cacti/pillars/tumbleweeds in canyons.
+0.5.4.389  Fix HUD/weapon menu/weapon indicator drifting to mid-screen when camera scrolls vertically. R1+Up/Down now pans camera vertically (snap-back on release). L1+Up/Down pans without snap-back.
+0.5.4.388  WA-style terrain: sharper silhouettes, heavier cave coverage, wider chasms. Landmine max damage increased to 50.
+0.5.4.387  Maps are now twice as tall with vertical camera scrolling (L1+Up/Down). Terrain uses the full height — peaks reach higher, caves and canyons run deeper.
 0.5.4.386  Terrain rounded much further — hills, cliffs, islands and canyons are now smooth organic blobs. Caves unchanged.
 0.5.4.385  Smoother, more natural terrain: hills, cliffs, islands and canyons are now rounded and organic instead of jagged. Caves unchanged.
 0.5.4.384  Internal update.

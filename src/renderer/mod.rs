@@ -35,6 +35,7 @@ pub mod terrain_textures;
 pub mod skeleton;
 pub mod cosmetic_sprites;
 pub mod splash;
+pub mod scenery;
 
 pub use fb::{Framebuffer, Bgra};
 pub use buffer::WorldBuffer;

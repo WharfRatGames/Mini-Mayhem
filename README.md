@@ -5,7 +5,8 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 ## Features
 
 ### Gameplay
-- Procedural terrain generation with 5 archetypes: rolling hills, cliffs/overhangs, floating islands, caverns, and canyon/mesa
+- Procedural terrain generation with 5 archetypes: rolling hills, cliffs/overhangs, floating islands, caverns, and canyon/mesa — tuned to produce WA-style maps with sharp silhouettes, heavy cave coverage, and wide chasms
+- Maps are twice the screen height — terrain spans 700px vertically with peaks near the top and deep caves/canyons; camera scrolls vertically to follow the action (L1+Up/Down to pan)
 - Fully destructible terrain — craters, tunnels, and collapses persist
 - Turn-based flow: Acting → Watching → Retreat → Ending
 - Wind, gravity, per-soldier HP, fall damage, and water/drowning mechanics
@@ -26,7 +27,7 @@ Bazooka, Grenade (variable fuse), Shotgun, Pistol (6-shot burst), MAC-10 (∞), 
 - `src/game/net_sync.rs` — `build_state`/`apply_server_state` for live client state rebuild; compile-time parity checklists
 - `src/game/` — state, team/loadout, turn system, soldier animation
 - `src/physics/` — projectile/weapon definitions, collision and bounce outcomes
-- `src/renderer/` — sprites, terrain, backgrounds, particle FX
+- `src/renderer/` — sprites, terrain, backgrounds, particle FX; camera Y-axis, viewport-relative BG images
 - `src/net/` — shared network message structs (`msg.rs`, `InputMsg`, `StateMsg`)
 - `src/server/` — authoritative game server binary
 - `src/api/` — REST API for accounts, matches, leaderboards (SQLite-backed)

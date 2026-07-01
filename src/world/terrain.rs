@@ -46,6 +46,19 @@ pub struct Terrain {
     /// 0=hills 1=cliffs/overhangs 2=floating islands 3=caverns 4=canyon/mesa.
     /// Drives spawn placement (caverns put some soldiers underground).
     pub archetype: u8,
+    /// Decorative scenery objects placed seed-deterministically on the terrain surface.
+    /// Purely cosmetic — no collision effect.
+    pub scenery: Vec<SceneryObject>,
+}
+
+/// A single decorative scenery object placed on the terrain surface.
+/// `x`/`y` are world-space pixel coordinates of the bottom-center of the sprite.
+/// `sprite` is the variant index within the archetype's object set.
+#[derive(Clone, Copy)]
+pub struct SceneryObject {
+    pub x: u32,
+    pub y: u32,
+    pub sprite: u8,
 }
 
 impl Terrain {
@@ -61,6 +74,7 @@ impl Terrain {
             solid_runs: vec![Vec::new(); WORLD_W as usize],
             surface_texture: 0,
             archetype: 0,
+            scenery: Vec::new(),
         }
     }
 
@@ -363,10 +377,10 @@ impl Terrain {
         let mut terrace_mix = 0.6;
         let mut cave = false;
         // |normalized noise| < cave_thresh carves air. OpenSimplex output clusters
-        // near 0, so keep this SMALL — 0.12 ≈ thin tunnels; 0.30+ obliterates terrain.
-        let mut cave_thresh = 0.12;
-        let cave_sx = 7.0;
-        let cave_sy = 6.0;
+        // near 0, so keep this SMALL — 0.16 ≈ WA-style caves; 0.30+ obliterates terrain.
+        let mut cave_thresh = 0.16;
+        let cave_sx = 5.5;
+        let cave_sy = 5.0;
         let mut blob = false;
         let mut big_void = false;
         let mut overhang = false;       // cliffs: stamp cantilevered ceiling shelves
@@ -411,7 +425,7 @@ impl Terrain {
                         warp_amp = rnd(&mut rng, 0.12, 0.08);
                     }
                 }
-                cave = lcg(&mut rng) % 100 < 30;
+                cave = lcg(&mut rng) % 100 < 65;
             }
             1 => { // Cliffs — sub-variants: craggy-face / arch-bridge / one-sided mesa
                 let sub = lcg(&mut rng) % 3;
@@ -451,7 +465,7 @@ impl Terrain {
                         terrace_mix = 0.25;
                     }
                 }
-                cave = lcg(&mut rng) % 100 < 35;
+                cave = lcg(&mut rng) % 100 < 70;
             }
             2 => { // Floating islands — sub-variants: archipelago / titan / staircase
                 fade = 0.0;
@@ -523,6 +537,7 @@ impl Terrain {
                         warp_amp = rnd(&mut rng, 0.06, 0.04);
                     }
                 }
+                cave = lcg(&mut rng) % 100 < 50;
             }
         }
 
@@ -562,7 +577,7 @@ impl Terrain {
         let rolling = !blob && archetype != 3;
         let hill_freq = rnd(&mut rng, 2.8, 1.8);   // 2.8–4.6 cycles: several hills per map (visible on-screen)
         const HILL_AMP: f64 = 0.24;                // strong relief: frequent jump-height ledges
-        const SKY_BAND: f64 = 0.30;                // top ~135px+ tapers off → guaranteed headroom (all archetypes)
+        const SKY_BAND: f64 = 0.12;                // top 12% tapers off → ~84px guaranteed headroom
 
         // ── Phase 2: Density field (skipped for cave maps — they use fill+carve) ──
         if archetype == 3 {
@@ -570,8 +585,11 @@ impl Terrain {
             // This gives the Worms Armageddon signature look: enclosed chambers,
             // textured rock walls, vertical shafts from sky to cave system.
 
-            const SKY_FLOOR: i32 = 130; // rock ceiling starts here; sky above
-            const CAVE_FLOOR: i32 = 345; // thin solid base above water
+            // proportional to terrain height so cave maps scale with WORLD_H
+            let sky_floor: i32 = TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.14) as i32; // ~178px: sky opening above
+            let cave_floor: i32 = WATER_Y as i32 - (terrain_range_f * 0.10) as i32;      // ~770px: solid base below
+            #[allow(non_snake_case)] let SKY_FLOOR = sky_floor;
+            #[allow(non_snake_case)] let CAVE_FLOOR = cave_floor;
 
             // A — Fill solid rock: entire map above water is solid to start.
             // The top zone (0..SKY_FLOOR) is pure solid rock — no surface layer, no sky.
@@ -674,10 +692,10 @@ impl Terrain {
             }
 
             // C.6 — Air dilation: widen all air passages so soldiers (14px wide, 20px tall)
-            // can traverse them. Four passes of Moore-neighborhood dilation — each pass
+            // can traverse them. Two passes of Moore-neighborhood dilation — each pass
             // expands existing air by 1px on all sides, ONLY within the rock band (SKY_FLOOR
             // and below). Never touch the sealed top zone (y < SKY_FLOOR).
-            for _ in 0..4 {
+            for _ in 0..2 {
                 let snap = terrain.solid.clone();
                 for y in SKY_FLOOR..CAVE_FLOOR - 1 {
                     for x in 1..WORLD_W as i32 - 1 {
@@ -906,7 +924,7 @@ impl Terrain {
         // keeps thin bridges / small stepping-stone islands that sit above threshold
         // solid — only their edges round — instead of eroding them away.
         // Islands use a gentler radius (their blobs are smaller and already rounded).
-        let r: i32 = if blob { 6 } else { 10 };
+        let r: i32 = if blob { 4 } else { 5 };
         let mut tmp = vec![0.0f64; region_w * region_h];
         // Horizontal pass: clamp x at the region edges (terrain continues sideways).
         for ry in 0..region_h {
@@ -959,8 +977,9 @@ impl Terrain {
         // Overhangs (1), islands (2), and caverns (3) are exempt — they intentionally
         // use the upper screen area.
         if matches!(archetype, 0 | 4) {
-            const SKY_FLOOR: u32 = 192; // 40% of SCREEN_H=480
-            for y in TERRAIN_MIN_Y..SKY_FLOOR.min(WATER_Y) {
+            // Keep the top portion of the terrain zone clear on flat maps; scale with world height.
+            let sky_floor_clear: u32 = TERRAIN_MIN_Y + (terrain_range_f * 0.14) as u32;
+            for y in TERRAIN_MIN_Y..sky_floor_clear.min(WATER_Y) {
                 for x in 0..WORLD_W as i32 {
                     terrain.set_solid(x, y as i32, false);
                 }
@@ -1032,7 +1051,7 @@ impl Terrain {
         // (ty > 0.18) so surface terrain is not eroded.
         if cave && archetype != 3 {
             let cave_min_y = TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.18) as i32 + 1;
-            for _ in 0..4 {
+            for _ in 0..2 {
                 let snap = terrain.solid.clone();
                 for y in cave_min_y..WATER_Y as i32 - 1 {
                     for x in 1..WORLD_W as i32 - 1 {
@@ -1093,12 +1112,11 @@ impl Terrain {
         // side — neither team is stranded on smaller bits than the other. The bumpy
         // 3-octave relief still makes the home sides a ledge-hopping challenge.
         let n_chasms = if matches!(archetype, 0 | 1 | 4) {
-            2 + (lcg(&mut rng) % 3) as usize // 2–4
+            3 + (lcg(&mut rng) % 3) as usize // 3–5
         } else { 0 };
-        // Central zone is kept narrower (0.37–0.63) so each team's chasm-free home
-        // landform is wide enough to spread 4 soldiers at the 140px safe spacing.
-        let zone_lo = (0.37 * WORLD_W as f64) as i32; // ~710: left edge of central zone
-        let zone_hi = (0.63 * WORLD_W as f64) as i32; // ~1210: right edge of central zone
+        // Spread chasms across more of the map for WA-style terrain variety.
+        let zone_lo = (0.22 * WORLD_W as f64) as i32; // ~422
+        let zone_hi = (0.78 * WORLD_W as f64) as i32; // ~1498
         for _ in 0..n_chasms {
             // Width: ~55% jumpable, ~45% grapple-only.
             let half_w = if lcg(&mut rng) % 100 < 55 {
@@ -1119,7 +1137,9 @@ impl Terrain {
                 let surf = terrain.surface_y_at(cx as u32).unwrap_or(TERRAIN_MAX_Y) as i32;
                 (surf + rnd(&mut rng, 60.0, 35.0) as i32).min(WATER_Y as i32 - 6)
             };
-            let chasm_top = if matches!(archetype, 0 | 4) { 192i32 } else { TERRAIN_MIN_Y as i32 };
+            let chasm_top = if matches!(archetype, 0 | 4) {
+                TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.14) as i32
+            } else { TERRAIN_MIN_Y as i32 };
             carve_chasm(&mut terrain, cx, half_w, chasm_top, bottom_y, drift);
         }
 
@@ -1202,6 +1222,35 @@ impl Terrain {
         // the map. This is what lets islands/caverns/overhangs survive to the screen.
 
         terrain.texture = Some(Self::generate_dirt_texture(seed));
+
+        // ── Scenery object placement ─────────────────────────────────────────
+        // Derived entirely from seed — same on client and server, no StateMsg needed.
+        {
+            let sprite_counts: [u8; 5] = [5, 4, 4, 4, 4]; // per archetype
+            let count = sprite_counts[terrain.archetype as usize];
+            let mut srng = seed ^ 0xDECA_FBAB_E000_1234u64;
+            let margin = (WORLD_W as f64 * 0.05) as u32;
+            let usable_w = WORLD_W - 2 * margin;
+            const NUM_OBJECTS: u32 = 12;
+            const MIN_SPACING: u32 = 240;
+            let mut placed: Vec<SceneryObject> = Vec::with_capacity(NUM_OBJECTS as usize);
+            for _ in 0..NUM_OBJECTS * 8 {
+                srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let col = margin + (srng >> 33) as u32 % usable_w;
+                let surface_y = terrain.spawn_y[col as usize];
+                // Skip columns with no real ground (sky_limit == WATER_Y means bare water column)
+                if terrain.sky_limit[col as usize] >= WATER_Y { continue; }
+                if surface_y >= WATER_Y { continue; }
+                // Enforce minimum horizontal spacing
+                if placed.iter().any(|o| o.x.abs_diff(col) < MIN_SPACING) { continue; }
+                srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let sprite = (srng >> 33) as u8 % count;
+                placed.push(SceneryObject { x: col, y: surface_y, sprite });
+                if placed.len() == NUM_OBJECTS as usize { break; }
+            }
+            terrain.scenery = placed;
+        }
+
         terrain
     }
 
@@ -1248,6 +1297,20 @@ impl Terrain {
             if spawns.len() >= count { return spawns; }
             // Fall through to generic surface spawning if still short.
         }
+
+        // Pre-scan for underground cave floors so we can reserve slots for them.
+        // Maps with punched caves (archetypes 0,1,2,4) should seat some soldiers
+        // underground for vertical variety; cap the surface pass so those slots stay open.
+        let cave_quota = if self.archetype != 3 {
+            let mut n = 0usize;
+            let mut cx = lo + 60;
+            while cx <= hi - 60 {
+                if self.standable_cave_foot_simple(cx).is_some() { n += 1; }
+                cx += 120;
+            }
+            (count / 2).min(n)
+        } else { 0 };
+        let surface_cap = count.saturating_sub(cave_quota);
 
         // ── Surface spawns on substantial landforms of similar size ───────────────
         // Group standable surface columns into landform "tops": runs of columns whose
@@ -1296,15 +1359,15 @@ impl Terrain {
         // whole width instead of bunching them at one end — so a team is distributed
         // throughout its half. Never closer than MIN_SEP (one blast can't catch two).
         for seg in &wide {
-            if spawns.len() >= count { break; }
+            if spawns.len() >= surface_cap { break; }
             let x0 = seg[0].0;
             let x1 = seg.last().unwrap().0;
-            let remaining = count - spawns.len();
+            let remaining = surface_cap - spawns.len();
             // How many fit on this top at the safe spacing, capped to what's still needed.
             let cap = ((x1 - x0) / MIN_SEP + 1).clamp(1, remaining as i32);
             let gap = ((x1 - x0) as f32 / (cap - 1).max(1) as f32).max(MIN_SEP as f32);
             for i in 0..cap {
-                if spawns.len() >= count { break; }
+                if spawns.len() >= surface_cap { break; }
                 let target = x0 + (gap * i as f32) as i32;
                 // Snap the evenly-spaced target to the nearest standable column that is
                 // still ≥ MIN_SEP from everyone already placed.
@@ -1315,6 +1378,22 @@ impl Terrain {
                     spawns.push(WorldPos::new(cx as f32, cy as f32));
                     used_x.push(cx);
                 }
+            }
+        }
+
+        // Cave-floor spawns: for maps with punched caves (non-cavern archetypes),
+        // actively mix underground positions in to spread soldiers vertically.
+        // We reserved some slots from the surface pass (capped above); fill them here.
+        if self.archetype != 3 && spawns.len() < count {
+            let mut cx = lo + 60;
+            while cx <= hi - 60 && spawns.len() < count {
+                if let Some(fy) = self.standable_cave_foot_simple(cx) {
+                    if used_x.iter().all(|&u| (u - cx).abs() >= MIN_SEP) {
+                        spawns.push(WorldPos::new(cx as f32, fy as f32));
+                        used_x.push(cx);
+                    }
+                }
+                cx += 80;
             }
         }
 

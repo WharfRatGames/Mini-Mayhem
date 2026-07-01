@@ -1,13 +1,21 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.384 (deployed 2026-06-29)
-Last updated: 2026-06-29
+Current version: 0.5.4.388
+Last updated: 2026-06-30
 
 COMPLETED PHASES
 ----------------
 
 Phase 1 — Terrain & Physics
-  Perlin heightmap generation, 5 map archetypes (hills/cliffs/islands/caves/canyon)
+  OpenSimplex density-field generation (generate_tactical — the sole live generator),
+    5 map archetypes (hills/cliffs/islands/caves/canyon); density field is box-blurred
+    before thresholding so silhouettes are smooth organic blobs, not jagged (v0.5.4.385/.386)
+  World height doubled to 960px (2× screen); maps use full vertical range with peaks
+    near the top and caves/canyons running deep; cave constants scaled proportionally (v0.5.4.387)
+  WA-style terrain tuning (v0.5.4.388): sharper silhouettes (blur radius 10→5/6→4), much
+    heavier cave coverage (hills 30%→65%, cliffs 35%→70%, canyon 0%→50%), wider cave passages
+    (cave_thresh 0.12→0.16, noise freq 7.0/6.0→5.5/5.0), more/wider-spread chasms (2–4 central →
+    3–5 across 22–78% of map width); landmine max damage increased 35→50
   Destructible terrain (crater carving persists)
   Projectile ballistics (Euler integration, wind, gravity, bounce/friction)
   Water death zone
@@ -16,11 +24,12 @@ Phase 2 — Renderer & Input
   Framebuffer rendering (/dev/fb0, BGRA) for Miyoo Mini Plus
   evdev button input
   8x8 pixel font
-  Camera follow + free pan
+  Camera follow + free pan (horizontal and vertical); L1+Up/Down pans vertically (v0.5.4.387)
   Hotseat local multiplayer
   Soldier skeletal animation (walk cycle, backflip, airborne lean)
   Team color rendering
   Parallax backgrounds, clouds, biome sky tints, wind debris
+  Background images viewport-relative (always fill screen regardless of vertical scroll)
 
 Phase 3 — Weapons & Turn System
   Turn system: Acting → Watching → Retreat → Ending
@@ -94,6 +103,49 @@ INFRASTRUCTURE CHANGES (2026-06-28 through 2026-06-29)
   IRC dashboard (/ircdash/) and bot dashboard (/arty/dashboard/bot.html) now require admin key
   Bot server (mayhem_bot.py): all /notify/* endpoints gated by ?key= admin key check
   Port reference doc: assets/ports.txt
+
+RECENT CHANGES (vertical maps + scrolling, v0.5.4.387, 2026-06-30)
+-------------------------------------------------------------------
+  World height doubled (WORLD_H 480→960); SCREEN_H stays 480 so maps are 2× taller than
+    the viewport. Camera now has a Y axis — follows the active soldier vertically, and
+    L1+Up/Down pans the camera vertically during a turn.
+  Terrain range expanded from ~200px to 700px (TERRAIN_MIN_Y=80, TERRAIN_MAX_Y=780).
+    SKY_BAND reduced 0.30→0.12 so terrain can reach near the top of the world.
+    Cave archetype SKY_FLOOR/CAVE_FLOOR now proportional to TERRAIN_MIN_Y/WATER_Y
+    (were hardcoded 130/345 from the old 480px world).
+  Background images fixed to be viewport-relative (screen Y), so they always fill the
+    screen correctly regardless of cam_y — was reading empty cache rows when scrolled down.
+  All HUD, buffer, renderer, and main.rs call sites updated for the new cam_y parameter.
+  Parity: camera is client-only; terrain generation is seed-derived and identical on
+    client+server. VERSION and REQUIRED_VERSION bumped to 0.5.4.387.
+
+RECENT CHANGES (terrain shape, v0.5.4.385–.386, 2026-06-30)
+-----------------------------------------------------------
+  Terrain silhouettes made smooth/organic instead of jagged. In generate_tactical the
+    continuous density field is now box-blurred before thresholding (archetypes hills/
+    cliffs/islands/canyon); blurring the continuous field rounds contours without eroding
+    thin bridges/stepping-stone islands. Caverns (archetype 3) unchanged.
+  .385 = conservative (blur radius 3); .386 = much rounder (radius 10, islands 6; fine
+    relief octave dropped, ×4 halved, threshold lowered to offset blur shrinkage).
+  Tradeoff: gentler slopes → more terrain is walk-up-able (the fine relief that forced
+    jump/backflip is largely gone) — accepted for the look.
+  Deterministic (no new RNG, fixed-order f64) so client/server rebuild identical terrain
+    from the seed; no StateMsg/parity change.
+  Legacy generate_worms generator (old full-Perlin jagged style) deleted — generate_tactical
+    is now the ONLY generator reachable in-game (from_heightmap remains test-only).
+
+RECENT CHANGES (IRC/ZPG, 2026-06-29)
+--------------------------------------
+  ZPG: HP system removed (was cosmetic-only; never decreased; heal command removed)
+  ZPG: 47 SOLO_EVENTS (was 13), 25 WORLD_EVENTS (was 10)
+  ZPG: 2 new bosses (Infinite Loop, Null Pointer Wraith), 8 new items
+  ZPG: Lucky break event (+XP, 5% per tick per player)
+  ZPG: Misfortune event (-XP, 3% per tick per player) with flavor messages
+  ZPG: Faction rivalry event (3%) — world flavor tied to active factions
+  ZPG: 4 PvP message variants (was 1)
+  ZPG: World event frequency raised 3%→5%
+  Windows backup: Task Scheduler now uses wscript.exe + VBScript wrapper (run_backup.vbs)
+    to launch backup_arty.ps1 with window style 0 — completely silent, no flash
 
 RECENT CHANGES (v0.5.4.384, 2026-06-29)
 -----------------------------------------

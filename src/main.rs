@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.386";
+const VERSION: &str = "0.5.4.390";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -132,7 +132,7 @@ fn main() {
                         if filled > 0 { buf.fill_rect(bar_x, bar_y, filled, bar_h as u32, Bgra::new(80,200,120)); }
                         let pct = format!("{}%", (frac * 100.0) as u32);
                         draw_str(&mut buf, &pct, sw/2 - str_width(&pct)/2, bar_y + bar_h + 10, Bgra::new(180,180,200));
-                        buf.blit_to_fb(&mut fb, 0);
+                        buf.blit_to_fb(&mut fb, 0, 0);
                     });
                     match binary {
                         Some(b) if b.starts_with(b"\x7fELF") => {
@@ -159,7 +159,7 @@ fn main() {
                 if !tls_broken {
                     draw_str_scaled(&mut buf, "B = SKIP", sw/2 - str_width_scaled("B = SKIP",2)/2, sh - 20, Bgra::new(140,140,160), 1);
                 }
-                buf.blit_to_fb(&mut fb, 0);
+                buf.blit_to_fb(&mut fb, 0, 0);
                 std::thread::sleep(TICK_DURATION);
             }
         }
@@ -167,7 +167,7 @@ fn main() {
 
     // Splash screen: show wharf.jpg briefly before going to the title.
     renderer::splash::draw_splash(&mut buf);
-    buf.blit_to_fb(&mut fb, 0);
+    buf.blit_to_fb(&mut fb, 0, 0);
     {
         let splash_start = Instant::now();
         while splash_start.elapsed() < std::time::Duration::from_secs(3) {
@@ -211,7 +211,7 @@ fn main() {
             // Non-blocking poll — cache result once background thread finishes.
             if !update_available { if let Ok((true, _)) = update_rx.try_recv() { update_available = true; } }
             if let Some(c) = title.update(&input, &mut buf) { break c; }
-            buf.blit_to_fb(&mut fb, 0);
+            buf.blit_to_fb(&mut fb, 0, 0);
             let elapsed = frame_start.elapsed();
             if elapsed < TICK_DURATION { std::thread::sleep(TICK_DURATION - elapsed); }
         };
@@ -230,7 +230,7 @@ fn main() {
                 let fs = std::time::Instant::now();
                 input.poll();
                 if let Some(game::settings::SettingsAction::Back) = settings_screen.update(&input, &mut buf) { break; }
-                buf.blit_to_fb(&mut fb, 0);
+                buf.blit_to_fb(&mut fb, 0, 0);
                 let e = fs.elapsed();
                 if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
             }
@@ -277,7 +277,7 @@ fn main() {
             let t = "CHECKING FOR UPDATES...";
             buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
             draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t, 2)/2, sh/2 - 8, Bgra::new(140, 140, 180), 2);
-            buf.blit_to_fb(&mut fb, 0);
+            buf.blit_to_fb(&mut fb, 0, 0);
         }
         let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
         if let Ok((true, _)) = got {
@@ -322,7 +322,7 @@ fn main() {
                     if filled > 0 { buf.fill_rect(bar_x, bar_y, filled, bar_h as u32, Bgra::new(80,200,120)); }
                     let pct = format!("{}%", (frac * 100.0) as u32);
                     draw_str(&mut buf, &pct, sw/2 - str_width(&pct)/2, bar_y + bar_h + 10, Bgra::new(180,180,200));
-                    buf.blit_to_fb(&mut fb, 0);
+                    buf.blit_to_fb(&mut fb, 0, 0);
                 });
                 match binary {
                     Some(b) if b.len() > 4 && b[0] == 0x7f && &b[1..4] == b"ELF" => {
@@ -350,7 +350,7 @@ fn main() {
             draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
             let b_label = if forced { "B = BACK" } else { "B = SKIP" };
             draw_str_scaled(&mut buf, b_label, sw/2 - str_width_scaled(b_label,2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
-            buf.blit_to_fb(&mut fb, 0);
+            buf.blit_to_fb(&mut fb, 0, 0);
             std::thread::sleep(TICK_DURATION);
         };
         if !proceed { continue 'game; }
@@ -424,7 +424,7 @@ fn main() {
                 buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32,
                     renderer::Bgra::new(8, 8, 20));
                 if let Some(a) = acct.update(&input, &mut buf, 0) { break a; }
-                buf.blit_to_fb(&mut fb, 0);
+                buf.blit_to_fb(&mut fb, 0, 0);
                 let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
             };
             match result {
@@ -450,7 +450,7 @@ fn main() {
             buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32,
                 renderer::Bgra::new(8, 8, 20));
             if let Some(a) = picker.update(&input, &mut buf, 0) { break a; }
-            buf.blit_to_fb(&mut fb, 0);
+            buf.blit_to_fb(&mut fb, 0, 0);
             let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
         };
         if let Ok(Some((earned, weekly))) = bonus_rx.try_recv() {
@@ -712,7 +712,7 @@ fn main() {
     // CPU AI state — reset each turn
     let mut cpu_state = CpuState::undecided();
     let start_pos   = game.teams[0].soldiers[0].pos;
-    let mut cam     = Camera::new(start_pos.x);
+    let mut cam     = Camera::new(start_pos.x, crate::world::TERRAIN_MAX_Y as f32);
     cam.snap_to(start_pos);
     let mut game_over_ticks: u32 = 0;
     // Last server tick whose StateMsg.sounds we've already played — dedupes the
@@ -750,7 +750,7 @@ fn main() {
         if let Some(ref mut reporter) = bug_reporter {
             let cancelled = reporter.tick(&input);
             reporter.draw(&mut buf, cam.left_edge());
-            buf.blit_to_fb(&mut fb, cam.left_edge());
+            buf.blit_to_fb(&mut fb, cam.left_edge(), cam.top_edge());
             if cancelled || reporter.is_done() {
                 bug_reporter = None;
             }
@@ -935,7 +935,7 @@ fn main() {
                     game_over_ticks = 0;
                     lstate = game::loop_runner::LoopState::new();
                     let start_pos = game.teams[0].soldiers[0].pos;
-                    cam = Camera::new(start_pos.x);
+                    cam = Camera::new(start_pos.x, crate::world::TERRAIN_MAX_Y as f32);
                     cam.snap_to(start_pos);
                     draw_msg(&mut buf, &mut fb, if my_team == 0 { "YOU ARE RED" } else { "YOU ARE BLUE" });
                 }
@@ -1024,9 +1024,13 @@ fn main() {
                 // L1 + dpad: free pan — stays when L1 released, clears on turn change
                 if input.held(input::Button::Left)  { cam.pan(-cam_speed); }
                 if input.held(input::Button::Right) { cam.pan( cam_speed); }
+                if input.held(input::Button::Up)    { cam.pan_y(-cam_speed); }
+                if input.held(input::Button::Down)  { cam.pan_y( cam_speed); }
             } else if input.held(input::Button::R1) {
                 if input.held(input::Button::Left)  { cam.pan(-cam_speed); }
                 if input.held(input::Button::Right) { cam.pan( cam_speed); }
+                if input.held(input::Button::Up)    { cam.pan_y(-cam_speed); }
+                if input.held(input::Button::Down)  { cam.pan_y( cam_speed); }
             } else if let Some(ref hm) = game.homing_missile {
                 if !hm.confirmed {
                     cam.follow(world::WorldPos::new(hm.render_x, hm.render_y));
@@ -1097,7 +1101,7 @@ fn main() {
             cam.tick();
             game::loop_runner::render_live(&game, &mut buf, &mut cam, &mut lstate, my_team);
             // draw_weapon_menu_overlay uses game.weapon_menu_open — same source as tick()
-            game::loop_runner::draw_weapon_menu_overlay(&game, &mut buf, cam.left_edge() as i32);
+            game::loop_runner::draw_weapon_menu_overlay(&game, &mut buf, cam.left_edge() as i32, cam.top_edge() as i32);
             if let Some(secs) = paused_secs {
                 draw_disconnect_overlay(&mut buf, cam.left_edge() as i32, secs);
             }
@@ -1177,7 +1181,7 @@ fn main() {
                 // Pass None (not Some(my_team)) so the headline reads
                 // "RED/BLUE TEAM WINS!" identically to local modes. The ELO line
                 // is gated on elo_delta != 0, so ranked still shows it.
-                crate::renderer::hud::draw_game_over(&mut buf, winner, None, cam.left_edge() as i32, wa, elo_delta, scrap_earned, kills, hp_left, &memo, wc);
+                crate::renderer::hud::draw_game_over(&mut buf, winner, None, cam.left_edge() as i32, cam.top_edge(), wa, elo_delta, scrap_earned, kills, hp_left, &memo, wc);
                 // Countdown bar at bottom
                 {
                     use world::{SCREEN_W, SCREEN_H};
@@ -1197,7 +1201,7 @@ fn main() {
                 }
             }
             if lstate.paused {
-                crate::renderer::hud::draw_pause_menu(&mut buf, lstate.pause_cursor as u8, cam.left_edge() as i32);
+                crate::renderer::hud::draw_pause_menu(&mut buf, lstate.pause_cursor as u8, cam.left_edge() as i32, cam.top_edge());
             }
             !mp_quit
         } else {
@@ -1257,7 +1261,7 @@ fn main() {
             }
         };
 
-        buf.blit_to_fb(&mut fb, cam.left_edge());
+        buf.blit_to_fb(&mut fb, cam.left_edge(), cam.top_edge());
 
         // Measure actual inter-blit interval so the counter reflects real display
         // cadence rather than loop iterations (sleep overshoot can make the two diverge).
@@ -1440,7 +1444,7 @@ fn run_casual_lobby(
             buf.fill_rect(mx - 6, world::SCREEN_H as i32 - 56, (mw + 12) as u32, 18, Bgra::new(40, 10, 10));
             draw_str_scaled(buf, msg, mx, world::SCREEN_H as i32 - 53, Bgra::new(255, alpha / 2 + 80, alpha / 2 + 80), 1);
         }
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         std::thread::sleep(std::time::Duration::from_millis(33));
     }
 }
@@ -1667,7 +1671,7 @@ fn show_roster_picker(
             Some(RosterAction::Back)        => return None,
             None => {}
         }
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         let e = fs.elapsed();
         if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
     }
@@ -1708,7 +1712,7 @@ fn run_account_menu(
             draw_str_scaled(buf, &msg, sw/2 - mw/2, sh/2 - 30, Bgra::new(120, 200, 120), 2);
             draw_str_scaled(buf, "Y  LOG OUT", sw/2 - str_width_scaled("Y  LOG OUT", 2)/2, sh/2 + 10, Bgra::new(220, 100, 80), 2);
             draw_str_scaled(buf, "B  BACK",    sw/2 - str_width_scaled("B  BACK", 2)/2,    sh/2 + 40, Bgra::new(140, 140, 140), 2);
-            buf.blit_to_fb(fb, 0);
+            buf.blit_to_fb(fb, 0, 0);
             let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
         }
     } else {
@@ -1730,7 +1734,7 @@ fn run_account_menu(
                 }
                 break;
             }
-            buf.blit_to_fb(fb, 0);
+            buf.blit_to_fb(fb, 0, 0);
             let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
         }
     }
@@ -1824,9 +1828,9 @@ fn show_my_teams_menu(
             let aw = str_width_scaled("▼", 2);
             draw_str_scaled(buf, "▼", sw/2 - aw/2, slot_y, Bgra::new(150, 150, 180), 2);
         }
-        crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0);
+        crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
 
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         let e = fs.elapsed();
         if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
     }
@@ -1868,7 +1872,7 @@ fn show_store_screen(
             Some(StoreAction::Back) => return,
             None => {}
         }
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         let e = fs.elapsed();
         if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
     }
@@ -1943,7 +1947,7 @@ fn show_equip_screen(
             }
             None => {}
         }
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         let e = fs.elapsed();
         if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
     }
@@ -1964,7 +1968,7 @@ fn show_missions_screen(
         input.poll();
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, COLOR_DARK_BG);
         if let Some(MissionsAction::Back) = screen.update(input, buf) { return; }
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         let e = fs.elapsed();
         if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
     }
@@ -1978,7 +1982,7 @@ fn draw_status(buf: &mut renderer::WorldBuffer, fb: &mut renderer::Framebuffer, 
     let x = SCREEN_W as i32 / 2 - str_width_scaled(msg, 2) / 2;
     let y = SCREEN_H as i32 / 2 - 8;
     draw_str_scaled(buf, msg, x, y, Bgra::new(255, 210, 50), 2);
-    buf.blit_to_fb(fb, 0);
+    buf.blit_to_fb(fb, 0, 0);
 }
 
 fn show_login_bonus(
@@ -2053,7 +2057,7 @@ fn show_login_bonus(
     // Bottom accent bar
     buf.fill_rect(0, sh - 6, SCREEN_W, 6, bar_col);
 
-    buf.blit_to_fb(fb, 0);
+    buf.blit_to_fb(fb, 0, 0);
 
     // Wait up to 3s or A press
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
@@ -2149,7 +2153,7 @@ fn show_match_intro(
         buf.fill_rect(0, sh - 5, SCREEN_W, 5, Bgra::new(25, 25, 40));
         buf.fill_rect(0, sh - 5, filled, 5, Bgra::new(70, 70, 140));
 
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         std::thread::sleep(TICK_DURATION);
     }
 }
@@ -2165,7 +2169,7 @@ fn draw_msg(buf: &mut WorldBuffer, fb: &mut Framebuffer, msg: &str) {
     buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
     let x = sw / 2 - str_width_scaled(msg, 2) / 2;
     draw_str_scaled(buf, msg, x, 10, Bgra::new(255, 210, 50), 2);
-    buf.blit_to_fb(fb, 0);
+    buf.blit_to_fb(fb, 0, 0);
 }
 
 /// Styled reconnect-or-abandon dialog shown on the title screen after an
@@ -2216,7 +2220,7 @@ fn draw_reconnect_popup(buf: &mut WorldBuffer, fb: &mut Framebuffer, cursor: usi
     let hint = "UP/DOWN  A=SELECT  B=ABANDON";
     let hx = dx + (dw - str_width_scaled(hint, 1)) / 2;
     draw_str_scaled(buf, hint, hx, dy + dh - 22, Bgra::new(80, 90, 120), 1);
-    buf.blit_to_fb(fb, 0);
+    buf.blit_to_fb(fb, 0, 0);
 }
 
 /// In-game overlay drawn while waiting for the opponent to reconnect.
@@ -2350,7 +2354,7 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
             input.poll();
             buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 8, 20));
             if let Some(a) = acct.update(input, buf, 0) { break a; }
-            buf.blit_to_fb(fb, 0);
+            buf.blit_to_fb(fb, 0, 0);
             let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
         };
         match result {
@@ -2396,7 +2400,7 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
             input.poll();
             buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 8, 20));
             if let Some(a) = picker.update(input, buf, 0) { break a; }
-            buf.blit_to_fb(fb, 0);
+            buf.blit_to_fb(fb, 0, 0);
             let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
         };
         let r = match picked {
@@ -2425,7 +2429,7 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
                     let fs = std::time::Instant::now();
                     input.poll();
                     if let Some(a) = acct.update(input, buf, 0) { break a; }
-                    buf.blit_to_fb(fb, 0);
+                    buf.blit_to_fb(fb, 0, 0);
                     let e = fs.elapsed();
                     if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
                 };
@@ -2476,8 +2480,8 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
                         loop {
                             let fs = std::time::Instant::now();
                             input.poll();
-                            crate::renderer::hud::draw_game_over(buf, winner, Some(my_slot), 0, av, 0, tat_scrap, kills, hp_left, &memo, col);
-                            buf.blit_to_fb(fb, 0);
+                            crate::renderer::hud::draw_game_over(buf, winner, Some(my_slot), 0, 0, av, 0, tat_scrap, kills, hp_left, &memo, col);
+                            buf.blit_to_fb(fb, 0, 0);
                             go_ticks += 1;
                             if go_ticks >= 300 || input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) { break; }
                             let e = fs.elapsed();
@@ -2496,7 +2500,7 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
             }
             None => {}
         }
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         let e = frame_start.elapsed();
         if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
     }
@@ -2611,7 +2615,7 @@ fn run_tat_game(
                 game.aim.angle = mv.angle;
                 game.aim.power = mv.power;
             }
-            let mut replay_cam = renderer::Camera::new(game.teams[opp_slot].soldiers[opp_si].pos.x);
+            let mut replay_cam = renderer::Camera::new(game.teams[opp_slot].soldiers[opp_si].pos.x, game.teams[opp_slot].soldiers[opp_si].pos.y);
             replay_cam.snap_to(game.teams[opp_slot].soldiers[opp_si].pos);
             // Clear messages accumulated during fast-forward — only the live replay's messages should show
             game.messages.clear();
@@ -2650,7 +2654,7 @@ fn run_tat_game(
                 }
                 replay_cam.tick();
                 game::loop_runner::render(&game, buf, &mut replay_cam, &mut lstate);
-                buf.blit_to_fb(fb, replay_cam.left_edge());
+                buf.blit_to_fb(fb, replay_cam.left_edge(), replay_cam.top_edge());
                 let e = frame_start.elapsed();
                 if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
                 if matches!(game.turn.phase, TurnPhase::Acting) && game.projectiles.is_empty() && game.turn.current_team() != opp_slot { break; }
@@ -2684,7 +2688,7 @@ fn run_tat_game(
                 }
                 replay_cam.tick();
                 game::loop_runner::render(&game, buf, &mut replay_cam, &mut lstate);
-                buf.blit_to_fb(fb, replay_cam.left_edge());
+                buf.blit_to_fb(fb, replay_cam.left_edge(), replay_cam.top_edge());
                 let e = frame_start.elapsed();
                 if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
                 if matches!(game.turn.phase, TurnPhase::Acting) && game.projectiles.is_empty() && game.turn.current_team() != opp_slot { break; }
@@ -2736,7 +2740,7 @@ fn run_tat_game(
     { let si = game.teams[my_slot].active; game.teams[my_slot].soldiers[si].has_fired = false; game::loop_runner::snap_to_surface(&mut game, my_slot, si); }
     // Snap camera to active soldier
     let start_pos = game.teams[my_slot].soldiers[game.teams[my_slot].active].pos;
-    let mut cam = renderer::Camera::new(start_pos.x);
+    let mut cam = renderer::Camera::new(start_pos.x, crate::world::TERRAIN_MAX_Y as f32);
     cam.snap_to(start_pos);
 
     // Drain any A-held state carried over from the lobby (match confirmation uses A).
@@ -2786,7 +2790,7 @@ fn run_tat_game(
             draw_str(buf, &label, dx, dy, col);
         }
 
-        buf.blit_to_fb(fb, cam.left_edge());
+        buf.blit_to_fb(fb, cam.left_edge(), cam.top_edge());
         let e = frame_start.elapsed();
         if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
 
@@ -3110,12 +3114,12 @@ fn show_leaderboard_screen(
         // ── Footer ────────────────────────────────────────────────────────────
         buf.fill_rect(0, body_bot, SCREEN_W, 1, dim_line);
         if max_scroll > 0 {
-            crate::renderer::hud::draw_button_hints(buf, &[("UP/DOWN", "SCROLL"), ("B", "BACK")], 0);
+            crate::renderer::hud::draw_button_hints(buf, &[("UP/DOWN", "SCROLL"), ("B", "BACK")], 0, 0);
         } else {
-            crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0);
+            crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
         }
 
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         std::thread::sleep(TICK_DURATION);
     }
 }
@@ -3204,9 +3208,9 @@ fn show_stats_screen(
 
         // Footer
         buf.fill_rect(0, sh - 26, SCREEN_W, 1, dim_line);
-        crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0);
+        crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
 
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         std::thread::sleep(TICK_DURATION);
     }
 }
@@ -3365,9 +3369,9 @@ fn show_profile_screen(
             }
         }
 
-        crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0);
+        crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
 
-        buf.blit_to_fb(fb, 0);
+        buf.blit_to_fb(fb, 0, 0);
         std::thread::sleep(TICK_DURATION);
     }
 }

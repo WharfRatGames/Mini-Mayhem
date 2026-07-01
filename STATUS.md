@@ -1,7 +1,71 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.371
+## Version: 0.5.4.388
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Recent changes (0.5.4.388)
+- **WA-style terrain generation** — tuned `generate_tactical` to produce maps resembling
+  Worms Armageddon's hand-crafted levels: sharper silhouettes (box-blur radius 10→5),
+  much more cave coverage (hills 30%→65%, cliffs 35%→70%, canyon 0%→50%), wider cave
+  passages (`cave_thresh` 0.12→0.16, noise frequency 7.0/6.0→5.5/5.0 for larger structures),
+  and more/wider-spread chasms (2–4 central-only → 3–5 across 22–78% of map width).
+- **Mine max damage** — landmine max damage increased from 35→50.
+
+## Recent changes (0.5.4.387)
+- **Vertical maps and scrolling** — world height doubled to 960px (2× the 480px viewport).
+  Maps now use the full height: terrain spans 700px vertically (`TERRAIN_MIN_Y=80`,
+  `TERRAIN_MAX_Y=780`), peaks can reach near the top of the world, and caves/canyons run
+  much deeper. Camera gains a Y axis — it follows the active soldier vertically and
+  `L1+Up/Down` pans vertically during a turn (same as horizontal `L1+Left/Right`).
+- **Generator tuned for taller world** — `SKY_BAND` reduced 0.30→0.12 so terrain reaches
+  higher instead of being forced below y≈290. Cave archetype `SKY_FLOOR`/`CAVE_FLOOR` now
+  derived proportionally from `TERRAIN_MIN_Y`/`WATER_Y` (were hardcoded 130/345 from the old
+  480px world — cave maps were only using ~215px of the available 760px).
+- **Background rendering fixed** — background images are now viewport-relative (screen Y),
+  so they always fill the screen correctly when scrolled down. Previously they read empty
+  cache rows (black) for any world Y above 480.
+- **Deploy/Discord fix** — `update_server.sh` now reads the admin key from the Pi and
+  passes `?key=` on the `/notify/patch` call; patch notes were silently 403ing on every deploy.
+- **Windows backup silent** — Task Scheduler now launches backup via `wscript.exe` +
+  `run_backup.vbs` (window style 0) instead of the self-relaunch trick; no console flash.
+
+## Recent changes (0.5.4.385–0.5.4.386)
+- **Smooth, organic terrain (0.5.4.385 → .386)** — `generate_tactical` now box-blurs the
+  continuous density field before thresholding, so hills/cliffs/islands/canyons render as
+  rounded organic blobs instead of jagged ridges. `.385` was conservative (blur radius 3);
+  `.386` is much rounder (radius 10, islands 6; fine relief octave removed, ×4 halved,
+  threshold lowered to offset blur shrinkage). Chasms and overhang shelves stay sharp;
+  caverns (archetype 3) unchanged. Deterministic — client/server rebuild identical terrain
+  from the seed, so no `StateMsg`/parity change. Tradeoff: gentler slopes make more terrain
+  walk-up-able (fine jump-forcing relief mostly gone), accepted for the look.
+- **Legacy generator removed (0.5.4.386)** — deleted the unused `generate_worms` (old
+  full-Perlin jagged generator). `generate_tactical` is now the only generator reachable
+  in-game; `from_heightmap` remains for `#[cfg(test)]` fixtures only.
+
+## Recent changes (0.5.4.382–0.5.4.384)
+- **Bot dashboard auth (0.5.4.384)** — admin key login screen added to bot.html (localStorage,
+  same key as other dashboards). All `/notify/*` endpoints in `mayhem_bot.py` gated by
+  `?key=` check (403 on bad key).
+- **IRC channel creation locked (0.5.4.383)** — `PredefChannelsOnly = yes` in ngircd.conf;
+  only opers can create new channels. Predefined channels: #lobby, #general, #dicerpg, #zpg.
+- **Miyoo framebuffer blit perf (0.5.4.383)** — all 480 row-reversals batched into a single
+  heap `flip_buf`; flushed to mmap in one copy instead of 480 separate writes.
+- **OTA update check (0.5.4.383)** — HTTPS first (2s timeout), HTTP fallback, LAN fallback
+  for hairpin NAT. Test mode no longer blocks on update check at entry (instant).
+- **Infrastructure hardening (2026-06-28)** — firewall (iptables) restricts Pi port 9000
+  (TheLounge) to LAN + home + VPN IPs; port 22 LAN-only on Pi, laptop, and Windows PC.
+  SSH key auth configured on laptop (arty_pi). ESTABLISHED,RELATED INPUT rule added to
+  dusty/10.0.0.45 so outbound SSH return traffic is accepted.
+- **Windows backup (2026-06-28)** — `deploy/backup_arty.ps1` runs on Windows via Task
+  Scheduler (hourly), pulls from dusty via scp; SHA256 dedup, keeps 5 most recent.
+
+## IRC / Bot changes (2026-06-29)
+- **ZPG overhaul** — HP system removed (was cosmetic-only, never decreased). Random event
+  volume massively increased: 47 SOLO_EVENTS (was 13), 25 WORLD_EVENTS (was 10), 2 new
+  bosses, 8 new items, lucky break event (+XP, 5%), misfortune event (-XP, 3%), faction
+  rivalry event (3%), 4 PvP message variants.
+- **Windows backup silent** — `backup_arty.ps1` self-relaunches with `-WindowStyle Hidden`
+  so Task Scheduler no longer pops a PowerShell console window (superseded in .387 by VBScript wrapper).
 
 ## Recent changes (0.5.4.366–0.5.4.371)
 - **Live play unresponsiveness fix (0.5.4.366)** — background reader thread held the

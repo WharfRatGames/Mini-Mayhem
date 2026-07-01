@@ -7,7 +7,10 @@ A living document of what's shipped, what's in progress, and what's coming.
 ## ✅ Phase 1 — Terrain & Physics
 *Core engine foundation*
 
-- [x] Perlin heightmap terrain generation
+- [x] Procedural terrain generation (OpenSimplex density field, 5 archetypes)
+- [x] Smooth, organic silhouettes (density field box-blurred before thresholding, v0.5.4.385/.386)
+- [x] Maps twice the screen height — 700px vertical terrain range, generator tuned for full use (v0.5.4.387)
+- [x] WA-style terrain — sharper silhouettes, heavy cave coverage, wider chasms, landmine max damage 50 (v0.5.4.388)
 - [x] Crater carving (destructible terrain)
 - [x] Euler projectile ballistics
 - [x] Wind simulation
@@ -22,7 +25,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] `/dev/fb0` direct framebuffer rendering (BGRA)
 - [x] `evdev` hardware button input
 - [x] 8×8 pixel font
-- [x] Camera follow and free pan
+- [x] Camera follow and free pan (horizontal and vertical; L1+Up/Down vertical pan, v0.5.4.387)
 - [x] Hotseat local multiplayer
 - [x] Soldier skeletal animation (walk cycle, backflip, airborne lean)
 - [x] Team color rendering
@@ -94,7 +97,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [ ] **Spectator mode** — watch a live match in progress without participating
 - [ ] **Replay system** — save and replay matches locally
 - [ ] **Additional weapons** — new crate-only weapons to expand the pool
-- [ ] **Map variety** — multiple terrain archetypes (cave systems, island chains, fortress maps)
+- [ ] **Map variety** — additional terrain archetypes and sub-variants (fortress maps, etc.)
 - [ ] **Server monitoring dashboard** — uptime, active matches, player counts
 - [ ] **Rate limiting on API** — per-IP rate limits on `/register` and `/login` to prevent brute force
 - [ ] **Input stream logging** — full per-match input logs for future replay analysis and anti-cheat
