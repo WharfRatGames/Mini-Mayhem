@@ -5,6 +5,7 @@ pub mod terrain;
 pub mod heightmap;
 pub mod water;
 pub mod crater;
+pub mod wa_templates;
 
 pub use constants::*;
 pub use coords::*;

@@ -363,7 +363,7 @@ impl Terrain {
         terrain.surface_texture = lcg(&mut rng) as u8;
 
         // Feature defaults
-        let octaves = 4usize;
+        let octaves = 3usize;
         let warp_freq = 2.5;
         let mut warp_amp = 0.07;
         let fade;
@@ -588,6 +588,20 @@ impl Terrain {
         #[allow(non_snake_case)]
         let HILL_AMP: f64 = hill_amp;
         const SKY_BAND: f64 = 0.12;                // top 12% tapers off → ~84px guaranteed headroom
+
+        // Precompute per-column hill relief (only depends on x, not y) to avoid
+        // redundant noise evaluations inside the hot y-loop. Saves ~2×WORLD_W×region_h
+        // noise calls on rolling archetypes.
+        let hill_col: Vec<f64> = if rolling {
+            (0..WORLD_W as usize).map(|x| {
+                let nx = x as f64 / WORLD_W as f64;
+                let relief = hill.get([nx * hill_freq,       0.7])
+                           + 0.30 * hill.get([nx * hill_freq * 4.0, 3.1]);
+                (relief / 1.30) * HILL_AMP
+            }).collect()
+        } else {
+            Vec::new()
+        };
 
         // ── Phase 2: Density field (skipped for cave maps — they use fill+carve) ──
         if archetype == 3 {
@@ -873,29 +887,18 @@ impl Terrain {
                 // 3. Contrast/gain — restores variation amplitude (fixes the plateau)
                 noise = (((noise - 0.5) * contrast) + 0.5).clamp(0.0, 1.0);
 
-                // 4. Density: blob mask for islands, else gradient + directional cliff bias
-                let mut density = if blob {
-                    let b: f64 = island_blobs.iter()
-                        .map(|(cx, cy, r)| {
-                            let dx = nx - cx;
-                            let dy = ny - cy;
-                            (1.0 - ((dx * dx + dy * dy).sqrt() / r).min(1.0)).max(0.0)
-                        })
-                        .fold(0.0f64, f64::max);
-                    b * (noise + 0.25) // 0 outside blobs; noise-textured inside
-                } else {
-                    let mut d = fade * ty + (1.0 - fade) * noise + (nx - 0.5) * cliff_bias;
-                    if rolling {
-                        // Three octaves of elevation: broad hills + medium bumps + fine
-                        // steps. The medium/fine octaves make the surface rise and fall
-                        // fast enough (>4px/px) that walking can't auto-climb it — you
-                        // must jump/backflip — so there are no long flat walkable stretches.
-                        let relief = hill.get([nx * hill_freq,       0.7])
-                                   + 0.30 * hill.get([nx * hill_freq * 4.0, 3.1]);
-                        d += (relief / 1.30) * HILL_AMP;
-                    }
-                    d
-                };
+                // 4. Density: sourced from a real Worms Armageddon terrain silhouette
+                // (see wa_templates) so every seed's macro shape is WA-styled. The old
+                // per-archetype noise/blob gradient is folded in at reduced weight —
+                // it still contributes fine edge texture and per-archetype lean/relief,
+                // but no longer defines the silhouette itself.
+                let mut density = super::wa_templates::wa_density(seed, nx, ty)
+                    + (noise - 0.5) * 0.15
+                    + (nx - 0.5) * cliff_bias * 0.3;
+                if rolling {
+                    density += hill_col[x] * 0.3;
+                }
+                let _ = (fade, blob, &island_blobs); // superseded by the WA silhouette
 
                 // 4b. Top sky-margin (ALL archetypes): erode density near the top so
                 // terrain tapers off below the ceiling instead of clamping flat against
@@ -907,11 +910,10 @@ impl Terrain {
                     density -= (1.0 - smooth_t) * 0.85;
                 }
 
-                // 5. Terracing — stepped cliffs / mesa shelves
-                if let Some(levels) = terrace {
-                    let q = (density * levels).floor() / levels;
-                    density = density * (1.0 - terrace_mix) + q * terrace_mix;
-                }
+                // 5. Terracing was designed to carve steps into a continuous synthetic
+                // gradient; it fragments the real WA silhouette instead, so it's not
+                // applied to the WA-sourced density (terrace/terrace_mix are unused now).
+                let _ = (terrace, terrace_mix);
 
                 // 6. Edge erosion for water on ends
                 if water_end_px > 0.0 {
