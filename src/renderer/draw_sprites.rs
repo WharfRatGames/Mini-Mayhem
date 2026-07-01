@@ -868,7 +868,7 @@ pub fn render_water_strip(strip: &mut [u8], tick: u32, cam_x: u32) {
                 for wy in base_y..(top - 2) {
                     if wy < strip_top || wy >= strip_top + strip_h { continue; }
                     let sy = (wy - strip_top) as usize;
-                    let sky = crate::renderer::draw_terrain::sky_colour(xi, wy, 0);
+                    let sky = crate::renderer::draw_terrain::sky_colour(xi, wy, false, 0);
                     let off = (sy * SCREEN_W as usize + sx) * 4;
                     strip[off]     = sky.b;
                     strip[off + 1] = sky.g;
@@ -969,8 +969,8 @@ pub fn draw_water_surface(buf: &mut WorldBuffer, tick: u32, cam_x: u32) {
             if top - 2 > base_y {
                 for wy in base_y..(top - 2) {
                     if buf.get_pixel_unchecked(xi as u32, wy as u32) == body {
-                        // Horizon sky colour is biome-independent (archetype unused here).
-                        buf.set_pixel_unchecked(xi as u32, wy as u32, crate::renderer::draw_terrain::sky_colour(xi, wy, 0));
+                        // Horizon sky colour is biome-independent (is_cavern/template_id unused here).
+                        buf.set_pixel_unchecked(xi as u32, wy as u32, crate::renderer::draw_terrain::sky_colour(xi, wy, false, 0));
                     }
                 }
             }

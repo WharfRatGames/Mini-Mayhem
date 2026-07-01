@@ -1,6 +1,7 @@
 /// Scenery object renderer — original pixel-art decorations placed on the terrain surface.
-/// One theme per terrain archetype; objects are drawn with fill_rect/set_pixel calls.
-/// All coordinates passed as bottom-center of the object in world space.
+/// Theme keyed off which WA mask is active (template_id) or is_cavern; objects are
+/// drawn with fill_rect/set_pixel calls. All coordinates passed as bottom-center of
+/// the object in world space.
 
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
@@ -14,13 +15,12 @@ pub fn draw_scenery(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: i32, cam_y:
         // Rough viewport cull (objects are at most ~60px tall and 32px wide)
         if wx < cam_x - 64 || wx > cam_x + SCREEN_W as i32 + 64 { continue; }
         if wy < cam_y - 80 || wy > cam_y + SCREEN_H as i32 + 16 { continue; }
-        match terrain.archetype {
-            0 => draw_pastoral(buf, wx, wy, obj.sprite),
-            1 => draw_rugged(buf, wx, wy, obj.sprite),
-            2 => draw_tropical(buf, wx, wy, obj.sprite),
-            3 => draw_underground(buf, wx, wy, obj.sprite),
-            4 => draw_arid(buf, wx, wy, obj.sprite),
-            _ => {}
+        if terrain.is_cavern {
+            draw_underground(buf, wx, wy, obj.sprite);
+        } else if terrain.template_id == 0 {
+            draw_pastoral(buf, wx, wy, obj.sprite);
+        } else {
+            draw_rugged(buf, wx, wy, obj.sprite);
         }
     }
 }

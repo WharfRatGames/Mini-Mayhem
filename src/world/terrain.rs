@@ -42,10 +42,17 @@ pub struct Terrain {
     /// Index (0–23) into the terrain texture atlas, chosen per map from the seed.
     /// Renderer samples this tile to texture the solid silhouette.
     pub surface_texture: u8,
-    /// Which landform style this map was generated as.
-    /// 0=hills 1=cliffs/overhangs 2=floating islands 3=caverns 4=canyon/mesa.
-    /// Drives spawn placement (caverns put some soldiers underground).
-    pub archetype: u8,
+    /// Which of the 2 real Worms Armageddon terrain masks this map's
+    /// silhouette was drawn from (see wa_templates::wa_density). Meaningless
+    /// when `is_cavern` is true. Drives cosmetic dispatch (sky/debris/dirt
+    /// tint/scenery theme) so there's some visual variety tied to the
+    /// underlying real map data.
+    pub template_id: u8,
+    /// True for the occasional carved-cavern map (a separate solid-rock
+    /// fill-and-carve generator, not derived from the WA masks). Drives
+    /// spawn placement (caverns put some soldiers underground) and cosmetic
+    /// dispatch.
+    pub is_cavern: bool,
     /// Decorative scenery objects placed seed-deterministically on the terrain surface.
     /// Purely cosmetic — no collision effect.
     pub scenery: Vec<SceneryObject>,
@@ -53,7 +60,7 @@ pub struct Terrain {
 
 /// A single decorative scenery object placed on the terrain surface.
 /// `x`/`y` are world-space pixel coordinates of the bottom-center of the sprite.
-/// `sprite` is the variant index within the archetype's object set.
+/// `sprite` is the variant index within the map's scenery theme (see scenery.rs).
 #[derive(Clone, Copy)]
 pub struct SceneryObject {
     pub x: u32,
@@ -73,7 +80,8 @@ impl Terrain {
             solid_to_water: vec![false; WORLD_W as usize],
             solid_runs: vec![Vec::new(); WORLD_W as usize],
             surface_texture: 0,
-            archetype: 0,
+            template_id: 0,
+            is_cavern: false,
             scenery: Vec::new(),
         }
     }
@@ -296,9 +304,10 @@ impl Terrain {
         terrain
     }
 
-    /// Multi-pass tactical terrain with 4 archetype-based landform styles.
-    /// 0=hills  1=cliffs/overhangs  2=floating islands  3=caverns  4=canyon/mesa
-    /// Phases 6 & 7 (smoothing + spawn guarantee) are always applied.
+    /// Multi-pass tactical terrain: silhouette drawn from one of 2 real Worms
+    /// Armageddon terrain masks (wa_density), plus an occasional carved-cavern
+    /// map (is_cavern, ~20% of seeds) using an independent solid-rock fill+carve
+    /// generator. Phases 6 & 7 (smoothing + spawn guarantee) are always applied.
     pub fn generate_tactical(seed: u64) -> Self {
         fn lcg(s: &mut u64) -> u64 {
             *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -354,237 +363,58 @@ impl Terrain {
         // (non-island, non-cavern) map regardless of how flat the local FBM noise is.
         let hill = OpenSimplex::new(seed.wrapping_add(7000) as u32);
 
-        // ── Phase 0: Archetype + feature selection (all seed-driven) ─────────────
-        // 0=hills 1=cliffs/overhangs 2=floating islands 3=caverns 4=canyon/mesa
-        let archetype = lcg(&mut rng) % 5;
-        terrain.archetype = archetype as u8;
+        // ── Phase 0: Feature selection (all seed-driven) ──────────────────────────
+        // Which of the 2 real WA terrain masks drives this map's silhouette (must
+        // match wa_density's own seed&1 pick — see wa_templates.rs). Meaningless
+        // when is_cavern is true.
+        terrain.template_id = (seed & 1) as u8;
+        // Occasional carved-cavern map: an independent solid-rock fill-and-carve
+        // generator (not derived from the WA masks). Kept at the same ~20% odds
+        // the old archetype roll gave it.
+        let is_cavern = lcg(&mut rng) % 5 == 0;
+        terrain.is_cavern = is_cavern;
         // Surface texture: seed-driven raw selector; the renderer maps it modulo
         // the pooled atlas tile count (client/server agree from the same seed).
         terrain.surface_texture = lcg(&mut rng) as u8;
 
-        // Feature defaults
+        // Feature parameters — seed-random, no longer gated by a landform style.
+        // The macro silhouette itself comes from the real WA masks (wa_density,
+        // Phase 2 below); these only shape the residual fine noise texture/lean
+        // folded in at reduced weight, plus is_cavern's own fill+carve thresholds.
         let octaves = 3usize;
         let warp_freq = 2.5;
-        let mut warp_amp = 0.07;
-        let fade;
-        let threshold;
-        let scale_x;
-        let mut scale_y = 2.5;
-        let mut ridged = false;
-        let contrast;
-        let mut cliff_bias = 0.0;
-        let mut terrace: Option<f64> = None;
-        let mut terrace_mix = 0.6;
-        let mut cave = false;
-        // |normalized noise| < cave_thresh carves air. OpenSimplex output clusters
-        // near 0, so keep this SMALL — 0.16 ≈ WA-style caves; 0.30+ obliterates terrain.
-        let mut cave_thresh = 0.16;
+        let warp_amp = rnd(&mut rng, 0.14, 0.16);
+        let threshold = rnd(&mut rng, 0.46, 0.08);
+        let scale_x = rnd(&mut rng, 3.0, 2.5);
+        let scale_y = 2.2;
+        let ridged = lcg(&mut rng) & 1 == 0;
+        let contrast = 1.3;
+        let cliff_bias = {
+            let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
+            dir * rnd(&mut rng, 0.10, 0.14)
+        };
+        let hill_amp: f64 = rnd(&mut rng, 0.10, 0.14);
+        // |normalized noise| < cave_thresh carves air (is_cavern's fill+carve pass).
+        // OpenSimplex output clusters near 0, so keep this SMALL — 0.16 ≈ WA-style
+        // caves; 0.30+ obliterates terrain.
+        let cave_thresh = 0.16;
         let cave_sx = 5.5;
         let cave_sy = 5.0;
-        let mut blob = false;
-        let mut big_void = false;
-        let mut overhang = false;       // cliffs: stamp cantilevered ceiling shelves
-        let mut surface_caves = false;  // caverns: let cave punch break the top crust
-        let mut void_shafts = 0usize;   // caverns: vertical entrance shafts into the void
-        // Per-archetype rolling-hill amplitude. Hills = full; cliffs/canyons = reduced
-        // so ridged noise / terracing define the silhouette instead of mound-on-mound.
-        let mut hill_amp: f64 = 0.24;
-
-        match archetype {
-            0 => { // Rolling hills — sub-variants: standard / flat plains / plateau / twin-peak
-                let sub = lcg(&mut rng) % 4;
-                match sub {
-                    0 => { // Standard rolling hills
-                        fade = rnd(&mut rng, 0.40, 0.12);
-                        threshold = rnd(&mut rng, 0.49, 0.05);
-                        scale_x = rnd(&mut rng, 2.5, 2.0);
-                        contrast = 1.25;
-                        cliff_bias = rnd(&mut rng, -0.10, 0.20);
-                    }
-                    1 => { // Flat plains: sparse low terrain, lots of open floor space (WA Rocky/Desert style)
-                        fade = 0.0;  // no vertical gradient — terrain is uniformly low
-                        threshold = rnd(&mut rng, 0.63, 0.04); // high threshold = sparse ground coverage
-                        scale_x = rnd(&mut rng, 4.0, 2.0);
-                        contrast = 1.8; // sharp cutoff → isolated lumps, not continuous hills
-                        cliff_bias = 0.0;
-                        warp_amp = rnd(&mut rng, 0.18, 0.10);
-                        hill_amp = 0.08; // rolling macro barely visible — bumps define variety
-                        cave = lcg(&mut rng) % 100 < 30; // fewer caves — mostly open
-                    }
-                    2 => { // Plateau: broad flat mesa with drop-offs at sides
-                        fade = rnd(&mut rng, 0.55, 0.08);
-                        threshold = rnd(&mut rng, 0.53, 0.03);
-                        scale_x = rnd(&mut rng, 1.5, 1.0);
-                        contrast = 1.6;
-                        cliff_bias = 0.0;
-                        terrace = Some(3.0);
-                        terrace_mix = 0.50;
-                    }
-                    _ => { // Twin peaks: strong directional bias + high frequency
-                        fade = rnd(&mut rng, 0.38, 0.10);
-                        threshold = rnd(&mut rng, 0.50, 0.04);
-                        scale_x = rnd(&mut rng, 5.0, 2.0);
-                        contrast = 1.45;
-                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
-                        cliff_bias = dir * rnd(&mut rng, 0.14, 0.12);
-                        warp_amp = rnd(&mut rng, 0.12, 0.08);
-                    }
-                }
-                cave = lcg(&mut rng) % 100 < 65;
-            }
-            1 => { // Cliffs — sub-variants: craggy-face / arch-bridge / one-sided mesa
-                let sub = lcg(&mut rng) % 3;
-                ridged = true;
-                overhang = true;
-                hill_amp = 0.08; // ridged noise dominates; rolling hills barely visible
-                match sub {
-                    0 => { // Craggy cliff face: standard ridged with strong warp
-                        fade = rnd(&mut rng, 0.30, 0.12);
-                        threshold = rnd(&mut rng, 0.52, 0.06);
-                        scale_x = rnd(&mut rng, 5.0, 4.0);
-                        scale_y = 2.2;
-                        contrast = 1.25;
-                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
-                        cliff_bias = dir * rnd(&mut rng, 0.18, 0.24);
-                        warp_amp = rnd(&mut rng, 0.40, 0.20); // raised minimum for more dramatic warping
-                    }
-                    1 => { // Arch-bridge: extreme warp + moderate bias → arches and tunnels
-                        fade = rnd(&mut rng, 0.28, 0.10);
-                        threshold = rnd(&mut rng, 0.54, 0.05);
-                        scale_x = rnd(&mut rng, 4.0, 3.0);
-                        scale_y = 1.8;
-                        contrast = 1.15;
-                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
-                        cliff_bias = dir * rnd(&mut rng, 0.10, 0.14);
-                        warp_amp = rnd(&mut rng, 0.50, 0.16); // very strong warp
-                    }
-                    _ => { // One-sided mesa: strong lean, high cliff on one side, slope on other
-                        fade = rnd(&mut rng, 0.40, 0.10);
-                        threshold = rnd(&mut rng, 0.50, 0.05);
-                        scale_x = rnd(&mut rng, 3.5, 2.5);
-                        scale_y = 2.5;
-                        contrast = 1.4;
-                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
-                        cliff_bias = dir * rnd(&mut rng, 0.32, 0.14); // very strong lean
-                        warp_amp = rnd(&mut rng, 0.35, 0.15);
-                        terrace = Some(rnd(&mut rng, 3.0, 2.0).round());
-                        terrace_mix = 0.25;
-                    }
-                }
-                cave = lcg(&mut rng) % 100 < 70;
-            }
-            2 => { // Floating islands — sub-variants: archipelago / titan / staircase
-                fade = 0.0;
-                blob = true;
-                let sub = lcg(&mut rng) % 3;
-                match sub {
-                    0 => { // Archipelago: many medium islands spread wide
-                        threshold = rnd(&mut rng, 0.26, 0.05);
-                        scale_x = rnd(&mut rng, 2.0, 1.0);
-                        scale_y = 1.6;
-                        contrast = 1.4;
-                        warp_amp = rnd(&mut rng, 0.14, 0.08);
-                    }
-                    1 => { // Titan: one or two giant islands dominating the map
-                        threshold = rnd(&mut rng, 0.20, 0.04);
-                        scale_x = rnd(&mut rng, 1.2, 0.6);
-                        scale_y = 1.2;
-                        contrast = 1.6;
-                        warp_amp = rnd(&mut rng, 0.20, 0.10);
-                    }
-                    _ => { // Staircase: islands arranged at varying heights with gaps
-                        threshold = rnd(&mut rng, 0.28, 0.04);
-                        scale_x = rnd(&mut rng, 2.5, 1.5);
-                        scale_y = 2.0;
-                        contrast = 1.3;
-                        warp_amp = rnd(&mut rng, 0.10, 0.06);
-                        terrace = Some(4.0);
-                        terrace_mix = 0.20;
-                    }
-                }
-            }
-            3 => { // Caverns: fill+carve in Phase 2 below; density-field is skipped
-                // Unused by density field but required by compiler.
-                fade = 0.0; threshold = 0.5; scale_x = 1.0; contrast = 1.0;
-            }
-            _ => { // Canyon / mesa — sub-variants: slot canyon / badlands / fortress
-                let sub = lcg(&mut rng) % 3;
-                hill_amp = 0.10; // terracing defines silhouette, not rolling humps
-                match sub {
-                    0 => { // Slot canyon: deep narrow trenches, strong terracing
-                        fade = rnd(&mut rng, 0.46, 0.10);
-                        threshold = rnd(&mut rng, 0.49, 0.04);
-                        scale_x = rnd(&mut rng, 2.5, 1.5);
-                        contrast = 1.25;
-                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
-                        cliff_bias = dir * rnd(&mut rng, 0.12, 0.16);
-                        terrace = Some(rnd(&mut rng, 4.0, 3.0).round());
-                        terrace_mix = 0.50; // was 0.30 — terracing now dominant
-                        warp_amp = 0.08;
-                    }
-                    1 => { // Badlands: heavy terracing, eroded pillars, strong warp
-                        fade = rnd(&mut rng, 0.42, 0.10);
-                        threshold = rnd(&mut rng, 0.51, 0.04);
-                        scale_x = rnd(&mut rng, 4.0, 2.0);
-                        contrast = 1.50;
-                        cliff_bias = rnd(&mut rng, -0.08, 0.16);
-                        terrace = Some(rnd(&mut rng, 5.0, 3.0).round());
-                        terrace_mix = 0.72; // was 0.55 — mesas dominate over mounds
-                        warp_amp = rnd(&mut rng, 0.14, 0.10);
-                    }
-                    _ => { // Fortress: flat-topped mesa with sheer walls + moat
-                        fade = rnd(&mut rng, 0.52, 0.08);
-                        threshold = rnd(&mut rng, 0.53, 0.03);
-                        scale_x = rnd(&mut rng, 1.8, 1.0);
-                        contrast = 1.70;
-                        let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
-                        cliff_bias = dir * rnd(&mut rng, 0.20, 0.16);
-                        terrace = Some(2.0); // just two levels: mesa top + ground
-                        terrace_mix = 0.82; // was 0.65 — very hard step between levels
-                        warp_amp = rnd(&mut rng, 0.06, 0.04);
-                    }
-                }
-                cave = lcg(&mut rng) % 100 < 50;
-            }
-        }
+        // Cave-punch tunnels / cantilevered overhang shelves: seed-random on any
+        // non-cavern map instead of being gated by a landform style.
+        let cave = !is_cavern && lcg(&mut rng) % 100 < 45;
+        let overhang = !is_cavern && lcg(&mut rng) % 100 < 25;
+        // Sky-clearance (erode the top ~14% of the terrain band) and its paired
+        // chasm-top offset must move together — seed-random on non-cavern maps.
+        let sky_clear = !is_cavern && lcg(&mut rng) % 100 < 50;
 
         // Water margins always applied — wide enough to be visible on both sides
         let water_end_px: f64 = 180.0 + (lcg(&mut rng) & 0xFF) as f64 / 255.0 * 170.0; // 180–350px
 
-        // Island blob centers — masses floating high in the sky (islands only).
-        // cy is kept in the upper band (0.18–0.50 of WORLD_H ≈ y 86–240) so there is
-        // a clear air/water gap beneath every island. A few big islands plus some
-        // small "stepping-stone" islands for traversal.
-        let island_blobs: Vec<(f64, f64, f64)> = if blob {
-            let big = 3 + (lcg(&mut rng) % 3) as usize;   // 3–5 main islands
-            let small = 2 + (lcg(&mut rng) % 3) as usize; // 2–4 stepping stones
-            let mut v = Vec::with_capacity(big + small);
-            for _ in 0..big {
-                v.push((
-                    rnd(&mut rng, 0.10, 0.80), // cx 0.10–0.90
-                    rnd(&mut rng, 0.18, 0.32), // cy 0.18–0.50 (high in the sky)
-                    rnd(&mut rng, 0.14, 0.12), // r  0.14–0.26
-                ));
-            }
-            for _ in 0..small {
-                v.push((
-                    rnd(&mut rng, 0.10, 0.80),
-                    rnd(&mut rng, 0.22, 0.30), // 0.22–0.52
-                    rnd(&mut rng, 0.05, 0.05), // r  0.05–0.10 (small)
-                ));
-            }
-            v
-        } else {
-            vec![]
-        };
-
-        // Macro shaping (rolling hills + top headroom). Applied to every archetype
-        // EXCEPT floating islands (they float high by design) and caverns (exempt for
-        // now — caverns keeps its original surface shape; only its spawns change).
-        let rolling = !blob && archetype != 3;
+        // Macro shaping (rolling hills + top headroom). Applied to every non-cavern
+        // map (caverns keep their original surface shape; only their spawns change).
+        let rolling = !is_cavern;
         let hill_freq = rnd(&mut rng, 2.8, 1.8);   // 2.8–4.6 cycles: several hills per map (visible on-screen)
-        // Per-archetype: hills get full relief; cliffs/canyons get much less so their
-        // ridged/terraced features dominate instead of producing mound-on-mound maps.
         #[allow(non_snake_case)]
         let HILL_AMP: f64 = hill_amp;
         const SKY_BAND: f64 = 0.12;                // top 12% tapers off → ~84px guaranteed headroom
@@ -604,7 +434,7 @@ impl Terrain {
         };
 
         // ── Phase 2: Density field (skipped for cave maps — they use fill+carve) ──
-        if archetype == 3 {
+        if is_cavern {
             // Cave maps start from a completely solid rock band and carve air out.
             // This gives the Worms Armageddon signature look: enclosed chambers,
             // textured rock walls, vertical shafts from sky to cave system.
@@ -846,7 +676,7 @@ impl Terrain {
             }
         }
 
-        if archetype != 3 {
+        if !is_cavern {
         // Continuous density buffer for the terrain region [TERRAIN_MIN_Y, WATER_Y).
         // We fill this per-pixel below, then box-blur it before thresholding so the
         // silhouette comes out smooth/organic instead of following every noise wiggle.
@@ -888,20 +718,18 @@ impl Terrain {
                 noise = (((noise - 0.5) * contrast) + 0.5).clamp(0.0, 1.0);
 
                 // 4. Density: sourced from a real Worms Armageddon terrain silhouette
-                // (see wa_templates) so every seed's macro shape is WA-styled. The old
-                // per-archetype noise/blob gradient is folded in at reduced weight —
-                // it still contributes fine edge texture and per-archetype lean/relief,
-                // but no longer defines the silhouette itself.
+                // (see wa_templates) so every seed's macro shape is WA-styled. The
+                // residual noise/lean gradient is folded in at reduced weight — it
+                // contributes fine edge texture but no longer defines the silhouette.
                 let mut density = super::wa_templates::wa_density(seed, nx, ty)
                     + (noise - 0.5) * 0.15
                     + (nx - 0.5) * cliff_bias * 0.3;
                 if rolling {
                     density += hill_col[x] * 0.3;
                 }
-                let _ = (fade, blob, &island_blobs); // superseded by the WA silhouette
 
-                // 4b. Top sky-margin (ALL archetypes): erode density near the top so
-                // terrain tapers off below the ceiling instead of clamping flat against
+                // 4b. Top sky-margin: erode density near the top so terrain tapers
+                // off below the ceiling instead of clamping flat against
                 // TERRAIN_MIN_Y. Guarantees headroom and kills flat top-edge plateaus;
                 // also pulls floating islands down off the very top of the screen.
                 if ty < SKY_BAND {
@@ -910,12 +738,7 @@ impl Terrain {
                     density -= (1.0 - smooth_t) * 0.85;
                 }
 
-                // 5. Terracing was designed to carve steps into a continuous synthetic
-                // gradient; it fragments the real WA silhouette instead, so it's not
-                // applied to the WA-sourced density (terrace/terrace_mix are unused now).
-                let _ = (terrace, terrace_mix);
-
-                // 6. Edge erosion for water on ends
+                // 5. Edge erosion for water on ends
                 if water_end_px > 0.0 {
                     let edge_dist = (x as f64).min(WORLD_W as f64 - 1.0 - x as f64);
                     if edge_dist < water_end_px {
@@ -935,8 +758,9 @@ impl Terrain {
         // jump/backflip intact. Blurring the CONTINUOUS field (not the binary mask)
         // keeps thin bridges / small stepping-stone islands that sit above threshold
         // solid — only their edges round — instead of eroding them away.
-        // Islands use a gentler radius (their blobs are smaller and already rounded).
-        let r: i32 = if blob { 4 } else { 5 };
+        // A gentle radius keeps small WA-silhouette stepping-stones rounded without
+        // eroding them away.
+        let r: i32 = 4;
         let mut tmp = vec![0.0f64; region_w * region_h];
         // Horizontal pass: clamp x at the region edges (terrain continues sideways).
         for ry in 0..region_h {
@@ -971,25 +795,24 @@ impl Terrain {
                 dens[ry as usize * region_w + rx] = sum / cnt;
             }
         }
-        // Threshold the smoothed field into the solid bitmap. Islands drop the
-        // threshold slightly: the blur pulls a small blob's contour inward, so this
-        // keeps the smallest stepping-stones above threshold (and above the
-        // min_frag=50 cleanup floor) instead of vanishing.
-        let thr = if blob { threshold - 0.03 } else { threshold - 0.02 };
+        // Threshold the smoothed field into the solid bitmap. Dropped slightly below
+        // `threshold`: the blur pulls small WA-silhouette stepping-stones' contours
+        // inward, so this keeps them above threshold (and above the min_frag=50
+        // cleanup floor below) instead of vanishing.
+        let thr = threshold - 0.03;
         for ry in 0..region_h {
             let y = TERRAIN_MIN_Y as usize + ry;
             for x in 0..region_w {
                 terrain.set_solid(x as i32, y as i32, dens[ry * region_w + x] >= thr);
             }
         }
-        } // end if archetype != 3
+        } // end if !is_cavern
 
-        // ── Phase 2a: Sky clearance (hills + canyon only) ────────────────────────
-        // Keep the top 40% of the screen (y < 192) free of terrain on flat maps.
-        // Overhangs (1), islands (2), and caverns (3) are exempt — they intentionally
-        // use the upper screen area.
-        if matches!(archetype, 0 | 4) {
-            // Keep the top portion of the terrain zone clear on flat maps; scale with world height.
+        // ── Phase 2a: Sky clearance (seed-random) ─────────────────────────────────
+        // Keep the top portion of the terrain zone clear on some maps, scaled with
+        // world height; other maps use the upper screen area (overhangs, floating
+        // WA silhouette chunks). Caverns are exempt — sealed rock cap, no sky.
+        if sky_clear {
             let sky_floor_clear: u32 = TERRAIN_MIN_Y + (terrain_range_f * 0.14) as u32;
             for y in TERRAIN_MIN_Y..sky_floor_clear.min(WATER_Y) {
                 for x in 0..WORLD_W as i32 {
@@ -998,7 +821,7 @@ impl Terrain {
             }
         }
 
-        // ── Phase 2b: Overhang shelves (cliffs archetype) ─────────────────────────
+        // ── Phase 2b: Overhang shelves (seed-random) ──────────────────────────────
         // A monotonic density field can't fold over itself, so genuine overhangs are
         // stamped explicitly: a horizontal slab floats above the local surface with an
         // air gap beneath, and one end is anchored to the ground by a support column so
@@ -1039,9 +862,8 @@ impl Terrain {
         // Carve air tunnels where two-layer cave noise lands in a band. Skip the
         // surface crust (ty<=0.18) so spawning stays reliable.
         if cave {
-            // Caverns let caves reach daylight (thin crust); others keep a thick crust
-            // so spawning on the surface stays reliable.
-            let crust = if surface_caves { 0.10 } else { 0.18 };
+            // Keep a thick surface crust so spawning stays reliable.
+            let crust = 0.18;
             for y in TERRAIN_MIN_Y..WATER_Y {
                 let ty = (y as f64 - TERRAIN_MIN_Y as f64) / terrain_range_f;
                 if ty <= crust { continue; }
@@ -1059,9 +881,9 @@ impl Terrain {
         }
 
         // Phase 3.5 — Air dilation for cave-punched non-cavern maps.
-        // Same 2-pass Moore dilation as archetype 3, but clamped below the crust
-        // (ty > 0.18) so surface terrain is not eroded.
-        if cave && archetype != 3 {
+        // Same 2-pass Moore dilation as the is_cavern fill+carve path, but clamped
+        // below the crust (ty > 0.18) so surface terrain is not eroded.
+        if cave && !is_cavern {
             let cave_min_y = TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.18) as i32 + 1;
             for _ in 0..2 {
                 let snap = terrain.solid.clone();
@@ -1084,47 +906,15 @@ impl Terrain {
             }
         }
 
-        // ── Phase 4: Big void (caverns) ───────────────────────────────────────────
-        if big_void {
-            let void_center_y = TERRAIN_MIN_Y as f64 + terrain_range_f * 0.40;
-            let void_half_h   = terrain_range_f * 0.24; // ≈69px half-height
-            for y in TERRAIN_MIN_Y..WATER_Y {
-                let ny = y as f64 / WORLD_H as f64;
-                let dy = (y as f64 - void_center_y).abs();
-                for x in 0..WORLD_W {
-                    if !terrain.is_solid(x as i32, y as i32) { continue; }
-                    let nx = x as f64 / WORLD_W as f64;
-                    if nx < 0.10 || nx > 0.90 { continue; } // keep 10% margins solid
-                    let void_noise = cave_a.get([nx * 3.0, ny * 5.0]) * 22.0;
-                    if dy < void_half_h + void_noise {
-                        terrain.set_solid(x as i32, y as i32, false);
-                    }
-                }
-            }
-        }
-
-        // ── Phase 4b: Cavern entrance shafts ──────────────────────────────────────
-        // Vertical tunnels from the surface down into the big void so the chamber is
-        // visible from outside and soldiers can rope/climb in.
-        for _ in 0..void_shafts {
-            let sxn = (rnd(&mut rng, 0.15, 0.70) * WORLD_W as f64) as i32;
-            let void_center_y = TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.40) as i32;
-            let top = terrain.surface_y_at(sxn as u32).unwrap_or(TERRAIN_MIN_Y) as i32;
-            let r = 7 + (lcg(&mut rng) % 8) as i32;        // 7–14 wide
-            let drift = rnd(&mut rng, -25.0, 50.0) as i32; // winding
-            dig_tunnel(&mut terrain, sxn, top.max(TERRAIN_MIN_Y as i32),
-                       sxn + drift, void_center_y, r);
-        }
-
-        // ── Phase 5: Chasms (hills / cliffs / canyon) ─────────────────────────────
+        // ── Phase 5: Chasms ────────────────────────────────────────────────────────
         // Vertical slots that make crossing the map a skill challenge: some cut to the
         // water (a mis-judged jump drowns), some are floored pits; widths span jumpable
         // (≤56px) to grapple-only (80–160px). Confined to the CENTRAL contested zone so
         // each team keeps a large chasm-free home landform of comparable size on its own
         // side — neither team is stranded on smaller bits than the other. The bumpy
         // 3-octave relief still makes the home sides a ledge-hopping challenge.
-        let n_chasms = if matches!(archetype, 0 | 1 | 4) {
-            3 + (lcg(&mut rng) % 3) as usize // 3–5
+        let n_chasms = if !is_cavern && lcg(&mut rng) % 100 < 45 {
+            2 + (lcg(&mut rng) % 3) as usize // 2–4
         } else { 0 };
         // Spread chasms across more of the map for WA-style terrain variety.
         let zone_lo = (0.22 * WORLD_W as f64) as i32; // ~422
@@ -1149,7 +939,7 @@ impl Terrain {
                 let surf = terrain.surface_y_at(cx as u32).unwrap_or(TERRAIN_MAX_Y) as i32;
                 (surf + rnd(&mut rng, 60.0, 35.0) as i32).min(WATER_Y as i32 - 6)
             };
-            let chasm_top = if matches!(archetype, 0 | 4) {
+            let chasm_top = if sky_clear {
                 TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.14) as i32
             } else { TERRAIN_MIN_Y as i32 };
             carve_chasm(&mut terrain, cx, half_w, chasm_top, bottom_y, drift);
@@ -1171,11 +961,12 @@ impl Terrain {
 
         // ── Phase 6b: Flood-fill fragment cleanup ─────────────────────────────────
         // Remove solid components smaller than min_frag (noise junk / tiny floaters).
-        // Islands use a lower bar so small stepping-stones survive.
+        // A low bar keeps the WA silhouettes' small floating stepping-stone chunks
+        // alive; the isolated-pixel pass above already removes single-pixel noise.
+        // Caverns are solid rock carved into large connected chambers, so they can
+        // afford a higher bar to clean up carve-noise debris.
         {
-            // Islands use a low bar so small stepping-stone islands survive; the
-            // isolated-pixel pass above already removes single-pixel noise.
-            let min_frag: usize = if blob { 50 } else { 200 };
+            let min_frag: usize = if is_cavern { 200 } else { 50 };
             let mut visited = vec![false; WORLD_PIXELS];
             let mut stack: Vec<(i32, i32)> = Vec::new();
             let mut comp: Vec<(i32, i32)> = Vec::new();
@@ -1238,8 +1029,16 @@ impl Terrain {
         // ── Scenery object placement ─────────────────────────────────────────
         // Derived entirely from seed — same on client and server, no StateMsg needed.
         {
-            let sprite_counts: [u8; 5] = [8, 7, 7, 7, 7]; // per archetype
-            let count = sprite_counts[terrain.archetype as usize];
+            // Sprite-variant count must match the theme scenery.rs::draw_scenery
+            // will pick for this map: draw_underground (cavern) / draw_pastoral
+            // (template 0) / draw_rugged (template 1) — 7 / 8 / 7 sprites respectively.
+            let count: u8 = if terrain.is_cavern {
+                7
+            } else if terrain.template_id == 0 {
+                8
+            } else {
+                7
+            };
             let mut srng = seed ^ 0xDECA_FBAB_E000_1234u64;
             let margin = (WORLD_W as f64 * 0.05) as u32;
             let usable_w = WORLD_W - 2 * margin;
@@ -1285,7 +1084,7 @@ impl Terrain {
         let mut used_x: Vec<i32> = Vec::with_capacity(count);
 
         // Cave maps (WA style): all soldiers spawn underground. No surface layer exists.
-        if self.archetype == 3 {
+        if self.is_cavern {
             let mut cave_cands: Vec<(i32, i32)> = Vec::new();
             let mut x = lo;
             while x <= hi {
@@ -1311,9 +1110,9 @@ impl Terrain {
         }
 
         // Pre-scan for underground cave floors so we can reserve slots for them.
-        // Maps with punched caves (archetypes 0,1,2,4) should seat some soldiers
-        // underground for vertical variety; cap the surface pass so those slots stay open.
-        let cave_quota = if self.archetype != 3 {
+        // Non-cavern maps with punched caves should seat some soldiers underground
+        // for vertical variety; cap the surface pass so those slots stay open.
+        let cave_quota = if !self.is_cavern {
             let mut n = 0usize;
             let mut cx = lo + 60;
             while cx <= hi - 60 {
@@ -1393,10 +1192,10 @@ impl Terrain {
             }
         }
 
-        // Cave-floor spawns: for maps with punched caves (non-cavern archetypes),
-        // actively mix underground positions in to spread soldiers vertically.
-        // We reserved some slots from the surface pass (capped above); fill them here.
-        if self.archetype != 3 && spawns.len() < count {
+        // Cave-floor spawns: for non-cavern maps with punched caves, actively mix
+        // underground positions in to spread soldiers vertically. We reserved some
+        // slots from the surface pass (capped above); fill them here.
+        if !self.is_cavern && spawns.len() < count {
             let mut cx = lo + 60;
             while cx <= hi - 60 && spawns.len() < count {
                 if let Some(fy) = self.standable_cave_foot_simple(cx) {
@@ -1512,7 +1311,7 @@ impl Terrain {
     /// Scans bottom-up so soldiers land on the main void floor, not a shallow tunnel.
     /// None if no roofed standing spot exists.
     /// Like standable_cave_foot_y but skips the escape-connectivity check.
-    /// Used for archetype-3 (cave) spawns where vertical shafts guarantee reachability.
+    /// Used for is_cavern spawns where vertical shafts guarantee reachability.
     pub fn standable_cave_foot_simple(&self, x: i32) -> Option<i32> {
         use crate::renderer::draw_sprites::SOLDIER_HALF_W;
         const HEAD_H: i32 = 26;
@@ -1824,8 +1623,8 @@ mod spawn_tests {
     }
 
     /// Caverns maps must actually place some soldiers underground: across seeds that
-    /// generate the caverns archetype, at least one team should get a spawn whose foot
-    /// is roofed — there is solid terrain overhead within the cave ceiling range.
+    /// roll is_cavern, at least one team should get a spawn whose foot is roofed —
+    /// there is solid terrain overhead within the cave ceiling range.
     #[test]
     fn caverns_spawn_some_soldiers_underground() {
         // A spawn is underground if it stands on solid ground but has a solid ceiling
@@ -1839,14 +1638,14 @@ mod spawn_tests {
         let mut saw_underground = false;
         for seed in 0..200u64 {
             let mut t = Terrain::generate_tactical(seed);
-            if t.archetype != 3 { continue; }
+            if !t.is_cavern { continue; }
             saw_caverns = true;
             let spawns = t.find_team_spawns(0, WORLD_W / 2 - 40, 4);
             if spawns.iter().any(|sp| roofed(&t, sp.x as i32, sp.y as i32)) {
                 saw_underground = true;
             }
         }
-        assert!(saw_caverns, "no caverns archetype generated in seeds 0..200");
+        assert!(saw_caverns, "no is_cavern map generated in seeds 0..200");
         assert!(saw_underground, "caverns maps never placed a soldier underground");
     }
 

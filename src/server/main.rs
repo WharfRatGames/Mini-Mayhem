@@ -1261,7 +1261,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.392";
+const REQUIRED_VERSION: &str = "0.5.4.393";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

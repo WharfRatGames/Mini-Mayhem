@@ -8,16 +8,17 @@ use super::turn::TurnManager;
 /// explosion damage, so the player can read the resulting HP loss.
 pub const DAMAGE_FOCUS_TICKS: u32 = 50;
 
-/// Representative dirt tone per map archetype, used to colour explosion debris
-/// chunks so the fallout matches the biome.
-pub fn biome_dirt(archetype: u8) -> crate::renderer::fb::Bgra {
+/// Representative dirt tone used to colour explosion debris chunks so the
+/// fallout matches the map look: cavern maps get dark earth; surface maps
+/// vary by which of the 2 WA masks drove the silhouette (template_id).
+pub fn biome_dirt(is_cavern: bool, template_id: u8) -> crate::renderer::fb::Bgra {
     use crate::renderer::fb::Bgra;
-    match archetype {
-        1 => Bgra::new(120, 122, 128), // cliffs: grey stone
-        2 => Bgra::new(150, 130, 96),  // islands: sandy
-        3 => Bgra::new(78, 70, 64),    // caverns: dark earth
-        4 => Bgra::new(166, 116, 78),  // canyon: red-brown
-        _ => Bgra::new(132, 104, 64),  // hills: brown
+    if is_cavern {
+        Bgra::new(78, 70, 64) // dark earth
+    } else if template_id == 0 {
+        Bgra::new(132, 104, 64) // brown
+    } else {
+        Bgra::new(120, 122, 128) // grey stone
     }
 }
 
@@ -585,7 +586,7 @@ impl GameState {
         if pos.y >= WATER_Y as f32 {
             self.emit_fx(crate::renderer::fx::FxEvent::Splash { x: pos.x, y: pos.y });
         } else {
-            let d = biome_dirt(self.terrain.archetype);
+            let d = biome_dirt(self.terrain.is_cavern, self.terrain.template_id);
             self.emit_fx(crate::renderer::fx::FxEvent::Explosion {
                 x: pos.x, y: pos.y, radius, col: [d.r, d.g, d.b],
             });
@@ -1106,12 +1107,12 @@ impl GameState {
         if drop_rng >= 0.30 { return false; }
 
         // Pick a random x and determine the crate's start position.
-        // On cave maps (archetype 3) the surface is the sealed rock cap — crates
+        // On cave maps (is_cavern) the surface is the sealed rock cap — crates
         // dropped from y=0 land on the roof and are unreachable. Instead, find a
         // standable cave floor and start the crate just above its ceiling so it
         // falls naturally into the accessible chamber below.
         let x = (pos_rng * WORLD_W as f32) as u32 % WORLD_W;
-        let start_y = if self.terrain.archetype == 3 {
+        let start_y = if self.terrain.is_cavern {
             // Use the simple check (no BFS) — standable_cave_foot_y's full
             // cave_has_escape BFS stalls the server tick for several ms, causing
             // irregular state delivery to clients (felt as input unresponsiveness).
@@ -1180,7 +1181,7 @@ impl GameState {
                 let amount = 5 + (scrap_rng.wrapping_mul(1664525) % 26) as u32;
                 let sx = ((scrap_rng.wrapping_mul(22695477) % WORLD_W) as f32)
                     .max(8.0).min(WORLD_W as f32 - 8.0);
-                let scrap_start_y = if self.terrain.archetype == 3 {
+                let scrap_start_y = if self.terrain.is_cavern {
                     match self.terrain.standable_cave_foot_simple(sx as i32) {
                         Some(foot_y) => {
                             let head_top = (foot_y - 26).max(0);
@@ -1530,7 +1531,7 @@ impl GameState {
         }
     }
 
-    /// Shatter a molotov cocktail: small blast + 12 fire patches that spread wide.
+    /// Shatter a molotov cocktail: small blast + 48 fire patches that burn for 2.5 min.
     pub fn spawn_molotov_fire(&mut self, pos: WorldPos) {
         use crate::world::Vec2;
         use crate::physics::projectile::WeaponKind;
@@ -1539,17 +1540,16 @@ impl GameState {
             .wrapping_mul(0x6364136223846885)
             .wrapping_add((pos.y as u64).wrapping_mul(0x9e3779b97f4a7c15))
             .wrapping_add(self.tick as u64 * 0x517CC1B727220A95);
-        let count = 12;
+        let count = 48; // 4× the old 12 — dense pool of fire
         for _ in 0..count {
             rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-            // Spread across a wide horizontal arc (like liquid splashing)
-            let raw_angle = (rng >> 33) as f32 / (u32::MAX as f32); // 0..1
-            // Bias: mostly outward and slightly downward, wide horizontal scatter
+            let raw_angle = (rng >> 33) as f32 / (u32::MAX as f32);
             let angle = (raw_angle - 0.5) * std::f32::consts::PI * 1.6; // -144°..+144°
             rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
             let speed = 2.5 + (rng >> 33) as f32 / (u32::MAX as f32) * 5.5;
             rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-            let life = 180 + (rng >> 33) as u32 % 120; // 6-10 s — longer than barrel fire
+            // 2.5 min = 4500 ticks ± 10% spread so patches don't all expire together
+            let life = 4050 + (rng >> 33) as u32 % 900; // 4050–4950 ticks (~2.25–2.75 min)
             self.fire_patches.push(FirePatch {
                 pos,
                 vel: Vec2::new(angle.cos() * speed, angle.sin() * speed - 1.5),

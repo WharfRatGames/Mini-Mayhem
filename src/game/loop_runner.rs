@@ -1024,7 +1024,7 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
 
         if game.weapon_menu_open {
             let n    = game.teams[ti].weapons.len();
-            const COLS: usize = 5;
+            const COLS: usize = 4;
             // Column-major layout: weapons fill each column top-to-bottom before moving right.
             // idx → (row = idx % rows, col = idx / rows)
             let rows = (n + COLS - 1) / COLS;
@@ -1607,7 +1607,7 @@ fn step_plasma_torch(game: &mut GameState) {
 
     // Dirt chips spat back out of the bore.
     if game.tick % 3 == 0 {
-        let d = crate::game::state::biome_dirt(game.terrain.archetype);
+        let d = crate::game::state::biome_dirt(game.terrain.is_cavern, game.terrain.template_id);
         game.emit_fx(crate::renderer::fx::FxEvent::Dig {
             x: tip_x, y: tip_y, dir: dx.signum(), col: [d.r, d.g, d.b],
         });
@@ -2583,7 +2583,7 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
             let crater = crate::world::Crater::new(rx, ry, 2.0);
             crater.carve(&mut game.terrain);
             game.crater_log.push((rx, ry, 2.0));
-            let d = crate::game::state::biome_dirt(game.terrain.archetype);
+            let d = crate::game::state::biome_dirt(game.terrain.is_cavern, game.terrain.template_id);
             game.emit_fx(crate::renderer::fx::FxEvent::Dig {
                 x: rx, y: ry,
                 dir: -step_x.signum(),
@@ -2728,7 +2728,7 @@ fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Op
             let crater = crate::world::Crater::new(rx, ry, 1.5);
             crater.carve(&mut game.terrain);
             game.crater_log.push((rx, ry, 1.5));
-            let d = crate::game::state::biome_dirt(game.terrain.archetype);
+            let d = crate::game::state::biome_dirt(game.terrain.is_cavern, game.terrain.template_id);
             game.emit_fx(crate::renderer::fx::FxEvent::Dig {
                 x: rx, y: ry,
                 dir: -step_x.signum(),
@@ -2768,10 +2768,10 @@ pub fn draw_weapon_menu(
     use crate::physics::projectile::WeaponKind;
     use crate::world::{SCREEN_W, SCREEN_H};
 
-    let cols: i32 = 5;
+    let cols: i32 = 4;
     let cell_w: i32 = 120;
-    let cell_h: i32 = 64;
-    const MAX_ROWS: i32 = 6;
+    let cell_h: i32 = 56;
+    const MAX_ROWS: i32 = 4;
     // Column-major: weapons fill down each column before moving right.
     // idx → row = idx % total_rows, col = idx / total_rows
     let total_rows  = ((weapons.len() as i32) + cols - 1) / cols;
@@ -4689,15 +4689,12 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         use crate::renderer::font::{draw_str_scaled, str_width_scaled};
         use crate::renderer::fb::Bgra;
         use crate::world::SCREEN_W;
-        let arch_name = match game.terrain.archetype {
-            0 => "HILLS",
-            1 => "CLIFFS",
-            2 => "ISLANDS",
-            3 => "CAVERNS",
-            4 => "MESA",
-            _ => "?",
+        let map_label = if game.terrain.is_cavern {
+            "CAVERNS".to_string()
+        } else {
+            format!("WA-{}", game.terrain.template_id)
         };
-        let label = format!("SEED {:016X}  {}", game.map_seed, arch_name);
+        let label = format!("SEED {:016X}  {}", game.map_seed, map_label);
         let w = str_width_scaled(&label, 2);
         let x = cam_x as i32 + SCREEN_W as i32 - w - 6;
         let y = cam_y as i32 + 6;

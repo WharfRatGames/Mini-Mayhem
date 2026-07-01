@@ -4,7 +4,7 @@
 //!
 //!   1. `draw_backdrop` — a soft sun glow with slow horizontal parallax.
 //!   2. `update_debris` / `draw_debris` — wind-driven ambient motes (snow / dust /
-//!      embers / pollen) chosen per map archetype: the "alive air".
+//!      embers / pollen) chosen per map look: the "alive air".
 //!
 //! All layers are client-only visuals (not networked) and are clipped to the
 //! visible viewport. Anything that lands on solid terrain or below the waterline
@@ -47,32 +47,35 @@ fn sun_lut() -> &'static SunLut {
 
 /// Draw the sun glow into the visible viewport, only on sky pixels (skips
 /// terrain and water).
-pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32) {
+pub fn draw_backdrop(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: u32, cam_y: u32) {
+    use crate::world::SCREEN_H;
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
     let water_y = WATER_Y as i32;
 
-    // ── Sun glow: soft additive disc, slow horizontal parallax ──
+    // Sun is fixed in the upper-left of the world (world coords).
+    // It's only visible when cam_y is near the top.
     let sun_sx = 130.0 - cam_x as f32 * PAR_SUN;
     let cx = sun_sx as i32;
-    let cy = 70i32;
+    let wy_sun = 70i32; // world Y
+    let vis_y0 = cam_y as i32;
+    let vis_y1 = (cam_y + SCREEN_H) as i32;
     if sun_sx > -(SUN_R as f32) && sun_sx < SCREEN_W as f32 + SUN_R as f32 {
         let lut = sun_lut();
         let sx0 = (cx - SUN_R).max(0);
         let sx1 = (cx + SUN_R).min(SCREEN_W as i32);
-        let sy0 = (cy - SUN_R).max(0);
-        let sy1 = (cy + SUN_R).min(water_y);
-        // Row-major: sy outer → sequential buffer writes; LUT row stays in cache.
-        for sy in sy0..sy1 {
-            let dy_i = (sy - cy + SUN_R) as usize;
+        let wy0 = (wy_sun - SUN_R).max(vis_y0);
+        let wy1 = (wy_sun + SUN_R).min(water_y).min(vis_y1);
+        for wy in wy0..wy1 {
+            let dy_i = (wy - wy_sun + SUN_R) as usize;
             let lut_row = &lut.add[dy_i];
             for sx in sx0..sx1 {
                 let wx = (cam_x as i32 + sx) as u32;
-                if sy >= terrain.sky_limit[wx as usize] as i32 { continue; }
+                if wy >= terrain.sky_limit[wx as usize] as i32 { continue; }
                 let dx_i = (sx - cx + SUN_R) as usize;
                 let v = lut_row[dx_i];
                 if v == 0 { continue; }
-                let c = buf.get_pixel_unchecked(wx, sy as u32);
-                buf.set_pixel_unchecked(wx, sy as u32, Bgra::new(
+                let c = buf.get_pixel_unchecked(wx, wy as u32);
+                buf.set_pixel_unchecked(wx, wy as u32, Bgra::new(
                     c.r.saturating_add(v),
                     c.g.saturating_add(v),
                     c.b.saturating_add(v >> 1),
@@ -124,15 +127,15 @@ struct DebrisStyle {
     spin: f32,        // max rotation speed for flutter
 }
 
-/// Per-archetype debris look: hills→pollen, cliffs→snow, islands→mist,
-/// caverns→dust+embers, canyon→dust.
-fn debris_style(archetype: u8) -> DebrisStyle {
-    match archetype {
-        1 => DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 420, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow
-        2 => DebrisStyle { colour: Bgra::new(200, 220, 236), fall: 0.16, drift: 1.5, count: 200, big_chance: 10, glow_chance: 0,  sway_amp: 0.5, sway_speed: 0.05, spin: 0.04 }, // sea mist
-        3 => DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 220, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
-        4 => DebrisStyle { colour: Bgra::new(202, 176, 134), fall: 0.20, drift: 1.0, count: 210, big_chance: 12, glow_chance: 0,  sway_amp: 0.4, sway_speed: 0.07, spin: 0.10 }, // canyon dust
-        _ => DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 180, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen
+/// Debris look: cavern maps get dust+embers; surface maps vary by which of the
+/// 2 WA masks drove the silhouette (template_id) — pollen or snow.
+fn debris_style(is_cavern: bool, template_id: u8) -> DebrisStyle {
+    if is_cavern {
+        DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 220, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 } // dust + embers
+    } else if template_id == 0 {
+        DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 180, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 } // pollen
+    } else {
+        DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 420, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 } // snow
     }
 }
 
@@ -172,7 +175,7 @@ fn spawn(state: &mut u32, style: &DebrisStyle, wind: f32) -> BgParticle {
 /// Advance debris one tick: wind nudges horizontal drift, gravity pulls down,
 /// off-screen particles are recycled and the set is topped up to the target count.
 pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f32, tick: u32) {
-    let style = debris_style(terrain.archetype);
+    let style = debris_style(terrain.is_cavern, terrain.template_id);
     let mut state = tick.wrapping_mul(2654435761_u32).wrapping_add(0x9E3779B9) | 1;
 
     for p in particles.iter_mut() {
@@ -196,35 +199,31 @@ pub fn update_debris(particles: &mut Vec<BgParticle>, terrain: &Terrain, wind: f
 
 /// Draw debris into the visible viewport, skipping any pixel behind terrain or
 /// below the waterline so motes vanish behind the landscape.
-pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgParticle], cam_x: u32, tick: u32) {
+pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgParticle], cam_x: u32, cam_y: u32, tick: u32) {
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
-    let style = debris_style(terrain.archetype);
+    let style = debris_style(terrain.is_cavern, terrain.template_id);
 
     for p in particles {
-        let sx = p.x as i32;
-        let sy = p.y as i32;
-        if sy < 0 || sy >= WATER_Y as i32 { continue; }
+        let sx = p.x as i32; // screen X
+        let sy = p.y as i32; // screen Y (relative to viewport top)
+        let wy0 = cam_y as i32 + sy; // world Y
+        if sy < 0 || wy0 >= WATER_Y as i32 { continue; }
 
         let colour = if p.glow {
-            // Flickering ember: warm orange that pulses with tick + position.
             let flick = ((tick.wrapping_add(sx as u32 * 7 + sy as u32 * 3)) % 5) as i32 * 12;
             Bgra::new((220 + flick).min(255) as u8, (110 + flick / 2).min(255) as u8, 40)
         } else {
             style.colour
         };
 
-        // 1px motes are a single pixel; 2px motes draw a 3-pixel "flake/leaf"
-        // whose orientation flips with `rot`, giving a tumbling flutter.
         let mut put = |ox: i32, oy: i32| {
             let px = sx + ox;
-            let py = sy + oy;
-            if py < 0 || py >= WATER_Y as i32 || px < 0 || px >= SCREEN_W as i32 { return; }
+            let wy = wy0 + oy;
+            if wy < 0 || wy >= WATER_Y as i32 || px < 0 || px >= SCREEN_W as i32 { return; }
             let wx = cam_x as i32 + px;
-            // sky_limit[wx] is the first solid row from top; anything at or
-            // below it is in or under terrain — no need for the full is_solid check.
             if wx < 0 || wx >= WORLD_W as i32 { return; }
-            if py >= terrain.sky_limit[wx as usize] as i32 { return; }
-            buf.set_pixel(wx, py, colour);
+            if wy >= terrain.sky_limit[wx as usize] as i32 { return; }
+            buf.set_pixel(wx, wy, colour);
         };
         put(0, 0);
         if p.size >= 2 {
