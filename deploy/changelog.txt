@@ -1,3 +1,4 @@
+0.5.4.391  More scenery variety (15 new sprite types), denser object placement (28 per map), map shape variety (flat plains, stronger canyon mesas/cliffs), more barrels (14-20) and mines (16-24), pistol sounds on every shot.
 0.5.4.390  Scenery objects: each map now has themed decorations on the terrain surface — flowers/mushrooms/rocks on hills, pine trees/boulders/crates on cliffs, palm trees/barrels/tents on islands, crystals/skulls/torches in caverns, cacti/pillars/tumbleweeds in canyons.
 0.5.4.389  Fix HUD/weapon menu/weapon indicator drifting to mid-screen when camera scrolls vertically. R1+Up/Down now pans camera vertically (snap-back on release). L1+Up/Down pans without snap-back.
 0.5.4.388  WA-style terrain: sharper silhouettes, heavier cave coverage, wider chasms. Landmine max damage increased to 50.

@@ -33,7 +33,10 @@ fn draw_pastoral(buf: &mut WorldBuffer, cx: i32, by: i32, sprite: u8) {
         1 => draw_mushroom(buf, cx, by),
         2 => draw_mossy_rock(buf, cx, by),
         3 => draw_fence_post(buf, cx, by),
-        _ => draw_bush(buf, cx, by),
+        4 => draw_bush(buf, cx, by),
+        5 => draw_sunflower(buf, cx, by),
+        6 => draw_log(buf, cx, by),
+        _ => draw_pebble_cluster(buf, cx, by),
     }
 }
 
@@ -166,7 +169,10 @@ fn draw_rugged(buf: &mut WorldBuffer, cx: i32, by: i32, sprite: u8) {
         0 => draw_pine_tree(buf, cx, by),
         1 => draw_boulder(buf, cx, by),
         2 => draw_wooden_crate(buf, cx, by),
-        _ => draw_dead_stump(buf, cx, by),
+        3 => draw_dead_stump(buf, cx, by),
+        4 => draw_broken_wall(buf, cx, by),
+        5 => draw_lichen_rock(buf, cx, by),
+        _ => draw_cairn(buf, cx, by),
     }
 }
 
@@ -292,7 +298,10 @@ fn draw_tropical(buf: &mut WorldBuffer, cx: i32, by: i32, sprite: u8) {
         0 => draw_palm_tree(buf, cx, by),
         1 => draw_barrel(buf, cx, by),
         2 => draw_tent_shanty(buf, cx, by),
-        _ => draw_anchor(buf, cx, by),
+        3 => draw_anchor(buf, cx, by),
+        4 => draw_coconut(buf, cx, by),
+        5 => draw_driftwood(buf, cx, by),
+        _ => draw_crab_trap(buf, cx, by),
     }
 }
 
@@ -440,7 +449,10 @@ fn draw_underground(buf: &mut WorldBuffer, cx: i32, by: i32, sprite: u8) {
         0 => draw_crystal_cluster(buf, cx, by),
         1 => draw_bone_pile(buf, cx, by),
         2 => draw_torch(buf, cx, by),
-        _ => draw_skull(buf, cx, by),
+        3 => draw_skull(buf, cx, by),
+        4 => draw_stalactite_shard(buf, cx, by),
+        5 => draw_rusted_chain(buf, cx, by),
+        _ => draw_ribcage(buf, cx, by),
     }
 }
 
@@ -573,7 +585,10 @@ fn draw_arid(buf: &mut WorldBuffer, cx: i32, by: i32, sprite: u8) {
         0 => draw_cactus(buf, cx, by),
         1 => draw_bleached_skull(buf, cx, by),
         2 => draw_crumbling_pillar(buf, cx, by),
-        _ => draw_tumbleweed(buf, cx, by),
+        3 => draw_tumbleweed(buf, cx, by),
+        4 => draw_dry_shrub(buf, cx, by),
+        5 => draw_sun_bleached_log(buf, cx, by),
+        _ => draw_horns(buf, cx, by),
     }
 }
 
@@ -698,4 +713,415 @@ fn draw_tumbleweed(buf: &mut WorldBuffer, cx: i32, by: i32) {
     buf.fill_rect(cx - 6, by - 16, 5, 3, tan);
     buf.fill_rect(cx - 7, by - 13, 4, 4, tan);
     buf.fill_rect(cx - 5, by - 12, 5, 2, dry);
+}
+
+// ── New pastoral variants ──────────────────────────────────────────────────────
+
+fn draw_sunflower(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let stem  = Bgra::new(40, 140, 35);
+    let dark  = Bgra::new(18, 75, 15);
+    let petal = Bgra::new(40, 210, 255);
+    let pdark = Bgra::new(20, 130, 200);
+    let center= Bgra::new(30, 100, 185);
+    let cdark = Bgra::new(10, 55, 120);
+    // Stem
+    buf.fill_rect(cx - 1, by - 22, 3, 22, dark);
+    buf.fill_rect(cx,     by - 22, 1, 21, stem);
+    // Leaf
+    buf.fill_rect(cx + 2, by - 13, 5, 2, stem);
+    buf.fill_rect(cx + 3, by - 14, 3, 1, stem);
+    buf.fill_rect(cx - 7, by - 9,  5, 2, stem);
+    // Petals (8-point)
+    buf.fill_rect(cx - 1, by - 32, 3, 5, pdark);
+    buf.fill_rect(cx,     by - 31, 1, 3, petal);
+    buf.fill_rect(cx - 1, by - 28, 3, 5, pdark);
+    buf.fill_rect(cx - 5, by - 31, 5, 3, pdark);
+    buf.fill_rect(cx - 4, by - 30, 3, 1, petal);
+    buf.fill_rect(cx + 2, by - 31, 5, 3, pdark);
+    buf.fill_rect(cx + 3, by - 30, 3, 1, petal);
+    buf.fill_rect(cx - 6, by - 28, 4, 3, pdark);
+    buf.fill_rect(cx + 4, by - 28, 4, 3, pdark);
+    // Center disk
+    buf.fill_rect(cx - 3, by - 28, 7, 6, cdark);
+    buf.fill_rect(cx - 2, by - 27, 5, 4, center);
+    buf.fill_rect(cx - 1, by - 27, 3, 2, Bgra::new(50, 130, 210));
+}
+
+fn draw_log(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let wood  = Bgra::new(150, 105, 55);
+    let dark  = Bgra::new(80, 50, 20);
+    let end   = Bgra::new(175, 135, 80);
+    let ring  = Bgra::new(120, 82, 38);
+    let bark  = Bgra::new(115, 78, 35);
+    // Log body (horizontal cylinder)
+    buf.fill_rect(cx - 16, by - 7,  33, 2, dark);
+    buf.fill_rect(cx - 17, by - 10, 35, 7, dark);
+    buf.fill_rect(cx - 16, by - 9,  33, 6, wood);
+    buf.fill_rect(cx - 16, by - 9,  33, 2, Bgra::new(185, 148, 90));
+    // Bark lines
+    buf.fill_rect(cx - 10, by - 9, 1, 5, bark);
+    buf.fill_rect(cx - 3,  by - 9, 1, 5, bark);
+    buf.fill_rect(cx + 5,  by - 9, 1, 5, bark);
+    buf.fill_rect(cx + 11, by - 9, 1, 5, bark);
+    // Left end cap
+    buf.fill_rect(cx - 18, by - 10, 3, 7, dark);
+    buf.fill_rect(cx - 17, by - 9,  3, 5, end);
+    buf.fill_rect(cx - 16, by - 8,  1, 3, ring);
+    // Right end cap
+    buf.fill_rect(cx + 16, by - 10, 3, 7, dark);
+    buf.fill_rect(cx + 15, by - 9,  3, 5, end);
+    buf.fill_rect(cx + 16, by - 8,  1, 3, ring);
+}
+
+fn draw_pebble_cluster(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let stone = Bgra::new(135, 128, 118);
+    let dark  = Bgra::new(75, 70, 65);
+    let hi    = Bgra::new(175, 168, 155);
+    // Large pebble left
+    buf.fill_rect(cx - 12, by - 7, 9, 3, dark);
+    buf.fill_rect(cx - 12, by - 9, 9, 5, dark);
+    buf.fill_rect(cx - 11, by - 8, 7, 4, stone);
+    buf.fill_rect(cx - 11, by - 8, 3, 2, hi);
+    // Medium pebble center
+    buf.fill_rect(cx - 4, by - 8, 9, 3, dark);
+    buf.fill_rect(cx - 4, by - 9, 9, 4, dark);
+    buf.fill_rect(cx - 3, by - 8, 7, 3, stone);
+    buf.fill_rect(cx - 2, by - 8, 3, 1, hi);
+    // Small pebble right
+    buf.fill_rect(cx + 5, by - 6, 7, 3, dark);
+    buf.fill_rect(cx + 5, by - 7, 7, 3, dark);
+    buf.fill_rect(cx + 6, by - 6, 5, 2, stone);
+    buf.fill_rect(cx + 6, by - 6, 2, 1, hi);
+    // Tiny pebble
+    buf.fill_rect(cx - 6, by - 5, 4, 3, dark);
+    buf.fill_rect(cx - 5, by - 4, 2, 2, stone);
+}
+
+// ── New rugged variants ────────────────────────────────────────────────────────
+
+fn draw_broken_wall(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let stone = Bgra::new(130, 122, 110);
+    let dark  = Bgra::new(65, 60, 52);
+    let hi    = Bgra::new(165, 158, 145);
+    let mortar= Bgra::new(95, 90, 82);
+    // Left standing section (taller)
+    buf.fill_rect(cx - 16, by - 22, 10, 22, dark);
+    buf.fill_rect(cx - 15, by - 21,  8, 20, stone);
+    buf.fill_rect(cx - 15, by - 21,  3, 18, hi);
+    // Mortar lines (horizontal courses)
+    for y in [by-6, by-12, by-18].iter() { buf.fill_rect(cx - 15, *y, 8, 1, mortar); }
+    // Broken top edge (irregular)
+    buf.fill_rect(cx - 8, by - 22, 3, 4, dark);
+    buf.fill_rect(cx - 6, by - 19, 2, 2, stone);
+    // Right fallen section (lower)
+    buf.fill_rect(cx - 2, by - 14, 10, 14, dark);
+    buf.fill_rect(cx - 1, by - 13,  8, 12, stone);
+    buf.fill_rect(cx - 1, by - 13,  3, 10, hi);
+    for y in [by-6, by-11].iter() { buf.fill_rect(cx - 1, *y, 8, 1, mortar); }
+    // Rubble on ground
+    buf.fill_rect(cx + 8,  by - 4, 6, 4, dark);
+    buf.fill_rect(cx + 9,  by - 3, 4, 3, stone);
+    buf.fill_rect(cx - 18, by - 3, 4, 3, dark);
+    buf.fill_rect(cx - 17, by - 2, 3, 2, stone);
+}
+
+fn draw_lichen_rock(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let rock  = Bgra::new(115, 108, 98);
+    let dark  = Bgra::new(60, 56, 50);
+    let hi    = Bgra::new(155, 148, 135);
+    let lichen= Bgra::new(75, 155, 60);
+    let ldark = Bgra::new(40, 100, 30);
+    // Rock body
+    buf.fill_rect(cx - 13, by - 3,  27, 2, dark);
+    buf.fill_rect(cx - 14, by - 9,  29, 7, dark);
+    buf.fill_rect(cx - 12, by - 13, 25, 6, dark);
+    buf.fill_rect(cx - 9,  by - 15, 19, 3, dark);
+    buf.fill_rect(cx - 13, by - 8,  27, 6, rock);
+    buf.fill_rect(cx - 11, by - 12, 23, 5, rock);
+    buf.fill_rect(cx - 8,  by - 14, 17, 2, rock);
+    buf.fill_rect(cx - 10, by - 8,   5, 3, hi);
+    // Lichen patches
+    buf.fill_rect(cx - 5,  by - 14,  10, 3, ldark);
+    buf.fill_rect(cx - 4,  by - 13,   8, 2, lichen);
+    buf.fill_rect(cx + 6,  by - 11,   6, 3, ldark);
+    buf.fill_rect(cx + 7,  by - 10,   4, 2, lichen);
+    buf.fill_rect(cx - 11, by - 10,   5, 3, ldark);
+    buf.fill_rect(cx - 10, by - 9,    3, 2, lichen);
+}
+
+fn draw_cairn(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let stone = Bgra::new(125, 118, 108);
+    let dark  = Bgra::new(65, 60, 54);
+    let hi    = Bgra::new(162, 155, 142);
+    // Bottom layer (widest)
+    buf.fill_rect(cx - 10, by - 4,  21, 2, dark);
+    buf.fill_rect(cx - 10, by - 7,  21, 5, dark);
+    buf.fill_rect(cx - 9,  by - 6,  19, 4, stone);
+    buf.fill_rect(cx - 8,  by - 6,   6, 2, hi);
+    // Middle layer
+    buf.fill_rect(cx - 7, by - 11, 15, 2, dark);
+    buf.fill_rect(cx - 7, by - 13, 15, 4, dark);
+    buf.fill_rect(cx - 6, by - 12, 13, 3, stone);
+    buf.fill_rect(cx - 5, by - 12,  5, 1, hi);
+    // Top stone
+    buf.fill_rect(cx - 4, by - 17,  9, 2, dark);
+    buf.fill_rect(cx - 4, by - 19,  9, 4, dark);
+    buf.fill_rect(cx - 3, by - 18,  7, 3, stone);
+    buf.fill_rect(cx - 2, by - 18,  3, 1, hi);
+    // Tip
+    buf.fill_rect(cx - 2, by - 21, 5, 3, dark);
+    buf.fill_rect(cx - 1, by - 20, 3, 2, stone);
+}
+
+// ── New tropical variants ──────────────────────────────────────────────────────
+
+fn draw_coconut(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let shell = Bgra::new(80, 52, 22);
+    let sdark = Bgra::new(40, 24, 8);
+    let fiber = Bgra::new(130, 98, 52);
+    let meat  = Bgra::new(235, 228, 210);
+    let husk  = Bgra::new(100, 72, 30);
+    // Group of 3 coconuts on ground
+    // Left coconut
+    buf.fill_rect(cx - 12, by - 9,  12, 4, sdark);
+    buf.fill_rect(cx - 12, by - 12, 12, 7, sdark);
+    buf.fill_rect(cx - 11, by - 11, 10, 6, shell);
+    buf.fill_rect(cx - 11, by - 11,  4, 3, fiber);
+    buf.fill_rect(cx - 9,  by - 10,  2, 2, husk);
+    // Right coconut (slightly opened)
+    buf.fill_rect(cx + 1, by - 10, 12, 4, sdark);
+    buf.fill_rect(cx + 1, by - 13, 12, 7, sdark);
+    buf.fill_rect(cx + 2, by - 12, 10, 6, shell);
+    buf.fill_rect(cx + 2, by - 12,  4, 2, fiber);
+    // Split open center — shows white meat
+    buf.fill_rect(cx - 5, by - 14, 11, 6, sdark);
+    buf.fill_rect(cx - 4, by - 13,  9, 5, shell);
+    buf.fill_rect(cx - 3, by - 13,  7, 4, meat);
+    buf.fill_rect(cx - 2, by - 12,  5, 2, Bgra::new(245, 240, 225));
+}
+
+fn draw_driftwood(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let wood  = Bgra::new(185, 172, 148);
+    let dark  = Bgra::new(105, 95, 75);
+    let hi    = Bgra::new(215, 205, 185);
+    let knot  = Bgra::new(130, 118, 95);
+    // Main trunk (angled slightly)
+    buf.fill_rect(cx - 18, by - 5,  36, 2, dark);
+    buf.fill_rect(cx - 17, by - 8,  36, 5, dark);
+    buf.fill_rect(cx - 16, by - 7,  34, 4, wood);
+    buf.fill_rect(cx - 16, by - 7,  34, 1, hi);
+    // Left end (rounded, weathered)
+    buf.fill_rect(cx - 19, by - 6, 3, 3, dark);
+    buf.fill_rect(cx - 18, by - 5, 2, 2, wood);
+    // Branch stub (left)
+    buf.fill_rect(cx - 10, by - 10, 4, 4, dark);
+    buf.fill_rect(cx - 9,  by - 9,  2, 3, wood);
+    // Branch stub (right)
+    buf.fill_rect(cx + 6, by - 11, 4, 5, dark);
+    buf.fill_rect(cx + 7, by - 10, 2, 4, wood);
+    // Knot holes
+    buf.fill_rect(cx - 3, by - 7, 3, 2, knot);
+    buf.fill_rect(cx + 8, by - 6, 3, 2, knot);
+    // Texture lines
+    buf.fill_rect(cx - 12, by - 7, 1, 3, dark);
+    buf.fill_rect(cx + 2,  by - 7, 1, 3, dark);
+}
+
+fn draw_crab_trap(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let rope  = Bgra::new(185, 160, 100);
+    let wood  = Bgra::new(160, 130, 75);
+    let dark  = Bgra::new(75, 55, 22);
+    let wire  = Bgra::new(140, 135, 125);
+    let wdark = Bgra::new(80, 78, 72);
+    let float1= Bgra::new(210, 60, 55);
+    let float2= Bgra::new(240, 240, 240);
+    // Trap cage body
+    buf.fill_rect(cx - 12, by - 2,  25, 2, dark);
+    buf.fill_rect(cx - 13, by - 10, 27, 10, wdark);
+    buf.fill_rect(cx - 12, by - 9,  25,  8, wire);
+    // Cage bars (vertical wires)
+    for x in [-8i32, -3, 2, 7, 12].iter() {
+        buf.fill_rect(cx + x, by - 9, 1, 8, wdark);
+    }
+    // Cage bars (horizontal)
+    buf.fill_rect(cx - 12, by - 5, 25, 1, wdark);
+    // Wooden base slats
+    buf.fill_rect(cx - 12, by - 2, 25, 2, dark);
+    buf.fill_rect(cx - 11, by - 1, 23, 1, wood);
+    // Float buoy (upper right)
+    buf.fill_rect(cx + 9, by - 16, 6, 3, dark);
+    buf.fill_rect(cx + 10, by - 15, 4, 2, float1);
+    buf.fill_rect(cx + 10, by - 15, 4, 1, float2);
+    // Rope connecting float
+    for i in 0..4i32 { buf.set_pixel(cx + 10 - i, by - 11 - i, rope); }
+}
+
+// ── New underground variants ───────────────────────────────────────────────────
+
+fn draw_stalactite_shard(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let stone = Bgra::new(140, 130, 118);
+    let dark  = Bgra::new(70, 64, 56);
+    let hi    = Bgra::new(185, 175, 160);
+    let wet   = Bgra::new(100, 140, 170);
+    // Fallen stalactite lying on ground (pointed left end, flat break right)
+    // Main body
+    buf.fill_rect(cx - 18, by - 3,  36, 2, dark);
+    buf.fill_rect(cx - 18, by - 8,  34, 6, dark);
+    buf.fill_rect(cx - 17, by - 7,  32, 5, stone);
+    buf.fill_rect(cx - 17, by - 7,  32, 1, hi);
+    // Pointed left tip
+    buf.fill_rect(cx - 20, by - 6,  3, 4, dark);
+    buf.fill_rect(cx - 19, by - 5,  2, 2, stone);
+    buf.fill_rect(cx - 21, by - 5,  2, 2, dark);
+    buf.fill_rect(cx - 20, by - 4,  1, 1, stone);
+    // Broken right end (rough)
+    buf.fill_rect(cx + 16, by - 9, 4, 3, dark);
+    buf.fill_rect(cx + 18, by - 7, 3, 5, dark);
+    // Wet streak (drip mark)
+    buf.fill_rect(cx - 5, by - 7, 1, 5, wet);
+    buf.fill_rect(cx + 3, by - 7, 1, 4, wet);
+    // Cracks
+    buf.fill_rect(cx + 5, by - 7, 1, 4, dark);
+    buf.fill_rect(cx - 8, by - 6, 1, 3, dark);
+}
+
+fn draw_rusted_chain(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let rust  = Bgra::new(155, 80, 35);
+    let rdark = Bgra::new(90, 42, 12);
+    let rhi   = Bgra::new(195, 115, 60);
+    // Chain links piled on ground (curved heap)
+    // Bottom links
+    buf.fill_rect(cx - 10, by - 3,  8, 3, rdark);
+    buf.fill_rect(cx - 9,  by - 2,  6, 2, rust);
+    buf.fill_rect(cx + 3,  by - 3,  8, 3, rdark);
+    buf.fill_rect(cx + 4,  by - 2,  6, 2, rust);
+    // Middle loop
+    buf.fill_rect(cx - 5, by - 7,  11, 3, rdark);
+    buf.fill_rect(cx - 5, by - 10, 11, 6, rdark);
+    buf.fill_rect(cx - 4, by - 9,   9, 4, rust);
+    buf.fill_rect(cx - 3, by - 9,   3, 2, rhi);
+    buf.fill_rect(cx - 4, by - 7,   1, 2, rdark); // center gap
+    buf.fill_rect(cx + 4, by - 7,   1, 2, rdark);
+    // Top dangling link
+    buf.fill_rect(cx - 3, by - 14, 7, 3, rdark);
+    buf.fill_rect(cx - 3, by - 16, 7, 5, rdark);
+    buf.fill_rect(cx - 2, by - 15, 5, 3, rust);
+    buf.fill_rect(cx - 1, by - 15, 3, 1, rhi);
+    buf.fill_rect(cx - 1, by - 13, 3, 1, rdark);
+}
+
+fn draw_ribcage(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let bone  = Bgra::new(225, 218, 195);
+    let bdark = Bgra::new(140, 132, 110);
+    let bhi   = Bgra::new(242, 238, 220);
+    // Spine (vertical)
+    buf.fill_rect(cx - 2, by - 18, 5, 18, bdark);
+    buf.fill_rect(cx - 1, by - 18, 3, 17, bone);
+    buf.fill_rect(cx,     by - 17, 1, 15, bhi);
+    // Ribs (left side, 4 pairs)
+    for (i, (dx, dy, w)) in [(9,4,8),(11,7,10),(11,11,10),(8,15,7)].iter().enumerate() {
+        let _ = i;
+        buf.fill_rect(cx - dx - 2, by - dy, w + 2, 2, bdark);
+        buf.fill_rect(cx - dx - 1, by - dy, *w,    1, bone);
+    }
+    // Ribs (right side)
+    for (dx, dy, w) in [(2,4,8),(2,7,10),(2,11,10),(2,15,7)].iter() {
+        buf.fill_rect(cx + dx,     by - dy, w + 2, 2, bdark);
+        buf.fill_rect(cx + dx + 1, by - dy, *w,    1, bone);
+    }
+    // Pelvis (bottom)
+    buf.fill_rect(cx - 8, by - 4, 17, 2, bdark);
+    buf.fill_rect(cx - 7, by - 3, 15, 1, bone);
+}
+
+// ── New arid variants ──────────────────────────────────────────────────────────
+
+fn draw_dry_shrub(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let branch = Bgra::new(130, 105, 65);
+    let dark   = Bgra::new(70, 52, 25);
+    let spine  = Bgra::new(215, 205, 180);
+    // Central trunk
+    buf.fill_rect(cx - 1, by - 20, 3, 20, dark);
+    buf.fill_rect(cx,     by - 20, 1, 19, branch);
+    // Left branches
+    for i in 0..4i32 {
+        let by2 = by - 6 - i * 4;
+        let bx = cx - 3 - i * 2;
+        let len = 4 + i * 2;
+        buf.fill_rect(bx - len, by2 - 2, (len + 1) as u32, 2, dark);
+        buf.fill_rect(bx - len, by2 - 1, len as u32, 1, branch);
+        // Spine thorns
+        buf.set_pixel(bx - len / 2, by2 - 3, spine);
+        buf.set_pixel(bx - len + 2, by2 - 2, spine);
+    }
+    // Right branches
+    for i in 0..4i32 {
+        let by2 = by - 8 - i * 4;
+        let bx = cx + 3 + i * 2;
+        let len = 4 + i * 2;
+        buf.fill_rect(bx, by2 - 2, (len + 1) as u32, 2, dark);
+        buf.fill_rect(bx, by2 - 1, len as u32, 1, branch);
+        buf.set_pixel(bx + len / 2, by2 - 3, spine);
+    }
+    // Root base
+    buf.fill_rect(cx - 5, by - 4, 5, 2, dark);
+    buf.fill_rect(cx + 1, by - 3, 5, 2, dark);
+}
+
+fn draw_sun_bleached_log(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let wood  = Bgra::new(215, 200, 170);
+    let dark  = Bgra::new(120, 108, 85);
+    let hi    = Bgra::new(238, 228, 205);
+    let crack = Bgra::new(95, 85, 65);
+    // Bleached dry log (shorter than rugged log, more cracked)
+    buf.fill_rect(cx - 15, by - 5,  31, 2, dark);
+    buf.fill_rect(cx - 15, by - 9,  31, 6, dark);
+    buf.fill_rect(cx - 14, by - 8,  29, 5, wood);
+    buf.fill_rect(cx - 14, by - 8,  29, 1, hi);
+    // Deep longitudinal cracks
+    buf.fill_rect(cx - 10, by - 8, 1, 4, crack);
+    buf.fill_rect(cx - 4,  by - 8, 1, 5, crack);
+    buf.fill_rect(cx + 3,  by - 8, 1, 4, crack);
+    buf.fill_rect(cx + 9,  by - 8, 1, 4, crack);
+    // End caps (very bleached)
+    buf.fill_rect(cx - 17, by - 9, 3, 6, dark);
+    buf.fill_rect(cx - 16, by - 8, 3, 4, hi);
+    buf.fill_rect(cx + 15, by - 9, 3, 6, dark);
+    buf.fill_rect(cx + 15, by - 8, 2, 4, hi);
+    // Bark peeling off (flap)
+    buf.fill_rect(cx + 4, by - 10, 6, 3, dark);
+    buf.fill_rect(cx + 5, by - 9,  5, 2, wood);
+}
+
+fn draw_horns(buf: &mut WorldBuffer, cx: i32, by: i32) {
+    let horn  = Bgra::new(220, 200, 155);
+    let hdark = Bgra::new(140, 120, 80);
+    let hhi   = Bgra::new(242, 228, 192);
+    let skull = Bgra::new(215, 205, 178);
+    let sdark = Bgra::new(140, 130, 105);
+    // Bleached animal skull (elongated, side-on)
+    buf.fill_rect(cx - 10, by - 8,  20, 3, sdark);
+    buf.fill_rect(cx - 10, by - 12, 20, 7, sdark);
+    buf.fill_rect(cx - 9,  by - 11, 18, 6, skull);
+    buf.fill_rect(cx - 8,  by - 11,  8, 3, hhi);
+    // Eye socket
+    buf.fill_rect(cx + 3, by - 10, 5, 4, sdark);
+    // Nostril
+    buf.fill_rect(cx - 8, by - 9, 3, 2, sdark);
+    // Left horn (curving up-left)
+    buf.fill_rect(cx - 10, by - 14, 4, 4, hdark);
+    buf.fill_rect(cx - 9,  by - 13, 2, 3, horn);
+    buf.fill_rect(cx - 14, by - 18, 5, 4, hdark);
+    buf.fill_rect(cx - 13, by - 17, 3, 3, horn);
+    buf.fill_rect(cx - 16, by - 23, 4, 6, hdark);
+    buf.fill_rect(cx - 15, by - 22, 2, 5, horn);
+    buf.fill_rect(cx - 15, by - 24, 2, 2, hhi);
+    // Right horn (curving up-right)
+    buf.fill_rect(cx + 7,  by - 14, 4, 4, hdark);
+    buf.fill_rect(cx + 8,  by - 13, 2, 3, horn);
+    buf.fill_rect(cx + 10, by - 18, 5, 4, hdark);
+    buf.fill_rect(cx + 11, by - 17, 3, 3, horn);
+    buf.fill_rect(cx + 13, by - 23, 4, 6, hdark);
+    buf.fill_rect(cx + 14, by - 22, 2, 5, horn);
+    buf.fill_rect(cx + 14, by - 24, 2, 2, hhi);
 }

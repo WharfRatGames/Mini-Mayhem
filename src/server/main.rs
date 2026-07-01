@@ -1079,7 +1079,7 @@ fn build_game_n(seed: u64, colors: &[u8]) -> GameState {
 fn place_map_mines(game: &mut GameState) {
     use arty::game::state::{PlacedMine, MineState};
     let seed = game.map_seed;
-    let mine_count = 9 + (seed % 7) as usize;
+    let mine_count = 16 + (seed % 9) as usize;  // 16–24
     let mut rng = seed.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
     let spread = WORLD_W / (mine_count as u32 + 1);
     for i in 1..=mine_count {
@@ -1105,7 +1105,7 @@ fn place_map_mines(game: &mut GameState) {
 fn place_map_barrels(game: &mut GameState) {
     use arty::game::state::{Barrel, BarrelState};
     let seed = game.map_seed;
-    let count = 7 + (seed.wrapping_mul(0xDEAD_C0DE) % 5) as usize;
+    let count = 14 + (seed.wrapping_mul(0xDEAD_C0DE) % 7) as usize;  // 14–20
     let mut rng = seed.wrapping_mul(0xBEEF_1234_5678_9ABCu64).wrapping_add(1442695040888963407);
     let spread = WORLD_W / (count as u32 + 1);
     for i in 1..=count {
@@ -1261,7 +1261,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.390";
+const REQUIRED_VERSION: &str = "0.5.4.391";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

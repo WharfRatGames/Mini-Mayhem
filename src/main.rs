@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.390";
+const VERSION: &str = "0.5.4.391";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1563,7 +1563,7 @@ fn build_default_game_opts(seed: u64, with_mines: bool, with_barrels: bool) -> G
 fn place_map_mines(game: &mut GameState) {
     use game::state::{PlacedMine, MineState};
     let seed = game.map_seed;
-    let mine_count = 9 + (seed % 7) as usize;  // 9–15
+    let mine_count = 16 + (seed % 9) as usize;  // 16–24
 
     // Simple LCG derived from seed
     let mut rng = seed.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
@@ -1593,7 +1593,7 @@ fn place_map_mines(game: &mut GameState) {
 fn place_map_barrels(game: &mut game::state::GameState) {
     use game::state::{Barrel, BarrelState};
     let seed = game.map_seed;
-    let count = 7 + (seed.wrapping_mul(0xDEAD_C0DE) % 5) as usize; // 7–11
+    let count = 14 + (seed.wrapping_mul(0xDEAD_C0DE) % 7) as usize; // 14–20
 
     let mut rng = seed.wrapping_mul(0xBEEF_1234_5678_9ABCu64).wrapping_add(1442695040888963407);
     let spread = WORLD_W / (count as u32 + 1);

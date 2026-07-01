@@ -1379,12 +1379,15 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
     }
 
     // Pistol: press A to start the 6-shot burst (one shot every ~0.75s, cannot be interrupted).
+    // Fire the first shot immediately on A-press (same frame) so sound is not delayed.
+    // Remaining 5 shots are handled by the pistol auto-burst block above.
     if weapon == WeaponKind::Pistol {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
-            game.pistol_shots_left = 6;
-            game.pistol_fire_timer = 0; // fire first shot immediately
+            fire_pistol_shot(game, ti, si, muzzle_override);
+            game.pistol_shots_left = 5;
+            game.pistol_fire_timer = 21;
         }
         return;
     }

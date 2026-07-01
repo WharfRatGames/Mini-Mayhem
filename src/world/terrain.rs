@@ -386,9 +386,12 @@ impl Terrain {
         let mut overhang = false;       // cliffs: stamp cantilevered ceiling shelves
         let mut surface_caves = false;  // caverns: let cave punch break the top crust
         let mut void_shafts = 0usize;   // caverns: vertical entrance shafts into the void
+        // Per-archetype rolling-hill amplitude. Hills = full; cliffs/canyons = reduced
+        // so ridged noise / terracing define the silhouette instead of mound-on-mound.
+        let mut hill_amp: f64 = 0.24;
 
         match archetype {
-            0 => { // Rolling hills — sub-variants: standard / valley / plateau / twin-peak
+            0 => { // Rolling hills — sub-variants: standard / flat plains / plateau / twin-peak
                 let sub = lcg(&mut rng) % 4;
                 match sub {
                     0 => { // Standard rolling hills
@@ -398,13 +401,15 @@ impl Terrain {
                         contrast = 1.25;
                         cliff_bias = rnd(&mut rng, -0.10, 0.20);
                     }
-                    1 => { // Valley: terrain pools in center, rises at edges
-                        fade = rnd(&mut rng, 0.35, 0.10);
-                        threshold = rnd(&mut rng, 0.50, 0.04);
-                        scale_x = rnd(&mut rng, 3.0, 2.0);
-                        contrast = 1.35;
-                        cliff_bias = 0.0; // symmetric
-                        warp_amp = rnd(&mut rng, 0.10, 0.08);
+                    1 => { // Flat plains: sparse low terrain, lots of open floor space (WA Rocky/Desert style)
+                        fade = 0.0;  // no vertical gradient — terrain is uniformly low
+                        threshold = rnd(&mut rng, 0.63, 0.04); // high threshold = sparse ground coverage
+                        scale_x = rnd(&mut rng, 4.0, 2.0);
+                        contrast = 1.8; // sharp cutoff → isolated lumps, not continuous hills
+                        cliff_bias = 0.0;
+                        warp_amp = rnd(&mut rng, 0.18, 0.10);
+                        hill_amp = 0.08; // rolling macro barely visible — bumps define variety
+                        cave = lcg(&mut rng) % 100 < 30; // fewer caves — mostly open
                     }
                     2 => { // Plateau: broad flat mesa with drop-offs at sides
                         fade = rnd(&mut rng, 0.55, 0.08);
@@ -431,6 +436,7 @@ impl Terrain {
                 let sub = lcg(&mut rng) % 3;
                 ridged = true;
                 overhang = true;
+                hill_amp = 0.08; // ridged noise dominates; rolling hills barely visible
                 match sub {
                     0 => { // Craggy cliff face: standard ridged with strong warp
                         fade = rnd(&mut rng, 0.30, 0.12);
@@ -440,7 +446,7 @@ impl Terrain {
                         contrast = 1.25;
                         let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
                         cliff_bias = dir * rnd(&mut rng, 0.18, 0.24);
-                        warp_amp = rnd(&mut rng, 0.28, 0.18);
+                        warp_amp = rnd(&mut rng, 0.40, 0.20); // raised minimum for more dramatic warping
                     }
                     1 => { // Arch-bridge: extreme warp + moderate bias → arches and tunnels
                         fade = rnd(&mut rng, 0.28, 0.10);
@@ -450,7 +456,7 @@ impl Terrain {
                         contrast = 1.15;
                         let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
                         cliff_bias = dir * rnd(&mut rng, 0.10, 0.14);
-                        warp_amp = rnd(&mut rng, 0.42, 0.16); // very strong warp
+                        warp_amp = rnd(&mut rng, 0.50, 0.16); // very strong warp
                     }
                     _ => { // One-sided mesa: strong lean, high cliff on one side, slope on other
                         fade = rnd(&mut rng, 0.40, 0.10);
@@ -460,7 +466,7 @@ impl Terrain {
                         contrast = 1.4;
                         let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
                         cliff_bias = dir * rnd(&mut rng, 0.32, 0.14); // very strong lean
-                        warp_amp = rnd(&mut rng, 0.18, 0.12);
+                        warp_amp = rnd(&mut rng, 0.35, 0.15);
                         terrace = Some(rnd(&mut rng, 3.0, 2.0).round());
                         terrace_mix = 0.25;
                     }
@@ -503,8 +509,9 @@ impl Terrain {
             }
             _ => { // Canyon / mesa — sub-variants: slot canyon / badlands / fortress
                 let sub = lcg(&mut rng) % 3;
+                hill_amp = 0.10; // terracing defines silhouette, not rolling humps
                 match sub {
-                    0 => { // Slot canyon: deep narrow trenches, moderate terracing
+                    0 => { // Slot canyon: deep narrow trenches, strong terracing
                         fade = rnd(&mut rng, 0.46, 0.10);
                         threshold = rnd(&mut rng, 0.49, 0.04);
                         scale_x = rnd(&mut rng, 2.5, 1.5);
@@ -512,7 +519,7 @@ impl Terrain {
                         let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
                         cliff_bias = dir * rnd(&mut rng, 0.12, 0.16);
                         terrace = Some(rnd(&mut rng, 4.0, 3.0).round());
-                        terrace_mix = 0.30;
+                        terrace_mix = 0.50; // was 0.30 — terracing now dominant
                         warp_amp = 0.08;
                     }
                     1 => { // Badlands: heavy terracing, eroded pillars, strong warp
@@ -522,7 +529,7 @@ impl Terrain {
                         contrast = 1.50;
                         cliff_bias = rnd(&mut rng, -0.08, 0.16);
                         terrace = Some(rnd(&mut rng, 5.0, 3.0).round());
-                        terrace_mix = 0.55;
+                        terrace_mix = 0.72; // was 0.55 — mesas dominate over mounds
                         warp_amp = rnd(&mut rng, 0.14, 0.10);
                     }
                     _ => { // Fortress: flat-topped mesa with sheer walls + moat
@@ -533,7 +540,7 @@ impl Terrain {
                         let dir = if lcg(&mut rng) & 1 == 0 { 1.0f64 } else { -1.0 };
                         cliff_bias = dir * rnd(&mut rng, 0.20, 0.16);
                         terrace = Some(2.0); // just two levels: mesa top + ground
-                        terrace_mix = 0.65;
+                        terrace_mix = 0.82; // was 0.65 — very hard step between levels
                         warp_amp = rnd(&mut rng, 0.06, 0.04);
                     }
                 }
@@ -576,7 +583,10 @@ impl Terrain {
         // now — caverns keeps its original surface shape; only its spawns change).
         let rolling = !blob && archetype != 3;
         let hill_freq = rnd(&mut rng, 2.8, 1.8);   // 2.8–4.6 cycles: several hills per map (visible on-screen)
-        const HILL_AMP: f64 = 0.24;                // strong relief: frequent jump-height ledges
+        // Per-archetype: hills get full relief; cliffs/canyons get much less so their
+        // ridged/terraced features dominate instead of producing mound-on-mound maps.
+        #[allow(non_snake_case)]
+        let HILL_AMP: f64 = hill_amp;
         const SKY_BAND: f64 = 0.12;                // top 12% tapers off → ~84px guaranteed headroom
 
         // ── Phase 2: Density field (skipped for cave maps — they use fill+carve) ──
@@ -1226,15 +1236,15 @@ impl Terrain {
         // ── Scenery object placement ─────────────────────────────────────────
         // Derived entirely from seed — same on client and server, no StateMsg needed.
         {
-            let sprite_counts: [u8; 5] = [5, 4, 4, 4, 4]; // per archetype
+            let sprite_counts: [u8; 5] = [8, 7, 7, 7, 7]; // per archetype
             let count = sprite_counts[terrain.archetype as usize];
             let mut srng = seed ^ 0xDECA_FBAB_E000_1234u64;
             let margin = (WORLD_W as f64 * 0.05) as u32;
             let usable_w = WORLD_W - 2 * margin;
-            const NUM_OBJECTS: u32 = 12;
-            const MIN_SPACING: u32 = 240;
+            const NUM_OBJECTS: u32 = 28;
+            const MIN_SPACING: u32 = 110;
             let mut placed: Vec<SceneryObject> = Vec::with_capacity(NUM_OBJECTS as usize);
-            for _ in 0..NUM_OBJECTS * 8 {
+            for _ in 0..NUM_OBJECTS * 6 {
                 srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let col = margin + (srng >> 33) as u32 % usable_w;
                 let surface_y = terrain.spawn_y[col as usize];
