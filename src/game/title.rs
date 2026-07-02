@@ -285,11 +285,16 @@ pub struct TitleScreen {
     help_page:     usize,
     tick:          u32,
     version:       &'static str,
+    update_available: bool,
 }
 
 impl TitleScreen {
     pub fn new(version: &'static str) -> Self {
-        Self { cursor: 0, sub_cursor: 0, scroll_offset: 0, sub: Sub::None, help_page: 0, tick: 0, version }
+        Self { cursor: 0, sub_cursor: 0, scroll_offset: 0, sub: Sub::None, help_page: 0, tick: 0, version, update_available: false }
+    }
+
+    pub fn set_update_available(&mut self, v: bool) {
+        self.update_available = v;
     }
 
     pub fn continue_to_submenu(&mut self) {
@@ -463,6 +468,13 @@ impl TitleScreen {
             crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT")], 0, 0);
         }
         draw_str(buf, self.version, sw - str_width(self.version) - 6, sh - 18, Bgra::new(70, 70, 100));
+        if self.update_available {
+            // Blinking banner above the version string so an available update is
+            // always visible from the title screen (selecting any MP mode offers it).
+            let t = "UPDATE AVAILABLE";
+            let col = if (self.tick / 20) % 2 == 0 { Bgra::new(255, 210, 50) } else { Bgra::new(200, 150, 30) };
+            draw_str(buf, t, sw - str_width(t) - 6, sh - 32, col);
+        }
     }
 
     fn draw_help(&self, buf: &mut WorldBuffer) {

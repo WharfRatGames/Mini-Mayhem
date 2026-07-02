@@ -145,7 +145,7 @@ impl Team {
 fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
     let mut v = vec![
         (WeaponKind::Bazooka,  None),    // infinite
-        (WeaponKind::Pistol,   None),    // infinite; 6-shot burst per use
+        (WeaponKind::Pistol,   None),    // infinite; 5-shot burst per use
         (WeaponKind::Grenade,  None),    // infinite
         (WeaponKind::Shotgun,  None),    // infinite
         (WeaponKind::NinjaRope, Some(5)), // 5 uses per loadout; utility tool, doesn't end turn

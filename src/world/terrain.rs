@@ -92,13 +92,31 @@ pub struct SceneryObject {
 }
 
 impl SceneryObject {
-    /// Collision footprint as (half_width, height) in pixels: the solid box is
-    /// `x-half_w ..= x+half_w`, `y-height ..= y`. Approximates the drawn sprite
-    /// (see renderer/scenery.rs); thin decorations (flames, thorns, ropes) are
-    /// deliberately excluded so soldiers stand on the visual bulk of the object.
-    /// Used both for placement clearance at generation time and per-tick object
-    /// stamping — MUST stay deterministic and identical on client and server.
+    /// Integer draw/collision scale for this sprite: small props get 3×, tall
+    /// ones 2×, so everything lands in a similar on-screen size band. Shared by
+    /// the renderer (scenery.rs) and `footprint` — MUST stay deterministic and
+    /// identical on client and server.
+    pub fn scale(&self, theme: Theme) -> i32 {
+        let (_, h) = self.base_footprint(theme);
+        if h <= 18 { 3 } else { 2 }
+    }
+
+    /// Collision footprint as (half_width, height) in pixels — already scaled
+    /// by `scale()`: the solid box is `x-half_w ..= x+half_w`, `y-height ..= y`.
+    /// Approximates the drawn sprite (see renderer/scenery.rs); thin decorations
+    /// (flames, thorns, ropes) are deliberately excluded so soldiers stand on the
+    /// visual bulk of the object. Used both for placement clearance at generation
+    /// time and per-tick object stamping — MUST stay deterministic and identical
+    /// on client and server.
     pub fn footprint(&self, theme: Theme) -> (i32, i32) {
+        let s = self.scale(theme);
+        let (hw, h) = self.base_footprint(theme);
+        (hw * s, h * s)
+    }
+
+    /// Unscaled (1×) sprite footprint, matching the raw pixel-art dimensions
+    /// in renderer/scenery.rs.
+    fn base_footprint(&self, theme: Theme) -> (i32, i32) {
         match theme {
             Theme::Pastoral => match self.sprite {
                 0 => (6, 24),  // flower
@@ -1089,28 +1107,49 @@ impl Terrain {
             const NUM_OBJECTS: u32 = 28;
             const MIN_SPACING: u32 = 110;
             let mut placed: Vec<SceneryObject> = Vec::with_capacity(NUM_OBJECTS as usize);
-            for _ in 0..NUM_OBJECTS * 6 {
+            for _ in 0..NUM_OBJECTS * 14 {
                 srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let col = margin + (srng >> 33) as u32 % usable_w;
-                let surface_y = terrain.spawn_y[col as usize];
-                // Skip columns with no real ground (sky_limit == WATER_Y means bare water column)
-                if terrain.sky_limit[col as usize] >= WATER_Y { continue; }
+                // Cavern maps: the "surface" is the sealed rock cap, so scenery
+                // (crystals, bones, torches...) goes on standable cave floors.
+                let surface_y = if terrain.is_cavern {
+                    match terrain.standable_cave_foot_simple(col as i32) {
+                        Some(y) => y as u32,
+                        None => continue,
+                    }
+                } else {
+                    // Skip columns with no real ground (sky_limit == WATER_Y means bare water column)
+                    if terrain.sky_limit[col as usize] >= WATER_Y { continue; }
+                    terrain.spawn_y[col as usize]
+                };
                 if surface_y >= WATER_Y { continue; }
                 // Enforce minimum horizontal spacing
                 if placed.iter().any(|o| o.x.abs_diff(col) < MIN_SPACING) { continue; }
                 srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let sprite = (srng >> 33) as u8 % count;
-                // Objects sit ON the terrain surface, never inside it: the whole
-                // footprint box above the base row must be air. Rejects spots on
-                // slopes/next to cliffs where the sprite would embed in a hillside,
-                // and under overhangs too low to fit the object.
                 let obj = SceneryObject { x: col, y: surface_y, sprite };
                 let (half_w, height) = obj.footprint(Theme::of(terrain.is_cavern, terrain.template_id));
                 let base = surface_y as i32;
-                let clear = (1..=height).all(|dy| {
-                    (-half_w..=half_w).all(|dx| !terrain.is_solid(col as i32 + dx, base - dy))
+                // Objects sit ON the terrain surface, never inside it — but real
+                // ground is bumpy, so the bottom EMBED_TOL rows may overlap a
+                // slope (the object sinks in a little, which reads as natural).
+                // Above that, the central ¾ of the footprint box must be air:
+                // rejects spots against hillsides/cliffs and under low overhangs
+                // while tolerating a slope grazing the outer edge.
+                const EMBED_TOL: i32 = 5;
+                let cw = (half_w * 3 / 4).max(1);
+                let clear = (EMBED_TOL + 1..=height).all(|dy| {
+                    (-cw..=cw).all(|dx| !terrain.is_solid(col as i32 + dx, base - dy))
                 });
                 if !clear { continue; }
+                // Grounded: the central half of the footprint must have solid
+                // ground within a few px below the base row — no floating props
+                // on ledge lips or chasm edges. (Outer edges may overhang a
+                // slope slightly; the visual bulk stays connected to ground.)
+                let grounded = (-half_w / 2..=half_w / 2).all(|dx| {
+                    (1..=EMBED_TOL).any(|dy| terrain.is_solid(col as i32 + dx, base + dy))
+                });
+                if !grounded { continue; }
                 placed.push(obj);
                 if placed.len() == NUM_OBJECTS as usize { break; }
             }
@@ -1138,13 +1177,22 @@ impl Terrain {
         let mut spawns: Vec<WorldPos> = Vec::with_capacity(count);
         let mut used_x: Vec<i32> = Vec::with_capacity(count);
 
+        // Scenery objects are solid (stamped into the object mask each tick) —
+        // never seat a soldier overlapping one. Soldier is ~14px wide; keep the
+        // spawn column clear of every footprint plus that margin.
+        let theme = Theme::of(self.is_cavern, self.template_id);
+        let scenery_boxes: Vec<(i32, i32)> = self.scenery.iter()
+            .map(|o| (o.x as i32, o.footprint(theme).0 + 10))
+            .collect();
+        let clear_of_scenery = |x: i32| scenery_boxes.iter().all(|&(ox, hw)| (x - ox).abs() > hw);
+
         // Cave maps (WA style): all soldiers spawn underground. No surface layer exists.
         if self.is_cavern {
             let mut cave_cands: Vec<(i32, i32)> = Vec::new();
             let mut x = lo;
             while x <= hi {
                 if let Some(fy) = self.standable_cave_foot_y(x) {
-                    cave_cands.push((x, fy));
+                    if clear_of_scenery(x) { cave_cands.push((x, fy)); }
                 }
                 x += 1;
             }
@@ -1195,7 +1243,7 @@ impl Terrain {
         while x <= hi {
             if let Some(fy) = self.standable_foot_y(x) {
                 // Must stand on a solid mass, not a thin slab/ledge.
-                if (1..=GROUND_DEPTH).all(|d| self.is_solid(x, fy + d)) {
+                if (1..=GROUND_DEPTH).all(|d| self.is_solid(x, fy + d)) && clear_of_scenery(x) {
                     cands.push((x, fy));
                 }
             }
@@ -1254,7 +1302,7 @@ impl Terrain {
             let mut cx = lo + 60;
             while cx <= hi - 60 && spawns.len() < count {
                 if let Some(fy) = self.standable_cave_foot_simple(cx) {
-                    if used_x.iter().all(|&u| (u - cx).abs() >= MIN_SEP) {
+                    if used_x.iter().all(|&u| (u - cx).abs() >= MIN_SEP) && clear_of_scenery(cx) {
                         spawns.push(WorldPos::new(cx as f32, fy as f32));
                         used_x.push(cx);
                     }
@@ -1280,8 +1328,10 @@ impl Terrain {
             let mut best_d = -1;
             let mut probe = lo + PAD;
             while probe <= hi - PAD {
-                let d = used_x.iter().map(|&u| (u - probe).abs()).min().unwrap_or(i32::MAX);
-                if d > best_d { best_d = d; px = probe; }
+                if clear_of_scenery(probe) {
+                    let d = used_x.iter().map(|&u| (u - probe).abs()).min().unwrap_or(i32::MAX);
+                    if d > best_d { best_d = d; px = probe; }
+                }
                 probe += 6;
             }
             px = px.clamp(lo + PAD, (hi - PAD).max(lo + PAD));
@@ -1326,6 +1376,22 @@ impl Terrain {
             spawns.push(WorldPos::new(px as f32, (crown_y - 1) as f32));
             used_x.push(px);
         }
+
+        // The mound headroom carving above can remove the ground a scenery
+        // object was seated on, leaving it floating. Prune any object that lost
+        // its central support. Deterministic (pure function of the terrain
+        // bits), so client and server stay in agreement.
+        let unsupported: Vec<usize> = self.scenery.iter().enumerate()
+            .filter(|(_, o)| {
+                let (hw, _) = o.footprint(theme);
+                let base = o.y as i32;
+                !(-hw / 2..=hw / 2).all(|dx| {
+                    (1..=5).any(|dy| self.is_solid(o.x as i32 + dx, base + dy))
+                })
+            })
+            .map(|(i, _)| i)
+            .collect();
+        for &i in unsupported.iter().rev() { self.scenery.remove(i); }
 
         spawns
     }

@@ -86,7 +86,7 @@ impl WeaponKind {
             Self::HolyHandGrenade => 100,
             Self::AirStrike      => 50,
             Self::Minigun        => 12,   // per bullet
-            Self::Uzi            => 8,    // per bullet
+            Self::Uzi            => 5,    // per bullet (40% cut from 8)
             Self::BaseballBat    => 25,
             Self::FreezeGrenade  => 10,
             Self::Earthquake     => 20,

@@ -1,7 +1,19 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.397
-Last updated: 2026-07-02 (v0.5.4.397)
+Current version: 0.5.4.400 (deployed to Pi server/API/dashboards/GitHub/Windows OTA;
+  .110/.126 Miyoos unreachable at deploy time, will pick up OTA update on next boot)
+Last updated: 2026-07-02 (v0.5.4.400 deployed —
+  1) soldiers can now stand on top of other soldiers (src/game/loop_runner.rs):
+     new is_on_soldier() grounding check, and a square landing on another soldier
+     now stands on their head instead of always sliding off;
+  2) MAC-10 (Uzi) max_damage cut 40%, 8->5/bullet, src/physics/projectile.rs;
+  3) update-check overhaul + MP freeze fix (src/main.rs, src/game/title.rs):
+     title-screen UPDATE AVAILABLE banner (boot check always runs), fresh check
+     kicked off when MULTIPLAYER is selected, cancellable animated check gate
+     (B=CANCEL, ~7s cap) replacing the main-thread recv_timeout freeze after
+     choosing Casual Live, MMAY handshake moved into the connect thread,
+     REJECTED:VERSION opens the full update screen (show_update_screen helper),
+     changelog fetch off-thread. See STATUS.md for detail.)
 
 COMPLETED PHASES
 ----------------
@@ -68,6 +80,9 @@ Phase 4 — Dedicated Server & Live Multiplayer
   Opponent quit notification
   OTA auto-update: HTTPS first (2s timeout), HTTP fallback, LAN fallback for hairpin NAT;
     test mode skips fresh update check (instant entry); live/TAT still re-checks
+  Update UX (pending .400): title-screen UPDATE AVAILABLE banner; fresh check on
+    MULTIPLAYER select; cancellable non-blocking MP check gate (no more freeze);
+    handshake off main thread; REJECTED:VERSION opens the install screen directly
   OTA sfx integrity: deploy script auto-syncs assets/sfx/ → deploy/assets/sfx/
     (spaces→underscores) on every deploy; manifest rebuilt each time
   IRC channel dashboard at /ircdash/ (live chat, ZPG/DiceRPG leaderboards)

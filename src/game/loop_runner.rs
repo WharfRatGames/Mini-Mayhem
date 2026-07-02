@@ -724,7 +724,7 @@ fn process_movement(game: &mut GameState, input: &InputState) {
     if input.just_pressed(Button::Select) {
         // lstate not available in process_movement — weapon menu handled in tick()
     }
-    let on_ground = is_on_ground(game, ti, si);
+    let on_ground = is_on_ground(game, ti, si) || is_on_soldier(game, ti, si);
 
     let mut walked = false;
     if input.held(Button::Left) && on_ground {
@@ -922,6 +922,26 @@ pub fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
         game.terrain.is_blocked(xc, y + 1)
             || game.terrain.is_blocked(xc, y + 2)
             || game.terrain.is_blocked(xc, y + 3)
+    })
+}
+
+/// Is this soldier standing on top of another living soldier's head (within the
+/// same foot-level tolerance as `is_on_ground`)? Terrain-only `is_on_ground`
+/// can't see other soldiers, so anything that gates walking/jumping/falling on
+/// "am I grounded" must OR this in too, or a soldier standing on a teammate's
+/// head falls straight through them the next tick.
+pub fn is_on_soldier(game: &GameState, ti: usize, si: usize) -> bool {
+    use crate::renderer::draw_sprites::{SOLDIER_W, SOLDIER_H};
+    let s = &game.teams[ti].soldiers[si];
+    let x = s.pos.x as i32;
+    let y = s.pos.y as i32;
+    game.teams.iter().enumerate().any(|(oti, oteam)| {
+        oteam.soldiers.iter().enumerate().any(|(osi, os)| {
+            if (oti == ti && osi == si) || !os.is_alive() { return false; }
+            let ox = os.pos.x as i32;
+            let head = os.pos.y as i32 - SOLDIER_H as i32;
+            (x - ox).abs() < SOLDIER_W as i32 && (y - head).abs() <= 3
+        })
     })
 }
 
@@ -1278,7 +1298,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
-    // Pistol auto-burst: fires one shot every 22 ticks (~0.73s at 30 Hz) until 6 shots done.
+    // Pistol auto-burst: fires one shot every 22 ticks (~0.73s at 30 Hz) until 5 shots done.
     if game.pistol_shots_left > 0 {
         if game.pistol_fire_timer == 0 {
             let ti = game.active_team();
@@ -1382,15 +1402,15 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
-    // Pistol: press A to start the 6-shot burst (one shot every ~0.75s, cannot be interrupted).
+    // Pistol: press A to start the 5-shot burst (one shot every ~0.75s, cannot be interrupted).
     // Fire the first shot immediately on A-press (same frame) so sound is not delayed.
-    // Remaining 5 shots are handled by the pistol auto-burst block above.
+    // Remaining 4 shots are handled by the pistol auto-burst block above.
     if weapon == WeaponKind::Pistol {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
             fire_pistol_shot(game, ti, si, muzzle_override);
-            game.pistol_shots_left = 5;
+            game.pistol_shots_left = 4;
             game.pistol_fire_timer = 21;
         }
         return;
@@ -4985,7 +5005,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                 });
                 if pinned { continue; }
             }
-            let on_ground = is_on_ground(game, ti, si);
+            let on_ground = is_on_ground(game, ti, si) || is_on_soldier(game, ti, si);
             let state = game.teams[ti].soldiers[si].state.clone();
             match state {
                 SoldierState::Airborne { mut vel, mut spinning } => {
@@ -5203,14 +5223,15 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             })
                         });
                         if soldier_hit && dy >= 0.0 {
-                            // Landed on another soldier. Rather than bouncing in place
-                            // (which kept the soldier airborne, froze the turn and shook
-                            // the camera), slide off to the nearest clear side and settle
-                            // on the terrain there. Also knock the hit soldier back.
+                            // Landed on another soldier. If the landing is mostly square on
+                            // top (more than half the body width overlapping), stand on their
+                            // head like a platform. Otherwise it's a glancing hit off the side
+                            // — slide to the nearest clear side and settle on the terrain there.
                             let sw = crate::renderer::draw_sprites::SOLDIER_W as i32;
                             let sh = crate::renderer::draw_sprites::SOLDIER_H as i32;
-                            // Find the soldier we landed on (need their x to pick slide direction).
+                            // Find the soldier we landed on (need their x/y).
                             let mut other_cx = cx;
+                            let mut other_oy = iy;
                             'find_other: for (oti, oteam) in game.teams.iter().enumerate() {
                                 for (osi, os) in oteam.soldiers.iter().enumerate() {
                                     if (oti == ti && osi == si) || !os.is_alive() { continue; }
@@ -5218,9 +5239,36 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                     let oy = os.pos.y as i32;
                                     if (ix - ox).abs() < sw && iy >= oy - sh && iy <= oy + 1 {
                                         other_cx = os.pos.x;
+                                        other_oy = oy;
                                         break 'find_other;
                                     }
                                 }
+                            }
+                            let overlap = sw - (ix - other_cx as i32).abs();
+                            if overlap >= sw / 2 {
+                                // Stand on top: feet land exactly at the other soldier's head.
+                                cy = (other_oy - sh) as f32;
+                                let dmg = game.teams[ti].soldiers[si].fall.land(cy);
+                                if dmg > 0 {
+                                    game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
+                                    game.teams[ti].soldiers[si].take_damage(dmg);
+                                    let ati = game.active_team();
+                                    if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
+                                }
+                                game.teams[ti].soldiers[si].pos.x = cx;
+                                game.teams[ti].soldiers[si].pos.y = cy.max(0.0);
+                                game.teams[ti].soldiers[si].airtime = 0;
+                                if game.teams[ti].soldiers[si].is_dead() {
+                                    game.teams[ti].soldiers[si].state = SoldierState::Dead;
+                                } else {
+                                    game.teams[ti].soldiers[si].state = SoldierState::Idle;
+                                }
+                                if game.rope_session && ti == game.active_team() && si == game.teams[game.active_team()].active {
+                                    game.rope = None;
+                                    game.rope_session = false;
+                                }
+                                landed = true;
+                                break;
                             }
                             let dir = if cx >= other_cx { 1.0 } else { -1.0 };
                             // Step sideways until clear of every other living soldier.

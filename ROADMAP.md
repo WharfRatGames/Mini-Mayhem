@@ -56,9 +56,13 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Barrel explosions and chain reactions (14–20 barrels per map)
 - [x] Map landmines 16–24 per map (v0.5.4.391)
 - [x] Themed scenery objects — 28 per map, styled per WA template / cavern mode (v0.5.4.390/.391)
-- [x] Solid scenery — per-sprite collision footprints stamped into the object mask; soldiers stand on them, projectiles collide; placement rejects spots embedded in slopes/overhangs (in working tree, pending deploy)
+- [x] Solid scenery — per-sprite collision footprints stamped into the object mask; soldiers stand on them, projectiles collide; placement rejects spots embedded in slopes/overhangs (v0.5.4.398)
+- [x] Big grounded scenery — 2–3× scale with matching collision footprints; always seated on ground (cave floors on cavern maps); spawns keep clear of solid props (v0.5.4.399)
+- [x] Pistol trimmed to 5-shot burst (v0.5.4.399)
+- [x] Soldiers can stand on top of other soldiers — square landings stand on the other's head instead of always sliding off (v0.5.4.400)
 - [x] Fall damage
 - [x] Drown death
+- [x] MAC-10 damage cut 40% (8→5/bullet) (v0.5.4.400)
 
 ---
 
@@ -74,6 +78,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Opponent quit notification with blocking confirmation
 - [x] Live-mode parity system (compile-time checklists + integration tests + all-paths test helper)
 - [x] OTA (over-the-air) auto-update on launch
+- [x] Update UX overhaul — title-screen UPDATE AVAILABLE banner, re-check on MULTIPLAYER select, cancellable non-blocking check gate (fixes Casual Live freeze), handshake off main thread, version-reject opens install screen (v0.5.4.400)
 - [x] Python/SQLite REST API (accounts, match history, leaderboard)
 
 ---

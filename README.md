@@ -8,14 +8,15 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 - Every map is a unique collage of real Worms Armageddon terrain art — each seed splices, warps, and crossfades segments of extracted WA silhouettes into a novel map; cavern maps (~20%) carve chambers from the same art, inverted; chasms, overhangs, and caves stay seed-random on any map (v0.5.4.392–.397)
 - Maps are twice the screen height — terrain spans 700px vertically with peaks near the top and deep caves/canyons; camera scrolls vertically to follow the action (L1+Up/Down to pan; R1+Up/Down to pan with snap-back)
 - Soldiers spawn at varied heights — cave ledges, tunnels, and mid-terrain, not just the topmost surface
-- 28 themed pixel-art scenery objects per map — styled per WA template / cavern mode (pastoral, rugged, underground); solid obstacles you can stand on and shoot, always placed on top of terrain
+- Large themed pixel-art scenery objects (2–3× scale) — styled per WA template / cavern mode (pastoral, rugged, underground); solid obstacles you can stand on and shoot, always seated on the ground (cave floors on cavern maps), never floating or embedded
+- Soldiers can stand on top of other soldiers — square landings stand on the other's head instead of always sliding off
 - Fully destructible terrain — craters, tunnels, and collapses persist
 - Turn-based flow: Acting → Watching → Retreat → Ending
 - Wind, gravity, per-soldier HP, fall damage, and water/drowning mechanics
 - Atmospheric visuals: parallax backgrounds, drifting clouds, wind-driven debris, biome-tinted skies
 
 ### Weapons
-Bazooka, Grenade (variable fuse), Shotgun, Pistol (6-shot burst), MAC-10 (∞), TNT, Landmine, Molotov Cocktail (2 uses, 48 flames, ~2.5 min burn), Clump Bomb, Homing Missile, Plasma Torch, Ninja Rope, Baseball Bat — plus crate-only weapons: Meteor Bomb, Revolver, Blasthive (homing bees), Garcia (targeted artillery), Air Strike, Black Hole Bomb, Hand of Jerry, Sacred Ordnance. Weapon/health/scrap crate drops with rarity tiers.
+Bazooka, Grenade (variable fuse), Shotgun, Pistol (5-shot burst), MAC-10 (∞), TNT, Landmine, Molotov Cocktail (2 uses, 48 flames, ~2.5 min burn), Clump Bomb, Homing Missile, Plasma Torch, Ninja Rope, Baseball Bat — plus crate-only weapons: Meteor Bomb, Revolver, Blasthive (homing bees), Garcia (targeted artillery), Air Strike, Black Hole Bomb, Hand of Jerry, Sacred Ordnance. Weapon/health/scrap crate drops with rarity tiers.
 
 ### Game Modes
 - **Singleplayer** — VS CPU or local hotseat

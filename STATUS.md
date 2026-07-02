@@ -1,27 +1,65 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.397
+## Version: 0.5.4.400
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Pending in working tree (not yet built/deployed — needs VERSION + REQUIRED_VERSION bump; scenery placement changes map generation)
-- **Solid scenery** — scenery objects are now real obstacles: per-sprite collision
-  footprints (`SceneryObject::footprint()` in `src/world/terrain.rs`, all 22 sprites
-  across the 3 themes) are stamped into the per-tick object mask in `stamp_objects()`
-  alongside barrels/mines, so soldiers stand on them and projectiles collide (both go
-  through `is_blocked`). Placement now rejects spots where the footprint box above the
-  surface overlaps solid terrain — objects sit ON terrain, never embedded in slopes or
-  under low overhangs. All-paths correct automatically (collision runs in `simulate`).
-- **FPS 25→30 groundwork** — (1) `TICK_DURATION` now exactly 33,333µs (was
-  integer-truncated 33ms) and the main game loop uses absolute-deadline pacing instead
-  of sleep-the-remainder, so Linux sleep overshoot no longer compounds (~28fps ceiling
-  before); (2) `Framebuffer::blit_row` 180° flip rewritten as forward-store/reversed-load
-  so LLVM can NEON-vectorize it; (3) TEST-mode profiler overlay now shows per-section
-  elapsed µs (sorted by time) plus previous frame's `blit_to_fb` cost (`lstate.blit_us`) —
-  run a TEST match on-device to find the next hot spot (suspects: water strip regen,
-  terrain viewport copy).
-- **New pistol.wav** — replacement sound synced to `assets/sfx/` and `deploy/assets/sfx/`.
+## Recent changes (0.5.4.400)
+- **Soldiers can stand on other soldiers** (`src/game/loop_runner.rs`) — new
+  `is_on_soldier()` OR'd into the two `on_ground` gates (`process_movement`'s
+  walk/jump check and `apply_all_gravity`'s Idle-state fall check), so a soldier
+  resting on another's head is no longer treated as airborne. The airborne
+  landing-on-soldier collision now distinguishes a square landing (≥ half body-width
+  overlap) — stand on the other soldier's head like a platform — from a glancing hit,
+  which still slides off to the nearest clear side as before. Pure `simulate_with_muzzle`
+  physics, so it's automatically correct across all 5 game-mode paths; no `StateMsg`
+  change needed (position/state were already synced). `cargo test --test parity`: 19/19.
+- **MAC-10 damage cut 40%** — `WeaponKind::Uzi` `max_damage()` 8→5 per bullet
+  (`src/physics/projectile.rs`). Pure sim constant used inside `simulate_with_muzzle`,
+  automatically correct across all 5 paths.
+- **Update-check overhaul + MP freeze fix** (`src/main.rs`, `src/game/title.rs`) —
+  fixes the reported freeze on "CHECKING FOR UPDATES..." after choosing Casual Live
+  (main thread blocked on `recv_timeout` 500ms+6s with a single drawn frame; plus a
+  synchronous changelog fetch and a post-connect `read_line_blocking` that could hang
+  up to the 10s socket timeout). Now:
+  - Boot update check always runs (the `prior_update_attempted` sentinel only skips
+    the blocking pre-title gate) and the title screen shows a blinking
+    **UPDATE AVAILABLE** banner above the version string whenever the check lands.
+  - Selecting MULTIPLAYER on the main menu kicks off a fresh background check, so
+    the gate after picking a live mode usually has the answer already.
+  - That gate is now a cancellable animated poll loop (B = CANCEL, ~7s cap); on
+    timeout it proceeds — safe because the server handshake still hard-rejects
+    stale versions.
+  - The MMAY handshake (version/token send + OK/REJECTED read) moved into the
+    connect thread; `REJECTED:VERSION` now opens the full update screen
+    (A = INSTALL NOW) via the new `show_update_screen()` helper instead of dumping
+    the player back at the title.
+  - Changelog fetch on both update screens is off-thread ("loading update notes..."
+    placeholder swaps in via `try_recv`).
+  Menu/client code only — no protocol or sim change; parity tests pass (19/19).
+- **Deployed 2026-07-02** to Pi server/API/dashboard/Windows OTA/GitHub build; .110/.126
+  Miyoos were unreachable at deploy time and will pick up the OTA update on next boot.
 
-## Recent changes (0.5.4.392–0.5.4.397)
+## Recent changes (0.5.4.392–0.5.4.399)
+- **Pistol 5-shot burst + big grounded scenery (0.5.4.399)** — pistol burst cut to
+  5 shots total (1 immediate A-press + 4 auto-burst, was 6). Scenery objects now
+  render 2–3× bigger (`SceneryObject::scale()`: small sprites 3×, tall ones 2×) via
+  a `Scaled` wrapper in `scenery.rs` that magnifies all 40+ hand-authored 1× sprites
+  about the object's bottom-center anchor; `footprint()` returns scaled dims so
+  collision/stamping/placement match the visuals. Placement now requires solid ground
+  under the central half of the footprint (bottom 5 rows may sink into a slope,
+  central-¾ width air clearance above); cavern maps place scenery on standable cave
+  floors instead of the sealed cap (Underground props finally appear); spawn-mound
+  headroom carving prunes any object whose support it removes. `find_team_spawns`
+  now also rejects candidates within footprint + 10px of any scenery object so
+  soldiers never spawn inside the now-solid props.
+- **Solid scenery + frame pacing (0.5.4.398)** — scenery objects became real obstacles:
+  per-sprite collision footprints stamped into the per-tick object mask in
+  `stamp_objects()` (soldiers stand on them, projectiles collide); placement rejects
+  embedded spots. `TICK_DURATION` exactly 33,333µs + absolute-deadline pacing (sleep
+  overshoot no longer compounds, ~28fps ceiling gone); `blit_row` NEON-vectorizable;
+  TEST overlay shows per-section µs + prev-frame blit cost. Also resolved the
+  "only CAVERNS in test mode" report: the code was verified correct on x86/qemu-armv7/
+  on-device — the stale shipped .396 Miyoo binary was at fault; confirmed fixed on .398.
 - **Pistol SFX + generation speed (0.5.4.397)** — `pistol.wav` was a 48-second
   recording with one bang at t=9.3s: each shot's playback thread held the Miyoo's
   exclusive `hw:0,0` for the whole clip, so rapid-fire shots queued into the next

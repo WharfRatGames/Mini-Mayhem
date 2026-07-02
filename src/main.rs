@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.398";
+const VERSION: &str = "0.5.4.400";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -65,13 +65,12 @@ fn main() {
     // during the splash window (0-5s) rather than after it. recv_timeout at the
     // pre-title gate then finds the result already in the channel instead of
     // racing against the 2s HTTP timeout.
+    // Always run the check — even when a prior update attempt set the sentinel —
+    // so the title screen can show an "UPDATE AVAILABLE" banner. The sentinel
+    // only skips the blocking pre-title gate (prevents update-retry loops).
     let skip_update = updater::prior_update_attempted();
     let (update_tx, update_rx) = std::sync::mpsc::channel::<(bool, bool)>();
-    if !skip_update {
-        std::thread::spawn(move || { let _ = update_tx.send(updater::check_for_update(VERSION)); });
-    } else {
-        drop(update_tx); // channel disconnected immediately; recv_timeout returns Err right away
-    }
+    std::thread::spawn(move || { let _ = update_tx.send(updater::check_for_update(VERSION)); });
 
     updater::sync_assets_bg(VERSION);
 
@@ -110,15 +109,17 @@ fn main() {
             let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
             let bar_x = 40i32; let bar_w = sw - 80;
             let bar_y = sh/2 + 10; let bar_h = 24i32;
-            let changelog = updater::fetch_changelog(3)
-                .unwrap_or_else(|| vec!["update notes unavailable offline".to_string()]);
+            let changelog_rx = spawn_changelog_fetch();
             let max_lines = ((sh - 70 - 54) / 12).max(1) as usize;
-            let changelog: Vec<String> = changelog.iter()
-                .flat_map(|line| wrap_text(line, 1, sw - 36))
-                .take(max_lines)
-                .collect();
+            let mut changelog: Vec<String> = vec!["loading update notes...".to_string()];
             'pretitle_update: loop {
                 input.poll();
+                if let Ok(cl) = changelog_rx.try_recv() {
+                    changelog = cl.iter()
+                        .flat_map(|line| wrap_text(line, 1, sw - 36))
+                        .take(max_lines)
+                        .collect();
+                }
                 if input.just_pressed(input::Button::A) {
                     let binary = updater::stream_binary(|done, total| {
                         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
@@ -178,8 +179,12 @@ fn main() {
     }
 
     // ── Title screen ────────────────────────────────────────────────────────
+    // Fresh update check kicked off when the MULTIPLAYER submenu is entered, so
+    // the result is usually in before the player picks a live mode.
+    let mut mp_check_rx: Option<std::sync::mpsc::Receiver<bool>> = None;
     'game: loop {
     let mut title = TitleScreen::new(VERSION);
+    title.set_update_available(update_available);
     if return_to_mp { title.continue_to_submenu(); return_to_mp = false; }
 
     // Reconnect popup — only shown for involuntary disconnects from a
@@ -209,7 +214,12 @@ fn main() {
             let frame_start = Instant::now();
             input.poll();
             // Non-blocking poll — cache result once background thread finishes.
-            if !update_available { if let Ok((true, _)) = update_rx.try_recv() { update_available = true; } }
+            if !update_available {
+                if let Ok((true, _)) = update_rx.try_recv() {
+                    update_available = true;
+                    title.set_update_available(true);
+                }
+            }
             if let Some(c) = title.update(&input, &mut buf) { break c; }
             buf.blit_to_fb(&mut fb, 0, 0);
             let elapsed = frame_start.elapsed();
@@ -249,6 +259,13 @@ fn main() {
         }
         if c != game::title::CHOICE_MULTI { break c; }
         input.poll();
+        // Re-check for updates the moment MULTIPLAYER is selected — overlaps the
+        // HTTP round-trip with submenu navigation so the MP gate rarely waits.
+        if !update_available {
+            let (tx, rx) = std::sync::mpsc::channel::<bool>();
+            std::thread::spawn(move || { let _ = tx.send(updater::check_for_update(VERSION).0); });
+            mp_check_rx = Some(rx);
+        }
         title.continue_to_submenu();
     }};
     if choice == CHOICE_QUIT { return; }
@@ -263,96 +280,48 @@ fn main() {
         || choice == CHOICE_TAKE_A_TURN
         || choice == game::title::CHOICE_LIVE_RANKED
         || choice == game::title::CHOICE_TAT_RANKED;
-    // Wait for background thread result; if channel is disconnected (sentinel dropped tx),
-    // spawn a fresh dedicated check so SP/MP always gets a live result.
-    // MP/TAT always checks regardless of skip_update — the sentinel only prevents retry
-    // loops at boot; for multiplayer entry we must know the current version even if a
-    // prior update attempt failed and we're stuck on the old binary.
-    if (is_sp_mode && !skip_update || is_mp_mode) && !update_available {
-        if is_mp_mode {
-            use renderer::Bgra;
-            use renderer::font::{draw_str_scaled, str_width_scaled};
-            use world::{SCREEN_W, SCREEN_H};
-            let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
-            let t = "CHECKING FOR UPDATES...";
-            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-            draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t, 2)/2, sh/2 - 8, Bgra::new(140, 140, 180), 2);
-            buf.blit_to_fb(&mut fb, 0, 0);
-        }
-        let got = update_rx.recv_timeout(std::time::Duration::from_millis(500));
-        if let Ok((true, _)) = got {
-            update_available = true;
-        } else if is_mp_mode {
-            // MP only: re-check in case version changed since boot. SP skips to avoid blocking.
-            let (ftx, frx) = std::sync::mpsc::channel::<bool>();
-            std::thread::spawn(move || { let _ = ftx.send(updater::check_for_update(VERSION).0); });
-            if let Ok(true) = frx.recv_timeout(std::time::Duration::from_secs(6)) {
-                update_available = true;
+    // MP/TAT always re-checks regardless of skip_update — the sentinel only prevents
+    // retry loops at boot; for multiplayer entry we must know the current version even
+    // if a prior update attempt failed and we're stuck on the old binary. The check
+    // thread was (usually) already spawned when MULTIPLAYER was selected; here we only
+    // poll for its result in a cancellable, animated loop — never block the main thread.
+    // On timeout we proceed: the server handshake still hard-rejects stale versions.
+    if is_mp_mode && !update_available {
+        use renderer::Bgra;
+        use renderer::font::{draw_str_scaled, str_width_scaled};
+        use world::{SCREEN_W, SCREEN_H};
+        let rx = mp_check_rx.take().unwrap_or_else(|| {
+            let (tx, rx) = std::sync::mpsc::channel::<bool>();
+            std::thread::spawn(move || { let _ = tx.send(updater::check_for_update(VERSION).0); });
+            rx
+        });
+        let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
+        let deadline = Instant::now() + std::time::Duration::from_secs(7);
+        let mut tick = 0u32;
+        loop {
+            input.poll();
+            if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) {
+                continue 'game;
             }
+            match rx.try_recv() {
+                Ok(found) => { if found { update_available = true; } break; }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+            if Instant::now() >= deadline { break; }
+            let dots = ".".repeat(((tick / 15) % 4) as usize);
+            let t = format!("CHECKING FOR UPDATES{}", dots);
+            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
+            draw_str_scaled(&mut buf, &t, sw/2 - str_width_scaled("CHECKING FOR UPDATES...", 2)/2, sh/2 - 8, Bgra::new(140, 140, 180), 2);
+            let hint = "B = CANCEL";
+            draw_str_scaled(&mut buf, hint, sw/2 - str_width_scaled(hint, 1)/2, sh/2 + 20, Bgra::new(100, 100, 130), 1);
+            buf.blit_to_fb(&mut fb, 0, 0);
+            tick += 1;
+            std::thread::sleep(TICK_DURATION);
         }
     }
     if update_available && (is_sp_mode || is_mp_mode) {
-        use renderer::Bgra;
-        use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
-        use world::{SCREEN_W, SCREEN_H};
-        let forced = is_mp_mode;
-        let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
-        let bar_x = 40i32; let bar_w = sw - 80;
-        let bar_y = sh/2 + 10; let bar_h = 24i32;
-        // Pi-served changelog (see pre-title block) — always current, no rebuild.
-        let changelog = updater::fetch_changelog(3)
-            .unwrap_or_else(|| vec!["update notes unavailable offline".to_string()]);
-        let max_lines = ((sh - 70 - 54) / 12).max(1) as usize;
-        let changelog: Vec<String> = changelog.iter()
-            .flat_map(|line| wrap_text(line, 1, sw - 36))
-            .take(max_lines)
-            .collect();
-        let proceed = loop {
-            input.poll();
-            if input.just_pressed(input::Button::A) {
-                let binary = updater::stream_binary(|done, total| {
-                    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-                    buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-                    let t = "DOWNLOADING UPDATE";
-                    draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255,210,50), 2);
-                    buf.fill_rect(bar_x-2, bar_y-2, (bar_w+4) as u32, (bar_h+4) as u32, Bgra::new(60,60,100));
-                    buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h as u32, Bgra::new(20,20,40));
-                    let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
-                    let filled = (bar_w as f32 * frac) as u32;
-                    if filled > 0 { buf.fill_rect(bar_x, bar_y, filled, bar_h as u32, Bgra::new(80,200,120)); }
-                    let pct = format!("{}%", (frac * 100.0) as u32);
-                    draw_str(&mut buf, &pct, sw/2 - str_width(&pct)/2, bar_y + bar_h + 10, Bgra::new(180,180,200));
-                    buf.blit_to_fb(&mut fb, 0, 0);
-                });
-                match binary {
-                    Some(b) if b.len() > 4 && b[0] == 0x7f && &b[1..4] == b"ELF" => {
-                        draw_msg(&mut buf, &mut fb, "APPLYING UPDATE...");
-                        updater::apply_binary(&b, &mut buf, &mut fb);
-                        break false; // apply_binary called exec; if we're here exec failed
-                    }
-                    _ => { draw_msg(&mut buf, &mut fb, "DOWNLOAD FAILED"); std::thread::sleep(std::time::Duration::from_secs(2)); }
-                }
-            }
-            // B/Start: SP → skip update and proceed; MP → back to title
-            if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) {
-                break !forced;
-            }
-            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-            buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-            let t = if forced { "UPDATE REQUIRED FOR MULTIPLAYER" } else { "UPDATE AVAILABLE" };
-            let t_col = if forced { Bgra::new(255, 80, 80) } else { Bgra::new(255, 210, 50) };
-            draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t,2)/2, 10, t_col, 2);
-            let v = format!("VERSION {}", VERSION);
-            draw_str_scaled(&mut buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
-            for (i, line) in changelog.iter().enumerate() {
-                draw_str(&mut buf, line, 18, 54 + i as i32 * 12, Bgra::new(110, 130, 160));
-            }
-            draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
-            let b_label = if forced { "B = BACK" } else { "B = SKIP" };
-            draw_str_scaled(&mut buf, b_label, sw/2 - str_width_scaled(b_label,2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
-            buf.blit_to_fb(&mut fb, 0, 0);
-            std::thread::sleep(TICK_DURATION);
-        };
+        let proceed = show_update_screen(&mut fb, &mut input, &mut buf, is_mp_mode);
         if !proceed { continue 'game; }
     }
     // HOTSEAT = local 2-player, VS_CPU = CPU AI
@@ -477,10 +446,18 @@ fn main() {
     if is_live || is_live_ranked {
         use net::ServerConn;
         let ver = VERSION;
-        // Spawn connect attempt; main loop polls and checks B each frame
-        let (conn_tx, conn_rx) = std::sync::mpsc::channel::<Result<ServerConn, ()>>();
+        // Spawn connect attempt; main loop polls and checks B each frame.
+        // The MMAY handshake (send version/token, read OK/REJECTED) runs inside
+        // the thread too — read_line_blocking can take up to the 10s socket
+        // timeout if the server accepts but never replies, and must not freeze
+        // the main thread.
+        enum ConnectOutcome { Ok(ServerConn), VersionRejected, Failed }
+        let (conn_tx, conn_rx) = std::sync::mpsc::channel::<ConnectOutcome>();
         let port = live_game_port;
         let pre_resolved = net::cached_server_addr();
+        let hs_token = session_token.clone();
+        let hs_username = live_username.clone();
+        let hs_ranked = live_ranked_match;
         std::thread::spawn(move || {
             let result = if let Some(sock) = pre_resolved {
                 ServerConn::connect_addr(sock, port)
@@ -488,7 +465,28 @@ fn main() {
                 let addr = format!("crumbonium.duckdns.org:{}", port);
                 ServerConn::connect(&addr)
             };
-            let _ = conn_tx.send(result.map_err(|_| ()));
+            let outcome = match result {
+                Ok(mut c) => {
+                    c.send_raw(b"MMAY");
+                    c.send_raw(ver.as_bytes());
+                    c.send_raw(b"\n");
+                    c.send_raw(hs_token.as_bytes());
+                    c.send_raw(b"\n");
+                    if hs_ranked {
+                        c.send_raw(hs_username.as_bytes());
+                        c.send_raw(b"\n");
+                    }
+                    // Read server response: "OK\n" or "REJECTED:VERSION\n"
+                    let resp = c.read_line_blocking();
+                    if resp.trim() == "REJECTED:VERSION" {
+                        ConnectOutcome::VersionRejected
+                    } else {
+                        ConnectOutcome::Ok(c)
+                    }
+                }
+                Err(_) => ConnectOutcome::Failed,
+            };
+            let _ = conn_tx.send(outcome);
         });
         let connected = loop {
             input.poll();
@@ -496,27 +494,17 @@ fn main() {
                 continue 'game;
             }
             match conn_rx.try_recv() {
-                Ok(Ok(mut c)) => {
-                    c.send_raw(b"MMAY");
-                    c.send_raw(ver.as_bytes());
-                    c.send_raw(b"\n");
-                    c.send_raw(session_token.as_bytes());
-                    c.send_raw(b"\n");
-                    if live_ranked_match {
-                        c.send_raw(live_username.as_bytes());
-                        c.send_raw(b"\n");
-                    }
-                    // Read server response: "OK\n" or "REJECTED:VERSION\n"
-                    let resp = c.read_line_blocking();
-                    if resp.trim() == "REJECTED:VERSION" {
-                        draw_msg(&mut buf, &mut fb, "UPDATE REQUIRED");
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                        update_available = true;
-                        continue 'game;
-                    }
-                    break Some(c);
+                Ok(ConnectOutcome::Ok(c)) => break Some(c),
+                Ok(ConnectOutcome::VersionRejected) => {
+                    draw_msg(&mut buf, &mut fb, "UPDATE REQUIRED");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    update_available = true;
+                    // Go straight to the update screen (A = install) instead of
+                    // dumping the player back at the title with just a banner.
+                    show_update_screen(&mut fb, &mut input, &mut buf, true);
+                    continue 'game;
                 }
-                Ok(Err(_)) => {
+                Ok(ConnectOutcome::Failed) => {
                     draw_msg(&mut buf, &mut fb, "CONNECT FAILED  (B=BACK)");
                     loop {
                         input.poll();
@@ -2163,6 +2151,91 @@ fn show_match_intro(
         buf.fill_rect(0, sh - 5, SCREEN_W, 5, Bgra::new(25, 25, 40));
         buf.fill_rect(0, sh - 5, filled, 5, Bgra::new(70, 70, 140));
 
+        buf.blit_to_fb(fb, 0, 0);
+        std::thread::sleep(TICK_DURATION);
+    }
+}
+
+/// Fetch the update-screen changelog on a background thread; the update screens
+/// show a placeholder and swap the real notes in via try_recv, so the HTTP
+/// round-trip never blocks the main thread.
+fn spawn_changelog_fetch() -> std::sync::mpsc::Receiver<Vec<String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(updater::fetch_changelog(3)
+            .unwrap_or_else(|| vec!["update notes unavailable offline".to_string()]));
+    });
+    rx
+}
+
+/// Update screen: changelog + "A = INSTALL NOW". `forced` = MP entry (B backs
+/// out to the title); otherwise B skips and play continues. Returns whether the
+/// player may proceed into the chosen mode.
+fn show_update_screen(
+    fb:    &mut renderer::Framebuffer,
+    input: &mut input::InputState,
+    buf:   &mut WorldBuffer,
+    forced: bool,
+) -> bool {
+    use renderer::Bgra;
+    use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
+    use world::{SCREEN_W, SCREEN_H};
+    let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
+    let bar_x = 40i32; let bar_w = sw - 80;
+    let bar_y = sh/2 + 10; let bar_h = 24i32;
+    // Pi-served changelog (see pre-title block) — always current, no rebuild.
+    let changelog_rx = spawn_changelog_fetch();
+    let max_lines = ((sh - 70 - 54) / 12).max(1) as usize;
+    let mut changelog: Vec<String> = vec!["loading update notes...".to_string()];
+    loop {
+        input.poll();
+        if let Ok(cl) = changelog_rx.try_recv() {
+            changelog = cl.iter()
+                .flat_map(|line| wrap_text(line, 1, sw - 36))
+                .take(max_lines)
+                .collect();
+        }
+        if input.just_pressed(input::Button::A) {
+            let binary = updater::stream_binary(|done, total| {
+                buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
+                buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
+                let t = "DOWNLOADING UPDATE";
+                draw_str_scaled(buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255,210,50), 2);
+                buf.fill_rect(bar_x-2, bar_y-2, (bar_w+4) as u32, (bar_h+4) as u32, Bgra::new(60,60,100));
+                buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h as u32, Bgra::new(20,20,40));
+                let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
+                let filled = (bar_w as f32 * frac) as u32;
+                if filled > 0 { buf.fill_rect(bar_x, bar_y, filled, bar_h as u32, Bgra::new(80,200,120)); }
+                let pct = format!("{}%", (frac * 100.0) as u32);
+                draw_str(buf, &pct, sw/2 - str_width(&pct)/2, bar_y + bar_h + 10, Bgra::new(180,180,200));
+                buf.blit_to_fb(fb, 0, 0);
+            });
+            match binary {
+                Some(b) if b.len() > 4 && b[0] == 0x7f && &b[1..4] == b"ELF" => {
+                    draw_msg(buf, fb, "APPLYING UPDATE...");
+                    updater::apply_binary(&b, buf, fb);
+                    return false; // apply_binary called exec; if we're here exec failed
+                }
+                _ => { draw_msg(buf, fb, "DOWNLOAD FAILED"); std::thread::sleep(std::time::Duration::from_secs(2)); }
+            }
+        }
+        // B/Start: SP → skip update and proceed; MP → back to title
+        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) {
+            return !forced;
+        }
+        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
+        buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
+        let t = if forced { "UPDATE REQUIRED FOR MULTIPLAYER" } else { "UPDATE AVAILABLE" };
+        let t_col = if forced { Bgra::new(255, 80, 80) } else { Bgra::new(255, 210, 50) };
+        draw_str_scaled(buf, t, sw/2 - str_width_scaled(t,2)/2, 10, t_col, 2);
+        let v = format!("VERSION {}", VERSION);
+        draw_str_scaled(buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
+        for (i, line) in changelog.iter().enumerate() {
+            draw_str(buf, line, 18, 54 + i as i32 * 12, Bgra::new(110, 130, 160));
+        }
+        draw_str_scaled(buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
+        let b_label = if forced { "B = BACK" } else { "B = SKIP" };
+        draw_str_scaled(buf, b_label, sw/2 - str_width_scaled(b_label,2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
         buf.blit_to_fb(fb, 0, 0);
         std::thread::sleep(TICK_DURATION);
     }
