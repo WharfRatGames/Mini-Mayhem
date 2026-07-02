@@ -94,6 +94,18 @@ here. Run `cargo test --test parity` when changing the weapon menu or pre-simula
 `src/lib.rs`. Both the `arty` client and the `server` bin use it
 (`use arty::net::{msg::*, encode}`). Do **not** re-create a server-side copy.
 
+## Terrain generation
+
+`Terrain::generate_tactical(seed)` in `src/world/terrain.rs` is the **only** generator
+reachable in-game (called from `src/main.rs` and `src/server/main.rs`). It is purely
+seed-derived and **never transmitted** — the map `seed` rides in `StateMsg` and both sides
+rebuild the bitmap locally, so generation MUST stay deterministic (fixed-order f64/integer
+math, no time/RNG/HashMap-order nondeterminism) and client+server MUST run identical code
+(bump `VERSION`/`REQUIRED_VERSION` together for any change). Silhouettes are smoothed by
+box-blurring the continuous density field before thresholding (archetypes 0/1/2/4; caverns/3
+use their own cellular-automata pass). `from_heightmap` is a `#[cfg(test)]`-only fixture, not
+a live generator; the old `generate_worms` has been removed.
+
 ## Build / test
 
 - `cargo build` (all binaries), `cargo build --bin server` (server only).

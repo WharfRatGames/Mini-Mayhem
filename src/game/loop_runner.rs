@@ -1118,8 +1118,8 @@ pub fn process_aim(game: &mut GameState, input: &InputState, aim_angle_override:
     } else {
         // While rope is attached, Up/Down controls rope length (handled in process_fire).
         if game.rope.as_ref().map_or(false, |r| !r.flying) { return; }
-        // L1 is reserved for camera pan — don't adjust aim angle while it's held.
-        if !input.held(Button::L1) {
+        // L1/R1 are reserved for camera pan — don't adjust aim angle while either is held.
+        if !input.held(Button::L1) && !input.held(Button::R1) {
             if input.held(Button::Up)   { game.aim.angle += 0.04; }
             if input.held(Button::Down) { game.aim.angle -= 0.04; }
         }

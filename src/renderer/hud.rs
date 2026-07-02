@@ -8,8 +8,12 @@ use super::draw_sprites::TEAM_COLOURS;
 /// Height of the HUD bar in pixels.
 pub const HUD_H: u32 = 18;
 
-/// Y coordinate where the HUD bar starts.
+/// Screen-relative Y offset where the HUD bar starts (from viewport top).
 pub const HUD_Y: i32 = SCREEN_H as i32 - HUD_H as i32;
+
+/// World Y where the HUD bar starts, given the camera top edge.
+#[inline]
+pub fn hud_world_y(cam_y: u32) -> i32 { cam_y as i32 + HUD_Y }
 
 const HUD_BG:     Bgra = Bgra::new(15, 15, 25);
 const HUD_TEXT:   Bgra = Bgra::new(220, 220, 220);
@@ -33,6 +37,7 @@ pub const COLOR_GOLD:     Bgra = Bgra::new(220, 180, 50);
 /// `total_hp`     — total HP remaining per team (len 4)
 pub fn draw_hud(
     buf:         &mut WorldBuffer,
+    cam_y:       u32,
     wind:        &Wind,
     turn_secs:   u32,
     turn_number: u32,
@@ -40,30 +45,26 @@ pub fn draw_hud(
     team_alive:  &[u32; 4],
     total_hp:    &[u32; 4],
 ) {
-    // ── Background bar ────────────────────────────────────────────────────────
-    buf.fill_rect(0, HUD_Y, SCREEN_W, HUD_H, HUD_BG);
+    let hy = hud_world_y(cam_y);
+    buf.fill_rect(0, hy, SCREEN_W, HUD_H, HUD_BG);
 
-    // ── Turn timer (right side) ───────────────────────────────────────────────
     let timer_str = format!("{:02}", turn_secs);
     let timer_colour = if turn_secs <= 5 { HUD_RED } else { HUD_YELLOW };
     let timer_x = SCREEN_W as i32 - str_width(&timer_str) - 4;
-    draw_str(buf, &timer_str, timer_x, HUD_Y + 6, timer_colour);
+    draw_str(buf, &timer_str, timer_x, hy + 6, timer_colour);
 
-    // ── Turn number (left of timer) ───────────────────────────────────────────
     let turn_str = format!("T{}", turn_number);
-    draw_str(buf, &turn_str, timer_x - str_width(&turn_str) - 6, HUD_Y + 6, HUD_TEXT);
+    draw_str(buf, &turn_str, timer_x - str_width(&turn_str) - 6, hy + 6, HUD_TEXT);
 
-    // ── Wind indicator (centre) ───────────────────────────────────────────────
-    draw_wind_indicator(buf, wind);
-
-    // ── Team health strips (left side) ───────────────────────────────────────
-    draw_team_strips(buf, active_team, team_alive, total_hp);
+    draw_wind_indicator(buf, cam_y, wind);
+    draw_team_strips(buf, cam_y, active_team, team_alive, total_hp);
 }
 
 /// Draw the wind indicator in the centre of the HUD.
-fn draw_wind_indicator(buf: &mut WorldBuffer, wind: &Wind) {
+fn draw_wind_indicator(buf: &mut WorldBuffer, cam_y: u32, wind: &Wind) {
+    let hy = hud_world_y(cam_y);
     let centre_x = SCREEN_W as i32 / 2;
-    let y = HUD_Y + 8;
+    let y = hy + 8;
     let bar_w = 60i32;
     let bar_h = 4u32;
     let bar_x = centre_x - bar_w / 2;
@@ -71,16 +72,13 @@ fn draw_wind_indicator(buf: &mut WorldBuffer, wind: &Wind) {
     let strength = (wind.value().abs() * 10.0).round() as u32;
     let colour = if wind.value() >= 0.0 { Bgra::new(80, 180, 255) } else { Bgra::new(255, 140, 60) };
 
-    // Empty background track
     buf.fill_rect(bar_x, y, bar_w as u32, bar_h, Bgra::new(40, 40, 60));
 
-    // Fill from left edge — length proportional to magnitude, no empty gap on either side
     let fill = (wind.value().abs() * bar_w as f32) as i32;
     if fill > 0 {
         buf.fill_rect(bar_x, y, fill as u32, bar_h, colour);
     }
 
-    // Direction label left or right of bar (e.g. "<7" or "7>")
     let label = if wind.value() < -0.05 {
         format!("<{}", strength)
     } else if wind.value() > 0.05 {
@@ -89,22 +87,24 @@ fn draw_wind_indicator(buf: &mut WorldBuffer, wind: &Wind) {
         "~".to_string()
     };
     let lw = str_width(&label);
-    draw_str(buf, &label, centre_x - lw / 2, HUD_Y + 4, colour);
+    draw_str(buf, &label, centre_x - lw / 2, hy + 4, colour);
 }
 
 /// Draw the four team health strips on the left of the HUD.
 /// Each strip is a coloured bar showing remaining soldiers and HP.
 fn draw_team_strips(
     buf:         &mut WorldBuffer,
+    cam_y:       u32,
     active_team: usize,
     team_alive:  &[u32; 4],
     total_hp:    &[u32; 4],
 ) {
+    let hy = hud_world_y(cam_y);
     for team in 0..4usize {
-        if team_alive[team] == 0 { continue; } // skip eliminated teams
+        if team_alive[team] == 0 { continue; }
 
         let strip_x = 4 + team as i32 * 36;
-        let strip_y = HUD_Y + 3;
+        let strip_y = hy + 3;
         let colour  = TEAM_COLOURS[team];
 
         // Active team gets a bright border
@@ -141,6 +141,7 @@ pub fn draw_game_over(
     winner_team:  Option<usize>,
     my_team:      Option<usize>,
     cam_x:        i32,
+    cam_y:        u32,
     winner_avatar: u8,
     elo_delta:    i32,
     scrap_earned: u32,
@@ -151,24 +152,23 @@ pub fn draw_game_over(
 ) {
     let sw  = SCREEN_W as i32;
     let sh  = SCREEN_H as i32;
+    let oy  = cam_y as i32; // world Y origin of screen top
     let cx0 = cam_x;
     let mid = cx0 + sw / 2;
 
-    // Full-screen dark panel; avatar draws on top of it
     const AV: u32 = 90;
-    let av_y      = 5i32;
-    let dark_top  = av_y + AV as i32 + 4; // ~99 — used for element anchoring
-    buf.fill_rect(cx0, 0, SCREEN_W, sh as u32, Bgra::new(6, 8, 22));
+    let av_y      = oy + 5i32;
+    let dark_top  = av_y + AV as i32 + 4;
+    buf.fill_rect(cx0, oy, SCREEN_W, sh as u32, Bgra::new(6, 8, 22));
     buf.fill_rect(cx0, dark_top, SCREEN_W, 2, COLOR_BORDER);
 
-    // Fixed y anchors below the dark line — spread across full screen height
-    let y_headline = dark_top + 14;   // ~113
-    let y_subtext  = dark_top + 62;   // ~161
-    let y_divider  = dark_top + 92;   // ~191
-    let y_stats    = dark_top + 112;  // ~211
-    let y_memo     = dark_top + 185;  // ~284
-    let y_elo      = dark_top + 240;  // ~339
-    let y_hint     = sh - 26;         // 454
+    let y_headline = dark_top + 14;
+    let y_subtext  = dark_top + 62;
+    let y_divider  = dark_top + 92;
+    let y_stats    = dark_top + 112;
+    let y_memo     = dark_top + 185;
+    let y_elo      = dark_top + 240;
+    let y_hint     = oy + sh - 26;
 
     match winner_team {
         None => {
@@ -176,7 +176,7 @@ pub fn draw_game_over(
             let msg = "IT'S A DRAW!";
             let mw = str_width_scaled(msg, 4);
             draw_str_shadow_scaled(buf, msg, mid - mw/2, y_headline, HUD_TEXT, 4);
-            draw_button_hints(buf, &[("A", "CONTINUE")], cx0);
+            draw_button_hints(buf, &[("A", "CONTINUE")], cx0, cam_y);
         }
         Some(winner) => {
             let team_col  = TEAM_COLOURS[winner_color.min(3) as usize];
@@ -245,16 +245,16 @@ pub fn draw_game_over(
                 draw_str_scaled(buf, &scrap_str, mid - sw/2, y_elo + 36, COLOR_GOLD, 2);
             }
 
-            draw_button_hints(buf, &[("A", "CONTINUE")], cx0);
+            draw_button_hints(buf, &[("A", "CONTINUE")], cx0, cam_y);
         }
     }
 }
 
 /// Draw a countdown overlay (3... 2... 1... GO!).
-pub fn draw_countdown(buf: &mut WorldBuffer, secs: u32) {
+pub fn draw_countdown(buf: &mut WorldBuffer, cam_y: u32, secs: u32) {
     let label = if secs == 0 { "GO!".to_string() } else { format!("{}", secs) };
     let cx = SCREEN_W as i32 / 2 - str_width(&label) / 2;
-    let cy = SCREEN_H as i32 / 2 - 4;
+    let cy = cam_y as i32 + SCREEN_H as i32 / 2 - 4;
     draw_str_shadow(buf, &label, cx, cy, HUD_YELLOW);
 }
 
@@ -268,6 +268,7 @@ mod tests {
     fn default_hud(b: &mut WorldBuffer) {
         draw_hud(
             b,
+            0, // cam_y=0 for tests
             &Wind::calm(),
             45,
             1,
@@ -299,21 +300,21 @@ mod tests {
     #[test]
     fn hud_draws_without_panic_all_teams_alive() {
         let mut b = buf();
-        draw_hud(&mut b, &Wind::new(0.5), 30, 5, 2, &[4,4,4,4], &[400,400,400,400]);
+        draw_hud(&mut b, 0, &Wind::new(0.5), 30, 5, 2, &[4,4,4,4], &[400,400,400,400]);
     }
 
     #[test]
     fn hud_draws_without_panic_all_teams_dead() {
         let mut b = buf();
-        draw_hud(&mut b, &Wind::calm(), 0, 99, 0, &[0,0,0,0], &[0,0,0,0]);
+        draw_hud(&mut b, 0, &Wind::calm(), 0, 99, 0, &[0,0,0,0], &[0,0,0,0]);
     }
 
     #[test]
     fn timer_turns_red_at_5_seconds() {
         let mut b_safe   = buf();
         let mut b_danger = buf();
-        draw_hud(&mut b_safe,   &Wind::calm(), 10, 1, 0, &[4,0,0,0], &[400,0,0,0]);
-        draw_hud(&mut b_danger, &Wind::calm(),  5, 1, 0, &[4,0,0,0], &[400,0,0,0]);
+        draw_hud(&mut b_safe,   0, &Wind::calm(), 10, 1, 0, &[4,0,0,0], &[400,0,0,0]);
+        draw_hud(&mut b_danger, 0, &Wind::calm(),  5, 1, 0, &[4,0,0,0], &[400,0,0,0]);
         // Timer is on the right — check that danger has red pixels
         let right_x = SCREEN_W as i32 - 20;
         let mut has_red = false;
@@ -329,9 +330,9 @@ mod tests {
     #[test]
     fn wind_indicator_draws_without_panic() {
         let mut b = buf();
-        draw_wind_indicator(&mut b, &Wind::new(0.8));
-        draw_wind_indicator(&mut b, &Wind::calm());
-        draw_wind_indicator(&mut b, &Wind::new(-1.0));
+        draw_wind_indicator(&mut b, 0, &Wind::new(0.8));
+        draw_wind_indicator(&mut b, 0, &Wind::calm());
+        draw_wind_indicator(&mut b, 0, &Wind::new(-1.0));
     }
 
     // ── Team strips ───────────────────────────────────────────────────────────
@@ -340,8 +341,8 @@ mod tests {
     fn team_strips_skip_eliminated_teams() {
         let mut b_all  = buf();
         let mut b_some = buf();
-        draw_hud(&mut b_all,  &Wind::calm(), 30, 1, 0, &[4,4,4,4], &[400,400,400,400]);
-        draw_hud(&mut b_some, &Wind::calm(), 30, 1, 0, &[4,0,0,0], &[400,0,0,0]);
+        draw_hud(&mut b_all,  0, &Wind::calm(), 30, 1, 0, &[4,4,4,4], &[400,400,400,400]);
+        draw_hud(&mut b_some, 0, &Wind::calm(), 30, 1, 0, &[4,0,0,0], &[400,0,0,0]);
         // With only one team alive there should be fewer coloured pixels on left
         // Just verify no panic
     }
@@ -349,7 +350,7 @@ mod tests {
     #[test]
     fn active_team_gets_yellow_border() {
         let mut b = buf();
-        draw_hud(&mut b, &Wind::calm(), 30, 1, 2, &[4,4,4,4], &[400,400,400,400]);
+        draw_hud(&mut b, 0, &Wind::calm(), 30, 1, 2, &[4,4,4,4], &[400,400,400,400]);
         // Active team 2: strip_x = 4 + 2*36 = 76
         // Border at strip_x-1, strip_y-1
         let strip_x = 4 + 2 * 36 - 1;
@@ -363,15 +364,15 @@ mod tests {
     #[test]
     fn game_over_winner_draws_without_panic() {
         let mut b = buf();
-        draw_game_over(&mut b, Some(0), Some(0), 0, 0, 0, 0, [0,0], [0,0], "", 0); // winner sees win message
-        draw_game_over(&mut b, Some(3), Some(0), 0, 3, 0, 0, [0,0], [0,0], "", 3); // loser sees lose message
-        draw_game_over(&mut b, Some(1), None,    0, 1, 0, 0, [0,0], [0,0], "", 1); // hotseat — team name
+        draw_game_over(&mut b, Some(0), Some(0), 0, 0, 0, 0, 0, [0,0], [0,0], "", 0);
+        draw_game_over(&mut b, Some(3), Some(0), 0, 0, 3, 0, 0, [0,0], [0,0], "", 3);
+        draw_game_over(&mut b, Some(1), None,    0, 0, 1, 0, 0, [0,0], [0,0], "", 1);
     }
 
     #[test]
     fn game_over_draw_draws_without_panic() {
         let mut b = buf();
-        draw_game_over(&mut b, None, None, 0, 0, 0, 0, [0,0], [0,0], "", 0);
+        draw_game_over(&mut b, None, None, 0, 0, 0, 0, 0, [0,0], [0,0], "", 0);
     }
 
     // ── Countdown ────────────────────────────────────────────────────────────
@@ -379,20 +380,20 @@ mod tests {
     #[test]
     fn countdown_draws_without_panic() {
         let mut b = buf();
-        draw_countdown(&mut b, 3);
-        draw_countdown(&mut b, 1);
-        draw_countdown(&mut b, 0); // "GO!"
+        draw_countdown(&mut b, 0, 3);
+        draw_countdown(&mut b, 0, 1);
+        draw_countdown(&mut b, 0, 0);
     }
 }
 
 /// Draw a row of button hints centered at the bottom of the screen.
 /// `hints` is a slice of (button_label, action_label) pairs, e.g. `&[("A", "SELECT"), ("B", "BACK")]`.
-pub fn draw_button_hints(buf: &mut WorldBuffer, hints: &[(&str, &str)], cam_x: i32) {
+pub fn draw_button_hints(buf: &mut WorldBuffer, hints: &[(&str, &str)], cam_x: i32, cam_y: u32) {
     use super::font::{draw_str, str_width};
     let parts: Vec<String> = hints.iter().map(|(b, a)| format!("{}={}", b, a)).collect();
     let line = parts.join("  ");
     let x = cam_x + (SCREEN_W as i32 - str_width(&line)) / 2;
-    let y = SCREEN_H as i32 - 14;
+    let y = cam_y as i32 + SCREEN_H as i32 - 14;
     draw_str(buf, &line, x, y, COLOR_DIM_TEXT);
 }
 
@@ -411,12 +412,12 @@ pub fn draw_menu_selection(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32
 /// Draw the pause menu overlay.
 /// Returns true if Quit was selected, false if Resume.
 /// `cursor` is 0 = Resume, 1 = Quit.
-pub fn draw_pause_menu(buf: &mut WorldBuffer, cursor: u8, cam_x: i32) {
+pub fn draw_pause_menu(buf: &mut WorldBuffer, cursor: u8, cam_x: i32, cam_y: u32) {
     use super::font::{draw_str_scaled, str_width_scaled};
     let panel_w = 230u32;
     let panel_h = 110u32;
     let panel_x = cam_x + (SCREEN_W - panel_w) as i32 / 2;
-    let panel_y = (SCREEN_H - panel_h) as i32 / 2;
+    let panel_y = cam_y as i32 + (SCREEN_H - panel_h) as i32 / 2;
 
     // Background + border
     buf.fill_rect(panel_x, panel_y, panel_w, panel_h, Bgra::new(8, 10, 24));

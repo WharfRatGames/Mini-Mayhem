@@ -458,9 +458,9 @@ impl TitleScreen {
 
         // Hint + version
         if self.sub != Sub::None && self.sub != Sub::HowToPlay {
-            crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0);
+            crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
         } else {
-            crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT")], 0);
+            crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT")], 0, 0);
         }
         draw_str(buf, self.version, sw - str_width(self.version) - 6, sh - 18, Bgra::new(70, 70, 100));
     }

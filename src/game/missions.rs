@@ -204,9 +204,9 @@ impl MissionsScreen {
         }
 
         if claimable.is_empty() {
-            crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0);
+            crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
         } else {
-            crate::renderer::hud::draw_button_hints(buf, &[("A", "CLAIM"), ("B", "BACK")], 0);
+            crate::renderer::hud::draw_button_hints(buf, &[("A", "CLAIM"), ("B", "BACK")], 0, 0);
         }
     }
 }

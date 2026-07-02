@@ -15,24 +15,26 @@ def _status_refresh_loop():
     while True:
         try:
             db2 = sqlite3.connect(DB, timeout=2)
-            db2.execute("PRAGMA journal_mode=WAL")
-            total_users   = db2.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-            active_today  = db2.execute("SELECT COUNT(DISTINCT p0) + COUNT(DISTINCT p1) FROM matches WHERE done=1 AND finished_at > ?", (int(time.time()) - 86400,)).fetchone()[0]
-            total_matches = db2.execute("SELECT COUNT(*) FROM matches WHERE done=1").fetchone()[0]
-            active_tat    = db2.execute("SELECT COUNT(*) FROM matches WHERE done=0").fetchone()[0]
-            recent = db2.execute("""
-                SELECT u0.username, u1.username, m.ranked, m.winner, m.finished_at
-                FROM matches m
-                LEFT JOIN users u0 ON u0.id=m.p0
-                LEFT JOIN users u1 ON u1.id=m.p1
-                WHERE m.done=1 ORDER BY m.finished_at DESC LIMIT 10
-            """).fetchall()
-            recent_list = [{"p0": r[0] or "?", "p1": r[1] or "?", "ranked": bool(r[2]),
-                            "winner": r[3], "finished_at": r[4]} for r in recent]
-            live_queue_count   = db2.execute("SELECT COUNT(*) FROM live_queue WHERE paired_with IS NULL").fetchone()[0]
-            ranked_queue_count = db2.execute("SELECT COUNT(*) FROM ranked_pool WHERE match_id IS NULL").fetchone()[0]
-            top5 = db2.execute("SELECT username, elo FROM users ORDER BY elo DESC LIMIT 5").fetchall()
-            db2.close()
+            try:
+                db2.execute("PRAGMA journal_mode=WAL")
+                total_users   = db2.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+                active_today  = db2.execute("SELECT COUNT(DISTINCT p0) + COUNT(DISTINCT p1) FROM matches WHERE done=1 AND finished_at > ?", (int(time.time()) - 86400,)).fetchone()[0]
+                total_matches = db2.execute("SELECT COUNT(*) FROM matches WHERE done=1").fetchone()[0]
+                active_tat    = db2.execute("SELECT COUNT(*) FROM matches WHERE done=0").fetchone()[0]
+                recent = db2.execute("""
+                    SELECT u0.username, u1.username, m.ranked, m.winner, m.finished_at
+                    FROM matches m
+                    LEFT JOIN users u0 ON u0.id=m.p0
+                    LEFT JOIN users u1 ON u1.id=m.p1
+                    WHERE m.done=1 ORDER BY m.finished_at DESC LIMIT 10
+                """).fetchall()
+                recent_list = [{"p0": r[0] or "?", "p1": r[1] or "?", "ranked": bool(r[2]),
+                                "winner": r[3], "finished_at": r[4]} for r in recent]
+                live_queue_count   = db2.execute("SELECT COUNT(*) FROM live_queue WHERE paired_with IS NULL").fetchone()[0]
+                ranked_queue_count = db2.execute("SELECT COUNT(*) FROM ranked_pool WHERE match_id IS NULL").fetchone()[0]
+                top5 = db2.execute("SELECT username, elo FROM users ORDER BY elo DESC LIMIT 5").fetchall()
+            finally:
+                db2.close()
             # CPU
             try:
                 s1 = open("/proc/stat").readline().split()
@@ -95,38 +97,40 @@ def _lobbies_refresh_loop():
         try:
             now = int(time.time())
             db2 = sqlite3.connect(DB, timeout=2)
-            db2.execute("PRAGMA journal_mode=WAL")
-            live_games = db2.execute("""
-                SELECT lq.user_id, u1.username, lq.elo,
-                       lq.paired_with, u2.username, lq2.elo,
-                       lq.game_token, lq.joined_at
-                FROM live_queue lq
-                JOIN users u1 ON u1.id = lq.user_id
-                JOIN users u2 ON u2.id = lq.paired_with
-                JOIN live_queue lq2 ON lq2.user_id = lq.paired_with
-                WHERE lq.paired_with IS NOT NULL AND lq.user_id < lq.paired_with
-            """).fetchall()
-            live_waiting = db2.execute("""
-                SELECT lq.user_id, u.username, lq.elo, lq.joined_at
-                FROM live_queue lq JOIN users u ON u.id=lq.user_id
-                WHERE lq.paired_with IS NULL
-            """).fetchall()
-            tat_ranked_waiting = db2.execute("""
-                SELECT rp.user_id, u.username, rp.elo, rp.joined_at
-                FROM ranked_pool rp JOIN users u ON u.id=rp.user_id
-                WHERE rp.match_id IS NULL AND rp.joined_at > ?
-            """, (now - 300,)).fetchall()
-            tat_active = db2.execute("""
-                SELECT m.id, u0.username, m.p0, u1.username, m.p1,
-                       m.ranked, m.turn, m.turn_started_at, m.turn_timeout,
-                       m.p0_kills, m.p0_deaths, m.p1_kills, m.p1_deaths
-                FROM matches m
-                LEFT JOIN users u0 ON u0.id=m.p0
-                LEFT JOIN users u1 ON u1.id=m.p1
-                WHERE m.done=0
-                ORDER BY m.id DESC
-            """).fetchall()
-            db2.close()
+            try:
+                db2.execute("PRAGMA journal_mode=WAL")
+                live_games = db2.execute("""
+                    SELECT lq.user_id, u1.username, lq.elo,
+                           lq.paired_with, u2.username, lq2.elo,
+                           lq.game_token, lq.joined_at
+                    FROM live_queue lq
+                    JOIN users u1 ON u1.id = lq.user_id
+                    JOIN users u2 ON u2.id = lq.paired_with
+                    JOIN live_queue lq2 ON lq2.user_id = lq.paired_with
+                    WHERE lq.paired_with IS NOT NULL AND lq.user_id < lq.paired_with
+                """).fetchall()
+                live_waiting = db2.execute("""
+                    SELECT lq.user_id, u.username, lq.elo, lq.joined_at
+                    FROM live_queue lq JOIN users u ON u.id=lq.user_id
+                    WHERE lq.paired_with IS NULL
+                """).fetchall()
+                tat_ranked_waiting = db2.execute("""
+                    SELECT rp.user_id, u.username, rp.elo, rp.joined_at
+                    FROM ranked_pool rp JOIN users u ON u.id=rp.user_id
+                    WHERE rp.match_id IS NULL AND rp.joined_at > ?
+                """, (now - 300,)).fetchall()
+                tat_active = db2.execute("""
+                    SELECT m.id, u0.username, m.p0, u1.username, m.p1,
+                           m.ranked, m.turn, m.turn_started_at, m.turn_timeout,
+                           m.p0_kills, m.p0_deaths, m.p1_kills, m.p1_deaths
+                    FROM matches m
+                    LEFT JOIN users u0 ON u0.id=m.p0
+                    LEFT JOIN users u1 ON u1.id=m.p1
+                    WHERE m.done=0
+                    ORDER BY m.id DESC
+                """).fetchall()
+            finally:
+                db2.close()
             _lobbies_cached = {
                 "live_games": [{"p0":r[1],"p0_id":r[0],"p0_elo":r[2],
                                 "p1":r[4],"p1_id":r[3],"p1_elo":r[5],
@@ -147,6 +151,9 @@ def _lobbies_refresh_loop():
 threading.Thread(target=_status_refresh_loop,  daemon=True).start()
 threading.Thread(target=_temp_refresh_loop,    daemon=True).start()
 threading.Thread(target=_lobbies_refresh_loop, daemon=True).start()
+
+# Cap concurrent request threads so a burst of connections can't saturate all cores.
+_req_sem = threading.Semaphore(20)
 DB = os.path.expanduser("~/mayhem-server/arty.db")
 _key_file = os.path.expanduser("~/mayhem-server/admin_key.txt")
 ADMIN_KEY = open(_key_file).read().strip() if os.path.exists(_key_file) else os.environ.get("ARTY_ADMIN_KEY", "changeme")
@@ -535,14 +542,15 @@ def send_json(s, status, obj):
 # ── Request handler ───────────────────────────────────────────────────────────
 
 def handle(db, sock, peer_ip="?"):
-    try:
-        _handle(db, sock, peer_ip)
-    except Exception as e:
-        try: send_json(sock, 500, {"error": str(e)})
-        except: pass
-    finally:
-        try: sock.close()
-        except: pass
+    with _req_sem:
+        try:
+            _handle(db, sock, peer_ip)
+        except Exception as e:
+            try: send_json(sock, 500, {"error": str(e)})
+            except: pass
+        finally:
+            try: sock.close()
+            except: pass
 
 def _handle(db, sock, peer_ip="?"):
     result = read_req(sock)
@@ -1631,6 +1639,7 @@ def _handle(db, sock, peer_ip="?"):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
+    os.nice(5)  # yield to the game server under CPU pressure
     db = sqlite3.connect(DB, check_same_thread=False, timeout=10)
     db.execute("PRAGMA journal_mode=WAL")
     init_db(db)

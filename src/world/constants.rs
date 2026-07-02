@@ -3,7 +3,8 @@
 pub const WORLD_W: u32 = 1920;
 
 /// Total height of the game world in pixels.
-pub const WORLD_H: u32 = 480;
+/// 2 screens tall at 480px each; the camera scrolls vertically to show the viewport.
+pub const WORLD_H: u32 = 960;
 
 /// Width of the Miyoo screen viewport in pixels.
 pub const SCREEN_W: u32 = 640;
@@ -13,7 +14,7 @@ pub const SCREEN_H: u32 = 480;
 
 /// How many rows at the bottom of the world are water.
 /// Worms that enter this zone drown instantly.
-pub const WATER_ROWS: u32 = 98;
+pub const WATER_ROWS: u32 = 120;
 
 /// The Y coordinate at which water begins (inclusive).
 /// Anything at or below this line is water.
@@ -21,10 +22,10 @@ pub const WATER_Y: u32 = WORLD_H - WATER_ROWS;
 
 /// Minimum terrain surface Y. Terrain will never reach above this line,
 /// leaving clear sky at the top of the world.
-pub const TERRAIN_MIN_Y: u32 = 140;
+pub const TERRAIN_MIN_Y: u32 = 80;
 
 /// Maximum terrain surface Y. Terrain will never reach into the water zone.
-pub const TERRAIN_MAX_Y: u32 = WATER_Y - 40;
+pub const TERRAIN_MAX_Y: u32 = WATER_Y - 60;
 
 /// Total number of pixels in the world bitmap.
 pub const WORLD_PIXELS: usize = (WORLD_W * WORLD_H) as usize;
@@ -40,11 +41,11 @@ mod tests {
     #[test]
     fn world_dimensions_are_sane() {
         assert_eq!(WORLD_W, 1920);
-        assert_eq!(WORLD_H, 480);
+        assert_eq!(WORLD_H, 960);
         assert_eq!(SCREEN_W, 640);
         assert_eq!(SCREEN_H, 480);
-        // World is wider than the screen so the camera scrolls horizontally
         assert!(WORLD_W > SCREEN_W);
+        assert!(WORLD_H > SCREEN_H);
     }
 
     #[test]
@@ -64,6 +65,6 @@ mod tests {
     #[test]
     fn pixel_count_matches_dimensions() {
         assert_eq!(WORLD_PIXELS, (WORLD_W * WORLD_H) as usize);
-        assert_eq!(WORLD_PIXELS, 921_600);
+        assert_eq!(WORLD_PIXELS, 1_843_200);
     }
 }

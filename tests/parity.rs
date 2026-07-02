@@ -349,7 +349,7 @@ fn build_game(seed: u64) -> GameState {
 
 fn round_trip(server: &GameState, tick: u32, my_team: usize) -> GameState {
     let mut client = build_game(server.map_seed);
-    let mut cam = Camera::new(0.0);
+    let mut cam = Camera::new(0.0, 0.0);
     let state = build_state(server, tick, my_team);
     apply_server_state(&mut client, &mut cam, &state, my_team);
     client
@@ -627,7 +627,7 @@ fn multi_tick_parity_stays_in_sync() {
 
     // Reuse a single client to avoid the 50× terrain-generation cost of round_trip().
     let mut client = build_game(server.map_seed);
-    let mut cam = Camera::new(0.0);
+    let mut cam = Camera::new(0.0, 0.0);
     let input = InputState::new();
     for tick in 0..50u32 {
         server_tick(&mut server, &input, None, None);

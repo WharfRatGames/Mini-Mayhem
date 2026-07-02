@@ -161,12 +161,13 @@ impl WorldBuffer {
     }
 
     /// Copy a 640×480 viewport slice from the world buffer to a framebuffer.
-    /// `cam_x` is the left edge of the viewport in world pixels.
+    /// `cam_x`/`cam_y` are the left/top edges of the viewport in world pixels.
     /// Clamps so the viewport never exceeds world bounds.
-    pub fn blit_to_fb(&self, fb: &mut super::fb::Framebuffer, cam_x: u32) {
+    pub fn blit_to_fb(&self, fb: &mut super::fb::Framebuffer, cam_x: u32, cam_y: u32) {
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+        let cam_y = cam_y.min(WORLD_H.saturating_sub(SCREEN_H));
         for screen_y in 0..SCREEN_H {
-            let world_y = screen_y;
+            let world_y = cam_y + screen_y;
             let src_off = (world_y * WORLD_W + cam_x) as usize * 4;
             let src_row = &self.data[src_off..src_off + (SCREEN_W * 4) as usize];
             fb.blit_row(screen_y, src_row);
@@ -191,33 +192,39 @@ impl WorldBuffer {
 
     /// Copy the 640×480 viewport slice from `src` into the same region of `self`.
     /// Used each frame to stamp the world cache into the working draw buffer.
-    pub fn copy_viewport_from(&mut self, src: &WorldBuffer, cam_x: u32) {
-        self.copy_viewport_rows_from(src, cam_x, 0, WORLD_H);
+    pub fn copy_viewport_from(&mut self, src: &WorldBuffer, cam_x: u32, cam_y: u32) {
+        self.copy_viewport_rows_from(src, cam_x, cam_y, cam_y, cam_y + SCREEN_H);
     }
 
-    /// Like `copy_viewport_from`, but only rows `y0..y1`. Used to stamp a
-    /// pre-rendered background cache (which only covers the sky band) into
-    /// the viewport via cheap row memcpys.
-    pub fn copy_viewport_rows_from(&mut self, src: &WorldBuffer, cam_x: u32, y0: u32, y1: u32) {
+    /// Like `copy_viewport_from`, but only world rows `y0..y1` (clipped to the
+    /// visible viewport `cam_y..cam_y+SCREEN_H`). Used to stamp background cache
+    /// rows into the viewport.
+    pub fn copy_viewport_rows_from(&mut self, src: &WorldBuffer, cam_x: u32, cam_y: u32, y0: u32, y1: u32) {
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+        let cam_y = cam_y.min(WORLD_H.saturating_sub(SCREEN_H));
+        let vis_y0 = y0.max(cam_y);
+        let vis_y1 = y1.min(cam_y + SCREEN_H);
+        if vis_y0 >= vis_y1 { return; }
         let row_bytes = SCREEN_W as usize * 4;
-        for y in y0..y1 {
+        for y in vis_y0..vis_y1 {
             let off = (y * WORLD_W + cam_x) as usize * 4;
             self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
         }
-        self.pixel_writes += SCREEN_W as u64 * (y1.saturating_sub(y0)) as u64;
+        self.pixel_writes += SCREEN_W as u64 * (vis_y1 - vis_y0) as u64;
     }
 
     /// Blit a pre-rendered water strip (SCREEN_W × WATER_STRIP_H × 4 BGRA bytes) into
     /// the world buffer. Only pixels with alpha=0xFF are written; alpha=0 means "skip"
     /// (used to leave deep-water/terrain pixels from the world cache untouched).
-    pub fn blit_water_strip(&mut self, strip: &[u8], cam_x: u32) {
+    pub fn blit_water_strip(&mut self, strip: &[u8], cam_x: u32, cam_y: u32) {
         use crate::renderer::draw_sprites::{WATER_STRIP_TOP, WATER_STRIP_H};
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+        let cam_y = cam_y.min(WORLD_H.saturating_sub(SCREEN_H));
+        let vis_y1 = cam_y + SCREEN_H;
         let row_bytes = SCREEN_W as usize * 4;
         for sy in 0..WATER_STRIP_H as usize {
             let wy = WATER_STRIP_TOP as usize + sy;
-            if wy >= WORLD_H as usize { break; }
+            if wy >= WORLD_H as usize || (wy as u32) < cam_y || (wy as u32) >= vis_y1 { continue; }
             let strip_row = &strip[sy * row_bytes..(sy + 1) * row_bytes];
             let dst_off = (wy as u32 * WORLD_W + cam_x) as usize * 4;
             let dst_row = &mut self.data[dst_off..dst_off + row_bytes];
@@ -239,41 +246,37 @@ impl WorldBuffer {
     /// same pass that copies the solid spans, so each pixel in
     /// `sky_limit..WATER_Y` is written exactly once (instead of `bg_image`
     /// painting the whole column first and this then overwriting most of it).
-    pub fn copy_viewport_from_sky_aware(&mut self, src: &WorldBuffer, cam_x: u32, terrain: &Terrain, bg_cache: &WorldBuffer, seed: u64) {
+    pub fn copy_viewport_from_sky_aware(&mut self, src: &WorldBuffer, cam_x: u32, cam_y: u32, terrain: &Terrain, bg_cache: &WorldBuffer, seed: u64) {
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+        let cam_y = cam_y.min(WORLD_H.saturating_sub(SCREEN_H));
+        let vis_y1 = cam_y + SCREEN_H;
         let row_bytes = SCREEN_W as usize * 4;
         // Water rows: world_cache is a uniform `WATER` colour across the whole
-        // band (terrain_pixel never varies it, and nothing draws below
-        // WATER_Y+~18 — see draw_water_surface's wave fill and fx.rs's
-        // particle depth cap). Only the rows the wave/foam can touch need
-        // refreshing each frame; the deep band is filled once at cache init
-        // (see `fill_deep_water_band`) and stays correct under camera pans
-        // since the colour is identical for every column.
+        // band. Only the shallow wave band needs refreshing each frame; the deep
+        // band is pre-filled at cache init.
         let wave_band_end = (WATER_Y + 24).min(WORLD_H);
-        for y in WATER_Y..wave_band_end {
+        let wy0 = WATER_Y.max(cam_y);
+        let wy1 = wave_band_end.min(vis_y1);
+        for y in wy0..wy1 {
             let off = (y * WORLD_W + cam_x) as usize * 4;
             self.data[off..off + row_bytes].copy_from_slice(&src.data[off..off + row_bytes]);
         }
-        self.pixel_writes += SCREEN_W as u64 * (wave_band_end - WATER_Y) as u64;
+        if wy1 > wy0 { self.pixel_writes += SCREEN_W as u64 * (wy1 - wy0) as u64; }
         let par = super::bg_image::par_x_and_dst_w(seed, cam_x);
         // `copy_bg_viewport` only row-memcpys the background for rows that
-        // are sky for *every* visible column (0..min_y, where min_y is the
+        // are sky for *every* visible column (cam_y..min_y, where min_y is the
         // smallest `sky_limit` on screen). Columns whose own `sky_limit` is
         // taller than `min_y` need that extra band of background filled in
         // here instead, so it isn't double-painted by the row-memcpy pass.
         let min_y = terrain.sky_limit[cam_x as usize..(cam_x + SCREEN_W) as usize]
             .iter().copied().min().unwrap_or(0);
-        // Sky band: per column, skip straight to the topmost solid pixel
-        // (guaranteed sky above it — explosions only remove material, never
-        // add it above sky_limit), then copy solid pixels down to the water.
+        // Sky / terrain: per column, skip to topmost solid pixel and copy
+        // terrain from there to water. Clip all row ranges to [cam_y, vis_y1].
         let mut x = 0;
         while x < SCREEN_W {
             let wx = cam_x + x;
             let y0 = terrain.sky_limit[wx as usize];
             if terrain.solid_to_water[wx as usize] {
-                // Group consecutive columns sharing this sky_limit so their
-                // solid spans can be copied with one wide slice per row
-                // instead of one tiny copy per column.
                 let mut run_end = x + 1;
                 while run_end < SCREEN_W {
                     let wx2 = cam_x + run_end;
@@ -283,45 +286,45 @@ impl WorldBuffer {
                     run_end += 1;
                 }
                 let run_w = run_end - x;
-                if y0 > min_y {
+                // Extra sky band (min_y..y0), clipped to viewport
+                let extra_y0 = min_y.max(cam_y);
+                let extra_y1 = y0.min(vis_y1);
+                if extra_y1 > extra_y0 {
                     if let Some((par_x, dst_w)) = par {
-                        // Same copy_from_slice pattern as copy_bg_sky_band:
-                        // 1–2 contiguous slice copies per row instead of
-                        // run_w individual per-pixel get/set calls.
                         let src_x0 = (par_x + x) % dst_w;
-                        for gy in min_y..y0 {
+                        for gy in extra_y0..extra_y1 {
+                            let sy = gy - cam_y; // screen row for cache lookup
                             let dst_off = (gy * WORLD_W + cam_x + x) as usize * 4;
                             let seg1 = (dst_w - src_x0).min(run_w);
-                            let src_off1 = (gy * WORLD_W + src_x0) as usize * 4;
+                            let src_off1 = (sy * WORLD_W + src_x0) as usize * 4;
                             self.data[dst_off..dst_off + seg1 as usize * 4]
                                 .copy_from_slice(&bg_cache.data[src_off1..src_off1 + seg1 as usize * 4]);
                             if seg1 < run_w {
                                 let seg2 = run_w - seg1;
-                                let src_off2 = (gy * WORLD_W) as usize * 4;
+                                let src_off2 = (sy * WORLD_W) as usize * 4;
                                 let dst_off2 = dst_off + seg1 as usize * 4;
                                 self.data[dst_off2..dst_off2 + seg2 as usize * 4]
                                     .copy_from_slice(&bg_cache.data[src_off2..src_off2 + seg2 as usize * 4]);
                             }
                         }
                     }
-                    self.pixel_writes += (run_w * (y0 - min_y)) as u64;
+                    self.pixel_writes += (run_w * (extra_y1 - extra_y0)) as u64;
                 }
-                let span_bytes = run_w as usize * 4;
-                for y in y0..WATER_Y {
-                    let off = ((y * WORLD_W + wx) * 4) as usize;
-                    self.data[off..off + span_bytes].copy_from_slice(&src.data[off..off + span_bytes]);
+                // Terrain span (y0..WATER_Y), clipped to viewport
+                let ter_y0 = y0.max(cam_y);
+                let ter_y1 = WATER_Y.min(vis_y1);
+                if ter_y1 > ter_y0 {
+                    let span_bytes = run_w as usize * 4;
+                    for y in ter_y0..ter_y1 {
+                        let off = ((y * WORLD_W + wx) * 4) as usize;
+                        self.data[off..off + span_bytes].copy_from_slice(&src.data[off..off + span_bytes]);
+                    }
+                    self.pixel_writes += (run_w * (ter_y1 - ter_y0)) as u64;
                 }
-                self.pixel_writes += (run_w * (WATER_Y - y0)) as u64;
                 x = run_end;
                 continue;
             } else {
-                // Cave / chasm / overhang columns: group all consecutive non-solid_to_water
-                // columns and render row-major with wide horizontal slice copies.
-                //
-                // The old approach processed one column at a time with vertical stride
-                // copies (4 bytes × 7680-byte stride = one cache miss per pixel), causing
-                // ~81K strided copies/frame on cave maps → 15-20fps. Switching to
-                // row-major wide slices gives ~50× fewer copy ops, all cache-friendly.
+                // Cave / chasm / overhang columns — row-major wide slices.
                 let cave_start = x;
                 let mut cave_end = x + 1;
                 while cave_end < SCREEN_W
@@ -331,50 +334,59 @@ impl WorldBuffer {
                 }
                 let cave_w = cave_end - cave_start;
 
-                // Per-column sky strip (min_y..sky_limit[col]): narrow, per-pixel is fine.
+                // Per-column extra sky strip (min_y..sky_limit[col]), clipped to viewport.
                 if let Some((par_x, dst_w)) = par {
                     for cx in cave_start..cave_end {
                         let wx2 = cam_x + cx;
                         let col_y0 = terrain.sky_limit[wx2 as usize];
-                        if col_y0 > min_y {
+                        let ey0 = min_y.max(cam_y);
+                        let ey1 = col_y0.min(vis_y1);
+                        if ey1 > ey0 {
                             let src_x2 = (par_x + cx) % dst_w;
-                            for gy in min_y..col_y0 {
-                                let src_off = (gy * WORLD_W + src_x2) as usize * 4;
+                            for gy in ey0..ey1 {
+                                let sy = gy - cam_y; // screen row for cache lookup
+                                let src_off = (sy * WORLD_W + src_x2) as usize * 4;
                                 let dst_off = (gy * WORLD_W + wx2) as usize * 4;
                                 self.data[dst_off..dst_off + 4]
                                     .copy_from_slice(&bg_cache.data[src_off..src_off + 4]);
                             }
-                            self.pixel_writes += (col_y0 - min_y) as u64;
+                            self.pixel_writes += (ey1 - ey0) as u64;
                         }
                     }
                 }
 
-                // Lowest sky_limit in the group — first row needing cave rendering.
+                // Lowest sky_limit in the group — start of cave rendering.
                 let group_y0 = (cave_start..cave_end)
                     .map(|cx| terrain.sky_limit[(cam_x + cx) as usize])
                     .min()
                     .unwrap_or(0);
 
-                // Build solid bitmask: bit (local_x % 64) of
-                // solid_bits[y * words_per_row + local_x/64] is set when
-                // column (cave_start + local_x) is terrain-solid at row y.
+                // Solid bitmask for cave columns (only needed for visible rows).
+                let vis_group_y0 = group_y0.max(cam_y);
+                let vis_group_y1 = WATER_Y.min(vis_y1);
                 let words_per_row = ((cave_w + 63) / 64) as usize;
-                let mut solid_bits = vec![0u64; WATER_Y as usize * words_per_row];
+                // Allocate bitmask only for visible rows (offset by vis_group_y0).
+                let rows_needed = if vis_group_y1 > vis_group_y0 { (vis_group_y1 - vis_group_y0) as usize } else { 0 };
+                let mut solid_bits = vec![0u64; rows_needed * words_per_row];
                 for cx in cave_start..cave_end {
                     let wx2 = (cam_x + cx) as usize;
                     let local_x = cx - cave_start;
                     let word = (local_x / 64) as usize;
                     let bit  = local_x % 64;
                     for &(ys, ye) in &terrain.solid_runs[wx2] {
+                        let ys = ys.max(vis_group_y0);
+                        let ye = ye.min(vis_group_y1);
                         for y in ys..ye {
-                            solid_bits[y as usize * words_per_row + word] |= 1u64 << bit;
+                            let row_idx = (y - vis_group_y0) as usize;
+                            solid_bits[row_idx * words_per_row + word] |= 1u64 << bit;
                         }
                     }
                 }
 
-                // Row-major rendering: for each row, alternate bg and solid runs.
-                for y in group_y0..WATER_Y {
-                    let bits_base = y as usize * words_per_row;
+                // Row-major rendering: for each visible row, alternate bg and solid runs.
+                for y in vis_group_y0..vis_group_y1 {
+                    let row_idx = (y - vis_group_y0) as usize;
+                    let bits_base = row_idx * words_per_row;
                     let bits_row = &solid_bits[bits_base..bits_base + words_per_row];
                     // World-buffer byte offset for (y, cam_x + cave_start).
                     let row_base = (y * WORLD_W + cam_x + cave_start) as usize * 4;
@@ -401,15 +413,16 @@ impl WorldBuffer {
                         if solid_start > lx {
                             let bg_len = solid_start - lx;
                             if let Some((par_x, dst_w)) = par {
+                                let sy = y - cam_y; // screen row for cache lookup
                                 let src_x0 = (par_x + cave_start + lx) % dst_w;
                                 let dst_off = row_base + lx as usize * 4;
                                 let seg1 = (dst_w - src_x0).min(bg_len);
-                                let src_off1 = (y * WORLD_W + src_x0) as usize * 4;
+                                let src_off1 = (sy * WORLD_W + src_x0) as usize * 4;
                                 self.data[dst_off..dst_off + seg1 as usize * 4]
                                     .copy_from_slice(&bg_cache.data[src_off1..src_off1 + seg1 as usize * 4]);
                                 if seg1 < bg_len {
                                     let seg2 = bg_len - seg1;
-                                    let src_off2 = (y * WORLD_W) as usize * 4;
+                                    let src_off2 = (sy * WORLD_W) as usize * 4;
                                     let dst_off2 = dst_off + seg1 as usize * 4;
                                     self.data[dst_off2..dst_off2 + seg2 as usize * 4]
                                         .copy_from_slice(&bg_cache.data[src_off2..src_off2 + seg2 as usize * 4]);
@@ -467,15 +480,16 @@ impl WorldBuffer {
     /// `sky_limit` is taller get the extra `max_y..sky_limit[wx]` band filled
     /// in by `copy_viewport_from_sky_aware` instead, so no pixel is painted
     /// twice.
-    pub fn copy_bg_sky_band(&mut self, cache: &WorldBuffer, cam_x: u32, par_x: u32, dst_w: u32, max_y: u32) {
+    pub fn copy_bg_sky_band(&mut self, cache: &WorldBuffer, cam_x: u32, cam_y: u32, par_x: u32, dst_w: u32, max_y: u32) {
         if dst_w == 0 { return; }
-        for y in 0..max_y {
+        for y in cam_y..max_y.min(cam_y + SCREEN_H) {
+            let sy = y - cam_y; // screen row: cache was built at y=0..SCREEN_H
             let mut dst_x = cam_x;
             let mut src_x = par_x % dst_w;
             let mut remaining = SCREEN_W;
             while remaining > 0 {
                 let seg = remaining.min(dst_w - src_x);
-                let src_off = ((y * WORLD_W + src_x) * 4) as usize;
+                let src_off = ((sy * WORLD_W + src_x) * 4) as usize;
                 let dst_off = ((y * WORLD_W + dst_x) * 4) as usize;
                 let len = (seg * 4) as usize;
                 self.data[dst_off..dst_off + len].copy_from_slice(&cache.data[src_off..src_off + len]);

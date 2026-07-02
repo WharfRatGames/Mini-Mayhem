@@ -11,6 +11,9 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Smooth, organic silhouettes (density field box-blurred before thresholding, v0.5.4.385/.386)
 - [x] Maps twice the screen height — 700px vertical terrain range, generator tuned for full use (v0.5.4.387)
 - [x] WA-style terrain — sharper silhouettes, heavy cave coverage, wider chasms, landmine max damage 50 (v0.5.4.388)
+- [x] Vertical spawn spread — soldiers spawn at varied heights (cave ledges, tunnels, mid-terrain) not just the topmost surface (v0.5.4.389)
+- [x] Map variety — flat plains sub-variant, per-archetype hill amplitude, stronger canyon terracing and cliff warp (v0.5.4.391)
+- [x] Terrain generation ~40% faster — precomputed hill_col[], octaves 4→3 (~4.4M fewer noise calls per map; pending)
 - [x] Crater carving (destructible terrain)
 - [x] Euler projectile ballistics
 - [x] Wind simulation
@@ -25,7 +28,9 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] `/dev/fb0` direct framebuffer rendering (BGRA)
 - [x] `evdev` hardware button input
 - [x] 8×8 pixel font
-- [x] Camera follow and free pan (horizontal and vertical; L1+Up/Down vertical pan, v0.5.4.387)
+- [x] Camera follow and free pan (horizontal and vertical; L1+Up/Down vertical pan v0.5.4.387; R1+Up/Down with snap-back v0.5.4.389)
+- [x] All HUD elements screen-anchored to cam_y — stay at correct screen position when camera scrolls vertically (v0.5.4.389)
+- [x] Cursor weapons full vertical range — Garcia/Air Strike/Hand of Jerry can reach the waterline (v0.5.4.389)
 - [x] Hotseat local multiplayer
 - [x] Soldier skeletal animation (walk cycle, backflip, airborne lean)
 - [x] Team color rendering
@@ -36,15 +41,19 @@ A living document of what's shipped, what's in progress, and what's coming.
 *The actual game*
 
 - [x] Turn-based system with timer and retreat phase
-- [x] Bazooka, Grenade, Shotgun, TNT, Landmine, Ninja Rope, Baseball Bat, Plasma Torch (loadout)
-- [x] Blasthive, Meteor Bomb, Revolver, Black Hole Bomb, Air Strike, Hand of Jerry, Sacred Ordnance (crate-only)
-- [x] Weapon unlock timers (Bat / TNT / Air Strike)
-- [x] Adjustable grenade fuse (L1/R1)
+- [x] Bazooka, Grenade, Shotgun, MAC-10, Pistol, TNT, Landmine, Ninja Rope, Baseball Bat, Plasma Torch, Clump Bomb, Homing Missile, Molotov (loadout)
+- [x] Blasthive, Meteor Bomb, Revolver, Black Hole Bomb, Air Strike, Garcia, Hand of Jerry, Sacred Ordnance (crate-only)
+- [x] Molotov Cocktail — 48 fire patches, ~2.5 min burn, WA-style pooling fire physics (pending)
+- [x] Weapon unlock timers (Bat / TNT / Air Strike / Homing Missile)
+- [x] Adjustable grenade/clump bomb fuse (L1/R1)
 - [x] Crate drops (weapon, health, scrap)
 - [x] Rarity-tier weapon pool (Common / Uncommon / Rare / Ultra Rare)
+- [x] Weapon menu — 4-column scrollable grid, 120px cells (pending)
 - [x] Graves and headstones
 - [x] Blood splats
-- [x] Barrel explosions and chain reactions
+- [x] Barrel explosions and chain reactions (14–20 barrels per map)
+- [x] Map landmines 16–24 per map (v0.5.4.391)
+- [x] Themed scenery objects — 28 per map, 8/7/7/7/7 sprite variants per archetype (v0.5.4.390/.391)
 - [x] Fall damage
 - [x] Drown death
 

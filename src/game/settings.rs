@@ -168,7 +168,7 @@ impl SettingsScreen {
 
         buf.fill_rect(panel_x, start_y + item_h * 2 + 8, panel_w as u32, 2, COLOR_BORDER);
 
-        draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0);
+        draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
         let saved_str = "SAVES ON EXIT";
         let saved_w = str_width(saved_str);
         draw_str(buf, saved_str, sw/2 - saved_w/2, sh - 26, Bgra::new(70, 70, 100));
@@ -213,6 +213,6 @@ impl SettingsScreen {
         } else {
             &[("LEFT", "PREV"), ("B", "CLOSE")][..]
         };
-        draw_button_hints(buf, hints, 0);
+        draw_button_hints(buf, hints, 0, 0);
     }
 }

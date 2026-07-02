@@ -237,7 +237,8 @@ else
 fi
 
 # Notify Discord bot: patch notes + refresh cosmetics gallery
-ssh arty-pi "curl -s -X POST http://127.0.0.1:7779/notify/patch \
+ADMIN_KEY=$(ssh arty-pi "cat ~/mayhem-server/admin_key.txt" 2>/dev/null)
+ssh arty-pi "curl -s -X POST 'http://127.0.0.1:7779/notify/patch?key=$ADMIN_KEY' \
     -H 'Content-Type: application/json' \
     -d '{\"version\":\"$VERSION\"}'" 2>/dev/null \
     && echo "Discord notified (patch notes)" \

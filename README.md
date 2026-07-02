@@ -5,15 +5,17 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 ## Features
 
 ### Gameplay
-- Procedural terrain generation with 5 archetypes: rolling hills, cliffs/overhangs, floating islands, caverns, and canyon/mesa — tuned to produce WA-style maps with sharp silhouettes, heavy cave coverage, and wide chasms
-- Maps are twice the screen height — terrain spans 700px vertically with peaks near the top and deep caves/canyons; camera scrolls vertically to follow the action (L1+Up/Down to pan)
+- Procedural terrain generation with 5 archetypes: rolling hills, cliffs/overhangs, floating islands, caverns, and canyon/mesa — per-archetype shaping, flat plains sub-variant, WA-style sharp silhouettes and heavy cave coverage
+- Maps are twice the screen height — terrain spans 700px vertically with peaks near the top and deep caves/canyons; camera scrolls vertically to follow the action (L1+Up/Down to pan; R1+Up/Down to pan with snap-back)
+- Soldiers spawn at varied heights across all archetypes — cave ledges, tunnels, and mid-terrain, not just the topmost surface
+- 28 themed pixel-art scenery objects per map — styled per archetype (pastoral, rugged, tropical, underground, arid)
 - Fully destructible terrain — craters, tunnels, and collapses persist
 - Turn-based flow: Acting → Watching → Retreat → Ending
 - Wind, gravity, per-soldier HP, fall damage, and water/drowning mechanics
 - Atmospheric visuals: parallax backgrounds, drifting clouds, wind-driven debris, biome-tinted skies
 
 ### Weapons
-Bazooka, Grenade (variable fuse), Shotgun, Pistol (6-shot burst), MAC-10 (∞), TNT, Landmine, Molotov Cocktail (2 uses, 12 flames), Meteor Bomb, Revolver, Grappling Hook, Baseball Bat, Blasthive (homing bees), Garcia (targeted artillery), Homing Missile, Air Strike, Black Hole Bomb, and more — plus weapon/health/scrap crate drops.
+Bazooka, Grenade (variable fuse), Shotgun, Pistol (6-shot burst), MAC-10 (∞), TNT, Landmine, Molotov Cocktail (2 uses, 48 flames, ~2.5 min burn), Clump Bomb, Homing Missile, Plasma Torch, Ninja Rope, Baseball Bat — plus crate-only weapons: Meteor Bomb, Revolver, Blasthive (homing bees), Garcia (targeted artillery), Air Strike, Black Hole Bomb, Hand of Jerry, Sacred Ordnance. Weapon/health/scrap crate drops with rarity tiers.
 
 ### Game Modes
 - **Singleplayer** — VS CPU or local hotseat

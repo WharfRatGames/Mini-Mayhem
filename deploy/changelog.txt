@@ -1,3 +1,4 @@
+0.5.4.394  Fix: holding R1 to pan the camera vertically no longer also rotates the aim angle.
 0.5.4.393  Removed the old 5-style landform system — every map now generates from real Worms Armageddon terrain art (2 masks) or an occasional carved-cavern map; chasms/overhangs/caves are now random on any map instead of tied to a landform style.
 0.5.4.392  Terrain silhouettes now sourced from real Worms Armageddon terrain art (extracted from the original game's map data) for a more authentic WA look across all map styles.
 0.5.4.391  More scenery variety (15 new sprite types), denser object placement (28 per map), map shape variety (flat plains, stronger canyon mesas/cliffs), more barrels (14-20) and mines (16-24), pistol sounds on every shot.

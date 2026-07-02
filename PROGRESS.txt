@@ -1,7 +1,7 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.388
-Last updated: 2026-06-30
+Current version: 0.5.4.391 (+ uncommitted changes)
+Last updated: 2026-07-01
 
 COMPLETED PHASES
 ----------------
@@ -16,6 +16,9 @@ Phase 1 — Terrain & Physics
     heavier cave coverage (hills 30%→65%, cliffs 35%→70%, canyon 0%→50%), wider cave passages
     (cave_thresh 0.12→0.16, noise freq 7.0/6.0→5.5/5.0), more/wider-spread chasms (2–4 central →
     3–5 across 22–78% of map width); landmine max damage increased 35→50
+  Vertical spawn spread (v0.5.4.389): soldiers now spawn at varied heights across all archetypes —
+    maps with punched caves reserve half the spawn slots for underground positions so teams start
+    on ledges, in tunnels, and at mid-terrain, not just on the topmost surface layer
   Destructible terrain (crater carving persists)
   Projectile ballistics (Euler integration, wind, gravity, bounce/friction)
   Water death zone
@@ -24,7 +27,12 @@ Phase 2 — Renderer & Input
   Framebuffer rendering (/dev/fb0, BGRA) for Miyoo Mini Plus
   evdev button input
   8x8 pixel font
-  Camera follow + free pan (horizontal and vertical); L1+Up/Down pans vertically (v0.5.4.387)
+  Camera follow + free pan (horizontal and vertical); L1+Up/Down pans vertically (v0.5.4.387);
+    R1+Up/Down pans vertically with snap-back on release (v0.5.4.389)
+  All HUD elements screen-anchored to cam_y — HUD bar, FPS counter, avatar, weapon indicator,
+    weapon menu, and test-mode info stay at screen position when camera scrolls vertically (v0.5.4.389)
+  Cursor weapons (Garcia, Air Strike, Hand of Jerry) can now reach the full vertical map range
+    down to the waterline (v0.5.4.389)
   Hotseat local multiplayer
   Soldier skeletal animation (walk cycle, backflip, airborne lean)
   Team color rendering
@@ -35,8 +43,8 @@ Phase 3 — Weapons & Turn System
   Turn system: Acting → Watching → Retreat → Ending
   Loadout weapons (13): Bazooka, Grenade (variable fuse, L1/R1), Pistol (6-shot burst ∞),
     Shotgun (∞), MAC-10 (∞), Ninja Rope (x5), Clump Bomb (x2, 5 fragments flower pattern,
-    main blast 20 dmg, fragments 15 dmg), Molotov Cocktail (x2, 12 flames), TNT (x1),
-    Landmine (x2), Baseball Bat (x1), Plasma Torch (x3), Homing Missile (x1)
+    main blast 20 dmg, fragments 15 dmg), Molotov Cocktail (x2, 48 flames, ~2.5 min burn),
+    TNT (x1), Landmine (x2), Baseball Bat (x1), Plasma Torch (x3), Homing Missile (x1)
   Crate-only weapons: Revolver, Blasthive, Meteor Bomb, Sacred Ordnance,
     Garcia, Air Strike, Black Hole Bomb, Hand of Jerry
   Common crate pool: Landmine, Shotgun, TNT, Ninja Rope, Baseball Bat, Plasma Torch, Clump Bomb
@@ -46,7 +54,9 @@ Phase 3 — Weapons & Turn System
   Barrel chain reactions, fall damage, drown death
   Graves, headstones, blood splats
   WA-style fire physics: flames slide downhill, pool in pits, push soldiers
-  Weapon menu: 5-column grid layout (cell_w=92px)
+  Weapon menu: 4-column scrollable grid (cell_w=120px, cell_h=56px, MAX_ROWS=4)
+  Barrels 14–20 per map, mines 16–24 per map (scaled for 1920×960 world)
+  Scenery: 28 themed pixel-art objects per map (8/7/7/7/7 sprites per archetype)
 
 Phase 4 — Dedicated Server & Live Multiplayer
   Authoritative server (clients send inputs; server runs all physics)
@@ -103,6 +113,19 @@ INFRASTRUCTURE CHANGES (2026-06-28 through 2026-06-29)
   IRC dashboard (/ircdash/) and bot dashboard (/arty/dashboard/bot.html) now require admin key
   Bot server (mayhem_bot.py): all /notify/* endpoints gated by ?key= admin key check
   Port reference doc: assets/ports.txt
+
+RECENT CHANGES (scenery, map variety, molotov, perf, v0.5.4.390–.391 + pending, 2026-07-01)
+------------------------------------------------------------------------------------------
+  v0.5.4.390: Scenery objects — 12 per map, themed pixel-art sprites per archetype,
+    drawn behind terrain (src/renderer/scenery.rs). Weapon menu cells 92→120px wide.
+    HOMING MSL rename. Pistol fires on A-press frame.
+  v0.5.4.391: 15 more scenery sprite types (28 per map, 8/7/7/7/7 counts).
+    Flat plains sub-variant for archetype 0. Per-archetype HILL_AMP (cliffs 0.08,
+    canyon 0.10 vs old shared 0.24). Stronger canyon terracing, cliff warp. Barrels
+    14–20 and mines 16–24 (both client + server). Pistol sound on A-press frame.
+  Pending (uncommitted): Molotov 48 flames / ~2.5 min burn; weapon menu 4-col
+    scrollable; terrain gen ~40% faster (precomputed hill_col, octaves 4→3);
+    arty_api.py CPU fix (connection leak + semaphore cap + nice).
 
 RECENT CHANGES (vertical maps + scrolling, v0.5.4.387, 2026-06-30)
 -------------------------------------------------------------------

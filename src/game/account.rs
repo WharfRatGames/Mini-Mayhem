@@ -251,23 +251,23 @@ impl AccountScreen {
                     let text_col = if i == self.cursor { *col } else { Bgra::new(100, 100, 120) };
                     draw_str_shadow_scaled(buf, label, ix, iy, text_col, 2);
                 }
-                draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], cam_x);
+                draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], cam_x, 0);
             }
             LoginScreen::Username => {
                 self.username.draw(buf, cam_x);
-                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x);
+                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
             }
             LoginScreen::Password => {
                 self.password.draw(buf, cam_x);
-                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x);
+                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
             }
             LoginScreen::ConfirmPassword => {
                 self.confirm_password.draw(buf, cam_x);
-                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x);
+                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
             }
             LoginScreen::ChangePassword { .. } => {
                 self.password.draw(buf, cam_x);
-                draw_button_hints(buf, &[("START", "CONFIRM")], cam_x);
+                draw_button_hints(buf, &[("START", "CONFIRM")], cam_x, 0);
             }
         }
     }

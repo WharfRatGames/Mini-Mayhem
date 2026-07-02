@@ -1,7 +1,74 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.388
+## Version: 0.5.4.391
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+
+## Pending (uncommitted)
+- **Molotov rework** — 4× more flames (12→48 fire patches per throw); burn duration
+  ~2.5 minutes (4050–4950 ticks at 30 Hz, was 180–300). Dense lingering fire forces
+  soldiers to relocate or keep taking damage.
+- **Weapon menu scrollable** — layout changed to 4 columns (was 5), 56px row height
+  (was 64px); MAX_ROWS=4 so any loadout with more than 16 weapons scrolls. All
+  weapons now reachable on the Miyoo's small screen.
+- **Terrain generation ~40% faster** — hill-relief noise (previously re-evaluated
+  760× per column inside the y-loop) precomputed into a 1D `hill_col[]` Vec.
+  Octave count reduced 4→3 (fourth octave was ~6% of the signal). ~4.4M fewer
+  noise evaluations per map. Miyoo load times noticeably shorter on rolling maps.
+- **arty_api.py CPU fix** — background cache threads leaked SQLite connections on
+  every cycle (close() only on success path). Fixed with try/finally.
+  `threading.Semaphore(20)` caps concurrent request threads; `os.nice(5)` prevents
+  the API from monopolizing Pi cores. Deployed on Pi.
+
+## Recent changes (0.5.4.391)
+- **15 new scenery sprites** — five new draw functions per archetype added to
+  `src/renderer/scenery.rs`:
+  pastoral (0): sunflower, log, pebble cluster;
+  rugged (1): broken wall, lichen rock, cairn;
+  tropical (2): coconut, driftwood, crab trap;
+  underground (3): stalactite shard, rusted chain, ribcage;
+  arid (4): dry shrub, sun-bleached log, horns.
+  Sprite counts raised from [5,4,4,4,4] to [8,7,7,7,7]; 28 objects per map (was 12);
+  MIN_SPACING reduced 240→110px to allow density at the larger count.
+- **Flat plains sub-variant** — archetype 0 (hills) has a new WA Rocky/Desert-style
+  sub-variant: high threshold, near-zero fade, high contrast → mostly flat terrain
+  with scattered small bumps. Roughly 25% of hill maps now generate as flat plains.
+- **Per-archetype hill amplitude** — cliffs and canyon now use HILL_AMP 0.08/0.10
+  (was shared 0.24), so ridged noise and terracing define those archetypes rather
+  than rolling humps appearing on every map.
+- **Stronger canyon/cliff variety** — canyon terrace_mix floors raised (slot canyon
+  0.50, badlands 0.72, fortress 0.82); cliff warp_amp minimum raised to 0.40.
+- **Barrels 14–20, mines 16–24** — scaled up for the 1920×960 world (was 7–11 /
+  9–15). Both client and server placement functions updated identically.
+- **Pistol sound fix** — first shot in each burst now emits sound on the A-press
+  frame. Previously the burst-fire block ran before the A-press handler in the same
+  tick, delaying the first sound by one frame.
+
+## Recent changes (0.5.4.390)
+- **Scenery objects** — pixel-art decorations placed on every map (12 per map,
+  MIN_SPACING=240px), drawn behind terrain from `src/renderer/scenery.rs`.
+  Five themed sprite variants per archetype. Seed-derived and cosmetic only.
+- **Weapon menu wider cells** — cell width 92→120px for better name readability.
+  5-column layout retained at this version.
+- **HOMING MSL rename** — weapon displays as "HOMING MSL" (was truncated
+  "HOMING MISSILE").
+- **Pistol immediate first shot** — first shot fires on the A-press frame
+  (partial fix; sound still one frame late — fully corrected in 0.5.4.391).
+
+## Recent changes (0.5.4.389)
+- **HUD screen-anchored** — HUD bar, FPS counter, avatar box, weapon indicator, weapon menu,
+  test-mode seed/pixel-stats display, and pause overlay all track `cam_y` and stay at their
+  correct screen positions when the camera is scrolled vertically.
+- **R1+Up/Down vertical pan** — pans the camera vertically with snap-back to the active
+  soldier on release (same as R1+Left/Right for horizontal). L1+Up/Down continues to pan
+  without snap-back.
+- **Cursor vertical range** — Garcia, Air Strike, and Hand of Jerry cursors can now move
+  down to the waterline (was hard-capped at y=400); matches Homing Missile behaviour.
+- **Vertical spawn spread** — soldiers spawn at varied heights across all archetypes. Maps
+  with punched caves (hills, cliffs, islands, canyon) pre-scan for cave floors and reserve
+  half the spawn slots for underground positions, so teams start on ledges, in tunnels, and
+  at mid-terrain rather than all on the topmost surface layer.
+- **Cave generation speed** — Moore dilation passes reduced 4→2; test-mode entry and server
+  game startup are ~2× faster on cave-heavy maps (allocation ~3.7 MB instead of ~7.4 MB).
 
 ## Recent changes (0.5.4.388)
 - **WA-style terrain generation** — tuned `generate_tactical` to produce maps resembling

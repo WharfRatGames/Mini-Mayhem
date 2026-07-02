@@ -238,17 +238,14 @@ pub fn build_bg_cache(seed: u64) -> WorldBuffer {
 /// `WorldBuffer::copy_viewport_from_sky_aware`'s merged pass instead, so each
 /// pixel is written exactly once instead of being painted here and then
 /// overwritten by the terrain copy.
-pub fn copy_bg_viewport(buf: &mut WorldBuffer, cache: &WorldBuffer, terrain: &Terrain, seed: u64, cam_x: u32) {
+pub fn copy_bg_viewport(buf: &mut WorldBuffer, cache: &WorldBuffer, terrain: &Terrain, seed: u64, cam_x: u32, cam_y: u32) {
     let (par_x, dst_w) = match par_x_and_dst_w(seed, cam_x) {
         Some(v) => v,
         None => return,
     };
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
-    // Only paint rows that are sky for *every* visible column via the cheap
-    // row-memcpy pass; taller-sky columns get the extra band filled in by
-    // `copy_viewport_from_sky_aware` instead, avoiding double-painting.
     let min_y = terrain.sky_limit[cam_x as usize..(cam_x + SCREEN_W) as usize]
         .iter().copied().min().unwrap_or(0)
         .min(WATER_Y);
-    buf.copy_bg_sky_band(cache, cam_x, par_x, dst_w, min_y);
+    buf.copy_bg_sky_band(cache, cam_x, cam_y, par_x, dst_w, min_y);
 }
