@@ -71,12 +71,18 @@ pub struct CollageParams {
     /// True when synthesizing a cavern from island art: sample is inverted
     /// (WA land → carved air) so chambers keep the WA silhouette character.
     invert: bool,
-    warp_x: OpenSimplex,
-    warp_y: OpenSimplex,
-    warp_freq: f64,
-    warp_amp_x: f64,
-    warp_amp_y: f64,
+    /// Domain-warp offsets pre-evaluated on a coarse grid over [0,1]² and
+    /// bilinearly interpolated in `collage_density`. The warp is very low
+    /// frequency (a handful of cycles across the map), so a ~6px grid loses
+    /// nothing — and it cuts 2 OpenSimplex evaluations per world pixel, which
+    /// dominated map-generation time on the Miyoo. Amplitude is baked in.
+    warp_gx: Vec<f32>,
+    warp_gy: Vec<f32>,
 }
+
+/// Warp grid resolution (cells across / down the normalized map).
+const WARP_GW: usize = 512;
+const WARP_GH: usize = 128;
 
 fn lcg(s: &mut u64) -> u64 {
     *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -171,19 +177,48 @@ pub fn collage_params(seed: u64, cavern: bool) -> CollageParams {
     // (total blend window 60–120px).
     let fade = rnd(&mut r, 0.016, 0.016);
 
+    // Pre-evaluate the domain warp on the coarse grid (amplitude baked in).
+    let warp_x = OpenSimplex::new(seed.wrapping_add(8000) as u32);
+    let warp_y = OpenSimplex::new(seed.wrapping_add(9000) as u32);
+    let warp_freq = rnd(&mut r, 5.0, 3.0);
+    // Bend amplitude ~10-25px, expressed in normalized map units.
+    let warp_amp_x = rnd(&mut r, 10.0, 15.0) / WA_MASK_W as f64;
+    let warp_amp_y = rnd(&mut r, 10.0, 15.0) / WA_MASK_H as f64;
+    let mut warp_gx = Vec::with_capacity((WARP_GW + 1) * (WARP_GH + 1));
+    let mut warp_gy = Vec::with_capacity((WARP_GW + 1) * (WARP_GH + 1));
+    for gy in 0..=WARP_GH {
+        let ny = gy as f64 / WARP_GH as f64;
+        for gx in 0..=WARP_GW {
+            let nx = gx as f64 / WARP_GW as f64;
+            warp_gx.push((warp_x.get([nx * warp_freq, ny * warp_freq]) * warp_amp_x) as f32);
+            warp_gy.push((warp_y.get([nx * warp_freq + 7.7, ny * warp_freq]) * warp_amp_y) as f32);
+        }
+    }
+
     CollageParams {
         n_segs,
         bounds,
         segs,
         fade,
         invert,
-        warp_x: OpenSimplex::new(seed.wrapping_add(8000) as u32),
-        warp_y: OpenSimplex::new(seed.wrapping_add(9000) as u32),
-        warp_freq: rnd(&mut r, 5.0, 3.0),
-        // Bend amplitude ~10–25px, expressed in normalized map units.
-        warp_amp_x: rnd(&mut r, 10.0, 15.0) / WA_MASK_W as f64,
-        warp_amp_y: rnd(&mut r, 10.0, 15.0) / WA_MASK_H as f64,
+        warp_gx,
+        warp_gy,
     }
+}
+
+/// Bilinear lookup into a warp grid at normalized `(nx, ny)`.
+fn warp_at(grid: &[f32], nx: f64, ny: f64) -> f64 {
+    let fx = nx.clamp(0.0, 1.0) * WARP_GW as f64;
+    let fy = ny.clamp(0.0, 1.0) * WARP_GH as f64;
+    let x0 = (fx as usize).min(WARP_GW - 1);
+    let y0 = (fy as usize).min(WARP_GH - 1);
+    let tx = fx - x0 as f64;
+    let ty = fy - y0 as f64;
+    let row = WARP_GW + 1;
+    let top = grid[y0 * row + x0] as f64 + (grid[y0 * row + x0 + 1] as f64 - grid[y0 * row + x0] as f64) * tx;
+    let bot = grid[(y0 + 1) * row + x0] as f64
+        + (grid[(y0 + 1) * row + x0 + 1] as f64 - grid[(y0 + 1) * row + x0] as f64) * tx;
+    top + (bot - top) * ty
 }
 
 /// Mask index of the widest segment — drives the map's cosmetic theme
@@ -235,30 +270,38 @@ fn segment_coverage(seg: &SegmentSource, lo: f64, hi: f64) -> f64 {
 /// RNG, fixed-order f64 math.
 pub fn collage_density(p: &CollageParams, nx: f64, ny: f64) -> f64 {
     // Low-frequency domain warp bends the spliced art so seams and repeats
-    // don't read as copies.
-    let wx = p.warp_x.get([nx * p.warp_freq, ny * p.warp_freq]) * p.warp_amp_x;
-    let wy = p.warp_y.get([nx * p.warp_freq + 7.7, ny * p.warp_freq]) * p.warp_amp_y;
+    // don't read as copies. Bilinear grid lookup — see `CollageParams::warp_gx`.
+    let wx = warp_at(&p.warp_gx, nx, ny);
+    let wy = warp_at(&p.warp_gy, nx, ny);
     let nx = (nx + wx).rem_euclid(1.0);
     let ny = (ny + wy).clamp(0.0, 1.0 - 1e-9);
 
-    // Weight-blend the (at most two) segments whose fade window covers nx.
-    let mut num = 0.0f64;
-    let mut den = 0.0f64;
-    for i in 0..p.n_segs {
-        let lo = p.bounds[i];
-        let hi = p.bounds[i + 1];
-        let wl = if i == 0 { 1.0 } else { smoothstep((nx - (lo - p.fade)) / (2.0 * p.fade)) };
-        let wr = if i == p.n_segs - 1 {
-            1.0
-        } else {
-            smoothstep(((hi + p.fade) - nx) / (2.0 * p.fade))
-        };
-        let w = wl.min(wr);
-        if w > 0.0 {
-            num += w * sample_segment(&p.segs[i], nx, ny);
-            den += w;
+    // Fast path: away from every seam, exactly one segment covers nx — sample
+    // it directly (single mask-bit lookup; this is the hot path for ~95% of
+    // pixels). Near a seam, crossfade the two adjacent segments.
+    let mut i = p.n_segs - 1;
+    for k in 0..p.n_segs - 1 {
+        if nx < p.bounds[k + 1] {
+            i = k;
+            break;
         }
     }
-    let d = if den > 0.0 { num / den } else { 0.0 };
+    let near_left = i > 0 && nx < p.bounds[i] + p.fade;
+    let near_right = i < p.n_segs - 1 && nx > p.bounds[i + 1] - p.fade;
+    let d = if !near_left && !near_right {
+        sample_segment(&p.segs[i], nx, ny)
+    } else {
+        // Blend across the closer boundary: weight of the right-hand segment
+        // ramps 0→1 over [b - fade, b + fade].
+        let (a, b, bound) = if near_left {
+            (i - 1, i, p.bounds[i])
+        } else {
+            (i, i + 1, p.bounds[i + 1])
+        };
+        let t = smoothstep((nx - (bound - p.fade)) / (2.0 * p.fade));
+        let sa = sample_segment(&p.segs[a], nx, ny);
+        let sb = sample_segment(&p.segs[b], nx, ny);
+        sa + (sb - sa) * t
+    };
     if p.invert { 1.0 - d } else { d }
 }
