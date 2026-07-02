@@ -281,8 +281,10 @@ impl Framebuffer {
         let src_px = unsafe {
             std::slice::from_raw_parts(src.as_ptr() as *const u32, w)
         };
-        for i in 0..w {
-            dst_px[w - 1 - i] = src_px[i];
+        // Forward store + reversed load: LLVM vectorizes this into NEON
+        // rev+store, unlike the scalar reversed-store loop it replaces.
+        for (d, s) in dst_px.iter_mut().zip(src_px.iter().rev()) {
+            *d = *s;
         }
     }
 

@@ -30,6 +30,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] 8×8 pixel font
 - [x] Camera follow and free pan (horizontal and vertical; L1+Up/Down vertical pan v0.5.4.387; R1+Up/Down with snap-back v0.5.4.389; aim no longer rotates while panning with R1, v0.5.4.394)
 - [x] Fixed invisible soldiers — camera-relative draw culling now used for soldiers/headstones/projectiles/explosions instead of a fixed screen window (v0.5.4.395)
+- [x] 30fps pacing groundwork — exact 33.333ms tick, absolute-deadline frame pacing (sleep overshoot no longer compounds), NEON-vectorizable fb row flip, per-section µs profiler in TEST overlay (in working tree, pending deploy)
 - [x] All HUD elements screen-anchored to cam_y — stay at correct screen position when camera scrolls vertically (v0.5.4.389)
 - [x] Cursor weapons full vertical range — Garcia/Air Strike/Hand of Jerry can reach the waterline (v0.5.4.389)
 - [x] Hotseat local multiplayer
@@ -55,6 +56,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Barrel explosions and chain reactions (14–20 barrels per map)
 - [x] Map landmines 16–24 per map (v0.5.4.391)
 - [x] Themed scenery objects — 28 per map, styled per WA template / cavern mode (v0.5.4.390/.391)
+- [x] Solid scenery — per-sprite collision footprints stamped into the object mask; soldiers stand on them, projectiles collide; placement rejects spots embedded in slopes/overhangs (in working tree, pending deploy)
 - [x] Fall damage
 - [x] Drown death
 

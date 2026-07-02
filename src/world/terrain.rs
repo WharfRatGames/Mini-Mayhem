@@ -53,7 +53,8 @@ pub struct Terrain {
     /// dispatch.
     pub is_cavern: bool,
     /// Decorative scenery objects placed seed-deterministically on the terrain surface.
-    /// Purely cosmetic — no collision effect.
+    /// Solid: stamped into the object mask each tick (see `stamp_objects`), so
+    /// soldiers can stand on them and projectiles collide with them.
     pub scenery: Vec<SceneryObject>,
 }
 
@@ -88,6 +89,47 @@ pub struct SceneryObject {
     pub x: u32,
     pub y: u32,
     pub sprite: u8,
+}
+
+impl SceneryObject {
+    /// Collision footprint as (half_width, height) in pixels: the solid box is
+    /// `x-half_w ..= x+half_w`, `y-height ..= y`. Approximates the drawn sprite
+    /// (see renderer/scenery.rs); thin decorations (flames, thorns, ropes) are
+    /// deliberately excluded so soldiers stand on the visual bulk of the object.
+    /// Used both for placement clearance at generation time and per-tick object
+    /// stamping — MUST stay deterministic and identical on client and server.
+    pub fn footprint(&self, theme: Theme) -> (i32, i32) {
+        match theme {
+            Theme::Pastoral => match self.sprite {
+                0 => (6, 24),  // flower
+                1 => (9, 18),  // mushroom
+                2 => (12, 10), // mossy rock
+                3 => (14, 25), // fence post + rails
+                4 => (13, 18), // bush
+                5 => (6, 32),  // sunflower
+                6 => (18, 10), // log
+                _ => (12, 9),  // pebble cluster
+            },
+            Theme::Rugged => match self.sprite {
+                0 => (11, 40), // pine tree
+                1 => (15, 20), // boulder
+                2 => (10, 18), // wooden crate
+                3 => (12, 14), // dead stump
+                4 => (18, 22), // broken wall
+                5 => (14, 15), // lichen rock
+                _ => (10, 21), // cairn
+            },
+            Theme::Underground => match self.sprite {
+                0 => (14, 32), // crystal cluster
+                1 => (16, 14), // bone pile
+                2 => (3, 22),  // torch (handle+coal; flame not solid)
+                3 => (8, 16),  // skull
+                4 => (20, 9),  // fallen stalactite shard
+                5 => (10, 16), // rusted chain pile
+                _ => (12, 18), // ribcage
+            },
+        }
+    }
 }
 
 impl Terrain {
@@ -1058,7 +1100,18 @@ impl Terrain {
                 if placed.iter().any(|o| o.x.abs_diff(col) < MIN_SPACING) { continue; }
                 srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let sprite = (srng >> 33) as u8 % count;
-                placed.push(SceneryObject { x: col, y: surface_y, sprite });
+                // Objects sit ON the terrain surface, never inside it: the whole
+                // footprint box above the base row must be air. Rejects spots on
+                // slopes/next to cliffs where the sprite would embed in a hillside,
+                // and under overhangs too low to fit the object.
+                let obj = SceneryObject { x: col, y: surface_y, sprite };
+                let (half_w, height) = obj.footprint(Theme::of(terrain.is_cavern, terrain.template_id));
+                let base = surface_y as i32;
+                let clear = (1..=height).all(|dy| {
+                    (-half_w..=half_w).all(|dx| !terrain.is_solid(col as i32 + dx, base - dy))
+                });
+                if !clear { continue; }
+                placed.push(obj);
                 if placed.len() == NUM_OBJECTS as usize { break; }
             }
             terrain.scenery = placed;

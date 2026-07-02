@@ -109,9 +109,12 @@ pub struct LoopState {
     pub bg_debris:               Vec<crate::renderer::background::BgParticle>,
     /// Smoothed FPS, updated by main.rs once per second and drawn bottom-right.
     pub display_fps:             u32,
-    /// Per-section pixel-write counts from the most recent frame's render
-    /// (TEST mode profiling overlay — see `render_my_team`'s `mark!` calls).
-    pub pixel_stats:              Vec<(&'static str, u64)>,
+    /// Per-section (pixel-writes, elapsed µs) from the most recent frame's
+    /// render (TEST mode profiling overlay — see `render_my_team`'s `mark!` calls).
+    pub pixel_stats:              Vec<(&'static str, u64, u64)>,
+    /// µs spent in the previous frame's blit_to_fb (row flip + present),
+    /// recorded by main.rs and shown in the TEST overlay one frame late.
+    pub blit_us:                  u64,
     /// Cached water surface strip (SCREEN_W × WATER_STRIP_H × 4 BGRA bytes).
     /// Regenerated every 3 ticks or when cam_x changes; blitted each frame.
     pub water_strip:      Vec<u8>,
@@ -141,6 +144,7 @@ impl LoopState {
             bg_debris: Vec::new(),
             display_fps: 0,
             pixel_stats: Vec::new(),
+            blit_us: 0,
             water_strip: vec![0u8; (SCREEN_W * WATER_STRIP_H * 4) as usize],
             water_strip_tick: u32::MAX,
             water_strip_cam: u32::MAX,
@@ -3471,12 +3475,19 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // Per-section pixel-write profiling (TEST mode overlay, see section 9b/9d
     // below). `mark!` records how many pixels were written since the previous
     // mark and resets the running total.
-    let mut pixel_stats: Vec<(&'static str, u64)> = Vec::new();
+    let mut pixel_stats: Vec<(&'static str, u64, u64)> = Vec::new();
     let mut last_pw = buf.pixel_writes;
+    let mut last_t = std::time::Instant::now();
     macro_rules! mark {
         ($label:expr) => {
-            pixel_stats.push(($label, buf.pixel_writes - last_pw));
+            let now_t = std::time::Instant::now();
+            pixel_stats.push((
+                $label,
+                buf.pixel_writes - last_pw,
+                now_t.duration_since(last_t).as_micros() as u64,
+            ));
             last_pw = buf.pixel_writes;
+            last_t = now_t;
         };
     }
 
@@ -4722,19 +4733,29 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         use crate::renderer::fb::Bgra;
         use crate::world::SCREEN_W;
         let mut sorted = pixel_stats.clone();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
-        let total_pw: u64 = sorted.iter().map(|(_, n)| n).sum();
+        sorted.sort_by(|a, b| b.2.cmp(&a.2)); // hottest by time, not pixel count
+        let total_pw: u64 = sorted.iter().map(|(_, n, _)| n).sum();
+        let total_us: u64 = sorted.iter().map(|(_, _, t)| t).sum();
         let mut y = cam_y as i32 + 28;
         {
-            let text = format!("{:<14}{:>7}", "TOTAL", total_pw);
+            let text = format!("{:<14}{:>7}{:>6}us", "TOTAL", total_pw, total_us);
             let w = str_width_scaled(&text, 1);
             let x = cam_x as i32 + SCREEN_W as i32 - w - 6;
             buf.fill_rect(x - 2, y - 1, (w + 4) as u32, 10, Bgra::new(30, 10, 10));
             draw_str_scaled(buf, &text, x, y, Bgra::new(255, 180, 80), 1);
             y += 11;
         }
-        for (label, px) in sorted.iter().take(8) {
-            let text = format!("{:<14}{:>7}", label, px);
+        {
+            // Previous frame's fb blit (row flip + present) — timed in main.rs.
+            let text = format!("{:<14}{:>7}{:>6}us", "blit(prev)", "-", lstate.blit_us);
+            let w = str_width_scaled(&text, 1);
+            let x = cam_x as i32 + SCREEN_W as i32 - w - 6;
+            buf.fill_rect(x - 2, y - 1, (w + 4) as u32, 10, Bgra::new(10, 25, 10));
+            draw_str_scaled(buf, &text, x, y, Bgra::new(180, 255, 180), 1);
+            y += 11;
+        }
+        for (label, px, us) in sorted.iter().take(8) {
+            let text = format!("{:<14}{:>7}{:>6}us", label, px, us);
             let w = str_width_scaled(&text, 1);
             let x = cam_x as i32 + SCREEN_W as i32 - w - 6;
             buf.fill_rect(x - 2, y - 1, (w + 4) as u32, 10, Bgra::new(10, 10, 25));
@@ -4841,6 +4862,22 @@ fn stamp_objects(game: &mut GameState) {
         let cy = barrel.pos.y as i32;
         for dy in -24..=0i32 {
             for dx in -7..=7i32 {
+                game.terrain.stamp_object(cx + dx, cy + dy);
+            }
+        }
+    }
+
+    // Scenery: solid like barrels — soldiers stand on them, projectiles collide.
+    // Footprints are per-sprite (see SceneryObject::footprint); positions are
+    // seed-derived so this is identical on client and server.
+    let theme = crate::world::terrain::Theme::of(game.terrain.is_cavern, game.terrain.template_id);
+    for i in 0..game.terrain.scenery.len() {
+        let obj = game.terrain.scenery[i];
+        let (half_w, height) = obj.footprint(theme);
+        let cx = obj.x as i32;
+        let cy = obj.y as i32;
+        for dy in -height..=0i32 {
+            for dx in -half_w..=half_w {
                 game.terrain.stamp_object(cx + dx, cy + dy);
             }
         }

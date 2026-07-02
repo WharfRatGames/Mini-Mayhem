@@ -8,7 +8,7 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 - Every map is a unique collage of real Worms Armageddon terrain art — each seed splices, warps, and crossfades segments of extracted WA silhouettes into a novel map; cavern maps (~20%) carve chambers from the same art, inverted; chasms, overhangs, and caves stay seed-random on any map (v0.5.4.392–.397)
 - Maps are twice the screen height — terrain spans 700px vertically with peaks near the top and deep caves/canyons; camera scrolls vertically to follow the action (L1+Up/Down to pan; R1+Up/Down to pan with snap-back)
 - Soldiers spawn at varied heights — cave ledges, tunnels, and mid-terrain, not just the topmost surface
-- 28 themed pixel-art scenery objects per map — styled per WA template / cavern mode (pastoral, rugged, underground)
+- 28 themed pixel-art scenery objects per map — styled per WA template / cavern mode (pastoral, rugged, underground); solid obstacles you can stand on and shoot, always placed on top of terrain
 - Fully destructible terrain — craters, tunnels, and collapses persist
 - Turn-based flow: Acting → Watching → Retreat → Ending
 - Wind, gravity, per-soldier HP, fall damage, and water/drowning mechanics

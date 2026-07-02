@@ -3,6 +3,24 @@
 ## Version: 0.5.4.397
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
+## Pending in working tree (not yet built/deployed — needs VERSION + REQUIRED_VERSION bump; scenery placement changes map generation)
+- **Solid scenery** — scenery objects are now real obstacles: per-sprite collision
+  footprints (`SceneryObject::footprint()` in `src/world/terrain.rs`, all 22 sprites
+  across the 3 themes) are stamped into the per-tick object mask in `stamp_objects()`
+  alongside barrels/mines, so soldiers stand on them and projectiles collide (both go
+  through `is_blocked`). Placement now rejects spots where the footprint box above the
+  surface overlaps solid terrain — objects sit ON terrain, never embedded in slopes or
+  under low overhangs. All-paths correct automatically (collision runs in `simulate`).
+- **FPS 25→30 groundwork** — (1) `TICK_DURATION` now exactly 33,333µs (was
+  integer-truncated 33ms) and the main game loop uses absolute-deadline pacing instead
+  of sleep-the-remainder, so Linux sleep overshoot no longer compounds (~28fps ceiling
+  before); (2) `Framebuffer::blit_row` 180° flip rewritten as forward-store/reversed-load
+  so LLVM can NEON-vectorize it; (3) TEST-mode profiler overlay now shows per-section
+  elapsed µs (sorted by time) plus previous frame's `blit_to_fb` cost (`lstate.blit_us`) —
+  run a TEST match on-device to find the next hot spot (suspects: water strip regen,
+  terrain viewport copy).
+- **New pistol.wav** — replacement sound synced to `assets/sfx/` and `deploy/assets/sfx/`.
+
 ## Recent changes (0.5.4.392–0.5.4.397)
 - **Pistol SFX + generation speed (0.5.4.397)** — `pistol.wav` was a 48-second
   recording with one bang at t=9.3s: each shot's playback thread held the Miyoo's

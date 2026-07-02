@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.397";
+const VERSION: &str = "0.5.4.398";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -24,9 +24,9 @@ use game::{
     loop_runner::{LoopState, tick},
 };
 
-/// Target tick rate — 20 Hz.
+/// Target tick rate — 30 Hz.
 const TICK_HZ:       u64      = 30;
-const TICK_DURATION: Duration = Duration::from_millis(1000 / TICK_HZ);
+const TICK_DURATION: Duration = Duration::from_micros(1_000_000 / TICK_HZ);
 
 fn main() {
     // Release any audio/device fds inherited from the Onion launcher so that
@@ -737,6 +737,10 @@ fn main() {
     // Dropped on any `continue 'game` so the title screen gets normal OS Menu.
     #[cfg(not(feature = "desktop"))]
     let _menu_guard = { let _ = std::fs::write("/tmp/disable_menu_button", b""); MenuGuard };
+    // Absolute-deadline pacing: sleeping the *remainder* each frame lets the
+    // ~1-2ms Linux sleep overshoot compound into ~35-36ms frames (~28fps).
+    // Advancing a fixed deadline instead absorbs overshoot in the next frame.
+    let mut next_deadline = Instant::now() + TICK_DURATION;
     loop {
         let frame_start = Instant::now();
         input.poll();
@@ -1261,7 +1265,9 @@ fn main() {
             }
         };
 
+        let blit_start = Instant::now();
         buf.blit_to_fb(&mut fb, cam.left_edge(), cam.top_edge());
+        lstate.blit_us = blit_start.elapsed().as_micros() as u64;
 
         // Measure actual inter-blit interval so the counter reflects real display
         // cadence rather than loop iterations (sleep overshoot can make the two diverge).
@@ -1275,9 +1281,13 @@ fn main() {
             fps_accum_us = 0;
         }
 
-        let elapsed = frame_start.elapsed();
-        if elapsed < TICK_DURATION {
-            std::thread::sleep(TICK_DURATION - elapsed);
+        let now = Instant::now();
+        if now < next_deadline {
+            std::thread::sleep(next_deadline - now);
+            next_deadline += TICK_DURATION;
+        } else {
+            // Frame ran past its slot — resync rather than trying to catch up.
+            next_deadline = now + TICK_DURATION;
         }
         if !running {
             if net_conn.is_some() { return_to_mp = true; }
