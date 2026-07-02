@@ -127,15 +127,17 @@ struct DebrisStyle {
     spin: f32,        // max rotation speed for flutter
 }
 
-/// Debris look: cavern maps get dust+embers; surface maps vary by which of the
-/// 2 WA masks drove the silhouette (template_id) — pollen or snow.
+/// Debris look: cavern maps get dust+embers; surface maps vary by the
+/// collage's dominant WA mask (template_id → Theme) — pollen or snow.
 fn debris_style(is_cavern: bool, template_id: u8) -> DebrisStyle {
-    if is_cavern {
-        DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 220, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 } // dust + embers
-    } else if template_id == 0 {
-        DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 180, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 } // pollen
-    } else {
-        DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 420, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 } // snow
+    use crate::world::terrain::Theme;
+    match Theme::of(is_cavern, template_id) {
+        Theme::Underground =>
+            DebrisStyle { colour: Bgra::new(96,  88,  82),  fall: 0.24, drift: 0.7, count: 220, big_chance: 8,  glow_chance: 20, sway_amp: 0.3, sway_speed: 0.06, spin: 0.06 }, // dust + embers
+        Theme::Pastoral =>
+            DebrisStyle { colour: Bgra::new(212, 200, 140), fall: 0.10, drift: 0.9, count: 180, big_chance: 8,  glow_chance: 0,  sway_amp: 0.8, sway_speed: 0.09, spin: 0.14 }, // pollen
+        Theme::Rugged =>
+            DebrisStyle { colour: Bgra::new(238, 242, 250), fall: 0.55, drift: 1.2, count: 420, big_chance: 30, glow_chance: 0,  sway_amp: 0.9, sway_speed: 0.10, spin: 0.18 }, // snow
     }
 }
 

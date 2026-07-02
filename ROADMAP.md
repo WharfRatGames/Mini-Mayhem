@@ -7,13 +7,11 @@ A living document of what's shipped, what's in progress, and what's coming.
 ## ✅ Phase 1 — Terrain & Physics
 *Core engine foundation*
 
-- [x] Procedural terrain generation (OpenSimplex density field, 5 archetypes)
-- [x] Smooth, organic silhouettes (density field box-blurred before thresholding, v0.5.4.385/.386)
+- [x] Terrain generated from real Worms Armageddon map art — 2 masks extracted from the original game's land.dat, baked as Rust constants, seed picks mask/shift/mirror (v0.5.4.392)
+- [x] Archetype system removed — replaced by template_id (WA mask) + is_cavern (~20% odds); chasms/overhangs/caves now seed-random on any map (v0.5.4.393)
 - [x] Maps twice the screen height — 700px vertical terrain range, generator tuned for full use (v0.5.4.387)
-- [x] WA-style terrain — sharper silhouettes, heavy cave coverage, wider chasms, landmine max damage 50 (v0.5.4.388)
 - [x] Vertical spawn spread — soldiers spawn at varied heights (cave ledges, tunnels, mid-terrain) not just the topmost surface (v0.5.4.389)
-- [x] Map variety — flat plains sub-variant, per-archetype hill amplitude, stronger canyon terracing and cliff warp (v0.5.4.391)
-- [x] Terrain generation ~40% faster — precomputed hill_col[], octaves 4→3 (~4.4M fewer noise calls per map; pending)
+- [x] Terrain generation ~40% faster — precomputed hill_col[], octaves 4→3 (~4.4M fewer noise calls per map, v0.5.4.394)
 - [x] Crater carving (destructible terrain)
 - [x] Euler projectile ballistics
 - [x] Wind simulation
@@ -28,7 +26,8 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] `/dev/fb0` direct framebuffer rendering (BGRA)
 - [x] `evdev` hardware button input
 - [x] 8×8 pixel font
-- [x] Camera follow and free pan (horizontal and vertical; L1+Up/Down vertical pan v0.5.4.387; R1+Up/Down with snap-back v0.5.4.389)
+- [x] Camera follow and free pan (horizontal and vertical; L1+Up/Down vertical pan v0.5.4.387; R1+Up/Down with snap-back v0.5.4.389; aim no longer rotates while panning with R1, v0.5.4.394)
+- [x] Fixed invisible soldiers — camera-relative draw culling now used for soldiers/headstones/projectiles/explosions instead of a fixed screen window (v0.5.4.395)
 - [x] All HUD elements screen-anchored to cam_y — stay at correct screen position when camera scrolls vertically (v0.5.4.389)
 - [x] Cursor weapons full vertical range — Garcia/Air Strike/Hand of Jerry can reach the waterline (v0.5.4.389)
 - [x] Hotseat local multiplayer
@@ -53,7 +52,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Blood splats
 - [x] Barrel explosions and chain reactions (14–20 barrels per map)
 - [x] Map landmines 16–24 per map (v0.5.4.391)
-- [x] Themed scenery objects — 28 per map, 8/7/7/7/7 sprite variants per archetype (v0.5.4.390/.391)
+- [x] Themed scenery objects — 28 per map, styled per WA template / cavern mode (v0.5.4.390/.391)
 - [x] Fall damage
 - [x] Drown death
 
@@ -106,7 +105,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [ ] **Spectator mode** — watch a live match in progress without participating
 - [ ] **Replay system** — save and replay matches locally
 - [ ] **Additional weapons** — new crate-only weapons to expand the pool
-- [ ] **Map variety** — additional terrain archetypes and sub-variants (fortress maps, etc.)
+- [ ] **Map variety** — more real WA terrain masks beyond the current 2, additional sub-variants
 - [ ] **Server monitoring dashboard** — uptime, active matches, player counts
 - [ ] **Rate limiting on API** — per-IP rate limits on `/register` and `/login` to prevent brute force
 - [ ] **Input stream logging** — full per-match input logs for future replay analysis and anti-cheat

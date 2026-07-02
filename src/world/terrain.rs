@@ -42,20 +42,42 @@ pub struct Terrain {
     /// Index (0–23) into the terrain texture atlas, chosen per map from the seed.
     /// Renderer samples this tile to texture the solid silhouette.
     pub surface_texture: u8,
-    /// Which of the 2 real Worms Armageddon terrain masks this map's
-    /// silhouette was drawn from (see wa_templates::wa_density). Meaningless
-    /// when `is_cavern` is true. Drives cosmetic dispatch (sky/debris/dirt
-    /// tint/scenery theme) so there's some visual variety tied to the
-    /// underlying real map data.
+    /// The dominant WA source mask of this map's collage (see
+    /// wa_templates::collage_params / dominant_template_id). Drives cosmetic
+    /// dispatch via `Theme::of` (sky/debris/dirt tint/scenery theme) so the
+    /// visual theme follows the underlying real map art.
     pub template_id: u8,
-    /// True for the occasional carved-cavern map (a separate solid-rock
-    /// fill-and-carve generator, not derived from the WA masks). Drives
-    /// spawn placement (caverns put some soldiers underground) and cosmetic
+    /// True for the occasional carved-cavern map (~20% of seeds): solid rock
+    /// with chambers carved by the inverted WA collage. Drives spawn
+    /// placement (caverns put some soldiers underground) and cosmetic
     /// dispatch.
     pub is_cavern: bool,
     /// Decorative scenery objects placed seed-deterministically on the terrain surface.
     /// Purely cosmetic — no collision effect.
     pub scenery: Vec<SceneryObject>,
+}
+
+/// Cosmetic biome theme for a map (sky gradient, debris, dirt tint, scenery
+/// set). Derived from `is_cavern` + `template_id` (the dominant WA source
+/// mask of the collage) — single source of truth for every dispatch site so
+/// scenery sprite counts, renderers, etc. can never disagree.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Theme {
+    Underground,
+    Pastoral,
+    Rugged,
+}
+
+impl Theme {
+    pub fn of(is_cavern: bool, template_id: u8) -> Theme {
+        if is_cavern {
+            Theme::Underground
+        } else if template_id % 2 == 0 {
+            Theme::Pastoral
+        } else {
+            Theme::Rugged
+        }
+    }
 }
 
 /// A single decorative scenery object placed on the terrain surface.
@@ -304,10 +326,11 @@ impl Terrain {
         terrain
     }
 
-    /// Multi-pass tactical terrain: silhouette drawn from one of 2 real Worms
-    /// Armageddon terrain masks (wa_density), plus an occasional carved-cavern
-    /// map (is_cavern, ~20% of seeds) using an independent solid-rock fill+carve
-    /// generator. Phases 6 & 7 (smoothing + spawn guarantee) are always applied.
+    /// Multi-pass tactical terrain: every seed composes a novel silhouette as a
+    /// collage of real Worms Armageddon terrain art (wa_templates::collage_density
+    /// — segments spliced/warped/crossfaded per seed). Cavern maps (~20% of seeds)
+    /// carve chambers from the same collage, inverted. Phases 6 & 7 (smoothing +
+    /// spawn guarantee) are always applied.
     pub fn generate_tactical(seed: u64) -> Self {
         fn lcg(s: &mut u64) -> u64 {
             *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -364,15 +387,16 @@ impl Terrain {
         let hill = OpenSimplex::new(seed.wrapping_add(7000) as u32);
 
         // ── Phase 0: Feature selection (all seed-driven) ──────────────────────────
-        // Which of the 2 real WA terrain masks drives this map's silhouette (must
-        // match wa_density's own seed&1 pick — see wa_templates.rs). Meaningless
-        // when is_cavern is true.
-        terrain.template_id = (seed & 1) as u8;
-        // Occasional carved-cavern map: an independent solid-rock fill-and-carve
-        // generator (not derived from the WA masks). Kept at the same ~20% odds
-        // the old archetype roll gave it.
+        // Occasional cavern map (~20% odds), carved from the same WA source
+        // art (inverted) instead of the old independent fill+carve generator.
         let is_cavern = lcg(&mut rng) % 5 == 0;
         terrain.is_cavern = is_cavern;
+        // Seed-based collage over the real WA masks: every seed composes a
+        // novel silhouette from segments of the source art (see wa_templates).
+        // Uses its own private RNG stream — draw order here is unaffected.
+        let cparams = super::wa_templates::collage_params(seed, is_cavern);
+        // Cosmetic theme follows the collage's dominant source mask.
+        terrain.template_id = super::wa_templates::dominant_template_id(&cparams);
         // Surface texture: seed-driven raw selector; the renderer maps it modulo
         // the pooled atlas tile count (client/server agree from the same seed).
         terrain.surface_texture = lcg(&mut rng) as u8;
@@ -433,11 +457,12 @@ impl Terrain {
             Vec::new()
         };
 
-        // ── Phase 2: Density field (skipped for cave maps — they use fill+carve) ──
+        // ── Phase 2: Density field ────────────────────────────────────────────────
         if is_cavern {
-            // Cave maps start from a completely solid rock band and carve air out.
-            // This gives the Worms Armageddon signature look: enclosed chambers,
-            // textured rock walls, vertical shafts from sky to cave system.
+            // Cavern maps: solid rock band with chambers carved by the same WA
+            // collage that shapes island maps — inverted, so real WA land
+            // silhouettes become the air chambers (authentic WA edge character
+            // on every cave wall). Enclosed: sealed rock cap above, solid sides.
 
             // proportional to terrain height so cave maps scale with WORLD_H
             let sky_floor: i32 = TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.14) as i32; // ~178px: sky opening above
@@ -454,93 +479,83 @@ impl Terrain {
                 }
             }
 
-            // B — Organic noise seeding (Worms-style). Carve air where a layered
-            // OpenSimplex field falls below a threshold, biased into 2–3 stacked
-            // horizontal layers so the result has multiple vertical levels rather
-            // than one blob. Cellular automata (step C) then rounds it into caverns,
-            // pillars and overhangs.
-            let t_air = rnd(&mut rng, 0.40, 0.05);                 // ~0.40–0.45 air threshold (solid-dominant rock)
-            let fx = 6.0 + (lcg(&mut rng) % 5) as f64;             // 6–10 horizontal cycles
-            let fy = 5.0 + (lcg(&mut rng) % 4) as f64;             // 5–8 vertical cycles
-            let layers = 2.0 + (lcg(&mut rng) % 2) as f64;         // 2–3 stacked levels
-            const CONTRAST: f64 = 2.0;                             // expand noise spread → clean chambers/tunnels
-            let band_span = (CAVE_FLOOR - SKY_FLOOR) as f64;
+            // B — WA-collage density over the rock band [SKY_FLOOR, CAVE_FLOOR):
+            // solid-ness comes from the inverted WA collage (real WA land shapes
+            // become carved chambers), plus a low-weight noise octave for per-seed
+            // edge texture, a floor bias so chambers keep a solid base above the
+            // water gap, and a hard side seal. Same box-blur+threshold treatment
+            // as the island branch so cave walls come out rounded/organic.
+            // Deterministic f64 math, no RNG draws inside the loop.
+            let band_h = (CAVE_FLOOR - SKY_FLOOR) as usize;
+            let band_w = WORLD_W as usize;
+            let band_span = band_h as f64;
+            let mut cdens = vec![1.0f64; band_w * band_h];
+            const SIDE_SEAL: i32 = 12; // solid side walls (enclosed map)
             for y in SKY_FLOOR..CAVE_FLOOR {
                 let ny = y as f64 / WORLD_H as f64;
-                let band = (y - SKY_FLOOR) as f64 / band_span;     // 0 at ceiling → 1 at floor
-                for x in 6..WORLD_W as i32 - 6 {                    // keep a solid edge guard
-                    let nx = x as f64 / WORLD_W as f64;
-                    // 3-octave FBM from cave_a + a low-freq cave_b warp octave.
-                    let mut v = 0.0f64;
-                    let mut amp = 1.0f64;
-                    let mut fr = 1.0f64;
-                    let mut norm = 0.0f64;
-                    for _ in 0..3 {
-                        v += cave_a.get([nx * fx * fr, ny * fy * fr]) * amp;
-                        norm += amp;
-                        amp *= 0.5;
-                        fr *= 2.0;
-                    }
-                    v += cave_b.get([nx * 1.7, ny * 3.0]) * 0.4;
-                    norm += 0.4;
-                    let mut d = (v / norm + 1.0) * 0.5;             // normalize to ~[0,1]
-                    // Contrast-stretch so the field spans the full range — this is what
-                    // turns the noise into distinct caverns, pillars and overhangs
-                    // rather than a flat sheet hovering near the threshold.
-                    d = ((d - 0.5) * CONTRAST + 0.5).clamp(0.0, 1.0);
-                    // Vertical-layering as a SUBTLE threshold nudge only: air gathers a
-                    // little more toward band centers and solid toward band edges
-                    // (floors/ceilings), but noise still dictates the actual shapes.
-                    let layer = (band * layers * std::f64::consts::PI).sin().abs(); // 0 edges → 1 centers
-                    let local_thresh = t_air + (layer - 0.5) * 0.18;
-                    if d < local_thresh {
-                        terrain.set_solid(x, y, false);
-                    }
-                }
-            }
-
-            // C — Cellular automata (Moore/8-neighbour) for rounded WA cave walls.
-            // Rows outside the rock band count as solid so the sky crust / base
-            // aren't eroded away. 3–4 passes round the noise field into smooth
-            // caverns, leaving freestanding pillars where cells stay locally dense.
-            let ca_passes = 3 + (lcg(&mut rng) % 2);
-            for _ in 0..ca_passes {
-                let snap = terrain.solid.clone();
-                for y in 1..CAVE_FLOOR - 1 {
-                    for x in 1..WORLD_W as i32 - 1 {
-                        let mut solid_n = 0;
-                        for dy in -1..=1 {
-                            for dx in -1..=1 {
-                                if dx == 0 && dy == 0 { continue; }
-                                let yy = y + dy;
-                                let s = if yy < 0 || yy >= CAVE_FLOOR {
-                                    true // outside the band counts as solid
-                                } else {
-                                    snap[world_index((x + dx) as u32, yy as u32)]
-                                };
-                                if s { solid_n += 1; }
-                            }
-                        }
-                        terrain.set_solid(x, y, solid_n >= 5);
-                    }
-                }
-            }
-
-            // C.5 — Jagged ceiling: carve irregular stalactite-like bumps into the
-            // ceiling bottom (the SKY_FLOOR boundary) so it reads as rock, not a
-            // flat cut. Two noise octaves: broad humps (20–40px deep) + fine spikes (5–15px).
-            {
-                let stala_depth_broad = 20.0 + (lcg(&mut rng) % 20) as f64;
-                let stala_depth_fine  = 5.0  + (lcg(&mut rng) % 10) as f64;
+                let ty = (y - SKY_FLOOR) as f64 / band_span; // 0 ceiling → 1 floor
                 for x in 0..WORLD_W as i32 {
                     let nx = x as f64 / WORLD_W as f64;
-                    let broad = cave_a.get([nx * 4.0, 77.3]);  // -1..1
-                    let fine  = cave_b.get([nx * 14.0, 33.1]); // -1..1
-                    let drop = (broad * stala_depth_broad + fine * stala_depth_fine).max(0.0) as i32;
-                    // Carve air into the ceiling below SKY_FLOOR down to SKY_FLOOR+drop.
-                    // Only carve — never expose pixels above SKY_FLOOR (they stay solid rock).
-                    for y in SKY_FLOOR..=(SKY_FLOOR + drop).min(SKY_FLOOR + 45) {
-                        terrain.set_solid(x, y, false);
+                    let mut d = super::wa_templates::collage_density(&cparams, nx, ty)
+                        + cave_a.get([nx * 6.0, ny * 6.0]) * 0.10;
+                    // Floor bias: guarantee a solid base in the bottom ~12% of the
+                    // band so inverted-mask holes can't open straight into water.
+                    if ty > 0.88 {
+                        let t = (ty - 0.88) / 0.12;
+                        d += t * t * (3.0 - 2.0 * t) * 1.2;
+                    }
+                    // Ceiling bias: keep the top of the band attached to the cap.
+                    if ty < 0.04 {
+                        d += (1.0 - ty / 0.04) * 1.2;
+                    }
+                    if x < SIDE_SEAL || x >= WORLD_W as i32 - SIDE_SEAL {
+                        d = 2.0;
+                    }
+                    cdens[(y - SKY_FLOOR) as usize * band_w + x as usize] = d;
+                }
+            }
+            // Separable box blur (r=4), padding with SOLID (1.0) outside the band
+            // — the cap above and base below are rock, unlike the island branch's
+            // air padding.
+            let rb: i32 = 4;
+            let mut ctmp = vec![0.0f64; band_w * band_h];
+            for ry in 0..band_h {
+                let row = ry * band_w;
+                for rx in 0..band_w as i32 {
+                    let mut sum = 0.0;
+                    let mut cnt = 0.0;
+                    for dx in -rb..=rb {
+                        let xx = (rx + dx).clamp(0, band_w as i32 - 1) as usize;
+                        sum += cdens[row + xx];
+                        cnt += 1.0;
+                    }
+                    ctmp[row + rx as usize] = sum / cnt;
+                }
+            }
+            for rx in 0..band_w {
+                for ry in 0..band_h as i32 {
+                    let mut sum = 0.0;
+                    let mut cnt = 0.0;
+                    for dy in -rb..=rb {
+                        let yy = ry + dy;
+                        let v = if yy < 0 || yy >= band_h as i32 {
+                            1.0
+                        } else {
+                            ctmp[yy as usize * band_w + rx]
+                        };
+                        sum += v;
+                        cnt += 1.0;
+                    }
+                    cdens[ry as usize * band_w + rx] = sum / cnt;
+                }
+            }
+            // Threshold into the bitmap: carve air where the smoothed field is
+            // below 0.5 (the inverted collage marks chambers as low density).
+            for ry in 0..band_h {
+                let y = SKY_FLOOR + ry as i32;
+                for x in 0..band_w {
+                    if cdens[ry * band_w + x] < 0.5 {
+                        terrain.set_solid(x as i32, y, false);
                     }
                 }
             }
@@ -589,20 +604,8 @@ impl Terrain {
                 }
             }
 
-            // Water-margin erosion (same as other archetypes): taper rock near world edges
-            let water_end_px_cave: f64 = 120.0 + (lcg(&mut rng) & 0xFF) as f64 / 255.0 * 80.0;
-            for y in SKY_FLOOR as u32..CAVE_FLOOR as u32 {
-                for x in 0..WORLD_W {
-                    let edge_dist = (x as f64).min(WORLD_W as f64 - 1.0 - x as f64);
-                    if edge_dist < water_end_px_cave {
-                        let t = (edge_dist / water_end_px_cave) as f64;
-                        let smooth_t = t * t * (3.0 - 2.0 * t);
-                        if smooth_t < 0.55 {
-                            terrain.set_solid(x as i32, y as i32, false);
-                        }
-                    }
-                }
-            }
+            // (No side water erosion: WA caverns are enclosed — the collage
+            // pass's SIDE_SEAL keeps solid walls at both world edges.)
 
             // E — Air-region connectivity guarantee. Flood-fill every air pocket in
             // the rock band; keep the largest as the main traversable region. Small
@@ -717,11 +720,12 @@ impl Terrain {
                 // 3. Contrast/gain — restores variation amplitude (fixes the plateau)
                 noise = (((noise - 0.5) * contrast) + 0.5).clamp(0.0, 1.0);
 
-                // 4. Density: sourced from a real Worms Armageddon terrain silhouette
-                // (see wa_templates) so every seed's macro shape is WA-styled. The
-                // residual noise/lean gradient is folded in at reduced weight — it
-                // contributes fine edge texture but no longer defines the silhouette.
-                let mut density = super::wa_templates::wa_density(seed, nx, ty)
+                // 4. Density: a per-seed collage of real Worms Armageddon terrain
+                // silhouettes (see wa_templates) so every seed's macro shape is a
+                // novel WA-styled composition. The residual noise/lean gradient is
+                // folded in at reduced weight — it contributes fine edge texture
+                // but no longer defines the silhouette.
+                let mut density = super::wa_templates::collage_density(&cparams, nx, ty)
                     + (noise - 0.5) * 0.15
                     + (nx - 0.5) * cliff_bias * 0.3;
                 if rolling {
@@ -1030,14 +1034,12 @@ impl Terrain {
         // Derived entirely from seed — same on client and server, no StateMsg needed.
         {
             // Sprite-variant count must match the theme scenery.rs::draw_scenery
-            // will pick for this map: draw_underground (cavern) / draw_pastoral
-            // (template 0) / draw_rugged (template 1) — 7 / 8 / 7 sprites respectively.
-            let count: u8 = if terrain.is_cavern {
-                7
-            } else if terrain.template_id == 0 {
-                8
-            } else {
-                7
+            // will pick for this map (same Theme::of dispatch): draw_underground /
+            // draw_pastoral / draw_rugged — 7 / 8 / 7 sprites respectively.
+            let count: u8 = match Theme::of(terrain.is_cavern, terrain.template_id) {
+                Theme::Underground => 7,
+                Theme::Pastoral => 8,
+                Theme::Rugged => 7,
             };
             let mut srng = seed ^ 0xDECA_FBAB_E000_1234u64;
             let margin = (WORLD_W as f64 * 0.05) as u32;

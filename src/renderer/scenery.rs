@@ -15,12 +15,10 @@ pub fn draw_scenery(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: i32, cam_y:
         // Rough viewport cull (objects are at most ~60px tall and 32px wide)
         if wx < cam_x - 64 || wx > cam_x + SCREEN_W as i32 + 64 { continue; }
         if wy < cam_y - 80 || wy > cam_y + SCREEN_H as i32 + 16 { continue; }
-        if terrain.is_cavern {
-            draw_underground(buf, wx, wy, obj.sprite);
-        } else if terrain.template_id == 0 {
-            draw_pastoral(buf, wx, wy, obj.sprite);
-        } else {
-            draw_rugged(buf, wx, wy, obj.sprite);
+        match crate::world::terrain::Theme::of(terrain.is_cavern, terrain.template_id) {
+            crate::world::terrain::Theme::Underground => draw_underground(buf, wx, wy, obj.sprite),
+            crate::world::terrain::Theme::Pastoral => draw_pastoral(buf, wx, wy, obj.sprite),
+            crate::world::terrain::Theme::Rugged => draw_rugged(buf, wx, wy, obj.sprite),
         }
     }
 }

@@ -10,15 +10,14 @@ pub const DAMAGE_FOCUS_TICKS: u32 = 50;
 
 /// Representative dirt tone used to colour explosion debris chunks so the
 /// fallout matches the map look: cavern maps get dark earth; surface maps
-/// vary by which of the 2 WA masks drove the silhouette (template_id).
+/// vary by the collage's dominant WA mask (template_id → Theme).
 pub fn biome_dirt(is_cavern: bool, template_id: u8) -> crate::renderer::fb::Bgra {
     use crate::renderer::fb::Bgra;
-    if is_cavern {
-        Bgra::new(78, 70, 64) // dark earth
-    } else if template_id == 0 {
-        Bgra::new(132, 104, 64) // brown
-    } else {
-        Bgra::new(120, 122, 128) // grey stone
+    use crate::world::terrain::Theme;
+    match Theme::of(is_cavern, template_id) {
+        Theme::Underground => Bgra::new(78, 70, 64),   // dark earth
+        Theme::Pastoral    => Bgra::new(132, 104, 64), // brown
+        Theme::Rugged      => Bgra::new(120, 122, 128), // grey stone
     }
 }
 

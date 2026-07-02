@@ -1,23 +1,34 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.391
+## Version: 0.5.4.395
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Pending (uncommitted)
-- **Molotov rework** — 4× more flames (12→48 fire patches per throw); burn duration
-  ~2.5 minutes (4050–4950 ticks at 30 Hz, was 180–300). Dense lingering fire forces
-  soldiers to relocate or keep taking damage.
-- **Weapon menu scrollable** — layout changed to 4 columns (was 5), 56px row height
-  (was 64px); MAX_ROWS=4 so any loadout with more than 16 weapons scrolls. All
-  weapons now reachable on the Miyoo's small screen.
-- **Terrain generation ~40% faster** — hill-relief noise (previously re-evaluated
-  760× per column inside the y-loop) precomputed into a 1D `hill_col[]` Vec.
-  Octave count reduced 4→3 (fourth octave was ~6% of the signal). ~4.4M fewer
-  noise evaluations per map. Miyoo load times noticeably shorter on rolling maps.
-- **arty_api.py CPU fix** — background cache threads leaked SQLite connections on
-  every cycle (close() only on success path). Fixed with try/finally.
-  `threading.Semaphore(20)` caps concurrent request threads; `os.nice(5)` prevents
-  the API from monopolizing Pi cores. Deployed on Pi.
+## Recent changes (0.5.4.392–0.5.4.395)
+- **Invisible soldiers fixed (0.5.4.395)** — `render_my_team()`'s vertical draw-culling
+  for soldiers, headstones, projectiles, and explosions checked world-y against a
+  hardcoded `0..480` window instead of the camera-scrolled viewport (`cam_y..cam_y+480`).
+  Anything spawned below world-y 480 (bottom half of the 960px world) was silently
+  skipped from rendering entirely — never drawn, not occluded. Became far more visible
+  after the WA-terrain rewrite since spawns (especially cave floors) land deeper more
+  often. Fixed all four cull sites to use `cam_y`.
+- **Aim rotating during camera pan fixed (0.5.4.394)** — `process_aim()` only excluded
+  `L1` from Up/Down aim adjustment, but both `L1` and `R1` pan the camera vertically.
+  Holding `R1`+Up/Down to scroll was also rotating the aim angle. Both modifiers now
+  excluded.
+- **Archetype system removed (0.5.4.393)** — the old 5-way landform archetype
+  (hills/cliffs/islands/caverns/canyon) is gone. Every map is now either sourced from
+  one of 2 real WA terrain masks (`template_id: 0|1`) or an occasional carved-cavern
+  map (`is_cavern: bool`, ~20% odds). Chasms, overhang shelves, and cave carving are
+  now seed-random on any non-cavern map instead of gated by archetype, so any
+  combination can occur. Cosmetic dispatch (sky/debris/dirt tint/scenery theme)
+  collapsed to a 3-way split: cavern look, WA template 0, WA template 1.
+- **WA-sourced terrain silhouettes (0.5.4.392)** — terrain macro-shape now comes from
+  two real Worms Armageddon terrain bitmaps, extracted directly from the original
+  game's `land.dat` (1-bit-per-pixel, 1920×696, found via reverse-engineering the
+  file format). Baked as Rust constants (`src/world/wa_templates.rs`,
+  `include_bytes!`) — no runtime file I/O, fully deterministic per seed (seed picks
+  mask, x-shift, and mirror). Maps read as authentically WA-styled instead of
+  purely-synthetic noise silhouettes.
 
 ## Recent changes (0.5.4.391)
 - **15 new scenery sprites** — five new draw functions per archetype added to
@@ -125,6 +136,89 @@
   dusty/10.0.0.45 so outbound SSH return traffic is accepted.
 - **Windows backup (2026-06-28)** — `deploy/backup_arty.ps1` runs on Windows via Task
   Scheduler (hourly), pulls from dusty via scp; SHA256 dedup, keeps 5 most recent.
+
+## IRC / Bot changes (2026-07-02)
+- **ZPG plugin overhaul** — the IRC zero-player game (`assets/zpg_plugin_code.txt`)
+  gained several systems making tacos, classes, and factions mechanically
+  meaningful instead of cosmetic:
+  - **Class passives** — each of the 7 classes now has a real per-tick effect
+    (XP%, item-find%, boss dmg%, starting luck, taco%, flat taco bonus, or
+    world stability trickle). `!classinfo` lists them.
+  - **Faction passives** — every faction grants its members a bonus even when
+    not dominant (Packet Order +15% XP, Raccoon Syndicate 2x tacos, Chaos Null
+    +10pp item find); dominant-faction world effects (Machine Spirit stability/
+    boss-pressure, Chaos Null entropy) were strengthened and decoupled from the
+    now-per-member Packet Order/Raccoon Syndicate effects. `!factioninfo` lists them.
+  - **Taco shop** — `!shop` / `!buy <item>` spends tacos on luck, power, XP,
+    world stability, a one-shot boss-damage bomb, or a rename token.
+  - **Equipment rarities** — item finds roll Common/Rare/Epic/Legendary with
+    weighted odds and bonus multipliers; shown in `!zpgstats` and event text.
+  - **Stat-driven PvP** — replaced the flat random roll with attack/crit/dodge/
+    armor mechanics driven by level, luck, and item_bonus; battle reports
+    narrate crits, dodges, and armor absorption.
+  - **Structured inventory** — items now belong to a slot (Weapon/Armor/
+    Accessory/Relic); only the best item per slot counts toward power
+    (auto-equipped, no manual command). `!zpgstats` shows the real per-slot
+    loadout and a gear/shop power split instead of a flat item list.
+  - **Prestige** — `!prestige` at level 50+ resets level/xp/luck for a
+    permanent stacking +5% XP bonus per prestige; gear and tacos are kept.
+
+## IRC / Bot changes (2026-07-02, world systems pass 2)
+- **HP is back** — re-introduced (removed 2026-06-29) specifically so boss
+  fights have stakes: `hp`/`max_hp` columns, passive regen each tick, boss
+  retaliation damage against attackers, KO ("falls back") on 0 HP with a
+  small taco penalty and a death-counter increment.
+- **Boss actions** — `!attack` (default) / `!defend` (no dmg either way,
+  +2 stability) / `!repair` (no dmg either way, +4 stability, -3 entropy),
+  chosen per boss round via a `boss_actions` table.
+- **World-choice votes** — `!vote a|b`; opens at ~3%/tick when none is
+  active, resolves by majority on the *next* tick (no sub-tick timer
+  exists), applying a stability+XP or entropy+tacos effect server-wide.
+- **Seasons** — 30-day length; rollover crowns a title + Legendary "Golden
+  Packet Analyzer" for the top player, records a `season_history` row,
+  resets faction scores. `!seasons` shows history and time remaining.
+- **Location flavor** — 6 named locations; ~40% of solo events now
+  mention one instead of the generic pool.
+- **Achievements** — 8 tracked (First Blood, Taco Hoarder, XP Grinder,
+  Boss Slayer, Legendary Finder, Survivor, Chaos Loyalist, Machine Saint);
+  `!achievements` lists earned ones.
+- **Rare global events** — ~1%/tick, ×0.5 or ×2.0 server-wide XP for
+  ~30 minutes, with expiry broadcasts.
+- **NPC events** — ~3%/tick flavor events with a small shared effect
+  (tacos/XP/stability/entropy) for every current player.
+- **Daily quests** — 3 of 6 templates rotate in each day; `!quests` shows
+  the board and completion status; 15 tacos + 30 XP per completion.
+- **Hidden ultra-rare loot** — "The Root Password," a one-time
+  server-wide 0.01%-per-roll drop granting +10 permanent luck and a
+  maxed Legendary Relic.
+- **Server milestones** — total boss kills tracked server-wide; crossing
+  10/25/50/100/250/500/1000 broadcasts an event and grants +10 tacos to
+  every current player.
+- **Event pacing** — solo/location events, Common/Rare finds, lucky-break,
+  and misfortune messages are now batched per tick and only up to 4 are
+  broadcast (random sample), instead of flooding one line per player per
+  tick. Level-ups, Epic+/Legendary finds, boss/PvP/world/vote/NPC/rare/
+  faction events, achievements, quests, and milestones still broadcast
+  immediately.
+- **Bug fix** — `_faction_event` called `.get()` on a `sqlite3.Row` (no
+  such method), silently aborting any tick that rolled that branch
+  (caught by the outer try/except, so it never crashed the bot but also
+  never broadcast faction flavor). Predates this session; fixed to use
+  `'faction' in p.keys()`.
+- **Verification** — no live Supybot/IRC harness available, so the
+  plugin.py section was stubbed-imported directly (fake `supybot.*`
+  modules) and driven through 400 simulated ticks with 4 players (0
+  exceptions), vote open/resolve counts confirmed balanced, and a
+  forced 31-day-old `season_start_ts` was used to exercise the full
+  season-rollover path end-to-end.
+- **Deployed live** — pushed to `benbot.service` (Limnoria/Supybot,
+  `~/irc-bots/TriviaBot/Trivia_Bot.conf`) on the Pi (Grunkus@10.0.0.123).
+  Live plugin path: `~/irc-bots/TriviaBot/plugins/ZPG/`. Pre-deploy
+  `__init__.py`/`config.py`/`plugin.py` backed up to a sibling
+  `ZPG_backup_<timestamp>/` dir first; `assets/zpg_plugin_code.txt` split
+  back into the 3 real files via its `===== ZPG/*.py =====` markers,
+  `py_compile`-checked on the Pi, stale `__pycache__` cleared, service
+  restarted. Confirming the first live 300s world tick runs clean.
 
 ## IRC / Bot changes (2026-06-29)
 - **ZPG overhaul** — HP system removed (was cosmetic-only, never decreased). Random event
@@ -542,8 +636,9 @@
 ## What Works
 
 ### Core Gameplay
-- Tactical terrain generation (5 archetypes: hills, cliffs/overhangs, floating
-  islands, caverns, canyon/mesa; central chasms, water zone)
+- Tactical terrain generation from real WA terrain art (2 masks, mirrored/shifted
+  per seed) plus an occasional carved-cavern map; seed-random chasms, overhangs,
+  caves; water zone
 - Turn system: Acting → Watching → Retreat → Ending
 - Wind, gravity, per-soldier HP, fall damage, water drowning
 - Camera: follow active soldier, R1 snap-pan, L1 free-pan

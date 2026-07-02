@@ -1,24 +1,24 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.391 (+ uncommitted changes)
-Last updated: 2026-07-01
+Current version: 0.5.4.395
+Last updated: 2026-07-02
 
 COMPLETED PHASES
 ----------------
 
 Phase 1 — Terrain & Physics
-  OpenSimplex density-field generation (generate_tactical — the sole live generator),
-    5 map archetypes (hills/cliffs/islands/caves/canyon); density field is box-blurred
-    before thresholding so silhouettes are smooth organic blobs, not jagged (v0.5.4.385/.386)
+  WA-sourced terrain generation (generate_tactical — the sole live generator): macro
+    silhouette now comes from two real Worms Armageddon terrain bitmaps extracted from
+    the original game's land.dat, baked as Rust constants (src/world/wa_templates.rs,
+    include_bytes!, no runtime I/O); seed picks mask/x-shift/mirror deterministically (v0.5.4.392)
+  5-way archetype system removed (v0.5.4.393): replaced by template_id (which of the 2 WA
+    masks) + is_cavern (occasional carved-cavern mode, ~20% odds). Chasms, overhang shelves,
+    and cave carving are now seed-random on any non-cavern map instead of archetype-gated.
   World height doubled to 960px (2× screen); maps use full vertical range with peaks
     near the top and caves/canyons running deep; cave constants scaled proportionally (v0.5.4.387)
-  WA-style terrain tuning (v0.5.4.388): sharper silhouettes (blur radius 10→5/6→4), much
-    heavier cave coverage (hills 30%→65%, cliffs 35%→70%, canyon 0%→50%), wider cave passages
-    (cave_thresh 0.12→0.16, noise freq 7.0/6.0→5.5/5.0), more/wider-spread chasms (2–4 central →
-    3–5 across 22–78% of map width); landmine max damage increased 35→50
-  Vertical spawn spread (v0.5.4.389): soldiers now spawn at varied heights across all archetypes —
-    maps with punched caves reserve half the spawn slots for underground positions so teams start
-    on ledges, in tunnels, and at mid-terrain, not just on the topmost surface layer
+  Vertical spawn spread (v0.5.4.389): soldiers spawn at varied heights — maps with punched
+    caves reserve half the spawn slots for underground positions so teams start on ledges,
+    in tunnels, and at mid-terrain, not just on the topmost surface layer
   Destructible terrain (crater carving persists)
   Projectile ballistics (Euler integration, wind, gravity, bounce/friction)
   Water death zone
@@ -56,7 +56,7 @@ Phase 3 — Weapons & Turn System
   WA-style fire physics: flames slide downhill, pool in pits, push soldiers
   Weapon menu: 4-column scrollable grid (cell_w=120px, cell_h=56px, MAX_ROWS=4)
   Barrels 14–20 per map, mines 16–24 per map (scaled for 1920×960 world)
-  Scenery: 28 themed pixel-art objects per map (8/7/7/7/7 sprites per archetype)
+  Scenery: 28 themed pixel-art objects per map (styled per WA template / cavern mode)
 
 Phase 4 — Dedicated Server & Live Multiplayer
   Authoritative server (clients send inputs; server runs all physics)
@@ -114,7 +114,31 @@ INFRASTRUCTURE CHANGES (2026-06-28 through 2026-06-29)
   Bot server (mayhem_bot.py): all /notify/* endpoints gated by ?key= admin key check
   Port reference doc: assets/ports.txt
 
-RECENT CHANGES (scenery, map variety, molotov, perf, v0.5.4.390–.391 + pending, 2026-07-01)
+RECENT CHANGES (WA terrain art + archetype removal + bugfixes, v0.5.4.392–.395, 2026-07-01)
+--------------------------------------------------------------------------------------------
+  v0.5.4.392: Terrain silhouettes sourced from real Worms Armageddon terrain art.
+    Two 1-bit-per-pixel, 1920x696 terrain masks extracted directly from land.dat
+    (reverse-engineered format: LND magic header, index table, IMG chunks). Baked
+    as Rust constants via include_bytes! — generate_tactical stays pure/seed-derived,
+    no runtime file I/O. Seed selects mask (0/1), x-shift, and mirror.
+  v0.5.4.393: Removed the 5-way archetype system entirely. terrain.archetype (u8)
+    replaced by template_id (u8, which WA mask) + is_cavern (bool, ~20% odds,
+    independent carved-rock generation path). Chasms/overhangs/caves decoupled
+    from archetype — now seed-random on any non-cavern map, so combinations that
+    were previously impossible (e.g. chasms + overhangs together) can now occur.
+    Cosmetic dispatch (sky color, background debris, dirt tint, scenery theme)
+    collapsed from 5-way to 3-way: is_cavern, template_id 0, template_id 1.
+  v0.5.4.394: Fixed aim angle rotating while panning camera with R1. process_aim()
+    only excluded L1 (which also pans the camera) from Up/Down aim adjustment;
+    R1 pans vertically too and was missed. Both now excluded.
+  v0.5.4.395: Fixed invisible soldiers. render_my_team()'s vertical draw-cull for
+    soldiers/headstones/projectiles/explosions checked world-y against a hardcoded
+    0..480 window instead of the camera-scrolled viewport (cam_y..cam_y+480) — any
+    soldier spawned below y=480 in the 960px world was silently never drawn. Got
+    much more common after the WA-terrain rewrite since spawns land deeper more
+    often (especially cave floors). Fixed all four cull sites to use cam_y.
+
+RECENT CHANGES (scenery, map variety, molotov, perf, v0.5.4.390–.391, 2026-07-01)
 ------------------------------------------------------------------------------------------
   v0.5.4.390: Scenery objects — 12 per map, themed pixel-art sprites per archetype,
     drawn behind terrain (src/renderer/scenery.rs). Weapon menu cells 92→120px wide.
@@ -156,6 +180,109 @@ RECENT CHANGES (terrain shape, v0.5.4.385–.386, 2026-06-30)
     from the seed; no StateMsg/parity change.
   Legacy generate_worms generator (old full-Perlin jagged style) deleted — generate_tactical
     is now the ONLY generator reachable in-game (from_heightmap remains test-only).
+
+RECENT CHANGES (ZPG plugin overhaul, 2026-07-02)
+--------------------------------------------------
+  ZPG: class passives — Packet Mage +20% XP, Machine Priest +10pp item-find chance,
+    Operator +10% boss damage, Kernel Wizard +2 luck on creation, Raccoon Wrangler
+    +25% taco drops, Taco Merchant +1 flat taco bonus on any taco gain, Network
+    Druid +1 world stability per tick per living Druid. New !classinfo command.
+  ZPG: faction passives — Packet Order members +15% XP, Raccoon Syndicate members
+    2x taco drops, Chaos Null members +10pp item-find chance; dominant Machine
+    Spirit now +10 stability/tick and halves boss-pressure gain (was +2 flat to
+    all three), dominant Chaos Null now +10 entropy/tick (was +2). New
+    !factioninfo command.
+  ZPG: taco shop — !shop lists 6 items, !buy <item> spends tacos: Lucky Charm
+    (+1 luck), Better Backpack (+1 power), Potion of XP (+75 XP), World Donation
+    (+5 stability), Boss Bomb (+20 dmg on next boss hit, consumed on use), Rename
+    Token (!buy renametoken <newnick>, migrates player+item rows).
+  ZPG: equipment rarities — item finds roll Common/Rare/Epic/Legendary
+    (60/25/10/5% odds, 1.0x/1.5x/2.5x/4.0x bonus multiplier); re-finding an owned
+    item upgrades it to the better of the two rolled rarities. Shown in
+    !zpgstats and find/upgrade broadcasts.
+  ZPG: stat-driven PvP — replaced flat 1..level+5 random roll with attack
+    (level*2 + luck + item_bonus + d15), crit chance scaling with luck (up to
+    25%, x2 damage), dodge chance scaling with defender's luck (up to 20%,
+    negates the attack), and armor mitigation from defender's item_bonus
+    (round(item_bonus*1.5) damage reduction). Battle reports narrate crits/
+    dodges/armor absorption.
+  ZPG: structured inventory — every item now belongs to a slot (Weapon/Armor/
+    Accessory/Relic, 5 items each); only the best-bonus item per slot counts
+    toward power (auto-equip). players.item_bonus is now a cache recomputed
+    from equipped gear (_recompute_gear_power); new players.shop_power column
+    holds Better Backpack purchases separately. !zpgstats shows a real
+    per-slot breakdown and a gear/shop power split instead of a flat item list.
+  ZPG: prestige — !prestige at level 50+ resets level/xp/luck (luck restarts
+    at the class's base) but keeps gear and tacos; grants a permanent stacking
+    +5% XP per prestige, applied to all XP gains, shown as a star in !zpgstats.
+
+RECENT CHANGES (ZPG world systems pass 2, 2026-07-02)
+-------------------------------------------------------
+  ZPG: HP re-introduced — players.hp/max_hp (max_hp = 100 + (level-1)*10);
+    passive regen each tick (15% of missing HP, min 5); bosses now retaliate
+    against players who !attack (or default), reducing HP; hitting 0 HP
+    "falls back" the player (broadcast, +1 death, small taco penalty, hp=1).
+  ZPG: boss actions — !attack (default)/!defend (0 dmg dealt/taken, +2
+    stability)/!repair (0 dmg dealt/taken, +4 stability, -3 entropy), set via
+    a per-round boss_actions table, cleared after each round resolves.
+  ZPG: world-choice votes — ~3% per tick chance to open a 2-option vote
+    (!vote a|b) when none is active; resolves on the next tick by simple
+    majority, applying a stability+XP or entropy+tacos effect to everyone.
+  ZPG: seasons — 30-day season length; !seasons shows history + time
+    remaining; rollover computes top faction/player/boss-dmg/tacos-earned,
+    records a season_history row, crowns the top player a "S{n} Champion"
+    title + Legendary Golden Packet Analyzer, resets faction scores and
+    season_tacos/season_boss_dmg.
+  ZPG: location flavor — 6 LOCATIONS, ~40% of solo events now draw from
+    LOCATION_EVENTS (mentions a location) instead of the generic pool.
+  ZPG: achievements — 8 (First Blood, Taco Hoarder, XP Grinder, Boss Slayer,
+    Legendary Finder, Survivor, Chaos Loyalist, Machine Saint), checked
+    per-player per-tick, tracked in a new achievements table, !achievements
+    to list earned ones.
+  ZPG: rare global events — ~1% per tick (only if none active), 4 flavors,
+    apply a server-wide XP ×0.5 or ×2.0 multiplier for ~6 ticks (~30 min),
+    with an expiry broadcast.
+  ZPG: NPC events — ~3% per tick, 6 flavors, each with a small mechanical
+    nudge (tacos/XP/stability/entropy) applied to every current player.
+  ZPG: daily quests — 3 of 6 templates picked per day (win a duel, find an
+    item, deal boss damage, level up, join a faction, buy from the shop);
+    !quests shows today's board + completion; rewards 15 tacos + 30 XP each.
+  ZPG: hidden ultra-rare loot — "The Root Password", a one-time
+    server-wide 0.01%-per-roll drop (independent of the normal item-find
+    check); grants +10 permanent luck and a maxed Legendary Relic item.
+  ZPG: server milestones — total boss kills tracked server-wide; crossing
+    each of [10,25,50,100,250,500,1000] broadcasts a milestone event and
+    grants +10 tacos to every current player.
+  ZPG: event pacing — solo/location flavor events, Common/Rare item finds,
+    lucky-break, and misfortune messages are now batched into a per-tick
+    "highlights" list and only up to 4 are broadcast (random sample) instead
+    of one line per player per tick; level-ups, Epic+/Legendary finds, boss
+    updates, PvP, world/vote/NPC/rare events, faction events, achievement
+    unlocks, quest completions, and milestone/season announcements still
+    broadcast immediately.
+  ZPG: fixed a pre-existing crash — _faction_event called p.get('faction')
+    on a sqlite3.Row, which has no .get(); any tick that rolled the faction
+    event branch with any player present would raise AttributeError and
+    abort the tick (caught by _world_tick's try/except, so it failed
+    silently rather than crashing the bot, but no faction flavor ever
+    broadcast). Fixed to use 'faction' in p.keys() and p['faction'].
+  Verification: extracted plugin.py section compiled clean throughout;
+    stubbed supybot modules to import the plugin directly and ran 400
+    simulated ticks with 4 players (0 exceptions), confirmed vote
+    open/resolve counts balance, forced a 31-day-old season_start_ts to
+    exercise the full season-rollover path end-to-end (winners, history
+    row, title, item award, faction reset all verified), and drove
+    !vote/!attack/!defend/!repair/!achievements/!quests/!seasons directly
+    against fake irc/msg objects.
+  DEPLOYED to the live bot (2026-07-02): live plugin lives at
+    ~/irc-bots/TriviaBot/plugins/ZPG/ on the Pi (Grunkus@10.0.0.123), run by
+    benbot.service (Limnoria/Supybot, Trivia_Bot.conf). Backed up the
+    pre-deploy __init__.py/config.py/plugin.py to a ZPG_backup_<timestamp>/
+    sibling dir first. assets/zpg_plugin_code.txt split back into the 3
+    real files via the "===== ZPG/*.py =====" markers, remote py_compile
+    checked, __pycache__ cleared, benbot.service restarted. Awaiting
+    confirmation of the first live world tick (300s interval) for a clean
+    run with no traceback in the journal.
 
 RECENT CHANGES (IRC/ZPG, 2026-06-29)
 --------------------------------------

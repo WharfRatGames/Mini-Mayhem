@@ -14,14 +14,13 @@ const WATER: Bgra = Bgra::water();
 /// so the waterline reads consistently and the water-trough sky restore in
 /// `draw_water_surface` matches regardless of map. Only the upper sky tint
 /// varies: cavern maps get a dim grey-blue cave tint; surface maps vary by
-/// which of the 2 WA masks drove the silhouette (template_id).
+/// the collage's dominant WA mask (template_id → Theme).
 fn sky_top(is_cavern: bool, template_id: u8) -> (f32, f32, f32) {
-    if is_cavern {
-        (45.0, 60.0, 92.0) // dim grey-blue
-    } else if template_id == 0 {
-        (50.0, 85.0, 145.0) // default
-    } else {
-        (95.0, 120.0, 165.0) // cold, pale
+    use crate::world::terrain::Theme;
+    match Theme::of(is_cavern, template_id) {
+        Theme::Underground => (45.0, 60.0, 92.0),  // dim grey-blue
+        Theme::Pastoral    => (50.0, 85.0, 145.0), // default
+        Theme::Rugged      => (95.0, 120.0, 165.0), // cold, pale
     }
 }
 
