@@ -1,3 +1,4 @@
+0.5.4.395  Fix: some soldiers were invisible from the start of a match — the vertical draw-culling for soldiers/headstones/projectiles/explosions used a fixed 0-480 window instead of the camera-scrolled viewport, so anyone spawned in the lower half of the map never rendered.
 0.5.4.394  Fix: holding R1 to pan the camera vertically no longer also rotates the aim angle.
 0.5.4.393  Removed the old 5-style landform system — every map now generates from real Worms Armageddon terrain art (2 masks) or an occasional carved-cavern map; chasms/overhangs/caves are now random on any map instead of tied to a landform style.
 0.5.4.392  Terrain silhouettes now sourced from real Worms Armageddon terrain art (extracted from the original game's map data) for a more authentic WA look across all map styles.

@@ -3533,7 +3533,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     for grave in &game.graves {
         let wx = grave.pos.x;
         let wy = grave.pos.y;
-        if wx >= vx0 - 8.0 && wx < vx1 + 8.0 && wy >= 0.0 && wy < sh as f32 {
+        if wx >= vx0 - 8.0 && wx < vx1 + 8.0 && wy >= cam_y as f32 && wy < cam_y as f32 + sh as f32 {
             let gcolor = game.teams.get(grave.team).map(|t| t.color_id as usize).unwrap_or(grave.team.min(3));
             draw_headstone(buf, grave.pos, gcolor, grave.headstone_id);
         }
@@ -3677,7 +3677,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             if soldier.is_dead() && !soldier.death_explosion_pending { continue; }
             let wx = soldier.pos.x;
             let wy = soldier.pos.y;
-            if wx >= vx0 - 16.0 && wx < vx1 + 16.0 && wy >= 0.0 && wy < sh as f32 {
+            if wx >= vx0 - 16.0 && wx < vx1 + 16.0 && wy >= cam_y as f32 && wy < cam_y as f32 + sh as f32 {
                 use crate::physics::projectile::WeaponKind;
                 let aim_angle = if game.turn.is_acting()
                     && ti == active_ti
@@ -3967,7 +3967,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         use crate::physics::projectile::{WeaponKind, FuseState};
         let wx = proj.pos.x;
         let wy = proj.pos.y;
-        if wx >= vx0 && wx < vx1 && wy >= 0.0 && wy < sh as f32 {
+        if wx >= vx0 && wx < vx1 && wy >= cam_y as f32 && wy < cam_y as f32 + sh as f32 {
             if proj.kind == WeaponKind::Grenade {
                 draw_grenade_projectile(buf, proj.pos);
                 // Fuse countdown: show remaining seconds above the grenade
@@ -4401,7 +4401,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     for exp in &game.explosions {
         let wx = exp.pos.x;
         let wy = exp.pos.y;
-        if wx >= vx0 - exp.radius && wx < vx1 + exp.radius && wy >= 0.0 && wy < sh as f32 + exp.radius {
+        if wx >= vx0 - exp.radius && wx < vx1 + exp.radius && wy >= cam_y as f32 - exp.radius && wy < cam_y as f32 + sh as f32 + exp.radius {
             draw_explosion(buf, exp.pos, exp.radius, exp.age);
         }
     }
