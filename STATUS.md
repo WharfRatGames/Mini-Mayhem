@@ -1,9 +1,28 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.395
+## Version: 0.5.4.397
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.392–0.5.4.395)
+## Recent changes (0.5.4.392–0.5.4.397)
+- **Pistol SFX + generation speed (0.5.4.397)** — `pistol.wav` was a 48-second
+  recording with one bang at t=9.3s: each shot's playback thread held the Miyoo's
+  exclusive `hw:0,0` for the whole clip, so rapid-fire shots queued into the next
+  turn, and the first-sound lazy decode (9.2MB → 48s×48kHz resample on the game
+  thread) stalled match start. Trimmed to the 0.5s bang (`assets/sfx/` +
+  `deploy/assets/sfx/`), `play_pistol` now uses the skip-if-busy path. Collage
+  generation: domain warp precomputed on a 512×128 bilinear grid + single-lookup
+  fast path away from seams — caverns now generate faster than the pre-collage
+  generator. New guard test `tests/soldier_visibility.rs` renders every spawned
+  soldier and asserts it produces pixels.
+- **Seed-based WA collage map generation (0.5.4.396)** — every seed now composes a
+  novel silhouette by splicing 2–4 horizontal segments of real WA terrain art
+  (per-segment mask/shift/mirror/y-transform, 60–120px crossfades, low-freq domain
+  warp; coverage check rejects all-ocean windows). Cavern maps carve chambers from
+  the same collage *inverted* — the old procedural fill+carve cavern generator is
+  gone. Theme dispatch centralized in `Theme::of(is_cavern, template_id)`
+  (template_id = dominant segment's mask). New `tools/extract_wa_mask.py` extracts
+  masks from WA `land.dat` (Team17-LZ77, collision-mask chunk) or PNG; masks renamed
+  `island0/island1.bin`. Guard tests in `tests/wa_collage_check.rs`.
 - **Invisible soldiers fixed (0.5.4.395)** — `render_my_team()`'s vertical draw-culling
   for soldiers, headstones, projectiles, and explosions checked world-y against a
   hardcoded `0..480` window instead of the camera-scrolled viewport (`cam_y..cam_y+480`).

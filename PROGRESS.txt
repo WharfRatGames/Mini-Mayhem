@@ -1,7 +1,7 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.395
-Last updated: 2026-07-02
+Current version: 0.5.4.397
+Last updated: 2026-07-02 (v0.5.4.397)
 
 COMPLETED PHASES
 ----------------
@@ -137,6 +137,26 @@ RECENT CHANGES (WA terrain art + archetype removal + bugfixes, v0.5.4.392–.395
     soldier spawned below y=480 in the 960px world was silently never drawn. Got
     much more common after the WA-terrain rewrite since spawns land deeper more
     often (especially cave floors). Fixed all four cull sites to use cam_y.
+  v0.5.4.396: Seed-based WA collage map generation. Every seed composes a novel
+    silhouette by splicing 2-4 horizontal segments of real WA terrain art
+    (per-segment mask/shift/mirror/y-transform, 60-120px crossfades, low-frequency
+    domain warp; per-segment coverage check rejects all-ocean shift windows).
+    Cavern maps now carve chambers from the same collage INVERTED - the old
+    procedural fill+carve cavern generator is gone; sealed cap/side walls and the
+    traversability passes (air dilation, shafts, connectivity tunnels) kept.
+    Theme dispatch centralized in Theme::of(is_cavern, template_id); template_id =
+    dominant segment's mask index. tools/extract_wa_mask.py added: parses WA
+    land.dat (Team17-LZ77, collision-mask IMG chunk) or PNG into the 1-bpp mask
+    format; masks renamed island0/island1.bin. Guard tests: tests/wa_collage_check.rs
+    (determinism, distinctness, solid-fraction bands, cavern enclosure, spawns).
+  v0.5.4.397: Pistol SFX fixed + faster generation. pistol.wav was a 48-second
+    recording with one bang at t=9.3s - each shot's playback thread held the
+    exclusive hw:0,0 device for the full clip so rapid-fire shots queued into the
+    next turn; the lazy first-sound decode (9.2MB resample on the game thread)
+    also stalled match start. Trimmed to the 0.5s bang; play_pistol uses the
+    skip-if-busy path. Collage domain warp precomputed on a 512x128 bilinear grid
+    + single-lookup fast path away from seams (caverns now generate faster than
+    the pre-collage generator). New guard test tests/soldier_visibility.rs.
 
 RECENT CHANGES (scenery, map variety, molotov, perf, v0.5.4.390–.391, 2026-07-01)
 ------------------------------------------------------------------------------------------
