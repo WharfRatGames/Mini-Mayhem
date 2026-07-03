@@ -1964,6 +1964,7 @@ fn fire_weapon(game: &mut GameState) {
     let vel   = Vec2::new(angle.cos() * power * fm, -angle.sin() * power);
 
     let mut proj = Projectile::new(spawn, vel, kind);
+    proj.owner = Some((ti, si));
     if kind == WeaponKind::Grenade || kind == WeaponKind::ClusterBomb {
         proj.fuse = FuseState::Burning(game.aim.fuse_ticks);
     }

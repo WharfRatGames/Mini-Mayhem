@@ -1,45 +1,99 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.400
+## Version: 0.5.4.405 (deployed 2026-07-03)
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Recent changes (0.5.4.400)
-- **Soldiers can stand on other soldiers** (`src/game/loop_runner.rs`) — new
-  `is_on_soldier()` OR'd into the two `on_ground` gates (`process_movement`'s
-  walk/jump check and `apply_all_gravity`'s Idle-state fall check), so a soldier
-  resting on another's head is no longer treated as airborne. The airborne
-  landing-on-soldier collision now distinguishes a square landing (≥ half body-width
-  overlap) — stand on the other soldier's head like a platform — from a glancing hit,
-  which still slides off to the nearest clear side as before. Pure `simulate_with_muzzle`
-  physics, so it's automatically correct across all 5 game-mode paths; no `StateMsg`
-  change needed (position/state were already synced). `cargo test --test parity`: 19/19.
-- **MAC-10 damage cut 40%** — `WeaponKind::Uzi` `max_damage()` 8→5 per bullet
-  (`src/physics/projectile.rs`). Pure sim constant used inside `simulate_with_muzzle`,
-  automatically correct across all 5 paths.
-- **Update-check overhaul + MP freeze fix** (`src/main.rs`, `src/game/title.rs`) —
-  fixes the reported freeze on "CHECKING FOR UPDATES..." after choosing Casual Live
-  (main thread blocked on `recv_timeout` 500ms+6s with a single drawn frame; plus a
-  synchronous changelog fetch and a post-connect `read_line_blocking` that could hang
-  up to the 10s socket timeout). Now:
-  - Boot update check always runs (the `prior_update_attempted` sentinel only skips
-    the blocking pre-title gate) and the title screen shows a blinking
-    **UPDATE AVAILABLE** banner above the version string whenever the check lands.
-  - Selecting MULTIPLAYER on the main menu kicks off a fresh background check, so
-    the gate after picking a live mode usually has the answer already.
-  - That gate is now a cancellable animated poll loop (B = CANCEL, ~7s cap); on
-    timeout it proceeds — safe because the server handshake still hard-rejects
-    stale versions.
-  - The MMAY handshake (version/token send + OK/REJECTED read) moved into the
-    connect thread; `REJECTED:VERSION` now opens the full update screen
-    (A = INSTALL NOW) via the new `show_update_screen()` helper instead of dumping
-    the player back at the title.
-  - Changelog fetch on both update screens is off-thread ("loading update notes..."
-    placeholder swaps in via `try_recv`).
-  Menu/client code only — no protocol or sim change; parity tests pass (19/19).
-- **Deployed 2026-07-02** to Pi server/API/dashboard/Windows OTA/GitHub build; .110/.126
-  Miyoos were unreachable at deploy time and will pick up the OTA update on next boot.
+## In working tree, NOT built/deployed (target 0.5.4.406)
+- **Scenery craters like terrain** — explosions now destroy scenery objects. The removal
+  lives inside `Crater::carve` (`src/world/crater.rs`): any crater with radius ≥ 8 removes
+  every scenery object whose collision footprint intersects the blast circle. Living in
+  `carve` makes it automatically consistent across all paths — local sim, server, the live
+  client's `crater_log` replay, and both TAT loops all carve the same craters, so scenery
+  removal is deterministic everywhere with no `StateMsg` changes. Small carves (pistol/
+  revolver/MAC-10 chips r≤4, plasma-torch nibbles) leave scenery standing.
+- **Steep-angle bazooka self-detonation fixed** — the muzzle spawn point
+  (`pos.y - 4 - sin(angle)*12`) sits inside the shooter's own hit box at high aim angles,
+  and the rocket hit box (`dx<12, dy∈(-34,4)`) had no owner exclusion — a mid-charge
+  near-vertical shot was still inside the shooter's box on its first collision check and
+  detonated on the shooter. `Projectile` now carries `owner: Option<(team, soldier)>`
+  (set by `fire_weapon`) and `cleared_owner`; `step_projectiles` ignores the owner as a
+  target until the projectile has left their box once, after which the owner is a normal
+  target (a shot falling back on your own head still hurts). Covered by
+  `tests/fix_verification.rs`.
+- **Faster match load** — three fixes to the ~630ms (desktop-release; several seconds on
+  the Miyoo) match-start pipeline:
+  1. `atlas_sample` (`src/renderer/draw_terrain.rs`) scanned pixel-by-pixel upward to find
+     each solid pixel's landform top — O(depth) per pixel, quadratic per column on deep
+     terrain, dominating `build_world_cache`. Now answered from the per-column
+     `solid_runs` cache via new `Terrain::run_top()` (`src/world/terrain.rs`), with the
+     old scan kept only as a fallback. `build_world_cache`: 235ms → 102ms desktop.
+  2. Loop order fixed in `build_world_cache`/`update_cache_region`/`build_bg_cache` —
+     they iterated x-outer over row-major buffers (7.7KB stride per write).
+  3. `bg_image::prewarm_for_seed()` + a terrain-texture-tile warmup thread start decoding
+     the background PNG and atlas tile as soon as the seed/terrain are known
+     (`build_default_game_opts` in `src/main.rs`), overlapping the decode with map
+     generation instead of stalling the first rendered frame.
 
-## Recent changes (0.5.4.392–0.5.4.399)
+## Recent changes (0.5.4.404–0.5.4.405)
+- **WA-timed backflip (0.5.4.405)** — the soldier's backflip now follows the rotation curve
+  of the real WA 22-frame backflip animation: `SPIN_CURVE[22]` in `src/renderer/skeleton.rs`
+  holds per-frame principal-axis angles measured from the extracted frames (eased takeoff,
+  fast mid-flip tumble, eased landing, 22-tick cycle), replacing the old linear 18-tick spin.
+  The soldier keeps its own look (hat/gun/uniform visible through the flip).
+- **SPR extraction tool (0.5.4.404)** — new `tools/extract_wa_sprite.py` parses sprite
+  animations out of WA's packed `Gfx.dir` (format reverse-engineered and documented in the
+  docstring: IMG-style palettized header, Team17-LZ77 chunks, per-frame placement rects).
+  0.5.4.404 briefly shipped the actual worm sprite frames drawn during backflips; reverted
+  in 0.5.4.405 to keep the soldier's appearance — the tool and the motion data remain.
+
+## Recent changes (0.5.4.401–0.5.4.403)
+- **Guaranteed-walkable spawns (0.5.4.403)** — `standable_foot_y`, `standable_cave_foot_y`,
+  and `standable_cave_foot_simple` (`src/world/terrain.rs`) previously validated only the
+  exact 3-column footprint (`x_l`, `x`, `x_r`), never checking that a soldier could take a
+  single step out of it. A wall-to-wall `SOLDIER_W`-wide slot passed every footing check yet
+  was provably unwalkable by `try_move_horizontal`. Added an escape-room check requiring at
+  least one column two pixels beyond either footprint edge to be clear over full body height.
+- **Mound-series terrain removed (0.5.4.403)** — a low-weight sine-relief (`hill_col`) was
+  layered onto every non-cavern map's density field regardless of the underlying WA collage
+  silhouette, producing a repeating "series of mounds" look on flatter maps. Disabled
+  (`rolling = false`); the collage remains the sole macro shape.
+- **Hand of Jerry water-splash fix (0.5.4.403)** — `step_garcia`'s fall collision fell back
+  to `WORLD_H` (map bottom) when the column had no solid terrain (open water), so the hand
+  free-fell far past the visible water line before `hit_ground` triggered the smash sound.
+  Falls back to `WATER_Y` instead — the splash now registers right at the surface.
+- **Embedded-scenery pruning (0.5.4.403)** — the emergency spawn-mound fallback in
+  `find_team_spawns` raises a 141px-wide column of solid dirt (`MOUND_HW=70`) but only
+  checked scenery clearance at its center point, so objects elsewhere in that span could get
+  buried. Extended the existing post-mound pruning pass (previously only caught objects left
+  floating) to also catch and remove objects left embedded.
+- **Barrels/mines on top of scenery (0.5.4.402)** — new `Terrain::surface_y_at_with_scenery()`
+  scans scenery footprints for the spawn column and returns the higher of terrain surface or
+  scenery top; used in all 4 map-gen spawn functions so barrels/mines never spawn embedded.
+- **Pistol audio pop fix (0.5.4.402)** — `pistol.wav` (708ms) was longer than the interval
+  between burst shots (700ms), so the Miyoo's ALSA device was still draining the previous
+  shot when the next tried to open it, producing an audible pop every other shot. Added
+  `try_load_capped()` (`src/audio.rs`) to trim the loaded clip to 380ms with a clean fade-out.
+- **Hand of Jerry camera fix (0.5.4.402)** — camera now follows the Hand of Jerry's targeting
+  cursor vertically in every path (hotseat, live client, both TAT replay loops), matching Air
+  Strike and Homing Missile, which already did.
+- **Scenery footprint fixes (0.5.4.402)** — mushroom and skull both had a declared collision
+  footprint taller than the actual drawn sprite (~6px invisible solid strip at the 3× scale
+  tier); corrected to match the drawn art.
+- **Pistol burst fix + balance (0.5.4.401)** — pistol was firing only 1 of its 5 shots: the
+  shot counter was set to 4 *after* calling `fire_pistol_shot()` instead of before, so the
+  function's own end-of-burst check saw a stale 0 and ended the turn immediately. MAC-10
+  damage cut a further 20% (3→2/bullet — the 0.5.4.400 nerf only changed an unused display
+  stat, not the real per-bullet constant). Meteor Bomb main explosion damage cut 20% (45→36).
+- **Deployed 2026-07-03** to Pi server/API/dashboard/Windows OTA/GitHub build for all three
+  versions; Miyoos were unreachable at each deploy and will pick up the OTA update on next boot.
+
+## Recent changes (0.5.4.392–0.5.4.400)
+- **Soldiers stand on other soldiers + MAC-10 nerf + update-check overhaul (0.5.4.400)** —
+  new `is_on_soldier()` grounding check (a square landing on another soldier's head stands
+  on it like a platform instead of always sliding off); MAC-10 `max_damage()` cut 40%
+  (8→5/bullet, later found to be an unused display stat — see 0.5.4.401); update-check
+  overhaul fixed the freeze on "CHECKING FOR UPDATES..." after choosing Casual Live (title
+  screen UPDATE AVAILABLE banner, cancellable check gate, handshake off main thread).
 - **Pistol 5-shot burst + big grounded scenery (0.5.4.399)** — pistol burst cut to
   5 shots total (1 immediate A-press + 4 auto-burst, was 6). Scenery objects now
   render 2–3× bigger (`SceneryObject::scale()`: small sprites 3×, tall ones 2×) via

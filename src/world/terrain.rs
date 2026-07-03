@@ -245,6 +245,24 @@ impl Terrain {
         };
     }
 
+    /// Topmost solid y of the contiguous run containing (x, y), from the
+    /// per-column run cache — O(#runs) instead of a pixel-by-pixel upward scan.
+    /// Returns None if (x, y) isn't covered by the cache (out of bounds, below
+    /// WATER_Y, or a stale cache after a direct `set_solid`).
+    pub fn run_top(&self, x: i32, y: i32) -> Option<u32> {
+        if x < 0 || x >= WORLD_W as i32 || y < 0 || y >= WATER_Y as i32 {
+            return None;
+        }
+        let y = y as u32;
+        if self.solid_to_water[x as usize] {
+            let top = self.sky_limit[x as usize];
+            return if y >= top { Some(top) } else { None };
+        }
+        self.solid_runs[x as usize].iter()
+            .find(|&&(s, e)| y >= s && y < e)
+            .map(|&(s, _)| s)
+    }
+
     /// Contiguous solid [start, end) spans in column `x` between `y0` and
     /// `WATER_Y`. Used to populate `solid_runs` for caves/chasm columns.
     fn solid_runs_for_column(&self, x: i32, y0: u32) -> Vec<(u32, u32)> {

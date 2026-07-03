@@ -51,6 +51,24 @@ impl Crater {
         for x in x0..=x1 {
             terrain.recompute_column_cache(x);
         }
+
+        // Scenery is destroyed by explosions just like the ground it sits on.
+        // Lives here (not in the explosion code) so every carve path agrees:
+        // local sim, server, the live client's crater_log replay, and TAT all
+        // call carve — scenery removal stays deterministic across all of them.
+        // Small carves (bullets r≤4, plasma-torch nibbles) only chip terrain,
+        // so they leave scenery standing.
+        if r >= 8.0 {
+            let theme = super::terrain::Theme::of(terrain.is_cavern, terrain.template_id);
+            terrain.scenery.retain(|obj| {
+                let (half_w, height) = obj.footprint(theme);
+                // Closest point of the footprint box to the blast centre
+                let nx = self.cx.clamp((obj.x as i32 - half_w) as f32, (obj.x as i32 + half_w) as f32);
+                let ny = self.cy.clamp((obj.y as i32 - height) as f32, obj.y as f32);
+                let (dx, dy) = (nx - self.cx, ny - self.cy);
+                dx * dx + dy * dy > r2
+            });
+        }
     }
 
     /// Returns true if this crater overlaps with a given world position.

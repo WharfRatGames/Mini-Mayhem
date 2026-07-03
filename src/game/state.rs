@@ -763,17 +763,18 @@ impl GameState {
         let mut black_hole_spawns:  Vec<WorldPos> = Vec::new();
         let mut molotov_impacts:    Vec<WorldPos> = Vec::new();
 
-        // Collect alive soldier positions for collision (before borrow in retain_mut)
-        let soldier_boxes: Vec<WorldPos> = self.teams.iter()
-            .flat_map(|t| t.soldiers.iter())
-            .filter(|s| s.is_alive())
-            .map(|s| s.pos)
+        // Collect alive soldier positions (with team/soldier identity, so a
+        // projectile can ignore its own shooter) before the borrow in retain_mut.
+        let soldier_boxes: Vec<(usize, usize, WorldPos)> = self.teams.iter().enumerate()
+            .flat_map(|(ti, t)| t.soldiers.iter().enumerate()
+                .filter(|(_, s)| s.is_alive())
+                .map(move |(si, s)| (ti, si, s.pos)))
             .collect();
 
         // Pre-step: steer bees toward nearest living soldier
         for proj in &mut self.projectiles {
             if proj.kind == WeaponKind::Blasthive && proj.is_fragment {
-                if let Some(&target) = soldier_boxes.iter().min_by(|a, b| {
+                if let Some(target) = soldier_boxes.iter().map(|&(_, _, p)| p).min_by(|a, b| {
                     let da = (a.x-proj.pos.x).powi(2) + (a.y-proj.pos.y).powi(2);
                     let db = (b.x-proj.pos.x).powi(2) + (b.y-proj.pos.y).powi(2);
                     da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
@@ -870,7 +871,7 @@ impl GameState {
                     // Main hive passes through soldiers; only bees sting
                     let is_main_hive = kind == WeaponKind::Blasthive && !proj.is_fragment;
                     let is_bee = kind == WeaponKind::Blasthive && proj.is_fragment;
-                    for &spos in if is_main_hive { &[][..] } else { &soldier_boxes[..] } {
+                    for &(sti, ssi, spos) in if is_main_hive { &[][..] } else { &soldier_boxes[..] } {
                         let dx = (proj.pos.x - spos.x).abs();
                         let dy = proj.pos.y - spos.y;
                         // Bees use a wider window (above the head + to the sides) so a
@@ -885,6 +886,13 @@ impl GameState {
                         } else {
                             dx < 8.0 && dy > -22.0 && dy < 2.0
                         };
+                        // The muzzle sits inside the shooter's box at steep aim
+                        // angles: ignore the shooter until the projectile has
+                        // left their box once, then they're a target like anyone.
+                        if proj.owner == Some((sti, ssi)) && !proj.cleared_owner {
+                            if hit { continue; }
+                            proj.cleared_owner = true;
+                        }
                         if hit && !kind.has_fuse() {
                             if kind == WeaponKind::Blasthive && !proj.is_fragment {
                                 // Main hive hits soldier directly: trigger hive burst + spawn bees at soldier center

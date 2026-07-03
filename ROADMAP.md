@@ -13,6 +13,8 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Archetype system removed — replaced by template_id (WA mask) + is_cavern (~20% odds); chasms/overhangs/caves now seed-random on any map (v0.5.4.393)
 - [x] Maps twice the screen height — 700px vertical terrain range, generator tuned for full use (v0.5.4.387)
 - [x] Vertical spawn spread — soldiers spawn at varied heights (cave ledges, tunnels, mid-terrain) not just the topmost surface (v0.5.4.389)
+- [x] Guaranteed-walkable spawns — footing checks now require escape room beyond at least one edge of the footprint, rejecting wall-to-wall soldier-width slots that were standable but unwalkable (v0.5.4.403)
+- [x] Mound-series terrain removed — a low-weight sine-relief layered onto every non-cavern map's density field, producing a repeating "series of mounds" look regardless of the WA collage silhouette, has been disabled (v0.5.4.403)
 - [x] Terrain generation ~40% faster — precomputed hill_col[], octaves 4→3 (~4.4M fewer noise calls per map, v0.5.4.394)
 - [x] Crater carving (destructible terrain)
 - [x] Euler projectile ballistics
@@ -35,6 +37,8 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Cursor weapons full vertical range — Garcia/Air Strike/Hand of Jerry can reach the waterline (v0.5.4.389)
 - [x] Hotseat local multiplayer
 - [x] Soldier skeletal animation (walk cycle, backflip, airborne lean)
+- [x] WA-timed backflip — whole-skeleton rotation follows the real WA backflip animation's 22-frame curve (eased takeoff, fast tumble, eased landing), measured from frames extracted by new `tools/extract_wa_sprite.py` (v0.5.4.405)
+- [x] Faster match load — landform-top texture sampling answered from the solid_runs column cache instead of a per-pixel upward scan (build_world_cache 235→102ms desktop); row-major loop order in the world/bg cache builders; background PNG + terrain tile decode prewarmed on worker threads during map generation (in working tree, pending deploy)
 - [x] Team color rendering
 
 ---
@@ -58,11 +62,19 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Themed scenery objects — 28 per map, styled per WA template / cavern mode (v0.5.4.390/.391)
 - [x] Solid scenery — per-sprite collision footprints stamped into the object mask; soldiers stand on them, projectiles collide; placement rejects spots embedded in slopes/overhangs (v0.5.4.398)
 - [x] Big grounded scenery — 2–3× scale with matching collision footprints; always seated on ground (cave floors on cavern maps); spawns keep clear of solid props (v0.5.4.399)
-- [x] Pistol trimmed to 5-shot burst (v0.5.4.399)
+- [x] Pistol trimmed to 5-shot burst (v0.5.4.399) — actually firing all 5 shots fixed in v0.5.4.401 (shot counter was set after the first shot instead of before)
 - [x] Soldiers can stand on top of other soldiers — square landings stand on the other's head instead of always sliding off (v0.5.4.400)
 - [x] Fall damage
 - [x] Drown death
-- [x] MAC-10 damage cut 40% (8→5/bullet) (v0.5.4.400)
+- [x] MAC-10 damage cut 40% (8→5/bullet) (v0.5.4.400) — that changed an unused display stat only; the real per-bullet damage cut a further 20% (3→2) in v0.5.4.401
+- [x] Meteor Bomb main explosion damage cut 20% (45→36) (v0.5.4.401)
+- [x] Barrels and mines spawn on top of scenery objects instead of embedded inside them (v0.5.4.402)
+- [x] Scenery objects can no longer end up buried inside terrain raised by the emergency spawn-mound fallback (v0.5.4.403)
+- [x] Destructible scenery — explosions (crater radius ≥ 8) remove scenery objects overlapping the blast, deterministically in every mode via Crater::carve; small-arms chips and torch nibbles leave scenery standing (in working tree, pending deploy)
+- [x] Steep-angle bazooka self-detonation fixed — projectiles ignore their shooter until they've left the shooter's hit box once (Projectile::owner) (in working tree, pending deploy)
+- [x] Pistol rapid-fire audio pop fixed — sound clip capped below the burst-shot interval so the audio device is never still busy when the next shot fires (v0.5.4.402)
+- [x] Hand of Jerry camera now follows its targeting cursor vertically, matching Air Strike and Homing Missile (v0.5.4.402)
+- [x] Hand of Jerry's smash sound now plays at the water line instead of far below it when dropped over open water (v0.5.4.403)
 
 ---
 

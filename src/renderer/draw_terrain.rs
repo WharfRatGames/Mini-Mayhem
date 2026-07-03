@@ -155,16 +155,25 @@ fn atlas_sample(terrain: &Terrain, x: i32, y: i32) -> Option<(u8, u8, u8)> {
     // off `spawn_y` measured the lower landform from the high slab, sampling deep
     // into the tile's bare body — so adjacent columns showed vertical strips of
     // different browns with the top-of-tile surface treatment (grass/flowers)
-    // missing. Scanning to the local run top puts the surface band on every piece.
+    // missing. The run top comes from the per-column run cache (kept fresh by
+    // recompute_column_cache) — the old pixel-by-pixel upward scan was O(depth)
+    // per pixel and dominated build_world_cache on tall solid maps. The scan
+    // remains only as a fallback for a pixel the cache doesn't cover.
     // Capped at the terrain height so the worst case stays bounded.
-    let mut surf = y;
     let cap = (crate::world::TERRAIN_MAX_Y as i32 - crate::world::TERRAIN_MIN_Y as i32).max(1);
-    let mut steps = 0;
-    while surf > 0 && steps < cap && terrain.is_solid(x, surf - 1) {
-        surf -= 1;
-        steps += 1;
-    }
-    let depth = (y - surf).max(0) as usize;
+    let surf = match terrain.run_top(x, y) {
+        Some(top) => top as i32,
+        None => {
+            let mut surf = y;
+            let mut steps = 0;
+            while surf > 0 && steps < cap && terrain.is_solid(x, surf - 1) {
+                surf -= 1;
+                steps += 1;
+            }
+            surf
+        }
+    };
+    let depth = (y - surf).max(0).min(cap) as usize;
     // Mirror horizontally so tile boundaries don't show a vertical seam line.
     let tx = mirror_index(x, tile.w);
     let body_h = tile.h.saturating_sub(SURFACE_BAND);
@@ -196,8 +205,10 @@ fn atlas_sample(terrain: &Terrain, x: i32, y: i32) -> Option<(u8, u8, u8)> {
 /// Build the world cache — render sky + terrain for the entire world.
 /// Expensive: O(WORLD_W × WORLD_H). Called once per game start.
 pub fn build_world_cache(cache: &mut WorldBuffer, terrain: &Terrain) {
-    for x in 0..WORLD_W as i32 {
-        for y in 0..WORLD_H as i32 {
+    // y outer: the buffer is row-major, so scanning rows keeps writes sequential
+    // (x-outer strides 7.7KB per write and thrashes the cache on the handheld).
+    for y in 0..WORLD_H as i32 {
+        for x in 0..WORLD_W as i32 {
             cache.set_pixel(x, y, terrain_pixel(terrain, x, y));
         }
     }
@@ -214,8 +225,8 @@ pub fn update_cache_region(cache: &mut WorldBuffer, terrain: &Terrain, cx: f32, 
     let x1 = x1.min(WORLD_W as i32 - 1);
     let y0 = y0.max(0);
     let y1 = y1.min(WORLD_H as i32 - 1);
-    for x in x0..=x1 {
-        for y in y0..=y1 {
+    for y in y0..=y1 {
+        for x in x0..=x1 {
             cache.set_pixel(x, y, terrain_pixel(terrain, x, y));
         }
     }

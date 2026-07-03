@@ -385,6 +385,13 @@ pub struct Projectile {
     pub is_fragment: bool,
     /// Fixed world-space target for homing missiles (set at fire time, never changes).
     pub homing_target: Option<(f32, f32)>,
+    /// (team, soldier) that fired this projectile. Muzzle spawn sits inside the
+    /// shooter's own hit box at steep aim angles; the owner is ignored as a
+    /// collision target until the projectile has left their box once.
+    pub owner: Option<(usize, usize)>,
+    /// Set once the projectile has been outside the owner's hit box; from then
+    /// on the owner is a valid target like any other soldier.
+    pub cleared_owner: bool,
 }
 
 impl Projectile {
@@ -402,6 +409,8 @@ impl Projectile {
             fuse,
             is_fragment: false,
             homing_target: None,
+            owner: None,
+            cleared_owner: false,
         }
     }
 
@@ -415,6 +424,8 @@ impl Projectile {
             fuse: FuseState::None,
             is_fragment: true,
             homing_target: None,
+            owner: None,
+            cleared_owner: false,
         }
     }
 
@@ -428,6 +439,8 @@ impl Projectile {
             fuse: FuseState::Burning(30), // ~1 s to bounce before exploding
             is_fragment: true,
             homing_target: None,
+            owner: None,
+            cleared_owner: false,
         }
     }
 
@@ -441,6 +454,8 @@ impl Projectile {
             fuse: FuseState::Burning(180), // ~6 s to find a target
             is_fragment: true,
             homing_target: None,
+            owner: None,
+            cleared_owner: false,
         }
     }
 
@@ -454,6 +469,8 @@ impl Projectile {
             fuse: FuseState::Burning(fuse_ticks),
             is_fragment: false,
             homing_target: None,
+            owner: None,
+            cleared_owner: false,
         }
     }
 

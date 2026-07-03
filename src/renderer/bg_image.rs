@@ -209,6 +209,15 @@ pub(crate) fn par_x_and_dst_w(seed: u64, cam_x: u32) -> Option<(u32, u32)> {
 /// `copy_bg_viewport` re-samples this cache each frame with a parallax-shifted
 /// offset, so the per-frame cost is a cheap column copy instead of a per-pixel
 /// redraw from the source image.
+/// Warm the decode+scale cache for this seed's background image on a worker
+/// thread. Call as soon as the map seed is known: the PNG decode + bilinear
+/// scale then overlaps terrain generation instead of stalling the first
+/// rendered frame (OnceLock makes the race with build_bg_cache safe — the
+/// loser just blocks until the cache is filled).
+pub fn prewarm_for_seed(seed: u64) {
+    std::thread::spawn(move || { let _ = scaled_slot(bg_index_for_seed(seed)); });
+}
+
 pub fn build_bg_cache(seed: u64) -> WorldBuffer {
     let mut cache = WorldBuffer::new();
     let slot = bg_index_for_seed(seed);
@@ -218,8 +227,9 @@ pub fn build_bg_cache(seed: u64) -> WorldBuffer {
     };
     let dst_w = img.w.min(WORLD_W);
     let dst_h = img.h.min(WATER_Y);
-    for dx in 0..dst_w {
-        for dy in 0..dst_h {
+    // dy outer: source and destination are row-major — sequential on both sides.
+    for dy in 0..dst_h {
+        for dx in 0..dst_w {
             let idx = ((dy * img.w + dx) * 4) as usize;
             let a = img.pixels[idx + 3];
             if a == 0 { continue; }

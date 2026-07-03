@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.405";
+const VERSION: &str = "0.5.4.406";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1292,6 +1292,7 @@ fn build_default_game(seed: u64) -> GameState {
 fn build_default_game_n(seed: u64, team_count: usize) -> GameState {
     let n = team_count.clamp(2, 4);
     if n == 2 { return build_default_game(seed); }
+    renderer::bg_image::prewarm_for_seed(seed); // overlap BG decode with terrain gen
     let mut terrain = Terrain::generate_tactical(seed);
     let all_spawns = terrain.find_team_spawns(0, WORLD_W, n * 4);
     let mut teams = Vec::with_capacity(n);
@@ -1533,7 +1534,11 @@ fn draw_casual_lobby(
 }
 
 fn build_default_game_opts(seed: u64, with_mines: bool, with_barrels: bool) -> GameState {
+    renderer::bg_image::prewarm_for_seed(seed); // overlap BG decode with terrain gen
     let mut terrain = Terrain::generate_tactical(seed);
+    // Same for the terrain texture tile — known once the terrain exists.
+    let st = terrain.surface_texture;
+    std::thread::spawn(move || { let _ = renderer::terrain_textures::tile(st); });
 
     // Worms-style: find 8 spawn points across the full map, then interleave between
     // teams so both can appear anywhere (no fixed left/right sides).

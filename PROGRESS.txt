@@ -1,19 +1,70 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.400 (deployed to Pi server/API/dashboards/GitHub/Windows OTA;
-  .110/.126 Miyoos unreachable at deploy time, will pick up OTA update on next boot)
-Last updated: 2026-07-02 (v0.5.4.400 deployed —
-  1) soldiers can now stand on top of other soldiers (src/game/loop_runner.rs):
-     new is_on_soldier() grounding check, and a square landing on another soldier
-     now stands on their head instead of always sliding off;
-  2) MAC-10 (Uzi) max_damage cut 40%, 8->5/bullet, src/physics/projectile.rs;
-  3) update-check overhaul + MP freeze fix (src/main.rs, src/game/title.rs):
-     title-screen UPDATE AVAILABLE banner (boot check always runs), fresh check
-     kicked off when MULTIPLAYER is selected, cancellable animated check gate
-     (B=CANCEL, ~7s cap) replacing the main-thread recv_timeout freeze after
-     choosing Casual Live, MMAY handshake moved into the connect thread,
-     REJECTED:VERSION opens the full update screen (show_update_screen helper),
-     changelog fetch off-thread. See STATUS.md for detail.)
+Current version: 0.5.4.405 (deployed 2026-07-03 to Pi server/API/dashboards/GitHub/
+  Windows OTA; Miyoo .126 updated + hash-verified, .110 offline — picks up OTA on next boot)
+
+In working tree, NOT built/deployed (target 0.5.4.406):
+  1) scenery objects now crater like terrain — explosions (crater radius >= 8)
+     destroy any scenery object whose footprint intersects the blast circle;
+     removal lives inside Crater::carve so every path (local sim, server, live
+     client crater_log replay, both TAT loops) stays deterministic with no
+     StateMsg changes; small-arms chips and torch nibbles leave scenery alone;
+  2) steep-angle bazooka shots no longer detonate on the shooter — the muzzle
+     spawn sits inside the shooter's own hit box at high aim angles and the
+     rocket soldier-hit check had no owner exclusion; Projectile now tracks
+     owner (team,soldier) + cleared_owner, and step_projectiles ignores the
+     shooter until the rocket has left their box once (falling back on your
+     own head still hurts); regression tests in tests/fix_verification.rs;
+  3) matches load faster — atlas_sample's per-pixel upward scan to the
+     landform top (quadratic per column; dominated build_world_cache)
+     replaced with a solid_runs cache lookup (Terrain::run_top);
+     build_world_cache 235ms -> 102ms desktop-release; x-outer loops over
+     row-major buffers fixed in build_world_cache/update_cache_region/
+     build_bg_cache; background-image + terrain-tile PNG decodes now prewarm
+     on worker threads while the map generates (bg_image::prewarm_for_seed).
+
+Deployed 2026-07-03 (v0.5.4.404-405):
+  1) backflip now follows the real WA backflip animation timing — SPIN_CURVE[22]
+     in skeleton.rs holds per-frame rotation angles measured from the extracted
+     22-frame wbackflp animation (eased takeoff, fast tumble, eased landing);
+     soldier keeps hat/gun/uniform through the flip (v0.5.4.404 briefly drew
+     the actual worm sprite frames; reverted in .405 — motion only);
+  2) new tools/extract_wa_sprite.py extracts sprite animations from WA's
+     packed Gfx.dir (.spr format reverse-engineered: IMG-style palettized
+     header, Team17-LZ77 chunks, per-frame placement rects; wbackflp.spr at
+     offset 0x14c674 size 0x18bf).
+
+Last updated: 2026-07-03 (v0.5.4.401-403 deployed —
+  1) pistol burst fixed to actually fire all 5 shots (the shot counter was set
+     after the first shot instead of before, so the burst's own end-of-burst
+     check ended the turn after shot 1); MAC-10 damage cut a further 20%
+     (3->2/bullet — the v0.5.4.400 nerf only touched an unused display stat);
+     Meteor Bomb main explosion damage cut 20% (45->36);
+  2) barrels and mines now spawn resting on top of scenery objects instead of
+     embedded inside them (Terrain::surface_y_at_with_scenery);
+  3) pistol's rapid-fire shots no longer pop every other bullet (pistol.wav
+     was 708ms, longer than the 700ms interval between burst shots, so the
+     ALSA device was still draining the previous shot when the next opened it;
+     capped the loaded clip to 380ms with a clean fade-out);
+  4) camera now follows the Hand of Jerry's targeting cursor vertically in
+     every path, matching Air Strike and Homing Missile;
+  5) two scenery objects (mushroom, skull) had an invisible solid area above
+     the visible sprite that soldiers could stand on in mid-air — footprints
+     corrected to match the drawn art;
+  6) soldiers now always spawn somewhere they can walk out of — the footing
+     helpers (standable_foot_y/standable_cave_foot_y/standable_cave_foot_simple)
+     previously validated only the exact 3-column footprint, never checking
+     that a soldier could take a single step from it; added an escape-room
+     check requiring clearance beyond at least one footprint edge;
+  7) removed a low-weight sine-relief layered onto every non-cavern map's
+     density field that produced a repeating "series of mounds" look;
+  8) Hand of Jerry's smash sound now plays at the water line instead of far
+     below it when dropped over open water (fall collision no longer falls
+     back to WORLD_H when the column has no solid terrain);
+  9) the emergency spawn-mound fallback in find_team_spawns can no longer
+     bury scenery objects under its raised dirt mass — extended the existing
+     post-mound pruning pass to catch embedded objects, not just floating ones.
+  See STATUS.md for detail.)
 
 COMPLETED PHASES
 ----------------
@@ -128,6 +179,48 @@ INFRASTRUCTURE CHANGES (2026-06-28 through 2026-06-29)
   IRC dashboard (/ircdash/) and bot dashboard (/arty/dashboard/bot.html) now require admin key
   Bot server (mayhem_bot.py): all /notify/* endpoints gated by ?key= admin key check
   Port reference doc: assets/ports.txt
+
+RECENT CHANGES (spawn safety, terrain/scenery/audio fixes, v0.5.4.401–.403, 2026-07-03)
+--------------------------------------------------------------------------------------------
+  v0.5.4.401: Pistol burst was firing only 1 of its 5 shots — the shot counter was set
+    to 4 after calling fire_pistol_shot() instead of before, so the function's own
+    end-of-burst check saw a stale 0 and ended the turn after shot 1. Counter now set
+    before the first shot fires (matches revolver/minigun/uzi). MAC-10 damage cut a
+    further 20% (3->2/bullet — the v0.5.4.400 nerf only changed WeaponKind::Uzi's
+    max_damage(), which is unused for the Uzi/never reaches the real per-bullet DAMAGE
+    const). Meteor Bomb main explosion damage cut 20% (45->36); radius/knockback
+    unchanged; real TNT weapon untouched (meteor bomb only borrows TNT's damage number
+    as a scaled base profile).
+  v0.5.4.402: Barrels and mines now spawn resting on top of scenery objects instead of
+    embedded inside them — new Terrain::surface_y_at_with_scenery() scans scenery
+    footprints for the spawn column and returns the higher of terrain surface or
+    scenery top; used in all 4 map-gen spawn functions. Fixed the pistol's rapid-fire
+    shots popping every other bullet — pistol.wav (708ms) was longer than the interval
+    between burst shots (700ms), so the ALSA device (Miyoo/embedded audio) was still
+    draining the previous shot when the next tried to open it; added
+    try_load_capped() to trim the loaded clip to 380ms with a clean fade-out. Camera
+    now follows the Hand of Jerry's targeting cursor vertically in every path
+    (hotseat, live client, both TAT replay loops), matching Air Strike and Homing
+    Missile, which already did. Fixed two scenery objects (mushroom, skull) whose
+    declared collision footprint was taller than the actual drawn sprite, leaving an
+    invisible solid strip above them that soldiers could stand on in mid-air.
+  v0.5.4.403: Soldiers now always spawn somewhere they can walk out of —
+    standable_foot_y/standable_cave_foot_y/standable_cave_foot_simple previously
+    validated only the exact 3-column footprint, never checking that a soldier could
+    take a single step from it; a wall-to-wall SOLDIER_W-wide slot passed every
+    footing check yet was provably unwalkable by try_move_horizontal. Added an
+    escape-room check requiring at least one direction beyond the footprint edge to
+    be clear. Removed a low-weight sine-relief ("hill_col") layered onto every
+    non-cavern map's density field regardless of the underlying WA collage
+    silhouette, which produced a repeating "series of mounds" look on flatter maps.
+    Fixed the Hand of Jerry's smash sound not playing near the water surface — its
+    fall collision fell back to WORLD_H (map bottom) when the column had no solid
+    terrain, so it free-fell far past the visible water line before registering
+    impact; falls back to WATER_Y instead. The last-resort spawn-mound fallback in
+    find_team_spawns raises a 141px-wide column of solid dirt but only checked
+    scenery clearance at its center point, so objects elsewhere in that span could
+    get buried; extended the existing post-mound pruning pass (previously only
+    caught objects left floating) to also catch and remove objects left embedded.
 
 RECENT CHANGES (WA terrain art + archetype removal + bugfixes, v0.5.4.392–.395, 2026-07-01)
 --------------------------------------------------------------------------------------------

@@ -62,6 +62,31 @@
 - auto-update uses shell script to avoid FAT overwrite issue
 - Creds saved to SDCARD and /tmp as fallback
 - API JSON has spaces after colons — json_field handles this
+- WeaponKind::max_damage() only feeds explosive splash-damage scaling
+  (apply_explosion_scaled, e.g. grenade/TNT/meteor bomb) — for hitscan/bullet
+  weapons (Uzi, pistol, revolver, minigun) the real per-shot damage is a local
+  `const DAMAGE` inside that weapon's fire_*_shot function. Changing
+  max_damage() alone does nothing for those weapons (bit us in v0.5.4.400: the
+  "MAC-10 nerf" only touched the unused display stat, not real damage).
+- Terrain generation/spawn-placement code must use is_solid (terrain only),
+  never is_blocked (terrain OR objects) — the per-tick `objects` bitmask is
+  populated by stamp_objects() during the running game loop and is always
+  empty at generation time. To account for scenery at gen time, query
+  self.scenery directly (see surface_y_at_with_scenery, clear_of_scenery).
+- Crater::carve is the single choke point for terrain destruction — every
+  path calls it (local sim, server, live client crater_log replay, TAT).
+  Anything that must stay consistent with cratering across modes (e.g.
+  scenery destruction) belongs INSIDE carve, not in the explosion code;
+  it then needs no StateMsg fields.
+- The muzzle spawn point (pos.y-4-sin*12) is inside the shooter's own hit
+  box at steep aim angles. Projectile::owner + cleared_owner exclude the
+  shooter as a target until the projectile leaves their box once — any new
+  fired-from-the-soldier projectile should set owner (see fire_weapon).
+- Per-pixel loops over WorldBuffer/terrain must iterate y-outer/x-inner
+  (row-major; x-outer strides 7.7KB per write). atlas_sample's landform-top
+  question is answered by Terrain::run_top() from the solid_runs column
+  cache (kept fresh by recompute_column_cache) — never rescan upward
+  per pixel.
 
 ## Services (Pi)
 - arty-api.service: systemd auto-start
