@@ -36,6 +36,7 @@ pub mod skeleton;
 pub mod cosmetic_sprites;
 pub mod splash;
 pub mod scenery;
+pub mod wa_sprites;
 
 pub use fb::{Framebuffer, Bgra};
 pub use buffer::WorldBuffer;
