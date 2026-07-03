@@ -1727,12 +1727,16 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
 
         // Collision: find the actual terrain surface below the sprite center.
         // Use surface_y_at so we always detect terrain even after explosion craters.
+        // Fall back to the water line (not WORLD_H) when the column has no solid
+        // terrain — otherwise a hand dropped over open water free-falls far past
+        // the visible surface before "hitting ground", so the smash/splash never
+        // plays anywhere near the actual water line.
         let surface_y = if fx >= 0 && fx < crate::world::WORLD_W as i32 {
             game.terrain.surface_y_at(fx as u32)
                 .map(|y| y as i32)
-                .unwrap_or(crate::world::WORLD_H as i32)
+                .unwrap_or(crate::world::WATER_Y as i32)
         } else {
-            crate::world::WORLD_H as i32
+            crate::world::WATER_Y as i32
         };
 
         // Hit when the sprite center reaches the terrain surface (accounting for half-height)

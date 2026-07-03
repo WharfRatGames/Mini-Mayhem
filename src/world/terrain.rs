@@ -497,7 +497,11 @@ impl Terrain {
 
         // Macro shaping (rolling hills + top headroom). Applied to every non-cavern
         // map (caverns keep their original surface shape; only their spawns change).
-        let rolling = !is_cavern;
+        // Disabled: layering this low-weight sine-like relief onto every non-cavern
+        // map produced a repeating "series of mounds" look, especially on flatter
+        // WA collage silhouettes. The collage itself is already the macro shape
+        // (see Phase 2 below); no additional hill relief is folded in now.
+        let rolling = false;
         let hill_freq = rnd(&mut rng, 2.8, 1.8);   // 2.8–4.6 cycles: several hills per map (visible on-screen)
         #[allow(non_snake_case)]
         let HILL_AMP: f64 = hill_amp;
@@ -1377,21 +1381,31 @@ impl Terrain {
             used_x.push(px);
         }
 
-        // The mound headroom carving above can remove the ground a scenery
-        // object was seated on, leaving it floating. Prune any object that lost
-        // its central support. Deterministic (pure function of the terrain
-        // bits), so client and server stay in agreement.
-        let unsupported: Vec<usize> = self.scenery.iter().enumerate()
+        // The mound raising/carving above can either remove the ground a scenery
+        // object was seated on (leaving it floating) or bury it under newly-added
+        // dirt mass (leaving it embedded) — the mound's solid-fill spans a wide
+        // MOUND_HW*2 column but was only checked against scenery at its center
+        // point (`clear_of_scenery(px)`), so an object elsewhere within that span
+        // can get swallowed. Prune any object that's now unsupported OR embedded.
+        // Deterministic (pure function of the terrain bits), so client and server
+        // stay in agreement.
+        const EMBED_TOL: i32 = 5;
+        let invalid: Vec<usize> = self.scenery.iter().enumerate()
             .filter(|(_, o)| {
-                let (hw, _) = o.footprint(theme);
+                let (hw, height) = o.footprint(theme);
                 let base = o.y as i32;
-                !(-hw / 2..=hw / 2).all(|dx| {
+                let floating = !(-hw / 2..=hw / 2).all(|dx| {
                     (1..=5).any(|dy| self.is_solid(o.x as i32 + dx, base + dy))
-                })
+                });
+                let cw = (hw * 3 / 4).max(1);
+                let embedded = (EMBED_TOL + 1..=height).any(|dy| {
+                    (-cw..=cw).any(|dx| self.is_solid(o.x as i32 + dx, base - dy))
+                });
+                floating || embedded
             })
             .map(|(i, _)| i)
             .collect();
-        for &i in unsupported.iter().rev() { self.scenery.remove(i); }
+        for &i in invalid.iter().rev() { self.scenery.remove(i); }
 
         spawns
     }
@@ -1416,10 +1430,19 @@ impl Terrain {
             // Full body footprint must be clear, matching the tightened movement
             // collision (try_move_horizontal / airborne terrain_hit), so a soldier
             // never spawns wedged in a passage it can't legally move out of.
-            (foot_y - CLEAR_H - SKY_H + 1 ..= foot_y).all(|y| {
+            let body_clear = (foot_y - CLEAR_H - SKY_H + 1 ..= foot_y).all(|y| {
                 let y = y.max(0);
                 !self.is_solid(x_l, y) && !self.is_solid(x, y) && !self.is_solid(x_r, y)
-            })
+            });
+            if !body_clear { return false; }
+            // Escape room: the exact footprint can be clear yet still be exactly
+            // SOLDIER_W wide with solid walls flush against both edges — a soldier
+            // there could stand but never take a single step (try_move_horizontal
+            // requires the column just beyond the footprint edge to be open too).
+            // Require at least one direction to have room to walk out.
+            let clear_col = |cx: i32| (foot_y - CLEAR_H - SKY_H + 1 ..= foot_y)
+                .all(|y| !self.is_solid(cx, y.max(0)));
+            clear_col(x_l - 2) || clear_col(x_r + 2)
         };
         // Scan top-down from the very top so we can land on high sky-islands (whose
         // tops sit above CLEAR_H+SKY_H) before any ground far below.
@@ -1450,7 +1473,14 @@ impl Terrain {
                 !self.is_solid(x_l, y) && !self.is_solid(x, y) && !self.is_solid(x_r, y)
             }) { return false; }
             // Must be underground (roofed), not on the open surface.
-            ((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y))
+            if !((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y)) {
+                return false;
+            }
+            // Escape room: reject spots exactly SOLDIER_W wide with solid walls
+            // flush against both footprint edges — standable but unwalkable.
+            let clear_col = |cx: i32| (foot_y - HEAD_H + 1 ..= foot_y)
+                .all(|y| !self.is_solid(cx, y.max(0)));
+            clear_col(x_l - 2) || clear_col(x_r + 2)
         };
         // Bottom-up: prefer deeper floors (main chambers) over high thin tunnels.
         (HEAD_H..WATER_Y as i32).rev().find(|&foot_y| ok(foot_y))
@@ -1477,6 +1507,11 @@ impl Terrain {
             if !((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y)) {
                 return false;
             }
+            // Escape room: reject spots exactly SOLDIER_W wide with solid walls
+            // flush against both footprint edges — standable but unwalkable.
+            let clear_col = |cx: i32| (foot_y - HEAD_H + 1 ..= foot_y)
+                .all(|y| !self.is_solid(cx, y.max(0)));
+            if !(clear_col(x_l - 2) || clear_col(x_r + 2)) { return false; }
             // Never spawn in a sealed pocket: there must be a way out within walking
             // distance — a nearby floor at a similar height that opens to the sky
             // (unroofed), reachable along the cave/tunnel.
