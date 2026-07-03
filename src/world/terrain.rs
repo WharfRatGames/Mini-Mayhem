@@ -120,7 +120,7 @@ impl SceneryObject {
         match theme {
             Theme::Pastoral => match self.sprite {
                 0 => (6, 24),  // flower
-                1 => (9, 18),  // mushroom
+                1 => (10, 16), // mushroom
                 2 => (12, 10), // mossy rock
                 3 => (14, 25), // fence post + rails
                 4 => (13, 18), // bush
@@ -141,7 +141,7 @@ impl SceneryObject {
                 0 => (14, 32), // crystal cluster
                 1 => (16, 14), // bone pile
                 2 => (3, 22),  // torch (handle+coal; flame not solid)
-                3 => (8, 16),  // skull
+                3 => (9, 14),  // skull
                 4 => (20, 9),  // fallen stalactite shard
                 5 => (10, 16), // rusted chain pile
                 _ => (12, 18), // ribcage
@@ -1596,6 +1596,29 @@ impl Terrain {
             }
         }
         None
+    }
+
+    /// Like `surface_y_at`, but accounts for scenery objects (trees, rocks,
+    /// crystals, etc.) whose footprint spans column x — returns the topmost
+    /// of the terrain surface and any overlapping scenery object's top edge,
+    /// so barrel/mine spawn placement lands ON TOP of scenery instead of
+    /// embedding inside its collision box. Deterministic — MUST stay
+    /// identical on client and server (same inputs as `stamp_objects`).
+    pub fn surface_y_at_with_scenery(&self, x: u32) -> Option<u32> {
+        let ground_y = self.surface_y_at(x)?;
+        let theme = Theme::of(self.is_cavern, self.template_id);
+        let mut top_y = ground_y;
+        for obj in &self.scenery {
+            let (half_w, height) = obj.footprint(theme);
+            let (ox, oy) = (obj.x as i32, obj.y as i32);
+            if (x as i32 - ox).abs() <= half_w {
+                let obj_top = (oy - height).max(0) as u32;
+                if obj_top < top_y {
+                    top_y = obj_top;
+                }
+            }
+        }
+        Some(top_y)
     }
 }
 

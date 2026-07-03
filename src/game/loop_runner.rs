@@ -470,9 +470,8 @@ fn update_camera(game: &GameState, cam: &mut Camera, input: &InputState, step: S
                             cam.follow(game.teams[ti].soldiers[si].pos);
                         }
                     } else if game.garcia.as_ref().map_or(false, |g| !g.falling) {
-                        let gx = game.garcia.as_ref().unwrap().render_x;
-                        let soldier_y = game.teams[ti].soldiers[si].pos.y;
-                        cam.follow(crate::world::WorldPos::new(gx, soldier_y));
+                        let g = game.garcia.as_ref().unwrap();
+                        cam.follow(crate::world::WorldPos::new(g.render_x, g.render_y));
                     } else if let Some(ref air) = game.airstrike {
                         if !air.active {
                             cam.follow(crate::world::WorldPos::new(air.render_x, air.render_y));

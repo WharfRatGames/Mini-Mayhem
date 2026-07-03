@@ -318,14 +318,14 @@ impl WeaponKind {
     }
 
     /// Returns true if this weapon is affected by wind.
-    /// Grenades, Meteor Bomb, Blasthive, and other thrown weapons are NOT
-    /// affected by wind — they fly ballistically like in Worms Armageddon.
+    /// Grenades, Meteor Bomb, Blasthive, Airstrike bombs, Molotov Cocktails, and
+    /// other thrown/timed explosives are NOT affected by wind — only rocket-
+    /// propelled weapons drift, matching Worms Armageddon.
     pub fn affected_by_wind(self) -> bool {
         matches!(
             self,
             Self::Bazooka
                 | Self::SuperSheep
-                | Self::MolotovCocktail
         )
     }
 }

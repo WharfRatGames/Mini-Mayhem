@@ -264,6 +264,29 @@ mod imp {
         }
     }
 
+    /// Load a WAV and cap its playback length to `max_ms`, with a fresh
+    /// fade-out at the new cutoff. Used for rapid-fire sounds (pistol) where
+    /// the source clip is longer than the interval between shots — without
+    /// this, the ALSA device is still draining the previous shot when the
+    /// next tries to open it, causing an audible pop/dropout every other shot.
+    fn try_load_capped(lock: &OnceLock<Vec<i16>>, dir: &std::path::Path, name: &str, max_ms: u32) {
+        if lock.get().is_none() {
+            if let Some(mut b) = load_wav(&dir.join(name)) {
+                let max_samples = (RATE as u64 * max_ms as u64 / 1000) as usize;
+                if b.len() > max_samples {
+                    b.truncate(max_samples);
+                    let n = b.len();
+                    let fade = 480.min(n / 4);
+                    for i in (n - fade)..n {
+                        let ramp = (n - 1 - i) as i64;
+                        b[i] = ((b[i] as i64 * ramp) / fade.max(1) as i64) as i16;
+                    }
+                }
+                let _ = lock.set(b);
+            }
+        }
+    }
+
     /// Load a WAV and stretch it by `stretch` (>1 = slower/longer).
     /// Achieved by pretending the source sample rate is lower by that factor.
     fn try_load_stretched(lock: &OnceLock<Vec<i16>>, dir: &std::path::Path, name: &str, stretch: f32) {
@@ -341,7 +364,10 @@ mod imp {
         try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
         try_load(&MINIGUN,     &dir, "minigun.wav");
         try_load_stretched(&UZI, &dir, "mac10.wav", 1.26);
-        try_load(&PISTOL, &dir, "pistol.wav");
+        // Capped to 380ms: shots fire every 700ms (21 ticks @ 30Hz) but the raw
+        // clip is 708ms — uncapped, the ALSA device is still draining the prior
+        // shot when the next tries to open it, popping every other shot.
+        try_load_capped(&PISTOL, &dir, "pistol.wav", 380);
         if DEATHS.get().is_none() {
             let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
                 .into_iter().flatten().flatten()

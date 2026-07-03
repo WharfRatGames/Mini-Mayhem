@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.401";
+const VERSION: &str = "0.5.4.402";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1038,12 +1038,7 @@ fn main() {
                 if g.falling {
                     cam.follow_always(world::WorldPos::new(g.render_x, g.fall_y.max(0.0)));
                 } else {
-                    let ti = game.turn.current_team();
-                    let sy = game.teams.get(ti)
-                        .and_then(|t| t.soldiers.get(t.active))
-                        .map(|s| s.pos.y)
-                        .unwrap_or(g.fall_y);
-                    cam.follow(world::WorldPos::new(g.render_x, sy));
+                    cam.follow(world::WorldPos::new(g.render_x, g.render_y));
                 }
             } else if let Some(ref air) = game.airstrike {
                 if !air.active {
@@ -1571,7 +1566,7 @@ fn place_map_mines(game: &mut GameState) {
         rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
         let offset = (rng % spread as u64) as u32;
         let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
-        if let Some(surf_y) = game.terrain.surface_y_at(x) {
+        if let Some(surf_y) = game.terrain.surface_y_at_with_scenery(x) {
             let mine_pos = WorldPos::new(x as f32, surf_y as f32 - 1.0);
             if (surf_y as f32) < crate::world::WATER_Y as f32 - 10.0
                 && !too_close_to_soldiers(&game, mine_pos)
@@ -1600,8 +1595,8 @@ fn place_map_barrels(game: &mut game::state::GameState) {
         rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
         let offset = (rng % spread as u64) as u32;
         let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
-        if let Some(surf_y) = game.terrain.surface_y_at(x) {
-            // pos.y = first air pixel above terrain (surf_y - 1); physics rests here.
+        if let Some(surf_y) = game.terrain.surface_y_at_with_scenery(x) {
+            // pos.y = first air pixel above terrain or scenery (surf_y - 1); physics rests here.
             let pos = WorldPos::new(x as f32, surf_y as f32 - 1.0);
             if (surf_y as f32) < crate::world::WATER_Y as f32 - 10.0
                 && !too_close_to_soldiers(game, pos)
@@ -2720,7 +2715,7 @@ fn run_tat_game(
                     replay_cam.follow(world::WorldPos::new(if hm.confirmed { game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.x } else { hm.render_x }, hm.render_y));
                 } else if let Some(ref g) = game.garcia {
                     if g.falling { replay_cam.follow_always(world::WorldPos::new(g.render_x, g.fall_y.max(0.0))); }
-                    else { let sy = game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.y; replay_cam.follow(world::WorldPos::new(g.render_x, sy)); }
+                    else { replay_cam.follow(world::WorldPos::new(g.render_x, g.render_y)); }
                 } else if let Some(ref air) = game.airstrike {
                     if !air.active { replay_cam.follow(world::WorldPos::new(air.render_x, air.render_y)); }
                     else { replay_cam.follow(game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos); }
@@ -2754,7 +2749,7 @@ fn run_tat_game(
                     replay_cam.follow(world::WorldPos::new(if hm.confirmed { game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.x } else { hm.render_x }, hm.render_y));
                 } else if let Some(ref g) = game.garcia {
                     if g.falling { replay_cam.follow_always(world::WorldPos::new(g.render_x, g.fall_y.max(0.0))); }
-                    else { let sy = game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.y; replay_cam.follow(world::WorldPos::new(g.render_x, sy)); }
+                    else { replay_cam.follow(world::WorldPos::new(g.render_x, g.render_y)); }
                 } else if let Some(ref air) = game.airstrike {
                     if !air.active { replay_cam.follow(world::WorldPos::new(air.render_x, air.render_y)); }
                     else { replay_cam.follow(game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos); }
