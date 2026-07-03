@@ -1003,8 +1003,8 @@ impl GameState {
         self.meteor_chain = true;
         for pos in meteor_impacts {
             self.emit_sound(crate::audio::Sfx::Meteor);
-            // Initial impact: TNT profile at 60% radius+damage with gentle knockback.
-            self.apply_explosion_scaled(pos, WeaponKind::Tnt, 9.0, 0.6, 0.6);
+            // Initial impact: TNT profile at 60% radius, 48% damage (20% cut from 0.6) with gentle knockback.
+            self.apply_explosion_scaled(pos, WeaponKind::Tnt, 9.0, 0.6, 0.48);
             let seed = (pos.x as u32)
                 .wrapping_mul(0x9E3779B9)
                 .wrapping_add(pos.y as u32)

@@ -1409,8 +1409,8 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
+            game.pistol_shots_left = 5;
             fire_pistol_shot(game, ti, si, muzzle_override);
-            game.pistol_shots_left = 4;
             game.pistol_fire_timer = 21;
         }
         return;
@@ -2637,7 +2637,7 @@ fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Op
 
     const MAX_RANGE:         f32 = 450.0;
     const STEP:              f32 = 1.0;
-    const DAMAGE:            u32 = 3;
+    const DAMAGE:            u32 = 2; // 20% cut from 3
     const KNOCKBACK:         f32 = 2.0;
     const SPREAD:            f32 = 0.22; // ±12.6° — wider than minigun's ±8°
     const SHOOTER_RECOIL:    f32 = 0.5;
