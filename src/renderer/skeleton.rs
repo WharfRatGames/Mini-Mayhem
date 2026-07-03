@@ -125,6 +125,39 @@ fn pose_airborne(bones: &mut [Bone; N_BONES], vel_x: f32, vel_y: f32) {
     bones[ARM_L].angle = lean * 0.5 - 0.4;
 }
 
+/// Backflip rotation curve sampled from WA's 22-frame backflip animation
+/// (per-frame principal-axis angle of the extracted frames, normalized to one
+/// full revolution). Eases in, spins fastest mid-flip, eases out for landing.
+const SPIN_CURVE: [f32; 22] = [
+    0.0000, 0.1413, 0.3176, 0.5479, 0.7712, 1.0696,
+    1.3959, 1.7466, 2.1671, 2.5928, 2.9976, 3.4147,
+    3.8334, 4.2609, 4.6343, 4.9798, 5.2886, 5.5381,
+    5.6760, 5.8121, 5.9360, 6.0302,
+];
+
+/// Returns (root_angle) — the whole-skeleton rotation angle for this airtime tick.
+/// Pose bones hold the tuck shape; root rotation carries them around.
+fn pose_spin(bones: &mut [Bone; N_BONES], airtime: u32, facing: f32) -> f32 {
+    use std::f32::consts::{PI, TAU, FRAC_PI_2};
+    // WA-derived rotation curve: one revolution per 22 ticks, eased like the
+    // original animation (slow takeoff, fast tumble, slow landing).
+    let cycle = (airtime / 22) as f32;
+    let phase = SPIN_CURVE[(airtime % 22) as usize];
+    let root_angle = -(facing) * (cycle * TAU + phase);
+
+    // Tuck: torso upright relative to root, legs pulled forward/up, arms hugged in
+    bones[TORSO].angle = 0.0;
+    bones[HEAD].angle  = 0.0;
+    // Legs pulled up into a tuck (thighs forward, calves bent back)
+    bones[LEG_R].angle = PI - 0.55;
+    bones[LEG_L].angle = PI + 0.55;
+    // Arms hugged tight across the chest
+    bones[ARM_R].angle =  FRAC_PI_2 - 0.3;
+    bones[ARM_L].angle = -FRAC_PI_2 + 0.3;
+
+    root_angle
+}
+
 fn pose_dead(bones: &mut [Bone; N_BONES], facing: f32) {
     // Flop sideways in facing direction
     let flop = std::f32::consts::FRAC_PI_2 * facing;
@@ -522,24 +555,16 @@ pub fn draw_soldier_skeletal(
         root.1 += jy;
     }
 
-    // Backflip: drawn from the real WA sprite frames instead of the skeleton.
-    // Cosmetics/weapon are hidden for the duration of the flip.
-    if let SoldierAnim::Airborne { airtime, spinning: true, .. } = anim {
-        super::wa_sprites::draw_backflip(buf, root.0 as i32, pos.y as i32, team, facing, *airtime);
-        if hp > 0 && show_hp {
-            draw_hp_number_lifted(buf, pos.x as i32, pos.y as i32, hp, team, hat_name_lift(hat_id));
-        }
-        return None;
-    }
-
     let mut bones = default_bones();
 
-    // Select animation
+    // Select animation; spin returns a root_angle for whole-skeleton rotation
     let root_angle = match anim {
         SoldierAnim::Idle =>
             { pose_idle(&mut bones, pos.x * 0.0 + 0.0); 0.0 }
         SoldierAnim::Walking { tick } =>
             { pose_walk(&mut bones, *tick, f); 0.0 }
+        SoldierAnim::Airborne { vel_x: _, vel_y: _, airtime, spinning: true } =>
+            pose_spin(&mut bones, *airtime, f),
         SoldierAnim::Airborne { vel_x, vel_y, .. } =>
             { pose_airborne(&mut bones, *vel_x, *vel_y); 0.0 }
         SoldierAnim::Dead =>
