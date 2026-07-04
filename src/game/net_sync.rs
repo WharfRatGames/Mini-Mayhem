@@ -32,6 +32,14 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                 hp: s.hp, facing: s.facing, dead: s.is_dead(), has_fired: s.has_fired,
                 selected_weapon: t.selected_weapon,
                 airborne, spinning, vel_x: vel.x, vel_y: vel.y, airtime: s.airtime, walk_ticks: s.walk_ticks,
+                // While damage is still tallying (popup not shown yet) report a
+                // full hold so the client's HP box doesn't drain early; once
+                // flushed this is the real decrementing delay.
+                hp_countdown_delay: if s.pending_damage > 0 {
+                    crate::game::soldier::HP_COUNTDOWN_DELAY_TICKS
+                } else {
+                    s.hp_countdown_delay
+                },
                 walking: matches!(s.state, SoldierState::Walking { .. }),
                 hat_id: s.hat_id, uniform_color_id: s.uniform_color_id,
                 boot_color_id: s.boot_color_id, gun_style_id: s.gun_style_id,
@@ -193,6 +201,9 @@ pub fn apply_server_state(
                 if ns.hp < soldier.hp { soldier.hp_display_ticks = 150; }
                 // displayed_hp: snap up immediately, let it animate down naturally
                 if ns.hp > soldier.displayed_hp { soldier.displayed_hp = ns.hp; }
+                // Countdown hold is server-authoritative so the live client's
+                // HP box waits ~2 s after the damage popup, same as local modes.
+                soldier.hp_countdown_delay = ns.hp_countdown_delay;
                 soldier.pos.x           = ns.x;
                 soldier.pos.y           = ns.y;
                 soldier.hp              = ns.hp;
@@ -201,6 +212,15 @@ pub fn apply_server_state(
                 soldier.airtime         = ns.airtime;
                 soldier.walk_ticks      = ns.walk_ticks;
                 soldier.on_fire_ticks   = ns.on_fire_ticks as u32;
+                soldier.death_cause = {
+                    use crate::game::soldier::DeathCause;
+                    match ns.death_cause_u8 {
+                        1 => DeathCause::Explosion,
+                        2 => DeathCause::Fall,
+                        3 => DeathCause::Water,
+                        _ => DeathCause::Generic,
+                    }
+                };
                 // Sync opponent cosmetics and names (local player's own are set from roster at game start)
                 if ns.team != my_team {
                     soldier.hat_id           = ns.hat_id;
@@ -502,6 +522,14 @@ pub fn apply_server_state(
 // adding a field breaks compilation here. That turns a silent live-mode desync
 // into a build error and forces a decision at the one place that matters.
 //
+// RECURSION RULE: any struct reachable from a synced `GameState` field whose
+// fields are hand-mapped in build_state/apply_server_state MUST have its own
+// checklist below (Soldier, Team, Projectile, …). Adding a nested field then
+// breaks the build here just like a GameState field does. NEVER add `..` to a
+// checklist destructure — that reopens the silent-desync hole the checklist
+// exists to close. When adding a struct that will ride StateMsg, add its
+// checklist in the same commit.
+//
 // For simulation-path parity (hotseat / live server / TAT replay all produce the
 // same synced_snapshot), use `assert_all_paths_in_sync` in tests/parity.rs.
 // Call it in every new gameplay feature test.
@@ -547,4 +575,219 @@ fn _inputmsg_parity_checklist(m: &InputMsg) {
         muzzle_x: _, muzzle_y: _, // not synced: client-side rendered position, travels in InputMsg
         quit: _, // not synced: server-only forfeit signal, consumed immediately by server
     } = m;
+}
+
+/// Adding a field to `Soldier` breaks this. Synced fields ride `NetSoldier`
+/// (set in `build_state`, applied in `apply_server_state`); everything else
+/// needs a `// not synced: <reason>`.
+#[allow(dead_code)]
+fn _soldier_parity_checklist(s: &crate::game::soldier::Soldier) {
+    let crate::game::soldier::Soldier {
+        // ── Synced via NetSoldier ──
+        pos: _, facing: _, hp: _, index: _,
+        state: _,          // → airborne/spinning/vel_x/vel_y/walking
+        airtime: _, walk_ticks: _, has_fired: _, name: _,
+        hp_countdown_delay: _, on_fire_ticks: _, death_cause: _,
+        pending_damage: _, // folded into hp_countdown_delay on the wire (full hold while tallying)
+        hat_id: _, uniform_color_id: _, boot_color_id: _, gun_style_id: _,
+        // ── Not networked ──
+        team: _,          // not synced: structural identity, fixed at game setup
+        fall: _,          // not synced: server-side fall-damage tracker
+        has_moved: _,     // not synced: server-internal turn bookkeeping
+        has_grave: _,     // not synced: graves ship separately via NetGrave
+        death_explosion_pending: _, // not synced: server-side death timer
+        hp_display_ticks: _,        // not synced: client-local HP-box visibility timer
+        displayed_hp: _,  // not synced: client-local animation toward hp
+        damage_settle: _, // not synced: server-side tally window; popup ships via fx_events
+        kill_weapon: _,   // not synced: server-side kill credit; result arrives as a message
+    } = s;
+}
+
+/// Adding a field to `Team` breaks this.
+#[allow(dead_code)]
+fn _team_parity_checklist(t: &crate::game::team::Team) {
+    let crate::game::team::Team {
+        // ── Synced ──
+        color_id: _,        // NetSoldier.color_id + StateMsg.team_colors
+        name: _,            // StateMsg.team_names
+        soldiers: _,        // NetSoldier list (see _soldier_parity_checklist)
+        active: _,          // StateMsg.active_soldier (active team)
+        selected_weapon: _, // NetSoldier.selected_weapon + team_weapons
+        weapons: _,         // StateMsg.team_weapons
+        // ── Not networked ──
+        slot: _,         // not synced: lobby seat, fixed at game setup
+        avatar_id: _,    // not synced: lobby/roster cosmetic, fixed at game setup
+        elo: _,          // not synced: server/API concern, not in-match state
+        is_cpu: _,       // not synced: local-mode concept only
+        difficulty: _,   // not synced: local-mode CPU setting
+        headstone_id: _, // not synced: fixed at setup; graves carry it via NetGrave
+    } = t;
+}
+
+/// Adding a field to `Projectile` breaks this.
+#[allow(dead_code)]
+fn _projectile_parity_checklist(p: &crate::physics::projectile::Projectile) {
+    let crate::physics::projectile::Projectile {
+        // ── Synced via NetProjectile ──
+        pos: _, vel: _, kind: _, fuse: _, is_fragment: _, homing_target: _,
+        age_ticks: _,
+        // ── Not networked ──
+        owner: _,         // not synced: server-side self-hit grace bookkeeping
+        cleared_owner: _, // not synced: server-side self-hit grace bookkeeping
+    } = p;
+}
+
+/// Adding a field to `DroppedCrate` breaks this.
+#[allow(dead_code)]
+fn _crate_parity_checklist(c: &crate::game::state::DroppedCrate) {
+    let crate::game::state::DroppedCrate {
+        // ── Synced via NetCrate ──
+        pos: _, kind: _, landed: _,
+        // ── Not networked ──
+        descent_vy: _,       // not synced: server-side physics; client gets fresh pos each tick
+        damage_this_turn: _, // not synced: server-side destruction tally
+        fall_ticks: _,       // not synced: server-side descent bookkeeping
+    } = c;
+}
+
+/// Adding a field to `PlacedMine` breaks this.
+#[allow(dead_code)]
+fn _mine_parity_checklist(m: &crate::game::state::PlacedMine) {
+    let crate::game::state::PlacedMine {
+        // ── Synced via NetMine ──
+        pos: _, state: _, arm_ticks: _, trigger_ticks: _,
+    } = m;
+}
+
+/// Adding a field to `Barrel` breaks this.
+#[allow(dead_code)]
+fn _barrel_parity_checklist(b: &crate::game::state::Barrel) {
+    let crate::game::state::Barrel {
+        // ── Synced via NetBarrel ──
+        pos: _, hp: _,
+        // ── Not networked ──
+        vel: _,   // not synced: server-side physics; client gets fresh pos each tick
+        state: _, // not synced: client re-derives rest state from position
+    } = b;
+}
+
+/// Adding a field to `BlackHole` breaks this.
+#[allow(dead_code)]
+fn _blackhole_parity_checklist(h: &crate::game::state::BlackHole) {
+    let crate::game::state::BlackHole {
+        // ── Synced via NetBlackHole ──
+        pos: _, lifetime: _,
+    } = h;
+}
+
+/// Adding a field to `FirePatch` breaks this.
+#[allow(dead_code)]
+fn _firepatch_parity_checklist(f: &crate::game::state::FirePatch) {
+    let crate::game::state::FirePatch {
+        // ── Synced via NetFirePatch ──
+        pos: _, vel: _, landed: _, lifetime: _,
+    } = f;
+}
+
+/// Adding a field to `Grave` breaks this.
+#[allow(dead_code)]
+fn _grave_parity_checklist(g: &crate::game::state::Grave) {
+    let crate::game::state::Grave {
+        // ── Synced via NetGrave ──
+        pos: _, team: _, headstone_id: _,
+        // ── Not networked ──
+        soldier_idx: _, // not synced: server-side dedup key
+        died_tick: _,   // not synced: server-side bookkeeping
+        vel_y: _,       // not synced: graves ship pre-settled (update_graves runs server-side)
+        settled: _,     // not synced: graves ship pre-settled
+    } = g;
+}
+
+/// Adding a field to `RopeState` breaks this.
+#[allow(dead_code)]
+fn _rope_parity_checklist(r: &crate::game::state::RopeState) {
+    let crate::game::state::RopeState {
+        // ── Synced via NetRope ──
+        anchor: _, length: _, flying: _, hook: _,
+        // ── Not networked ──
+        hook_vel: _, // not synced: server-side physics; client draws from positions
+    } = r;
+}
+
+/// Adding a field to `GarciaState` breaks this.
+#[allow(dead_code)]
+fn _garcia_parity_checklist(g: &crate::game::state::GarciaState) {
+    let crate::game::state::GarciaState {
+        // ── Synced via NetGarcia ──
+        cursor_x: _, render_x: _, cursor_y: _, render_y: _, blink_timer: _,
+        falling: _, fall_y: _, vel_y: _, bounce_count: _,
+    } = g;
+}
+
+/// Adding a field to `HomingMissileState` breaks this.
+#[allow(dead_code)]
+fn _homing_missile_parity_checklist(h: &crate::game::state::HomingMissileState) {
+    let crate::game::state::HomingMissileState {
+        // ── Synced via NetHomingMissile ──
+        cursor_x: _, cursor_y: _, render_x: _, render_y: _, blink_timer: _,
+        confirmed: _,
+    } = h;
+}
+
+/// Adding a field to `AirstrikeState` breaks this.
+#[allow(dead_code)]
+fn _airstrike_parity_checklist(a: &crate::game::state::AirstrikeState) {
+    let crate::game::state::AirstrikeState {
+        // ── Synced via NetAirstrike ──
+        cursor_x: _, render_x: _, cursor_y: _, render_y: _, blink_timer: _,
+        active: _, plane_x: _, plane_vx: _, bombs_dropped: _, direction_right: _,
+        // ── Not networked ──
+        spawn_cam_left: _, // not synced: local camera bookkeeping at plane spawn
+    } = a;
+}
+
+/// Adding a field to `PlasmaTorchState` breaks this.
+#[allow(dead_code)]
+fn _plasma_torch_parity_checklist(t: &crate::game::state::PlasmaTorchState) {
+    let crate::game::state::PlasmaTorchState {
+        // ── Synced via StateMsg.torch_dir / torch_fuel ──
+        dir: _, fuel_ticks: _,
+    } = t;
+}
+
+/// Adding a field to `GameMessage` breaks this.
+#[allow(dead_code)]
+fn _message_parity_checklist(m: &crate::game::state::GameMessage) {
+    let crate::game::state::GameMessage {
+        // ── Synced via NetMessage ──
+        text: _, team: _, ticks: _,
+    } = m;
+}
+
+/// Adding a field to `AimState` breaks this.
+#[allow(dead_code)]
+fn _aim_parity_checklist(a: &crate::game::state::AimState) {
+    let crate::game::state::AimState {
+        // ── Synced ──
+        angle: _,      // StateMsg.aim_angle
+        power: _,      // StateMsg.aim_power
+        fuse_ticks: _, // StateMsg.aim_fuse_ticks
+        // ── Not networked ──
+        charge_ticks: _, // not synced: local input latching (charge detection)
+        charge_armed: _, // not synced: local input latching (menu-confirm guard)
+    } = a;
+}
+
+/// Adding a field to `TurnManager` breaks this.
+#[allow(dead_code)]
+fn _turn_parity_checklist(t: &crate::game::turn::TurnManager) {
+    let crate::game::turn::TurnManager {
+        // ── Synced ──
+        current_team: _, // StateMsg.turn_team
+        phase: _,        // StateMsg.phase
+        ticks_left: _,   // StateMsg.turn_secs
+        turn_number: _,  // StateMsg.turn_number
+        // ── Not networked ──
+        team_count: _,   // not synced: fixed at game setup on both sides
+    } = t;
 }

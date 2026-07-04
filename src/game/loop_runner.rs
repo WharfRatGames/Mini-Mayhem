@@ -187,6 +187,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     // splashes) once per tick, before any phase early-returns. Visual only.
     crate::renderer::fx::step_fx(&mut game.fx, &game.terrain, game.wind.value());
     crate::renderer::fx::step_fx_text(&mut game.fx_text);
+    flush_damage_tallies(game);
     // Object mask: re-stamp barrels + armed mines so collision sees them as solid.
     stamp_objects(game);
 
@@ -206,9 +207,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
         game.step_explosions();
         for team in &mut game.teams {
             for s in &mut team.soldiers {
-                if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
-                if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(1).max(s.hp); }
-                else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
+                s.step_hp_display();
             }
         }
         record_deaths(game);
@@ -420,9 +419,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     push_active_soldier_out(game);
     for team in &mut game.teams {
         for s in &mut team.soldiers {
-            if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
-            if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(1).max(s.hp); }
-            else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
+            s.step_hp_display();
         }
     }
     game.messages.retain_mut(|m| { m.ticks = m.ticks.saturating_sub(1); m.ticks > 0 });
@@ -1118,6 +1115,31 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
 
 /// Shared fire-grace and pause-resume suppression step.
 /// Call after process_weapon_menu every tick.
+/// Flush settled damage tallies into one popup per soldier. `take_damage`
+/// accumulates `pending_damage` and restarts `damage_settle` on every hit, so
+/// a burst (5 pistol shots, shotgun pellets) shows a single total once the
+/// hits stop landing. The popup also arms `hp_countdown_delay` so the HP box
+/// holds its old value ~2 s before ticking down. Runs inside
+/// `simulate_with_muzzle`, so all five paths share it; the popup replicates to
+/// live clients via the fx_events channel.
+fn flush_damage_tallies(game: &mut GameState) {
+    let mut popups: Vec<(f32, f32, u32, u8)> = Vec::new();
+    for (ti, team) in game.teams.iter_mut().enumerate() {
+        for s in &mut team.soldiers {
+            if s.pending_damage == 0 { continue; }
+            if s.damage_settle > 0 { s.damage_settle -= 1; continue; }
+            popups.push((s.pos.x, s.pos.y, s.pending_damage, ti as u8));
+            s.pending_damage = 0;
+            s.hp_countdown_delay = crate::game::soldier::HP_COUNTDOWN_DELAY_TICKS;
+        }
+    }
+    for (x, y, dmg, team) in popups {
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup {
+            x, y, amount: dmg.min(255) as u8, team,
+        });
+    }
+}
+
 pub fn tick_fire_grace(game: &mut GameState) {
     if game.server_fire_grace > 0 {
         game.server_fire_grace -= 1;
@@ -1993,12 +2015,16 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
     use crate::game::soldier::SoldierState;
     use crate::world::Vec2;
 
-    const PELLETS: usize = 5;
-    const SPREAD: f32   = 0.10;   // ±0.10 rad (~5.7°) per pellet
-    const RANGE:  i32   = 220;    // pixels before pellet expires
-    const PELLET_DMG: u32 = 5;    // 5 pellets × 5 = 25 max per shot
-    const PELLET_FORCE: f32 = 1.8; // directional knockback — 5 pellets = 9 px/tick max
+    // WA-style shotgun: each trigger pull is ONE precise hitscan ray along the
+    // exact aim angle — no simulated pellet cloud. Two shots per turn, up to
+    // 25 damage each (50 total). The pellet spread you see at the impact point
+    // is purely cosmetic dust, emitted below.
+    const RANGE:  i32   = 220;    // pixels before the shot expires
+    const SHOT_DMG: u32 = 25;     // full damage on a direct hit
+    const SHOT_FORCE: f32 = 7.0;  // directional knockback (px/tick)
     const RECOIL: f32  = 2.0;     // shooter kickback
+    const FAKE_PELLETS: u32 = 4;  // cosmetic impact spots around the real hit
+    const SPREAD: f32  = 0.10;    // ±0.10 rad visual scatter for the fake pellets
 
     let ti = game.active_team();
     let si = game.teams[ti].active;
@@ -2012,119 +2038,131 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
         (x, y)
     });
 
-    // LCG seeded from tick + shot number for deterministic but varied spread
+    // Deterministic per-shot seed (visual scatter only).
     let seed = game.tick.wrapping_mul(1664525).wrapping_add(1013904223);
 
-    // Collect damage per soldier so we only apply once per shot
     let n_teams  = game.teams.len();
     let n_sol: Vec<usize> = (0..n_teams).map(|t| game.teams[t].soldiers.len()).collect();
-    let mut hits: Vec<Vec<(u32, f32, f32)>> = (0..n_teams)
-        .map(|t| vec![(0u32, 0.0f32, 0.0f32); n_sol[t]])
-        .collect();
-    // Splat positions collected here, pushed to game.blood_splats after borrow ends
-    let mut splat_hits: Vec<(f32, f32, f32, f32)> = Vec::new(); // (px, py, dx, dy)
+    let dx = base_angle.cos() * fm;
+    let dy = -base_angle.sin();
 
-    for pellet in 0..PELLETS {
-        let r  = seed.wrapping_mul(pellet as u32 + 7).wrapping_add(pellet as u32 * 31337) as f32
-                 / u32::MAX as f32;
-        let spread = (r - 0.5) * 2.0 * SPREAD;
-        let angle  = base_angle + spread;
-        let dx = angle.cos() * fm;
-        let dy = -angle.sin();
-
-        let mut px = muzzle_x;
-        let mut py = muzzle_y;
-        let mut hit = false;
-        for _ in 0..RANGE {
-            px += dx;
-            py += dy;
-            let ix = px as i32;
-            let iy = py as i32;
-            if ix < 0 || iy < 0 { break; }
-            if game.terrain.is_solid(ix, iy) {
-                if !hitscan_hit_crate(game, px, py) {
-                    let crater = crate::world::Crater::new(px, py, 4.0);
-                    crater.carve(&mut game.terrain);
-                    game.crater_log.push((px, py, 4.0));
-                }
-                break;
+    // ── The real shot: single ray, single hit ─────────────────────────────────
+    let mut px = muzzle_x;
+    let mut py = muzzle_y;
+    let mut hit_soldier: Option<(usize, usize)> = None;
+    let mut stopped = false;
+    for _ in 0..RANGE {
+        px += dx;
+        py += dy;
+        let ix = px as i32;
+        let iy = py as i32;
+        if ix < 0 || iy < 0 { break; }
+        if game.terrain.is_solid(ix, iy) {
+            if !hitscan_hit_crate(game, px, py) {
+                let crater = crate::world::Crater::new(px, py, 5.0);
+                crater.carve(&mut game.terrain);
+                game.crater_log.push((px, py, 5.0));
             }
-            // Barrel direct hit
-            for barrel in &mut game.barrels {
-                if let super::state::BarrelState::Normal = barrel.state {
-                    if (barrel.pos.x - px).abs() < 8.0 && (barrel.pos.y - py).abs() < 12.0 {
-                        barrel.state = super::state::BarrelState::Triggered { ticks: 6 };
-                        hit = true;
-                        break;
-                    }
-                }
-            }
-            if hit { break; }
-            // Soldier hit: same bounding box used by projectile collision
-            'soldiers: for t in 0..n_teams {
-                for s in 0..n_sol[t] {
-                    if !game.teams[t].soldiers[s].is_alive() { continue; }
-                    let spx = game.teams[t].soldiers[s].pos.x;
-                    let spy = game.teams[t].soldiers[s].pos.y;
-                    let ddx = (px - spx).abs();
-                    let ddy = py - spy;
-                    let hit_top = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { -30.0 } else { -22.0 };
-                    if ddx < 8.0 && ddy > hit_top && ddy < 2.0 {
-                        hits[t][s].0 += PELLET_DMG;
-                        hits[t][s].1 += dx * PELLET_FORCE;
-                        hits[t][s].2 += dy * PELLET_FORCE;
-                        splat_hits.push((px, py, dx, dy));
-                        hit = true;
-                        break 'soldiers;
-                    }
-                }
-            }
-            if hit { break; }
+            stopped = true;
+            break;
         }
+        // Barrel direct hit
+        for barrel in &mut game.barrels {
+            if let super::state::BarrelState::Normal = barrel.state {
+                if (barrel.pos.x - px).abs() < 8.0 && (barrel.pos.y - py).abs() < 12.0 {
+                    barrel.state = super::state::BarrelState::Triggered { ticks: 6 };
+                    stopped = true;
+                    break;
+                }
+            }
+        }
+        if stopped { break; }
+        // Soldier hit: same bounding box used by projectile collision
+        'soldiers: for t in 0..n_teams {
+            for s in 0..n_sol[t] {
+                if !game.teams[t].soldiers[s].is_alive() { continue; }
+                let spx = game.teams[t].soldiers[s].pos.x;
+                let spy = game.teams[t].soldiers[s].pos.y;
+                let ddx = (px - spx).abs();
+                let ddy = py - spy;
+                let hit_top = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { -30.0 } else { -22.0 };
+                if ddx < 8.0 && ddy > hit_top && ddy < 2.0 {
+                    hit_soldier = Some((t, s));
+                    stopped = true;
+                    break 'soldiers;
+                }
+            }
+        }
+        if stopped { break; }
     }
+    let (end_x, end_y) = (px, py);
 
-    // Blood splats for each pellet that hit a soldier
-    let mut rng = seed as u64;
-    for (spx, spy, sdx, sdy) in splat_hits {
-        rng = rng.wrapping_mul(2654435761).wrapping_add(1);
-        let fwd = 5.0 + (rng & 0x1F) as f32 * 0.5;
-        let lat = ((rng >> 5) & 0xF) as f32 - 7.5;
-        game.blood_splats.push((
-            crate::world::WorldPos::new(
-                spx + sdx * fwd + (-sdy) * lat,
-                spy + sdy * fwd + ( sdx) * lat,
-            ), 90,
-        ));
-    }
-
-    // Apply accumulated damage + knockback, track if active worm was hit
+    // Apply the hit: full shot damage + knockback along the ray.
     let active_ti = game.active_team();
     let active_si = game.teams[active_ti].active;
     let active_hp_before = game.teams[active_ti].soldiers[active_si].hp;
-    for t in 0..n_teams {
-        for s in 0..n_sol[t] {
-            let (dmg, vx, vy) = hits[t][s];
-            if dmg == 0 { continue; }
-            game.teams[t].soldiers[s].death_cause = crate::game::soldier::DeathCause::Explosion;
-            let hit_pos = game.teams[t].soldiers[s].pos;
-            game.teams[t].soldiers[s].take_damage(dmg);
-            game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: hit_pos.x, y: hit_pos.y, amount: dmg.min(255) as u8, team: t as u8 });
-            let new_state = match &game.teams[t].soldiers[s].state {
-                SoldierState::Airborne { vel, spinning } => SoldierState::Airborne {
-                    vel: Vec2::new(vel.x + vx, vel.y + vy),
-                    spinning: *spinning,
-                },
-                SoldierState::Idle | SoldierState::Walking { .. } => SoldierState::Airborne {
-                    vel: Vec2::new(vx, vy),
-                    spinning: false,
-                },
-                SoldierState::Dead => continue,
-            };
-            game.teams[t].soldiers[s].state = new_state;
+    if let Some((t, s)) = hit_soldier {
+        let vx = dx * SHOT_FORCE;
+        let vy = dy * SHOT_FORCE - 1.0;
+        let sol = &mut game.teams[t].soldiers[s];
+        sol.death_cause = crate::game::soldier::DeathCause::Explosion;
+        sol.take_damage(SHOT_DMG);
+        // Damage shows per SHOT: collapse the settle window so this shell's
+        // number pops immediately; the second shell tallies separately.
+        sol.damage_settle = 0;
+        let new_state = match &sol.state {
+            SoldierState::Airborne { vel, spinning } => Some(SoldierState::Airborne {
+                vel: Vec2::new(vel.x + vx, vel.y + vy),
+                spinning: *spinning,
+            }),
+            SoldierState::Idle | SoldierState::Walking { .. } => Some(SoldierState::Airborne {
+                vel: Vec2::new(vx, vy),
+                spinning: false,
+            }),
+            SoldierState::Dead => None,
+        };
+        if let Some(st) = new_state { game.teams[t].soldiers[s].state = st; }
+        // Blood splats fanned out behind the impact.
+        let mut rng = seed as u64;
+        for _ in 0..3 {
+            rng = rng.wrapping_mul(2654435761).wrapping_add(1);
+            let fwd = 5.0 + (rng & 0x1F) as f32 * 0.5;
+            let lat = ((rng >> 5) & 0xF) as f32 - 7.5;
+            game.blood_splats.push((
+                crate::world::WorldPos::new(
+                    end_x + dx * fwd + (-dy) * lat,
+                    end_y + dy * fwd + ( dx) * lat,
+                ), 90,
+            ));
         }
     }
     if game.teams[active_ti].soldiers[active_si].hp < active_hp_before {
         game.active_worm_hit = true;
+    }
+
+    // ── Cosmetic pellet spread: VISUAL ONLY ───────────────────────────────────
+    // March a few scattered rays with read-only terrain checks and puff dust
+    // where each would land — sells the shotgun blast without any of them
+    // dealing damage or carving terrain. Routed through emit_fx so live
+    // clients replay the identical burst.
+    for k in 0..FAKE_PELLETS {
+        let r = seed.wrapping_mul(k + 7).wrapping_add(k * 31337) as f32 / u32::MAX as f32;
+        let ang = base_angle + (r - 0.5) * 2.0 * SPREAD;
+        let (fdx, fdy) = (ang.cos() * fm, -ang.sin());
+        let mut fx = muzzle_x;
+        let mut fy = muzzle_y;
+        for _ in 0..RANGE {
+            fx += fdx;
+            fy += fdy;
+            let (ix, iy) = (fx as i32, fy as i32);
+            if ix < 0 || iy < 0 { break; }
+            if game.terrain.is_solid(ix, iy) {
+                game.emit_fx(crate::renderer::fx::FxEvent::Dust {
+                    x: fx, y: fy, count: 3, kick: 0.6, dir: -fdx,
+                });
+                break;
+            }
+        }
     }
 
     // Recoil — kick the shooter backwards and slightly upward
@@ -2258,7 +2296,6 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
         };
         target.death_cause = DeathCause::Explosion;
         target.kill_weapon = Some(crate::physics::WeaponKind::BaseballBat);
-        let hit_pos = target.pos;
         target.take_damage(BAT_DAMAGE);
         // If the hit killed them, clear the airborne state so gravity doesn't
         // skip the corpse and freeze the turn.
@@ -2270,7 +2307,6 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
             // airtime >= 20 would cancel `spinning` on the first airborne tick).
             target.airtime = 0;
         }
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: hit_pos.x, y: hit_pos.y, amount: BAT_DAMAGE.min(255) as u8, team: target_ti as u8 });
     }
 
     game.teams[ti].soldiers[si].has_fired = true;
@@ -2379,8 +2415,6 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
         // Do NOT set active_worm_hit here — the shooter can never be hit by their own
         // ray (excluded in the march), and teammate hits should not cut the sequence short.
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 75));
-        let spos = game.teams[hti].soldiers[hsi].pos;
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: spos.x, y: spos.y, amount: DAMAGE.min(255) as u8, team: hti as u8 });
 
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
@@ -2476,8 +2510,6 @@ fn fire_pistol_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override:
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 75));
-        let spos = game.teams[hti].soldiers[hsi].pos;
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: spos.x, y: spos.y, amount: DAMAGE.min(255) as u8, team: hti as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -2614,8 +2646,6 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
-        let spos = game.teams[hti].soldiers[hsi].pos;
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: spos.x, y: spos.y, amount: DAMAGE.min(255) as u8, team: hti as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -2761,8 +2791,6 @@ fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Op
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
-        let spos = game.teams[hti].soldiers[hsi].pos;
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: spos.x, y: spos.y, amount: DAMAGE.min(255) as u8, team: hti as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -5169,7 +5197,6 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if dmg > 0 {
                                     game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                     game.teams[ti].soldiers[si].take_damage(dmg);
-                                    game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: last_clear_x, y: last_clear_y, amount: dmg.min(255) as u8, team: ti as u8 });
                                 }
                                 game.teams[ti].soldiers[si].pos.x = last_clear_x;
                                 game.teams[ti].soldiers[si].pos.y = land_y;
@@ -5276,7 +5303,6 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if dmg > 0 {
                                     game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                     game.teams[ti].soldiers[si].take_damage(dmg);
-                                    game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8, team: ti as u8 });
                                     let ati = game.active_team();
                                     if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                                 }
@@ -5315,7 +5341,6 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             if dmg > 0 {
                                 game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                 game.teams[ti].soldiers[si].take_damage(dmg);
-                                game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8, team: ti as u8 });
                                 let ati = game.active_team();
                                 if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                             }
@@ -5378,7 +5403,6 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                     if dmg > 0 {
                                         game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                         game.teams[ti].soldiers[si].take_damage(dmg);
-                                        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8, team: ti as u8 });
                                         let ati = game.active_team();
                                         if ti == ati && si == game.teams[ati].active {
                                             game.active_worm_hit = true;
@@ -5463,9 +5487,7 @@ pub fn update_visuals(game: &mut GameState) {
     crate::renderer::fx::step_fx_text(&mut game.fx_text);
     for team in &mut game.teams {
         for s in &mut team.soldiers {
-            if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }
-            if s.displayed_hp > s.hp { s.displayed_hp = s.displayed_hp.saturating_sub(1).max(s.hp); }
-            else if s.displayed_hp < s.hp { s.displayed_hp = s.hp; }
+            s.step_hp_display();
         }
     }
     game.messages.retain_mut(|m| { m.ticks = m.ticks.saturating_sub(1); m.ticks > 0 });

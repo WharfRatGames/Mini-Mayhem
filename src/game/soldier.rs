@@ -58,6 +58,15 @@ pub struct Soldier {
     pub hp_display_ticks: u32,
     /// Displayed HP — animates toward actual hp at 3/tick. Visual-only.
     pub displayed_hp: u8,
+    /// Damage taken but not yet shown as a popup — tallies hits landing close
+    /// together (e.g. 5 pistol shots) into one number. Flushed by the sim once
+    /// `damage_settle` runs out.
+    pub pending_damage: u32,
+    /// Ticks until `pending_damage` is considered settled; reset on every hit.
+    pub damage_settle: u32,
+    /// Ticks the HP countdown holds after the damage popup appears (synced so
+    /// the live client's displayed_hp waits identically). Visual-only timing.
+    pub hp_countdown_delay: u32,
     /// Ticks remaining of "on fire" squirm animation. Visual-only.
     pub on_fire_ticks: u32,
     /// How the soldier died — set just before the fatal take_damage call.
@@ -73,6 +82,12 @@ pub struct Soldier {
     pub boot_color_id:    u8,
     pub gun_style_id:     u8,
 }
+
+/// Ticks with no new damage before the pending tally pops up (game runs 30 Hz).
+pub const DAMAGE_SETTLE_TICKS: u32 = 20;
+/// Popup-to-countdown pause: the HP box holds its old value ~2 s after the
+/// damage number appears, then ticks down.
+pub const HP_COUNTDOWN_DELAY_TICKS: u32 = 60;
 
 impl Soldier {
     /// Create a new soldier at a world position.
@@ -94,6 +109,9 @@ impl Soldier {
             death_explosion_pending: false,
             hp_display_ticks: 0,
             displayed_hp: 100,
+            pending_damage: 0,
+            damage_settle: 0,
+            hp_countdown_delay: 0,
             on_fire_ticks: 0,
             death_cause: DeathCause::Generic,
             kill_weapon: None,
@@ -111,6 +129,11 @@ impl Soldier {
     pub fn take_damage(&mut self, dmg: u32) {
         if dmg > 0 {
             self.hp_display_ticks = 150; // show HP box for ~5 s after being hit
+            // Tally into the pending popup instead of showing per-hit numbers;
+            // the settle window restarts on every hit so rapid multi-hit damage
+            // (pistol/uzi bursts, multi-pellet shotgun) reads as one total.
+            self.pending_damage += dmg;
+            self.damage_settle = DAMAGE_SETTLE_TICKS;
         }
         self.hp = self.hp.saturating_sub(dmg as u8);
         if self.hp == 0 {
@@ -118,6 +141,27 @@ impl Soldier {
             // Grounded soldiers go Dead immediately.
             if !matches!(self.state, SoldierState::Airborne { .. }) {
                 self.state = SoldierState::Dead;
+            }
+        }
+    }
+
+    /// One tick of the HP-box display: visibility timer, popup-to-countdown
+    /// hold, then drain displayed_hp toward hp at 1/tick. Heals snap up
+    /// immediately. Single source for all three display-stepping contexts
+    /// (crate-watch, main sim, live-client update_visuals).
+    pub fn step_hp_display(&mut self) {
+        if self.hp_display_ticks > 0 { self.hp_display_ticks -= 1; }
+        if self.displayed_hp < self.hp {
+            self.displayed_hp = self.hp;
+        } else if self.displayed_hp > self.hp {
+            // Keep the box on screen while a countdown is pending or running.
+            self.hp_display_ticks = self.hp_display_ticks.max(30);
+            if self.pending_damage > 0 {
+                // Damage still tallying — hold until the popup has appeared.
+            } else if self.hp_countdown_delay > 0 {
+                self.hp_countdown_delay -= 1;
+            } else {
+                self.displayed_hp = self.displayed_hp.saturating_sub(1).max(self.hp);
             }
         }
     }

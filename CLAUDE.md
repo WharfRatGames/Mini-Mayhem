@@ -22,11 +22,28 @@ works in hotseat / vs-CPU / TAT.
 - **Cover it:** write a test using `assert_all_paths_in_sync` in `tests/parity.rs`.
   It runs your input sequence through all 5 paths and asserts `synced_snapshot`
   matches across all of them. Run `cargo test --test parity`.
-- **Compile-time forcing function:** adding a field to `GameState` or `InputMsg`
-  breaks the exhaustiveness checklists in `src/game/net_sync.rs`
-  (`_gamestate_parity_checklist` / `_inputmsg_parity_checklist`). You can't compile
-  until you classify the new field — which is the prompt to do the
+- **Compile-time forcing function:** adding a field to `GameState`, `InputMsg`,
+  **or any nested gameplay struct** (`Soldier`, `Team`, `Projectile`,
+  `DroppedCrate`, `PlacedMine`, `Barrel`, `FirePatch`, `BlackHole`, `Grave`,
+  `RopeState`, `GarciaState`, `AirstrikeState`, `HomingMissileState`,
+  `PlasmaTorchState`, `GameMessage`, `AimState`, `TurnManager`) breaks the
+  exhaustiveness checklists in `src/game/net_sync.rs` AND the exhaustive
+  snapshot destructures in `tests/parity.rs`. You can't compile until you
+  classify the new field — which is the prompt to do the
   `StateMsg`/`build_state`/`apply_server_state`/parity-test work.
+  **Recursion rule:** a new struct that rides a synced `GameState` field gets
+  its own `_*_parity_checklist` in the same commit. **Never add `..` to a
+  checklist or snapshot destructure** — that reopens the silent-desync hole.
+- **Sealed channels:** the raw fx spawn fns (`fx::explosion/splash/dust/dig/
+  damage_popup`) are private to `fx.rs` — sim code physically cannot bypass
+  `emit_fx`. The sound channel is guarded by the `no_channel_bypass_in_source`
+  test in `tests/parity.rs` (fails on raw `.sounds.push` / `audio::play`
+  outside `emit_sound` and the live client's replay loop).
+- **Commit + CI gates:** the pre-commit hook runs `cargo check --tests` on any
+  gameplay diff (so unclassified fields can't be committed; emergency bypass
+  `SKIP_COMPILE_CHECK=1` — `SKIP_MODES_CHECK=1` only skips the region
+  heuristic). `.github/workflows/parity.yml` repeats the compile gate + parity
+  suite on every push, so a clone without the hook is still covered.
 - **Default is SYNCED.** New gameplay/visible state should be synced unless you can
   justify otherwise. To skip syncing, put the field in the checklist's
   "not networked" group with a `// not synced: <reason>` comment. When unsure, sync

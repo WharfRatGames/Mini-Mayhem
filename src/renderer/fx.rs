@@ -78,7 +78,7 @@ fn push_text(texts: &mut Vec<FxDamageText>, t: FxDamageText) {
 
 /// Explosion fallout: dirt chunks flung outward+up plus a few bright sparks.
 /// `radius` scales the count and spread. `dirt` is a biome dirt tone.
-pub fn explosion(fx: &mut Vec<FxParticle>, pos: WorldPos, radius: f32, dirt: Bgra) {
+fn explosion(fx: &mut Vec<FxParticle>, pos: WorldPos, radius: f32, dirt: Bgra) {
     let mut s = seed_at(pos, 0xE7);
     let chunks = (8.0 + radius * 0.8).min(40.0) as u32;
     for _ in 0..chunks {
@@ -109,7 +109,7 @@ pub fn explosion(fx: &mut Vec<FxParticle>, pos: WorldPos, radius: f32, dirt: Bgr
 }
 
 /// Water splash: droplets arcing up from `pos` (call when a blast hits water).
-pub fn splash(fx: &mut Vec<FxParticle>, pos: WorldPos) {
+fn splash(fx: &mut Vec<FxParticle>, pos: WorldPos) {
     let mut s = seed_at(pos, 0x5A);
     for _ in 0..10 {
         let spread = (rf(&mut s) - 0.5) * 4.0;
@@ -126,7 +126,7 @@ pub fn splash(fx: &mut Vec<FxParticle>, pos: WorldPos) {
 
 /// Small dust puff(s) at the feet — landings and footsteps. `count` puffs,
 /// `kick` adds outward speed (scale by fall damage for landings).
-pub fn dust(fx: &mut Vec<FxParticle>, pos: WorldPos, count: u32, kick: f32, dir: f32) {
+fn dust(fx: &mut Vec<FxParticle>, pos: WorldPos, count: u32, kick: f32, dir: f32) {
     let mut s = seed_at(pos, 0xD0 ^ count);
     for _ in 0..count {
         let spread = (rf(&mut s) - 0.5) * 1.6 - dir * (0.4 + rf(&mut s) * kick);
@@ -142,7 +142,7 @@ pub fn dust(fx: &mut Vec<FxParticle>, pos: WorldPos, count: u32, kick: f32, dir:
 }
 
 /// Dirt chips ejected from a dig tip (plasma torch / drill), opposite the dig dir.
-pub fn dig(fx: &mut Vec<FxParticle>, pos: WorldPos, dir: f32, dirt: Bgra) {
+fn dig(fx: &mut Vec<FxParticle>, pos: WorldPos, dir: f32, dirt: Bgra) {
     let mut s = seed_at(pos, 0x16);
     for _ in 0..3 {
         push(fx, FxParticle {
@@ -164,7 +164,7 @@ const HP_COUNTER_LIFT: f32 = 56.0;
 /// (soldier's foot position). Pops up fast then decelerates, so it visibly
 /// separates from the counter before fading — matching the HP counter's own
 /// tick-down (`Soldier::displayed_hp`).
-pub fn damage_popup(texts: &mut Vec<FxDamageText>, pos: WorldPos, amount: u8, team: u8) {
+fn damage_popup(texts: &mut Vec<FxDamageText>, pos: WorldPos, amount: u8, team: u8) {
     let start = WorldPos::new(pos.x, pos.y - HP_COUNTER_LIFT);
     push_text(texts, FxDamageText { pos: start, vy: -1.2, age: 0, life: 90, amount, team });
 }

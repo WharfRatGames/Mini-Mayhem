@@ -256,6 +256,9 @@ pub struct NetSoldier {
     pub airtime:         u32,
     pub walk_ticks:      u32,
     pub walking:         bool,
+    /// Ticks the HP-box countdown holds after a damage popup (visual timing,
+    /// server-authoritative so live clients pause identically).
+    pub hp_countdown_delay: u32,
     pub hat_id:           u8,
     pub uniform_color_id: u8,
     pub boot_color_id:    u8,

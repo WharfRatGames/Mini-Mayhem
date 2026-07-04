@@ -600,10 +600,8 @@ impl GameState {
         let active_si = self.teams[active_ti].active;
         let active_hp_before = self.teams[active_ti].soldiers[active_si].hp;
         let mut last_damaged: Option<WorldPos> = None;
-        // Damage popups to emit once the &mut teams borrow ends: (pos, dmg, team).
-        let mut popups: Vec<(WorldPos, u32, u8)> = Vec::new();
 
-        for (ti, team) in self.teams.iter_mut().enumerate() {
+        for team in &mut self.teams {
             for soldier in &mut team.soldiers {
                 if !soldier.is_alive() { continue; }
                 let dx = soldier.pos.x - pos.x;
@@ -627,7 +625,6 @@ impl GameState {
                     soldier.kill_weapon = Some(kind);
                     soldier.take_damage(dmg);
                     last_damaged = Some(soldier.pos);
-                    popups.push((soldier.pos, dmg, ti as u8));
                 }
 
                 // Bee stings sting for damage only — never launch soldiers airborne.
@@ -673,13 +670,8 @@ impl GameState {
             }
         }
 
-        // Floating damage numbers over each hurt soldier's HP counter — one per
-        // soldier, networked via the fx_events channel like every gameplay fx.
-        for (spos, dmg, ti) in popups {
-            self.emit_fx(crate::renderer::fx::FxEvent::DamagePopup {
-                x: spos.x, y: spos.y, amount: dmg.min(255) as u8, team: ti,
-            });
-        }
+        // Damage popups: take_damage tallied each soldier's pending_damage;
+        // flush_damage_tallies (loop_runner) pops the total once hits settle.
 
         // Flag if active worm was hit so retreat can be skipped
         if self.teams[active_ti].soldiers[active_si].hp < active_hp_before {
@@ -866,6 +858,7 @@ impl GameState {
             }
         }
 
+        let mut hhg_armed = false;
         self.projectiles.retain_mut(|proj| {
             // Silently expire projectiles that have flown far off the map edges or too high.
             if proj.pos.x < -(WORLD_W as f32) || proj.pos.x > 2.0 * WORLD_W as f32 || proj.pos.y < -600.0 {
@@ -876,9 +869,10 @@ impl GameState {
             let effective_wind = if !kind.affected_by_wind() { 0.0 } else { wind_val };
             match step_projectile(proj, &self.terrain, effective_wind) {
                 StepResult::HHGArmed => {
-                    // Projectile just stopped — play hallelujah, then Detonating fuse ticks down
-                    self.sounds.push(crate::audio::Sfx::HolyHandGrenade as u8);
-                    crate::audio::play(crate::audio::Sfx::HolyHandGrenade);
+                    // Projectile just stopped — play hallelujah, then Detonating
+                    // fuse ticks down. Can't emit_sound inside the retain_mut
+                    // closure (unique borrow), so flag it and emit after.
+                    hhg_armed = true;
                     true
                 }
                 StepResult::Flying | StepResult::Bounced => {
@@ -1014,6 +1008,10 @@ impl GameState {
                 }
             }
         });
+
+        if hhg_armed {
+            self.emit_sound(crate::audio::Sfx::HolyHandGrenade);
+        }
 
         for (pos, kind) in explosions {
             if kind == WeaponKind::AirStrike {

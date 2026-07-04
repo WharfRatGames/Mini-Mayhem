@@ -82,15 +82,36 @@ TMPDIR_CUSTOM=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_CUSTOM"' EXIT
 DIFFFILE="$TMPDIR_CUSTOM/staged.diff"
 
+GAMEPLAY_PATHS=(src/game/ src/main.rs src/renderer/ src/net/ src/physics/ src/world/ src/server/)
 if [[ -n "$REF" ]]; then
-    git diff "$REF" -- src/game/loop_runner.rs src/main.rs src/game/ src/renderer/ > "$DIFFFILE"
+    git diff "$REF" -- "${GAMEPLAY_PATHS[@]}" > "$DIFFFILE"
 else
-    git diff --cached -- src/game/loop_runner.rs src/main.rs src/game/ src/renderer/ > "$DIFFFILE"
+    git diff --cached -- "${GAMEPLAY_PATHS[@]}" > "$DIFFFILE"
 fi
 
 if [[ ! -s "$DIFFFILE" ]]; then
     echo -e "${GRN}No gameplay files changed — all-modes check skipped.${RST}"
     exit 0
+fi
+
+# ── Compile gate ──────────────────────────────────────────────────────────────
+# The real forcing functions are compile-time: the parity checklists in
+# src/game/net_sync.rs and the exhaustive snapshot destructures in
+# tests/parity.rs. `cargo check --tests` compiles both, so a new gameplay field
+# that hasn't been classified (synced vs not) CANNOT be committed. This gate is
+# deliberately NOT skipped by SKIP_MODES_CHECK (that flag only bypasses the
+# region heuristic below). Emergency escape: SKIP_COMPILE_CHECK=1.
+if [[ "${SKIP_COMPILE_CHECK:-}" != "1" ]]; then
+    echo -e "${BLD}Compile gate: cargo check --tests (parity checklists)...${RST}"
+    if ! cargo check --tests --quiet 2> "$TMPDIR_CUSTOM/check.err"; then
+        echo -e "${RED}${BLD}Compile gate FAILED — gameplay code or parity checklists don't compile:${RST}"
+        tail -40 "$TMPDIR_CUSTOM/check.err"
+        echo -e "${RED}Classify the new field in src/game/net_sync.rs checklists and tests/parity.rs"
+        echo -e "(sync it by default, or exclude with a '// not synced: <reason>' comment).${RST}"
+        echo -e "${YEL}Emergency bypass: SKIP_COMPILE_CHECK=1 git commit ...${RST}"
+        exit 1
+    fi
+    echo -e "  ${GRN}✓${RST}  compile gate passed"
 fi
 
 # Determine region line ranges

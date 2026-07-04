@@ -39,6 +39,10 @@ struct SoldierSnap {
     airborne_vel: Option<(f32, f32)>,
     airtime: u32,
     walk_ticks: u32,
+    /// Effective wire value: full hold while damage is still tallying.
+    hp_countdown_delay: u32,
+    on_fire_ticks_u8: u8,
+    death_cause_u8: u8,
 }
 
 #[derive(Debug, PartialEq)]
@@ -203,9 +207,40 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
     } = g;
 
     // ── teams ─────────────────────────────────────────────────────────────────
+    // Exhaustive destructures (no `..`): adding a field to Team/Soldier breaks
+    // this test's build until the field is snapshotted or excluded with a
+    // `// not synced:` comment — same forcing function as net_sync's checklists.
     let teams = teams.iter().map(|t| {
-        let soldiers = t.soldiers.iter().map(|s| {
-            let (state_disc, airborne_vel) = match &s.state {
+        let arty::game::team::Team {
+            soldiers, active, selected_weapon, weapons,
+            // ── Synced but fixed at game setup (both sides equal by construction) ──
+            color_id: _, name: _,
+            // ── Not networked ──
+            slot: _,         // not synced: lobby seat
+            avatar_id: _,    // not synced: lobby/roster cosmetic
+            elo: _,          // not synced: server/API concern
+            is_cpu: _,       // not synced: local-mode concept
+            difficulty: _,   // not synced: local-mode CPU setting
+            headstone_id: _, // not synced: graves carry it on the wire
+        } = t;
+        let soldiers = soldiers.iter().map(|s| {
+            let arty::game::soldier::Soldier {
+                pos, facing, hp, state, airtime, walk_ticks, has_fired,
+                hp_countdown_delay, on_fire_ticks, death_cause, pending_damage,
+                // ── Synced to wire but applied opponent-only on the client ──
+                name: _, hat_id: _, uniform_color_id: _, boot_color_id: _, gun_style_id: _,
+                // ── Not networked ──
+                team: _, index: _,  // structural identity, fixed at game setup
+                fall: _,            // not synced: server-side fall-damage tracker
+                has_moved: _,       // not synced: server-internal turn bookkeeping
+                has_grave: _,       // not synced: graves ship separately
+                death_explosion_pending: _, // not synced: server-side death timer
+                hp_display_ticks: _,        // not synced: client-local visibility timer
+                displayed_hp: _,    // not synced: client-local animation toward hp
+                damage_settle: _,   // not synced: server-side tally window
+                kill_weapon: _,     // not synced: server-side kill credit
+            } = s;
+            let (state_disc, airborne_vel) = match state {
                 SoldierState::Idle           => (0, None),
                 SoldierState::Walking {..}   => (1, None),
                 SoldierState::Airborne { vel, .. } => (2, Some((vel.x, vel.y))),
@@ -213,59 +248,96 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
                 _                            => (4, None),
             };
             SoldierSnap {
-                pos: (s.pos.x, s.pos.y), hp: s.hp, facing: s.facing,
-                has_fired: s.has_fired, state_disc, airborne_vel,
-                airtime: s.airtime, walk_ticks: s.walk_ticks,
+                pos: (pos.x, pos.y), hp: *hp, facing: *facing,
+                has_fired: *has_fired, state_disc, airborne_vel,
+                airtime: *airtime, walk_ticks: *walk_ticks,
+                // Mirror build_state's wire transform (full hold while tallying).
+                hp_countdown_delay: if *pending_damage > 0 {
+                    arty::game::soldier::HP_COUNTDOWN_DELAY_TICKS
+                } else { *hp_countdown_delay },
+                on_fire_ticks_u8: (*on_fire_ticks).min(255) as u8,
+                death_cause_u8: {
+                    use arty::game::soldier::DeathCause;
+                    match death_cause {
+                        DeathCause::Generic => 0, DeathCause::Explosion => 1,
+                        DeathCause::Fall => 2, DeathCause::Water => 3,
+                    }
+                },
             }
         }).collect();
-        let weapons = t.weapons.iter()
+        let weapons = weapons.iter()
             .map(|&(k, a)| (k.to_net_u8(), a.unwrap_or(0xFFFF)))
             .collect();
-        TeamSnap { active: t.active, selected_weapon: t.selected_weapon, soldiers, weapons }
+        TeamSnap { active: *active, selected_weapon: *selected_weapon, soldiers, weapons }
     }).collect();
 
     // ── projectiles ───────────────────────────────────────────────────────────
     let projectiles = projectiles.iter().map(|p| {
-        let fuse = match p.fuse {
+        let arty::physics::projectile::Projectile {
+            pos, vel, kind, age_ticks, fuse, is_fragment, homing_target,
+            owner: _,         // not synced: server-side self-hit grace
+            cleared_owner: _, // not synced: server-side self-hit grace
+        } = p;
+        let fuse = match fuse {
             FuseState::None           => 0u64,
-            FuseState::Burning(n)     => n as u64,
+            FuseState::Burning(n)     => *n as u64,
             FuseState::Expired        => 0xFFFF_FFFFu64,
             FuseState::Armed          => 0xFFFF_FFFEu64,
-            FuseState::Detonating(n)  => 0x8000_0000u64 | n as u64,
+            FuseState::Detonating(n)  => 0x8000_0000u64 | *n as u64,
         };
         ProjSnap {
-            kind: p.kind.to_net_u8(),
-            pos: (p.pos.x, p.pos.y), vel: (p.vel.x, p.vel.y),
-            age_ticks: p.age_ticks, fuse, is_fragment: p.is_fragment,
-            homing_target: p.homing_target,
+            kind: kind.to_net_u8(),
+            pos: (pos.x, pos.y), vel: (vel.x, vel.y),
+            age_ticks: *age_ticks, fuse, is_fragment: *is_fragment,
+            homing_target: *homing_target,
         }
     }).collect();
 
     // ── crates ────────────────────────────────────────────────────────────────
     let crates = crates.iter().map(|c| {
-        let kind_u8 = match &c.kind {
+        let arty::game::state::DroppedCrate {
+            pos, kind, landed,
+            descent_vy: _,       // not synced: server-side physics
+            damage_this_turn: _, // not synced: server-side destruction tally
+            fall_ticks: _,       // not synced: server-side descent bookkeeping
+        } = c;
+        let kind_u8 = match kind {
             CrateKind::Health    => 0,
             CrateKind::Weapon(_) => 1,
             CrateKind::Scrap(_)  => 2,
         };
-        CrateSnap { pos: (c.pos.x, c.pos.y), landed: c.landed, kind_u8 }
+        CrateSnap { pos: (pos.x, pos.y), landed: *landed, kind_u8 }
     }).collect();
 
     // ── mines ─────────────────────────────────────────────────────────────────
     let mines = mines.iter().map(|m| {
-        let state_u8 = match m.state { MineState::Arming => 0, MineState::Armed => 1, MineState::Triggered => 2 };
-        MineSnap { pos: (m.pos.x, m.pos.y), state_u8, arm_ticks: m.arm_ticks, trigger_ticks: m.trigger_ticks }
+        let arty::game::state::PlacedMine { pos, state, arm_ticks, trigger_ticks } = m;
+        let state_u8 = match state { MineState::Arming => 0, MineState::Armed => 1, MineState::Triggered => 2 };
+        MineSnap { pos: (pos.x, pos.y), state_u8, arm_ticks: *arm_ticks, trigger_ticks: *trigger_ticks }
     }).collect();
 
-    // ── barrels (vel + state NOT synced; see BarrelSnap) ────────────────────
-    let barrels = barrels.iter().map(|b| BarrelSnap { pos: (b.pos.x, b.pos.y), hp: b.hp }).collect();
+    // ── barrels ───────────────────────────────────────────────────────────────
+    let barrels = barrels.iter().map(|b| {
+        let arty::game::state::Barrel {
+            pos, hp,
+            vel: _,   // not synced: apply_server_state resets to 0
+            state: _, // not synced: apply_server_state resets to Normal
+        } = b;
+        BarrelSnap { pos: (pos.x, pos.y), hp: *hp }
+    }).collect();
 
     // ── black holes ───────────────────────────────────────────────────────────
-    let black_holes = black_holes.iter().map(|h| BlackHoleSnap { pos: (h.pos.x, h.pos.y), lifetime: h.lifetime }).collect();
+    let black_holes = black_holes.iter().map(|h| {
+        let arty::game::state::BlackHole { pos, lifetime } = h;
+        BlackHoleSnap { pos: (pos.x, pos.y), lifetime: *lifetime }
+    }).collect();
 
     // ── fire patches ──────────────────────────────────────────────────────────
-    let fire_patches = fire_patches.iter().map(|f| FirePatchSnap {
-        pos: (f.pos.x, f.pos.y), vel: (f.vel.x, f.vel.y), landed: f.landed, lifetime: f.lifetime,
+    let fire_patches = fire_patches.iter().map(|f| {
+        let arty::game::state::FirePatch { pos, vel, landed, lifetime } = f;
+        FirePatchSnap {
+            pos: (pos.x, pos.y), vel: (vel.x, vel.y), landed: *landed, lifetime: *lifetime,
+        }
     }).collect();
 
     // ── aim (power only; see field comments) ──────────────────────────────────
@@ -278,52 +350,84 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         GameResult::Draw       => 0x2_0000_0000u64,
     };
 
-    // ── rope (hook_vel NOT synced; see RopeSnap) ──────────────────────────────
-    let rope = rope.as_ref().map(|r| RopeSnap {
-        anchor: (r.anchor.x, r.anchor.y), hook: (r.hook.x, r.hook.y),
-        flying: r.flying, length: r.length,
+    // ── rope ──────────────────────────────────────────────────────────────────
+    let rope = rope.as_ref().map(|r| {
+        let arty::game::state::RopeState {
+            anchor, hook, flying, length,
+            hook_vel: _, // not synced: apply_server_state resets to zero
+        } = r;
+        RopeSnap {
+            anchor: (anchor.x, anchor.y), hook: (hook.x, hook.y),
+            flying: *flying, length: *length,
+        }
     });
 
     // ── garcia ────────────────────────────────────────────────────────────────
-    let garcia = garcia.as_ref().map(|g| GarciaSn {
-        cursor: (g.cursor_x, g.cursor_y), render: (g.render_x, g.render_y),
-        blink_timer: g.blink_timer, falling: g.falling,
-        fall_y: g.fall_y, vel_y: g.vel_y, bounce_count: g.bounce_count,
+    let garcia = garcia.as_ref().map(|g| {
+        let GarciaState { cursor_x, cursor_y, render_x, render_y, blink_timer,
+                          falling, fall_y, vel_y, bounce_count } = g;
+        GarciaSn {
+            cursor: (*cursor_x, *cursor_y), render: (*render_x, *render_y),
+            blink_timer: *blink_timer, falling: *falling,
+            fall_y: *fall_y, vel_y: *vel_y, bounce_count: *bounce_count,
+        }
     });
 
-    // ── airstrike (spawn_cam_left NOT synced; see AirstrikeSn) ───────────────
-    let airstrike = airstrike.as_ref().map(|a| AirstrikeSn {
-        cursor: (a.cursor_x, a.cursor_y), render: (a.render_x, a.render_y),
-        blink_timer: a.blink_timer, active: a.active,
-        plane_x: a.plane_x, plane_vx: a.plane_vx,
-        bombs_dropped: a.bombs_dropped, direction_right: a.direction_right,
+    // ── airstrike ─────────────────────────────────────────────────────────────
+    let airstrike = airstrike.as_ref().map(|a| {
+        let AirstrikeState {
+            cursor_x, cursor_y, render_x, render_y, blink_timer, active,
+            plane_x, plane_vx, bombs_dropped, direction_right,
+            spawn_cam_left: _, // not synced: client-only camera bookkeeping
+        } = a;
+        AirstrikeSn {
+            cursor: (*cursor_x, *cursor_y), render: (*render_x, *render_y),
+            blink_timer: *blink_timer, active: *active,
+            plane_x: *plane_x, plane_vx: *plane_vx,
+            bombs_dropped: *bombs_dropped, direction_right: *direction_right,
+        }
     });
 
     // ── homing missile ────────────────────────────────────────────────────────
-    let homing_missile = homing_missile.as_ref().map(|h| HomingMissileSn {
-        cursor: (h.cursor_x, h.cursor_y), render: (h.render_x, h.render_y),
-        blink_timer: h.blink_timer, confirmed: h.confirmed,
+    let homing_missile = homing_missile.as_ref().map(|h| {
+        let HomingMissileState { cursor_x, cursor_y, render_x, render_y,
+                                 blink_timer, confirmed } = h;
+        HomingMissileSn {
+            cursor: (*cursor_x, *cursor_y), render: (*render_x, *render_y),
+            blink_timer: *blink_timer, confirmed: *confirmed,
+        }
     });
 
     // ── plasma torch ──────────────────────────────────────────────────────────
     let (torch_dir, torch_fuel) = plasma_torch.as_ref().map(|t| {
-        let d = match t.dir { TorchDir::UpForward => 1, TorchDir::Forward => 2, TorchDir::DownForward => 3 };
-        (d, t.fuel_ticks)
+        let PlasmaTorchState { dir, fuel_ticks } = t;
+        let d = match dir { TorchDir::UpForward => 1, TorchDir::Forward => 2, TorchDir::DownForward => 3 };
+        (d, *fuel_ticks)
     }).unwrap_or((0, 0));
 
     // ── graves ────────────────────────────────────────────────────────────────
-    let graves = graves.iter().map(|g| GraveSnap {
-        pos: (g.pos.x, g.pos.y), team: g.team, headstone_id: g.headstone_id,
+    let graves = graves.iter().map(|g| {
+        let arty::game::state::Grave {
+            pos, team, headstone_id,
+            soldier_idx: _, // not synced: server-side dedup key
+            died_tick: _,   // not synced: server-side bookkeeping
+            vel_y: _,       // not synced: graves ship pre-settled
+            settled: _,     // not synced: graves ship pre-settled
+        } = g;
+        GraveSnap { pos: (pos.x, pos.y), team: *team, headstone_id: *headstone_id }
     }).collect();
 
     // ── blood splats ──────────────────────────────────────────────────────────
     let blood_splats = blood_splats.iter().map(|(p, t)| BloodSplatSnap { pos: (p.x, p.y), ticks: *t }).collect();
 
     // ── messages ──────────────────────────────────────────────────────────────
-    let messages = messages.iter().map(|m| MessageSnap {
-        text: m.text.clone(),
-        team_i8: m.team.map(|t| t as i8).unwrap_or(-1),
-        ticks: m.ticks,
+    let messages = messages.iter().map(|m| {
+        let arty::game::state::GameMessage { text, team, ticks } = m;
+        MessageSnap {
+            text: text.clone(),
+            team_i8: team.map(|t| t as i8).unwrap_or(-1),
+            ticks: *ticks,
+        }
     }).collect();
 
     SyncedSnapshot {
@@ -963,11 +1067,14 @@ fn sim_is_deterministic() {
 }
 
 /// Explosion damage must spawn a floating damage number for every hurt soldier
-/// (regression: apply_explosion_scaled applied damage without emitting
-/// FxEvent::DamagePopup, so bazooka/grenade/mine hits showed no popup), and the
-/// event must reach a live client through the fx_events round-trip.
+/// (regression: apply_explosion_scaled applied damage without any popup), the
+/// popup is DEFERRED until the damage tally settles (~20 ticks with no new
+/// hits), it arms the ~2 s HP-countdown hold, and the event reaches a live
+/// client through the fx_events round-trip.
 #[test]
 fn explosion_damage_emits_popup() {
+    use arty::game::loop_runner::server_tick;
+    use arty::input::InputState;
     use arty::renderer::fx::FxEvent;
 
     let mut server = build_game(650);
@@ -975,19 +1082,39 @@ fn explosion_damage_emits_popup() {
     let hp_before = server.teams[1].soldiers[0].hp;
     server.fx_events.clear();
     server.apply_explosion(target, WeaponKind::Bazooka);
-    assert!(server.teams[1].soldiers[0].hp < hp_before, "explosion must damage the target");
+    let dealt = (hp_before - server.teams[1].soldiers[0].hp) as u32;
+    assert!(dealt > 0, "explosion must damage the target");
 
-    // Sim side: local popup spawned, in the damaged soldier's team colour.
-    let popup = server.fx_events.iter().find_map(|ev| match *ev {
-        FxEvent::DamagePopup { amount, team, .. } => Some((amount, team)),
-        _ => None,
-    });
-    let (amount, team) = popup.expect("explosion damage must emit FxEvent::DamagePopup");
-    assert!(amount > 0);
+    // Deferred: no popup at the moment of impact — it tallies first.
+    assert!(
+        !server.fx_events.iter().any(|ev| matches!(ev, FxEvent::DamagePopup { .. })),
+        "popup must not appear until the damage tally settles"
+    );
+
+    // Tick until the tally flushes; capture the popup and that tick's state.
+    let input = InputState::new();
+    let mut found: Option<(u8, u8, arty::net::msg::StateMsg)> = None;
+    for tick in 0..60u32 {
+        server_tick(&mut server, &input, None, None);
+        let popup = server.fx_events.iter().find_map(|ev| match *ev {
+            FxEvent::DamagePopup { amount, team, .. } => Some((amount, team)),
+            _ => None,
+        });
+        if let Some((amount, team)) = popup {
+            found = Some((amount, team, build_state(&server, tick, 0)));
+            break;
+        }
+    }
+    let (amount, team, state) = found.expect("settled tally must emit FxEvent::DamagePopup");
+    assert!(amount as u32 >= dealt, "popup shows the tallied total");
     assert_eq!(team, 1, "popup carries the damaged soldier's team");
+    assert!(
+        server.teams[1].soldiers[0].hp_countdown_delay > 0,
+        "popup must arm the HP-countdown hold"
+    );
 
-    // Live-client side: the event rides StateMsg.fx_events and respawns the text.
-    let state = build_state(&server, 0, 0);
+    // Live-client side: the event rides StateMsg.fx_events and respawns the
+    // text, and the countdown hold arrives via NetSoldier.
     let mut client = build_game(server.map_seed);
     let mut cam = Camera::new(0.0, 0.0);
     client.fx_text.clear();
@@ -996,4 +1123,120 @@ fn explosion_damage_emits_popup() {
         arty::renderer::fx::apply_event(&mut client.fx, &mut client.fx_text, ev);
     }
     assert!(!client.fx_text.is_empty(), "live client must spawn the popup text");
+    assert!(
+        client.teams[1].soldiers[0].hp_countdown_delay > 0,
+        "live client must receive the HP-countdown hold"
+    );
+}
+
+/// Hits landing in quick succession (e.g. 5 pistol shots) tally into ONE popup
+/// with the total, not one popup per hit; displayed_hp holds until the ~2 s
+/// post-popup delay expires, then ticks down.
+#[test]
+fn damage_tally_aggregates_and_delays_countdown() {
+    use arty::game::loop_runner::server_tick;
+    use arty::input::InputState;
+    use arty::renderer::fx::FxEvent;
+
+    let mut server = build_game(651);
+    let input = InputState::new();
+    let hp_before = server.teams[1].soldiers[0].hp;
+
+    // 5 hits of 5, spaced 4 ticks apart — inside the settle window each time.
+    let mut popups = 0u32;
+    let mut total_shown = 0u32;
+    for hit in 0..5 {
+        server.teams[1].soldiers[0].take_damage(5);
+        for _ in 0..4 {
+            server_tick(&mut server, &input, None, None);
+            for ev in &server.fx_events {
+                if let FxEvent::DamagePopup { amount, .. } = *ev {
+                    popups += 1;
+                    total_shown += amount as u32;
+                }
+            }
+        }
+        let _ = hit;
+    }
+    // Let the tally settle and flush.
+    for _ in 0..30 {
+        server_tick(&mut server, &input, None, None);
+        for ev in &server.fx_events {
+            if let FxEvent::DamagePopup { amount, .. } = *ev {
+                popups += 1;
+                total_shown += amount as u32;
+            }
+        }
+    }
+    assert_eq!(popups, 1, "burst damage must tally into a single popup");
+    assert_eq!(total_shown, 25, "popup shows the summed total");
+
+    // displayed_hp holds at the pre-damage value through the ~2 s delay…
+    let s = &server.teams[1].soldiers[0];
+    assert_eq!(s.hp, hp_before - 25);
+    assert!(s.hp_countdown_delay > 0);
+    assert_eq!(s.displayed_hp, hp_before, "HP box holds until the delay expires");
+
+    // …then drains 1/tick once the delay runs out.
+    for _ in 0..(s.hp_countdown_delay + 30) {
+        server_tick(&mut server, &input, None, None);
+    }
+    assert_eq!(
+        server.teams[1].soldiers[0].displayed_hp,
+        server.teams[1].soldiers[0].hp,
+        "displayed_hp must finish counting down to the real hp"
+    );
+}
+
+/// Channel-bypass guard: the ONLY legal ways to produce gameplay sounds/FX are
+/// `GameState::emit_sound` / `GameState::emit_fx` — they spawn locally AND ship
+/// the event to live clients. A raw `.sounds.push(...)`, `.fx_events.push(...)`
+/// or `audio::play(...)` anywhere else desyncs live mode (or plays a sound the
+/// opponent never hears). The fx spawn fns are already private to fx.rs; this
+/// test seals the sound channel, which visibility can't. If you add a legal
+/// call site, update the allowlist with a comment explaining why it's safe.
+#[test]
+fn no_channel_bypass_in_source() {
+    use std::path::{Path, PathBuf};
+
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() { walk(&p, out); }
+            else if p.extension().is_some_and(|x| x == "rs") { out.push(p); }
+        }
+    }
+
+    // (file suffix, pattern, allowed count, why)
+    let allow: &[(&str, &str, usize)] = &[
+        ("game/state.rs", ".sounds.push(", 1),    // emit_sound body
+        ("game/state.rs", "audio::play(", 1),     // emit_sound body
+        ("game/state.rs", ".fx_events.push(", 1), // emit_fx body
+        ("main.rs", "audio::play(", 1),           // live client replaying StateMsg.sounds
+    ];
+    let patterns = [".sounds.push(", ".fx_events.push(", "audio::play("];
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+
+    let mut violations = Vec::new();
+    for f in files {
+        let rel = f.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+        if rel.starts_with("audio") { continue; } // the audio module implements play()
+        let src = std::fs::read_to_string(&f).unwrap();
+        for pat in patterns {
+            let count = src.matches(pat).count();
+            let allowed = allow.iter()
+                .find(|(suf, p, _)| rel.ends_with(suf) && *p == pat)
+                .map_or(0, |(_, _, n)| *n);
+            if count > allowed {
+                violations.push(format!(
+                    "src/{rel}: {count}x `{pat}` (allowed {allowed}) — route it through \
+                     GameState::emit_sound / emit_fx so live clients stay in sync"
+                ));
+            }
+        }
+    }
+    assert!(violations.is_empty(), "channel bypasses found:\n{}", violations.join("\n"));
 }

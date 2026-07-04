@@ -24,8 +24,9 @@ pub enum TurnPhase {
 ///   Team 0 Soldier 0 → Team 1 Soldier 0 → Team 0 Soldier 1 → Team 1 Soldier 1 ...
 #[derive(Debug, Clone)]
 pub struct TurnManager {
-    /// Number of active (non-eliminated) teams.
-    team_count:     usize,
+    /// Number of active (non-eliminated) teams. `pub(crate)` so the exhaustive
+    /// parity checklist in net_sync.rs can destructure the struct.
+    pub(crate) team_count: usize,
     /// Current team index in the rotation (0..team_count).
     pub current_team:   usize,
     /// Current turn phase.

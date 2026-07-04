@@ -1,0 +1,34 @@
+# All-modes parity backstop.
+#
+# The local pre-commit hook (scripts/check_all_modes.sh) runs the compile gate,
+# but hooks live in .git/hooks and aren't cloned — this workflow is the
+# always-on version. `cargo check --tests` compiles the parity checklists in
+# src/game/net_sync.rs and the exhaustive snapshot destructures in
+# tests/parity.rs, so an unclassified gameplay field fails CI; the parity test
+# suite then proves the sync actually round-trips.
+#
+# --no-default-features: the default `desktop` feature needs libudev/libasound;
+# the lib + parity tests build without it (same combo as the Pi server build).
+name: parity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: parity-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Compile gate (parity checklists + tests)
+        run: cargo check --tests --no-default-features
+      - name: Parity test suite
+        run: cargo test --test parity --no-default-features

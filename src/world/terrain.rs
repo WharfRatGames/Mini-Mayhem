@@ -1237,21 +1237,27 @@ impl Terrain {
 
     /// Pick deterministic spawn positions for a team, scanning the real
     /// post-generation terrain. Pure function of the terrain (identical on client
-    /// and server). Candidates are restricted to the interior `[x_lo, x_hi]` band
-    /// (callers pass left/right halves) and never within `SPAWN_EDGE_MARGIN` of a
-    /// world edge. Returns up to `count` well-separated standable spots; if the
-    /// terrain is too sparse it stamps a small interior platform as a last resort so
-    /// a team always gets its soldiers.
+    /// and server) — it never mutates the map. Candidates are restricted to the
+    /// interior `[x_lo, x_hi]` band (callers pass left/right halves) and never
+    /// within `SPAWN_EDGE_MARGIN` of a world edge. Returns up to `count`
+    /// well-separated standable spots, actively spread across the map's vertical
+    /// range; on very sparse terrain separation constraints relax rather than
+    /// stamping artificial platforms.
     pub fn find_team_spawns(&mut self, x_lo: u32, x_hi: u32, count: usize) -> Vec<WorldPos> {
         // 140px keeps same-team soldiers far enough apart that one explosion can't
         // gut two of them: TNT (the biggest blast, r=75) centred between two does only
         // ~7 dmg each, and every other weapon does 0 to a neighbour.
-        const MIN_SEP: i32 = 140;  // horizontal spacing between a team's soldiers
+        const MIN_SEP:   i32 = 140; // horizontal spacing between a team's soldiers
+        const MIN_SEP_V: i32 = 120; // vertical spacing that also counts as "separated"
+                                    // (a ledge 120px below a spawn is safe from TNT r=75)
         let lo = x_lo.max(SPAWN_EDGE_MARGIN) as i32;
         let hi = (x_hi.min(WORLD_W - SPAWN_EDGE_MARGIN) as i32).max(lo + 1);
 
         let mut spawns: Vec<WorldPos> = Vec::with_capacity(count);
-        let mut used_x: Vec<i32> = Vec::with_capacity(count);
+        let mut used: Vec<(i32, i32)> = Vec::with_capacity(count);
+        // Two spots are separated if far apart horizontally OR vertically.
+        let sep_ok = |used: &[(i32, i32)], cx: i32, cy: i32, sh: i32, sv: i32|
+            used.iter().all(|&(ux, uy)| (ux - cx).abs() >= sh || (uy - cy).abs() >= sv);
 
         // Scenery objects are solid (stamped into the object mask each tick) —
         // never seat a soldier overlapping one. Soldier is ~14px wide; keep the
@@ -1276,9 +1282,9 @@ impl Terrain {
                 let pools: [&[(i32, i32)]; 1] = [&cave_cands];
                 'slot: for pool in pools {
                     for &(cx, cy) in pool {
-                        if used_x.iter().all(|&ux| (ux - cx).abs() >= MIN_SEP) {
+                        if sep_ok(&used, cx, cy, MIN_SEP, MIN_SEP_V) {
                             spawns.push(WorldPos::new(cx as f32, cy as f32));
-                            used_x.push(cx);
+                            used.push((cx, cy));
                             break 'slot;
                         }
                     }
@@ -1314,10 +1320,12 @@ impl Terrain {
         const GROUND_DEPTH:  i32 = 26; // solid px required below the foot (excludes thin
                                        // floating shelves / cantilever tips — not real ground)
 
-        let mut cands: Vec<(i32, i32)> = Vec::new(); // (x, foot_y), left→right
+        // Every standable level per column enters the pool — the top of a hill AND
+        // the valley floor / ledge beneath an overhang — so lower ground competes.
+        let mut cands: Vec<(i32, i32)> = Vec::new(); // (x, foot_y): x asc, then y asc
         let mut x = lo;
         while x <= hi {
-            if let Some(fy) = self.standable_foot_y(x) {
+            for fy in self.standable_foot_levels(x) {
                 // Must stand on a solid mass, not a thin slab/ledge.
                 if (1..=GROUND_DEPTH).all(|d| self.is_solid(x, fy + d)) && clear_of_scenery(x) {
                     cands.push((x, fy));
@@ -1325,48 +1333,86 @@ impl Terrain {
             }
             x += 4;
         }
-        // Segment candidates into landform tops.
+        // Segment candidates into landform tops. Multiple y-levels can coexist over
+        // the same x-range, so run an open-segment sweep instead of a single chain:
+        // a candidate extends the open segment whose last point is nearest in y
+        // (within STEP_TOL, not already extended at this column), else starts a new
+        // one. Purely index-ordered — deterministic on client and server.
+        let mut open: Vec<(Vec<(i32, i32)>, bool)> = Vec::new(); // (points, extended-at-this-x)
         let mut segments: Vec<Vec<(i32, i32)>> = Vec::new();
+        let mut last_x = i32::MIN;
         for &(cx, cy) in &cands {
-            let split = match segments.last().and_then(|s| s.last()) {
-                Some(&(px, py)) => (cx - px) > GAP_TOL || (cy - py).abs() > STEP_TOL,
-                None => true,
-            };
-            if split { segments.push(Vec::new()); }
-            segments.last_mut().unwrap().push((cx, cy));
+            if cx != last_x {
+                let mut i = 0;
+                while i < open.len() {
+                    if cx - open[i].0.last().unwrap().0 > GAP_TOL {
+                        segments.push(open.remove(i).0);
+                    } else {
+                        open[i].1 = false;
+                        i += 1;
+                    }
+                }
+                last_x = cx;
+            }
+            let best = (0..open.len())
+                .filter(|&i| !open[i].1)
+                .map(|i| (i, (open[i].0.last().unwrap().1 - cy).abs()))
+                .filter(|&(_, dy)| dy <= STEP_TOL)
+                .min_by_key(|&(i, dy)| (dy, i));
+            match best {
+                Some((i, _)) => { open[i].0.push((cx, cy)); open[i].1 = true; }
+                None => open.push((vec![(cx, cy)], true)),
+            }
         }
-        // Keep tops wide enough to not be pillars; widest first ⇒ "similar size".
-        let seg_w   = |s: &Vec<(i32, i32)>| s.last().unwrap().0 - s[0].0;
-        let seg_top = |s: &Vec<(i32, i32)>| s.iter().map(|&(_, y)| y).min().unwrap();
-        let hi_y = cands.iter().map(|&(_, y)| y).min().unwrap_or(TERRAIN_MIN_Y as i32);
-        let mut wide: Vec<&Vec<(i32, i32)>> =
+        segments.extend(open.into_iter().map(|(s, _)| s));
+        // Keep tops wide enough to not be pillars.
+        let seg_w = |s: &Vec<(i32, i32)>| s.last().unwrap().0 - s[0].0;
+        let wide: Vec<&Vec<(i32, i32)>> =
             segments.iter().filter(|s| seg_w(s) >= MIN_LAND_W).collect();
-        // Widest first, but bias toward higher ground so a team lands on a hilltop/mesa
-        // rather than down in a wide hollow when both exist.
-        wide.sort_by_key(|s| -(seg_w(s) - (seg_top(s) - hi_y) / 3));
+        // Integer mean height per landform, for the vertical-dispersion score.
+        let seg_y: Vec<i32> = wide.iter()
+            .map(|s| s.iter().map(|&(_, y)| y).sum::<i32>() / s.len() as i32)
+            .collect();
 
-        // Spread soldiers EVENLY across each landform top (widest first), filling its
-        // whole width instead of bunching them at one end — so a team is distributed
-        // throughout its half. Never closer than MIN_SEP (one blast can't catch two).
-        for seg in &wide {
-            if spawns.len() >= surface_cap { break; }
+        // ── Greedy vertically-dispersed selection ────────────────────────────────
+        // First pick: the widest landform. Every later pick maximizes the minimum
+        // vertical distance to the soldiers already placed, with (capped) width as
+        // a secondary term — so the team spreads DOWN the map instead of stacking
+        // on the highest tops. 100px of new vertical ground outweighs 400px of
+        // extra width. Integer math only.
+        let mut seg_used: Vec<bool> = vec![false; wide.len()];
+        while spawns.len() < surface_cap {
+            let pick = (0..wide.len()).filter(|&i| !seg_used[i]).max_by_key(|&i| {
+                let vdist = used.iter()
+                    .map(|&(_, uy)| (uy - seg_y[i]).abs())
+                    .min().unwrap_or(10_000);
+                (vdist.min(10_000) * 4 + seg_w(wide[i]).min(600),
+                 -wide[i][0].0,      // tie: leftmost
+                 -(i as i32))        // tie: lowest index
+            });
+            let Some(si) = pick else { break };
+            seg_used[si] = true;
+            let seg = wide[si];
+
+            // Spread soldiers EVENLY across the landform, filling its whole width
+            // instead of bunching them at one end. Never closer than MIN_SEP
+            // horizontally unless MIN_SEP_V apart vertically (one blast can't catch two).
             let x0 = seg[0].0;
             let x1 = seg.last().unwrap().0;
             let remaining = surface_cap - spawns.len();
-            // How many fit on this top at the safe spacing, capped to what's still needed.
             let cap = ((x1 - x0) / MIN_SEP + 1).clamp(1, remaining as i32);
             let gap = ((x1 - x0) as f32 / (cap - 1).max(1) as f32).max(MIN_SEP as f32);
             for i in 0..cap {
                 if spawns.len() >= surface_cap { break; }
                 let target = x0 + (gap * i as f32) as i32;
-                // Snap the evenly-spaced target to the nearest standable column that is
-                // still ≥ MIN_SEP from everyone already placed.
+                // Snap the evenly-spaced target to the nearest standable column that
+                // is still separated from everyone already placed.
                 if let Some(&(cx, cy)) = seg.iter()
-                    .filter(|&&(px, _)| used_x.iter().all(|&u| (u - px).abs() >= MIN_SEP))
+                    .filter(|&&(px, py)| sep_ok(&used, px, py, MIN_SEP, MIN_SEP_V))
                     .min_by_key(|&&(px, _)| (px - target).abs())
                 {
                     spawns.push(WorldPos::new(cx as f32, cy as f32));
-                    used_x.push(cx);
+                    used.push((cx, cy));
                 }
             }
         }
@@ -1378,106 +1424,79 @@ impl Terrain {
             let mut cx = lo + 60;
             while cx <= hi - 60 && spawns.len() < count {
                 if let Some(fy) = self.standable_cave_foot_simple(cx) {
-                    if used_x.iter().all(|&u| (u - cx).abs() >= MIN_SEP) && clear_of_scenery(cx) {
+                    if sep_ok(&used, cx, fy, MIN_SEP, MIN_SEP_V) && clear_of_scenery(cx) {
                         spawns.push(WorldPos::new(cx as f32, fy as f32));
-                        used_x.push(cx);
+                        used.push((cx, fy));
                     }
                 }
                 cx += 80;
             }
         }
 
-        // Last resort (very fragmented/sparse half): the natural tops couldn't seat the
-        // whole team (e.g. only a couple of narrow ridges exist). Rather than stamp ONE
-        // flat slab and line the leftovers up on it — which bunches the team in a boxy
-        // void — raise a SEPARATE rounded mound per leftover soldier, each dropped into
-        // the emptiest gap across the half so the team stays spread out and the added
-        // terrain reads as hills, not a platform.
-        const MOUND_HW:   i32 = 70;  // mound half-width
-        const MOUND_DROP: i32 = 55;  // crown→edge fall (rounded profile)
-        const PAD:        i32 = MOUND_HW + 8;
-        while spawns.len() < count {
-            // Pick x at the midpoint of the widest gap between already-used soldiers
-            // (and the half's ends), keeping ≥ MIN_SEP from every neighbour where the
-            // half is wide enough to allow it.
-            let mut px = (lo + hi) / 2;
-            let mut best_d = -1;
-            let mut probe = lo + PAD;
-            while probe <= hi - PAD {
-                if clear_of_scenery(probe) {
-                    let d = used_x.iter().map(|&u| (u - probe).abs()).min().unwrap_or(i32::MAX);
-                    if d > best_d { best_d = d; px = probe; }
+        // Last resort (very fragmented/sparse half): the natural landforms couldn't
+        // seat the whole team. NEVER mutate the terrain (no artificial mounds or
+        // platforms) — instead progressively relax the separation constraints over
+        // the same candidate pool. With multi-level candidates this rarely goes
+        // past the first step.
+        if spawns.len() < count {
+            // Step 1: halve the separation requirements.
+            for &(cx, cy) in &cands {
+                if spawns.len() >= count { break; }
+                if sep_ok(&used, cx, cy, MIN_SEP / 2, MIN_SEP_V / 2) {
+                    spawns.push(WorldPos::new(cx as f32, cy as f32));
+                    used.push((cx, cy));
                 }
-                probe += 6;
             }
-            px = px.clamp(lo + PAD, (hi - PAD).max(lo + PAD));
-
-            // Crown height: blend with nearby soldiers' footing if any, else mid-terrain,
-            // nudged per-mound so neighbouring hillocks differ in height.
-            let near = used_x.iter().cloned()
-                .filter(|&u| (u - px).abs() < 360)
-                .min_by_key(|&u| (u - px).abs());
-            let base_from_spawn = near.and_then(|u| spawns.iter()
-                .min_by_key(|s| (s.x as i32 - u).abs())
-                .map(|s| s.y as i32));
-            let local_surf = self.surface_y_at(px as u32).map(|y| y as i32);
-            let wobble = (((px as i64 * 2654435761) >> 6) & 31) as i32 - 15;
-            let crown_y = base_from_spawn
-                .or(local_surf.filter(|&y| y < WATER_Y as i32 - 30))
-                .unwrap_or((TERRAIN_MIN_Y as i32 + TERRAIN_MAX_Y as i32) / 2 + 20)
-                .saturating_add(wobble)
-                .clamp(TERRAIN_MIN_Y as i32 + 50, WATER_Y as i32 - 96);
-
-            // Raise the mound: rounded solid top, only ADD dirt (never gouge a taller
-            // existing hill), and clear a tapered dome of sky above it for headroom.
-            for dx in -MOUND_HW..=MOUND_HW {
-                let cx = px + dx;
-                if cx < 4 || cx >= WORLD_W as i32 - 4 { continue; }
-                let f = (dx * dx) as f32 / (MOUND_HW * MOUND_HW) as f32; // 0 centre → 1 edge
-                let top = crown_y + (f * MOUND_DROP as f32) as i32;
-                for y in top..WATER_Y as i32 { self.set_solid(cx, y, true); }   // dirt mass
-                let head = (110.0 * (1.0 - f)) as i32;                           // tapered sky
-                for dy in 1..=head { self.set_solid(cx, top - dy, false); }
-                // The headroom clear above can punch a hole into ground that was
-                // previously solid between the old sky_limit and the new mound top
-                // (when the mound doesn't raise the column's visible top), leaving
-                // sky_limit/solid_to_water stale — recompute from the actual solid
-                // bits so the renderer's sky-aware viewport copy doesn't block-copy
-                // a cached placeholder over that new gap (and so a previously-empty
-                // column's new mound is correctly picked up too).
-                self.recompute_column_cache(cx);
-                let top_u = top as u32;
-                if top_u < self.spawn_y[cx as usize] { self.spawn_y[cx as usize] = top_u.max(TERRAIN_MIN_Y); }
-            }
-            spawns.push(WorldPos::new(px as f32, (crown_y - 1) as f32));
-            used_x.push(px);
         }
-
-        // The mound raising/carving above can either remove the ground a scenery
-        // object was seated on (leaving it floating) or bury it under newly-added
-        // dirt mass (leaving it embedded) — the mound's solid-fill spans a wide
-        // MOUND_HW*2 column but was only checked against scenery at its center
-        // point (`clear_of_scenery(px)`), so an object elsewhere within that span
-        // can get swallowed. Prune any object that's now unsupported OR embedded.
-        // Deterministic (pure function of the terrain bits), so client and server
-        // stay in agreement.
-        const EMBED_TOL: i32 = 5;
-        let invalid: Vec<usize> = self.scenery.iter().enumerate()
-            .filter(|(_, o)| {
-                let (hw, height) = o.footprint(theme);
-                let base = o.y as i32;
-                let floating = !(-hw / 2..=hw / 2).all(|dx| {
-                    (1..=5).any(|dy| self.is_solid(o.x as i32 + dx, base + dy))
-                });
-                let cw = (hw * 3 / 4).max(1);
-                let embedded = (EMBED_TOL + 1..=height).any(|dy| {
-                    (-cw..=cw).any(|dx| self.is_solid(o.x as i32 + dx, base - dy))
-                });
-                floating || embedded
-            })
-            .map(|(i, _)| i)
-            .collect();
-        for &i in invalid.iter().rev() { self.scenery.remove(i); }
+        if spawns.len() < count {
+            // Step 2: any candidate column, ignoring separation entirely (just
+            // never the exact same spot twice).
+            for &(cx, cy) in &cands {
+                if spawns.len() >= count { break; }
+                if used.iter().all(|&(ux, uy)| ux != cx || uy != cy) {
+                    spawns.push(WorldPos::new(cx as f32, cy as f32));
+                    used.push((cx, cy));
+                }
+            }
+        }
+        while spawns.len() < count {
+            // Step 3 (pathological — the strict candidate pool ran dry): from an
+            // evenly spaced base column, search outward for ANY standable level
+            // (relaxed headroom, no ground-depth/scenery checks), else the raw
+            // surface (foot on the topmost solid pixel), else — only if the whole
+            // band is empty air — mid-air over mid-terrain (the soldier falls).
+            let i = spawns.len() as i32;
+            let base = (lo + (hi - lo) * (2 * i + 1) / (2 * count as i32)).clamp(lo, hi);
+            let mut spot: Option<(i32, i32)> = None;
+            'search: for d in 0..=(hi - lo) {
+                for px in [base + d, base - d] {
+                    if px < lo || px > hi { continue; }
+                    for fy in self.standable_foot_levels(px) {
+                        if used.iter().all(|&(ux, uy)| ux != px || uy != fy) {
+                            spot = Some((px, fy));
+                            break 'search;
+                        }
+                    }
+                }
+            }
+            if spot.is_none() {
+                'surf: for d in 0..=(hi - lo) {
+                    for px in [base + d, base - d] {
+                        if px < lo || px > hi { continue; }
+                        if let Some(sy) = self.surface_y_at(px as u32) {
+                            let fy = sy as i32 - 1;
+                            if fy > 0 && used.iter().all(|&(ux, uy)| ux != px || uy != fy) {
+                                spot = Some((px, fy));
+                                break 'surf;
+                            }
+                        }
+                    }
+                }
+            }
+            let (px, py) = spot.unwrap_or((base, (TERRAIN_MIN_Y as i32 + TERRAIN_MAX_Y as i32) / 2));
+            spawns.push(WorldPos::new(px as f32, py as f32));
+            used.push((px, py));
+        }
 
         spawns
     }
@@ -1486,39 +1505,69 @@ impl Terrain {
     /// the pixel below is solid, there's a ≥7px platform under the feet, and ≥100px
     /// of open sky above (rejects ceilings / enclosed caves). None if no such spot.
     pub fn standable_foot_y(&self, x: i32) -> Option<i32> {
-        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
         const CLEAR_H: i32 = 24; // soldier body + clearance
         const SKY_H:   i32 = 100;
         if x < 0 || x >= WORLD_W as i32 { return None; }
-        let x_l = x - SOLDIER_HALF_W as i32;
-        let x_r = x + SOLDIER_HALF_W as i32;
-        let ok = |foot_y: i32| -> bool {
-            // Body must fit in-world; high islands are fine (their open sky is
-            // verified by the all-air scan below, not by a hard Y floor).
-            if foot_y < CLEAR_H || foot_y >= WATER_Y as i32 { return false; }
-            if !self.is_solid(x, foot_y + 1) { return false; }
-            let platform = (-4..=4).filter(|&dx| self.is_solid(x + dx, foot_y + 1)).count() >= 7;
-            if !platform { return false; }
-            // Full body footprint must be clear, matching the tightened movement
-            // collision (try_move_horizontal / airborne terrain_hit), so a soldier
-            // never spawns wedged in a passage it can't legally move out of.
-            let body_clear = (foot_y - CLEAR_H - SKY_H + 1 ..= foot_y).all(|y| {
-                let y = y.max(0);
-                !self.is_solid(x_l, y) && !self.is_solid(x, y) && !self.is_solid(x_r, y)
-            });
-            if !body_clear { return false; }
-            // Escape room: the exact footprint can be clear yet still be exactly
-            // SOLDIER_W wide with solid walls flush against both edges — a soldier
-            // there could stand but never take a single step (try_move_horizontal
-            // requires the column just beyond the footprint edge to be open too).
-            // Require at least one direction to have room to walk out.
-            let clear_col = |cx: i32| (foot_y - CLEAR_H - SKY_H + 1 ..= foot_y)
-                .all(|y| !self.is_solid(cx, y.max(0)));
-            clear_col(x_l - 2) || clear_col(x_r + 2)
-        };
         // Scan top-down from the very top so we can land on high sky-islands (whose
         // tops sit above CLEAR_H+SKY_H) before any ground far below.
-        (CLEAR_H..WATER_Y as i32).find(|&foot_y| ok(foot_y))
+        (CLEAR_H..WATER_Y as i32).find(|&foot_y| self.foot_ok(x, foot_y, SKY_H))
+    }
+
+    /// Standing check shared by `standable_foot_y` / `standable_foot_levels`:
+    /// solid platform under the feet, body footprint clear for `CLEAR_H + sky_h`
+    /// px above (matching movement collision), and a walkable escape column on at
+    /// least one side over the same height.
+    fn foot_ok(&self, x: i32, foot_y: i32, sky_h: i32) -> bool {
+        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+        const CLEAR_H: i32 = 24; // soldier body + clearance
+        let x_l = x - SOLDIER_HALF_W as i32;
+        let x_r = x + SOLDIER_HALF_W as i32;
+        // Body must fit in-world; high islands are fine (their open sky is
+        // verified by the all-air scan below, not by a hard Y floor).
+        if foot_y < CLEAR_H || foot_y >= WATER_Y as i32 { return false; }
+        if !self.is_solid(x, foot_y + 1) { return false; }
+        let platform = (-4..=4).filter(|&dx| self.is_solid(x + dx, foot_y + 1)).count() >= 7;
+        if !platform { return false; }
+        // Full body footprint must be clear, matching the tightened movement
+        // collision (try_move_horizontal / airborne terrain_hit), so a soldier
+        // never spawns wedged in a passage it can't legally move out of.
+        let body_clear = (foot_y - CLEAR_H - sky_h + 1 ..= foot_y).all(|y| {
+            let y = y.max(0);
+            !self.is_solid(x_l, y) && !self.is_solid(x, y) && !self.is_solid(x_r, y)
+        });
+        if !body_clear { return false; }
+        // Escape room: the exact footprint can be clear yet still be exactly
+        // SOLDIER_W wide with solid walls flush against both edges — a soldier
+        // there could stand but never take a single step (try_move_horizontal
+        // requires the column just beyond the footprint edge to be open too).
+        // Require at least one direction to have room to walk out.
+        let clear_col = |cx: i32| (foot_y - CLEAR_H - sky_h + 1 ..= foot_y)
+            .all(|y| !self.is_solid(cx, y.max(0)));
+        clear_col(x_l - 2) || clear_col(x_r + 2)
+    }
+
+    /// ALL standable foot Ys at column `x`, top→bottom (≤ 3). The topmost level
+    /// keeps the full 100px open-sky rule (same spot `standable_foot_y` returns);
+    /// lower levels — ledges and floors under overhangs — only need 16px of
+    /// clearance above the body, so terrain lower down the map actually enters
+    /// the spawn candidate pool instead of being shadowed by whatever sits above.
+    pub fn standable_foot_levels(&self, x: i32) -> Vec<i32> {
+        const CLEAR_H:     i32 = 24;
+        const SKY_RELAXED: i32 = 16; // body 24 + 16 = 40px total headroom
+        const MAX_LEVELS: usize = 3;
+        if x < 0 || x >= WORLD_W as i32 { return Vec::new(); }
+        let mut out = Vec::new();
+        let mut fy = CLEAR_H;
+        while fy < WATER_Y as i32 && out.len() < MAX_LEVELS {
+            let sky = if out.is_empty() { 100 } else { SKY_RELAXED };
+            if self.foot_ok(x, fy, sky) {
+                out.push(fy);
+                fy += CLEAR_H + 8; // skip past this body before looking lower
+            } else {
+                fy += 1;
+            }
+        }
+        out
     }
 
     /// Highest *enclosed* foot Y at column `x`: a cave/void floor a soldier can stand
@@ -1909,5 +1958,51 @@ mod spawn_tests {
             a.find_team_spawns(0, WORLD_W / 2 - 40, 4),
             b.find_team_spawns(0, WORLD_W / 2 - 40, 4)
         );
+    }
+
+    /// Spawns must spread down the map, not cluster on the highest landforms:
+    /// on maps whose standable ground spans a real vertical range, the chosen
+    /// spawn Ys must cover at least a quarter of that offered range, on at
+    /// least 3/4 of such seeds (individual awkward maps are tolerated).
+    #[test]
+    fn spawns_disperse_vertically() {
+        let mut exercised = 0u32;
+        let mut passed = 0u32;
+        for seed in 0..20u64 {
+            let mut t = Terrain::generate_tactical(seed);
+            if t.is_cavern { continue; } // cavern maps have their own placement
+            let mut cys: Vec<i32> = Vec::new();
+            let mut x = SPAWN_EDGE_MARGIN as i32;
+            while x <= (WORLD_W - SPAWN_EDGE_MARGIN) as i32 {
+                cys.extend(t.standable_foot_levels(x));
+                x += 4;
+            }
+            let (Some(&cmin), Some(&cmax)) = (cys.iter().min(), cys.iter().max()) else { continue };
+            let offered = cmax - cmin;
+            if offered < 250 { continue; } // genuinely flat map — nothing to disperse over
+            exercised += 1;
+            let spawns = t.find_team_spawns(0, WORLD_W, 8);
+            let ys: Vec<i32> = spawns.iter().map(|s| s.y as i32).collect();
+            let spread = ys.iter().max().unwrap() - ys.iter().min().unwrap();
+            if spread * 4 >= offered { passed += 1; }
+        }
+        assert!(exercised >= 5, "too few seeds offered vertical range ({exercised})");
+        assert!(
+            passed * 4 >= exercised * 3,
+            "vertical dispersion too low: only {passed}/{exercised} seeds spread >= 25% of offered range"
+        );
+    }
+
+    /// Manual eyeball helper: `cargo test --lib print_spawn_dist -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn print_spawn_dist() {
+        for seed in 0..10u64 {
+            let mut t = Terrain::generate_tactical(seed);
+            let spawns = t.find_team_spawns(0, WORLD_W, 8);
+            let mut ys: Vec<i32> = spawns.iter().map(|s| s.y as i32).collect();
+            ys.sort();
+            println!("seed {seed:2} cavern={} ys={:?}", t.is_cavern, ys);
+        }
     }
 }
