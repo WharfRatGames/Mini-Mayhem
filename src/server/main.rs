@@ -245,6 +245,10 @@ fn gen_casual_token(match_id: u64, team: usize) -> String {
 /// How long a paused match waits for the disconnected player to reconnect.
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// How long the match-start gate waits for every client's first InputMsg
+/// (terrain generation + intro screen) before starting turn 1 anyway.
+const START_READY_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Open (creating if needed) a per-match log file alongside the main server
 /// log, so each game's history can be tailed/grepped independently when many
 /// matches run concurrently. Falls back to /dev/null if it can't be opened.
@@ -339,8 +343,37 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
     // via the main per-tick broadcast — see `build_state`.
     let mut last_craters_sent: usize = 0;
 
+    // Match-start gate: the turn timer is tick-driven, so the sim must not
+    // start until BOTH clients have sent their first InputMsg (terrain built,
+    // intro screen done, live loop running). Otherwise the faster-loading
+    // machine's opponent misses the start of turn 1.
+    let mut match_started = false;
+    let start_wait = Instant::now();
+
     loop {
         let t = Instant::now();
+
+        if !match_started {
+            let ready0 = inp0.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+            let ready1 = inp1.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+            let gone = disc0.load(Ordering::Relaxed) || disc1.load(Ordering::Relaxed)
+                || quit0.load(Ordering::Relaxed)  || quit1.load(Ordering::Relaxed);
+            if (ready0 && ready1) || gone || start_wait.elapsed() >= START_READY_TIMEOUT {
+                mboth!(&mut mfile, match_id, "clients ready after {:?} — starting turn 1", start_wait.elapsed());
+                match_started = true;
+                // fall through into the normal tick below
+            } else {
+                // Feed both clients the frozen tick-0 state so whoever loads
+                // first sees the map with the full turn timer while waiting.
+                if let Some(bytes) = encode(&build_state(&game, tick, last_craters_sent)) {
+                    write_team!(0, &bytes);
+                    write_team!(1, &bytes);
+                }
+                let e = t.elapsed();
+                if e < TICK_DURATION { thread::sleep(TICK_DURATION - e); }
+                continue;
+            }
+        }
 
         // Pause/resume handling — only meaningful when registered (session_token set).
         if let Some((dteam, since)) = paused {
@@ -889,8 +922,32 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
         }};
     }
 
+    // Match-start gate — same as ranked: hold the tick-driven turn timer until
+    // every connected player's client has sent its first InputMsg, so nobody
+    // misses the start of turn 1 while an opponent is still loading.
+    let mut match_started = false;
+    let start_wait = Instant::now();
+
     loop {
         let t = Instant::now();
+
+        if !match_started {
+            let all_ready = members.iter().all(|m|
+                m.input.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+                || m.disc.load(Ordering::Relaxed)
+                || m.quit.load(Ordering::Relaxed));
+            if all_ready || start_wait.elapsed() >= START_READY_TIMEOUT {
+                mboth!(&mut mfile, match_id, "casual clients ready after {:?} — starting turn 1", start_wait.elapsed());
+                match_started = true;
+            } else {
+                if let Some(bytes) = encode(&build_state(&game, tick, 0)) {
+                    write_all_conns!(&bytes);
+                }
+                let e = t.elapsed();
+                if e < TICK_DURATION { thread::sleep(TICK_DURATION - e); }
+                continue;
+            }
+        }
 
         // Pause/resume handling — 2-player casual only.
         if n == 2 {
@@ -1261,7 +1318,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.410";
+const REQUIRED_VERSION: &str = "0.5.4.411";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

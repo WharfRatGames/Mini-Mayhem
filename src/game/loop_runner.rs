@@ -1123,10 +1123,39 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
 /// `simulate_with_muzzle`, so all five paths share it; the popup replicates to
 /// live clients via the fx_events channel.
 fn flush_damage_tallies(game: &mut GameState) {
+    // Chain reactions (shot knocks a soldier onto a mine, barrel cascades,
+    // death explosions) must read as ONE total: hold every flush while the
+    // world is still "hot" — anything in flight, fused, or falling can still
+    // add damage. The settle window is deliberately NOT decremented while
+    // holding, so after the world quiets there is still a full
+    // DAMAGE_SETTLE_TICKS buffer for follow-on triggers (a soldier landing
+    // next to an armed mine trips it a tick or two after touchdown).
+    // Exception: between shotgun shots (`shotgun_shots_left > 0`) each trigger
+    // pull pops its own number — per-shot feedback is the point of the weapon.
+    let any_airborne = game.teams.iter().flat_map(|t| t.soldiers.iter())
+        .any(|s| matches!(s.state, crate::game::soldier::SoldierState::Airborne { .. }));
+    let any_fused = game.mines.iter()
+            .any(|m| matches!(m.state, crate::game::state::MineState::Triggered))
+        || game.barrels.iter()
+            .any(|b| matches!(b.state, crate::game::state::BarrelState::Triggered { .. }));
+    let world_hot = any_airborne || any_fused
+        || !game.projectiles.is_empty()
+        || !game.explosions.is_empty()
+        || !game.pending_deaths.is_empty()
+        || !game.black_holes.is_empty()
+        || game.garcia.is_some()
+        || game.airstrike.is_some();
+    if world_hot && game.shotgun_shots_left == 0 { return; }
+
     let mut popups: Vec<(f32, f32, u32, u8)> = Vec::new();
     for (ti, team) in game.teams.iter_mut().enumerate() {
         for s in &mut team.soldiers {
             if s.pending_damage == 0 { continue; }
+            // Actively burning: fire DoT is still adding damage, so keep
+            // tallying until the burn stops — if it kills the soldier, the
+            // popup shows the whole burn's total once (after death) and the
+            // HP box then ticks down to 0.
+            if s.on_fire_ticks > 0 { continue; }
             if s.damage_settle > 0 { s.damage_settle -= 1; continue; }
             popups.push((s.pos.x, s.pos.y, s.pending_damage, ti as u8));
             s.pending_damage = 0;
@@ -1594,8 +1623,12 @@ fn step_plasma_torch(game: &mut GameState) {
 
     const TORCH_SPEED:    f32 = 2.0;  // px/tick forward
     const TORCH_TIP_DIST: f32 = 18.0; // px ahead where carving leads
-    const TORCH_RADIUS:   f32 = 15.0; // r=15 → 30px clear — fits soldier body (14×28) with margin; hats may clip
-    const BODY_RADIUS:    f32 = 15.0; // same at body so tunnel entrance matches
+    // r=17 → 34px bore. The walk check needs foot+SOLDIER_H (29px) clear at
+    // every column of the 14px-wide body, so a 30px bore (old r=15) left only
+    // 1px of headroom — any carve scallop or rounding speck wedged soldiers
+    // inside their own tunnel. 5px of margin makes torch tunnels always passable.
+    const TORCH_RADIUS:   f32 = 17.0;
+    const BODY_RADIUS:    f32 = 17.0; // same at body so tunnel entrance matches
 
     let (dir, fuel) = {
         let t = match game.plasma_torch.as_ref() { Some(t) => t, None => return };
@@ -1621,11 +1654,11 @@ fn step_plasma_torch(game: &mut GameState) {
 
     // Only advance (and carve) if there's actually solid terrain to dig through.
     // Prevents the torch from propelling the soldier through open air.
-    // Check BEYOND the carve zone (tip_dist + tip_radius = 28px) so the first-tick
-    // carve (which clears 0-28px) doesn't cause has_solid=false on tick 2.
-    let check_start = TORCH_TIP_DIST + TORCH_RADIUS + 2.0; // 34px from soldier
+    // Check BEYOND the carve zone (tip_dist + tip_radius) so the first-tick
+    // carve doesn't cause has_solid=false on tick 2.
+    let check_start = TORCH_TIP_DIST + TORCH_RADIUS + 2.0; // 37px from soldier
     let has_solid = (0..=4).any(|i| {
-        let d = check_start + i as f32 * 3.0; // 30, 33, 36, 39, 42 px ahead
+        let d = check_start + i as f32 * 3.0;
         game.terrain.is_solid((sx + dx * d) as i32, (body_cy + dy * d) as i32)
     });
     if !has_solid {
