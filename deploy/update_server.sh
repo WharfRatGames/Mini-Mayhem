@@ -191,6 +191,12 @@ else
 fi
 
 # Publish to GitHub Releases (attach deploy/assets.zip; build zip stays on Pi only)
+# Rebuild assets.zip from the live deploy/assets/ tree first — the tracked zip
+# went stale (Jun 18 → missing bg6 backgrounds + newer cosmetics) because
+# nothing refreshed it; releases and CI both consume this file.
+rm -f deploy/assets.zip
+zip -r -q deploy/assets.zip deploy/assets
+echo "assets.zip rebuilt from deploy/assets/"
 NOTES=$(head -1 deploy/changelog.txt 2>/dev/null || echo "v$VERSION")
 WIN_EXE="target/x86_64-pc-windows-gnu/release/mini-mayhem.exe"
 WIN_ARGS=""

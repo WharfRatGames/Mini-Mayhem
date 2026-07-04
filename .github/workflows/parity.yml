@@ -28,6 +28,10 @@ jobs:
             ~/.cargo/git
             target
           key: parity-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Unpack baked assets
+        # deploy/assets/ (include_bytes!'d PNGs/WAVs) is gitignored; the tracked
+        # deploy/assets.zip is the canonical bundle — same one attached to releases.
+        run: unzip -o -q deploy/assets.zip
       - name: Compile gate (parity checklists + tests)
         run: cargo check --tests --no-default-features
       - name: Parity test suite
