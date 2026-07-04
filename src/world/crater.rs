@@ -58,15 +58,24 @@ impl Crater {
         // call carve — scenery removal stays deterministic across all of them.
         // Small carves (bullets r≤4, plasma-torch nibbles) only chip terrain,
         // so they leave scenery standing.
+        //
+        // Exactly like terrain: only the pixels the blast circle actually
+        // overlaps are removed (SceneryObject::carve), and the object is
+        // dropped only once every tracked pixel is gone. A graze at the edge
+        // of a big tree nicks the corner and leaves the rest of the tree.
         if r >= 8.0 {
             let theme = super::terrain::Theme::of(terrain.is_cavern, terrain.template_id);
-            terrain.scenery.retain(|obj| {
+            terrain.scenery.retain_mut(|obj| {
                 let (half_w, height) = obj.footprint(theme);
-                // Closest point of the footprint box to the blast centre
+                // Broad-phase: closest point of the footprint box to the blast
+                // centre, to skip the per-pixel carve on objects nowhere near it.
                 let nx = self.cx.clamp((obj.x as i32 - half_w) as f32, (obj.x as i32 + half_w) as f32);
                 let ny = self.cy.clamp((obj.y as i32 - height) as f32, obj.y as f32);
                 let (dx, dy) = (nx - self.cx, ny - self.cy);
-                dx * dx + dy * dy > r2
+                if dx * dx + dy * dy > r2 {
+                    return true;
+                }
+                !obj.carve(theme, self.cx, self.cy, r2)
             });
         }
     }

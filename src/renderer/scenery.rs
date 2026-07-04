@@ -5,7 +5,7 @@
 
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
-use crate::world::terrain::Terrain;
+use crate::world::terrain::{SceneryObject, Terrain, Theme};
 use crate::world::constants::{SCREEN_W, SCREEN_H, WATER_Y};
 
 pub fn draw_scenery(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: i32, cam_y: i32) {
@@ -20,7 +20,7 @@ pub fn draw_scenery(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: i32, cam_y:
         // coordinates relative to the (wx, wy) bottom-center anchor, and the
         // wrapper magnifies every rect about that anchor. The scale MUST match
         // SceneryObject::scale — the collision footprint is derived from it.
-        let mut sbuf = Scaled { buf, ax: wx, ay: wy, s: obj.scale(theme) };
+        let mut sbuf = Scaled { buf, ax: wx, ay: wy, s: obj.scale(theme), obj, theme };
         match theme {
             crate::world::terrain::Theme::Underground => draw_underground(&mut sbuf, wx, wy, obj.sprite),
             crate::world::terrain::Theme::Pastoral => draw_pastoral(&mut sbuf, wx, wy, obj.sprite),
@@ -38,27 +38,50 @@ struct Scaled<'a> {
     ax: i32,
     ay: i32,
     s: i32,
+    obj: &'a SceneryObject,
+    theme: Theme,
 }
 
 impl Scaled<'_> {
     fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, c: Bgra) {
-        self.buf.fill_rect(
-            self.ax + (x - self.ax) * self.s,
-            self.ay + (y - self.ay) * self.s,
-            w * self.s as u32,
-            h * self.s as u32,
-            c,
-        );
+        // Fast path: the vast majority of objects have never been touched by
+        // an explosion (mask is None) — blit the whole rect in one call, same
+        // as before masking existed.
+        if self.obj.mask.is_none() {
+            self.buf.fill_rect(
+                self.ax + (x - self.ax) * self.s,
+                self.ay + (y - self.ay) * self.s,
+                w * self.s as u32,
+                h * self.s as u32,
+                c,
+            );
+            return;
+        }
+        for uy in y..y + h as i32 {
+            for ux in x..x + w as i32 {
+                self.set_pixel(ux, uy, c);
+            }
+        }
     }
 
     fn set_pixel(&mut self, x: i32, y: i32, c: Bgra) {
-        self.buf.fill_rect(
-            self.ax + (x - self.ax) * self.s,
-            self.ay + (y - self.ay) * self.s,
-            self.s as u32,
-            self.s as u32,
-            c,
-        );
+        let wx0 = self.ax + (x - self.ax) * self.s;
+        let wy0 = self.ay + (y - self.ay) * self.s;
+        if self.obj.mask.is_none() {
+            self.buf.fill_rect(wx0, wy0, self.s as u32, self.s as u32, c);
+            return;
+        }
+        // Masked path: mask resolution matches world pixels post-scale, so a
+        // crater boundary can cut through the middle of this 1x pixel's s×s
+        // block — check and plot each world pixel individually.
+        for dy in 0..self.s {
+            for dx in 0..self.s {
+                let (wx, wy) = (wx0 + dx, wy0 + dy);
+                if self.obj.pixel_intact(wx, wy, self.theme) {
+                    self.buf.fill_rect(wx, wy, 1, 1, c);
+                }
+            }
+        }
     }
 }
 

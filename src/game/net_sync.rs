@@ -531,7 +531,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         damage_focus: _, server_fire_grace: _, shotgun_shots_left: _,
         revolver_shots_left: _, minigun_shots_left: _, minigun_fire_timer: _, uzi_shots_left: _, uzi_fire_timer: _, pistol_shots_left: _, pistol_fire_timer: _, bullet_trails: _, rope_session: _,
         rope_used_this_turn: _, tnt_placed: _, crate_watch_ticks: _,
-        smoke_particles: _, fx: _, pending_deaths: _,
+        smoke_particles: _, fx: _, fx_text: _, pending_deaths: _,
         meteor_chain: _, // not synced: transient per-tick flag, reset each tick
     } = g;
 }

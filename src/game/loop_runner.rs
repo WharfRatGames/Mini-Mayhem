@@ -186,6 +186,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     // Advance client-only effect particles (explosion fallout / dust / sparks /
     // splashes) once per tick, before any phase early-returns. Visual only.
     crate::renderer::fx::step_fx(&mut game.fx, &game.terrain, game.wind.value());
+    crate::renderer::fx::step_fx_text(&mut game.fx_text);
     // Object mask: re-stamp barrels + armed mines so collision sees them as solid.
     stamp_objects(game);
 
@@ -775,7 +776,7 @@ fn process_movement(game: &mut GameState, input: &InputState) {
         let y0 = game.teams[ti].soldiers[si].pos.y;
         game.teams[ti].soldiers[si].pos.y -= jump_unstick_lift(game, ti, si);
         game.teams[ti].soldiers[si].state =
-            SoldierState::Airborne { vel: crate::world::Vec2::new(vx, -6.5), spinning: true };
+            SoldierState::Airborne { vel: crate::world::Vec2::new(vx, -6.82), spinning: true };
         // Reset airtime so the spin always plays its full revolution. Without this,
         // a stale airtime (e.g. the soldier was just grabbed into Walking near the
         // ground while a direction is held, which doesn't reset it) is already >= 20,
@@ -2105,7 +2106,9 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
             let (dmg, vx, vy) = hits[t][s];
             if dmg == 0 { continue; }
             game.teams[t].soldiers[s].death_cause = crate::game::soldier::DeathCause::Explosion;
+            let hit_pos = game.teams[t].soldiers[s].pos;
             game.teams[t].soldiers[s].take_damage(dmg);
+            game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: hit_pos.x, y: hit_pos.y, amount: dmg.min(255) as u8 });
             let new_state = match &game.teams[t].soldiers[s].state {
                 SoldierState::Airborne { vel, spinning } => SoldierState::Airborne {
                     vel: Vec2::new(vel.x + vx, vel.y + vy),
@@ -2255,6 +2258,7 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
         };
         target.death_cause = DeathCause::Explosion;
         target.kill_weapon = Some(crate::physics::WeaponKind::BaseballBat);
+        let hit_pos = target.pos;
         target.take_damage(BAT_DAMAGE);
         // If the hit killed them, clear the airborne state so gravity doesn't
         // skip the corpse and freeze the turn.
@@ -2266,6 +2270,7 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
             // airtime >= 20 would cancel `spinning` on the first airborne tick).
             target.airtime = 0;
         }
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: hit_pos.x, y: hit_pos.y, amount: BAT_DAMAGE.min(255) as u8 });
     }
 
     game.teams[ti].soldiers[si].has_fired = true;
@@ -2374,6 +2379,7 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
         // Do NOT set active_worm_hit here — the shooter can never be hit by their own
         // ray (excluded in the march), and teammate hits should not cut the sequence short.
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 75));
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: rx, y: ry, amount: DAMAGE.min(255) as u8 });
 
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
@@ -2469,6 +2475,7 @@ fn fire_pistol_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override:
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 75));
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: rx, y: ry, amount: DAMAGE.min(255) as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -2605,6 +2612,7 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: rx, y: ry, amount: DAMAGE.min(255) as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -2750,6 +2758,7 @@ fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Op
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: rx, y: ry, amount: DAMAGE.min(255) as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -4443,6 +4452,8 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 
     // 7b'. Effect particles — explosion fallout, dust, sparks, splashes.
     crate::renderer::fx::draw_fx(buf, &game.fx, cam_x);
+    // 7b''. Floating damage-number popups, drawn over the fx particles.
+    crate::renderer::fx::draw_fx_text(buf, &game.fx_text, cam_x);
 
     // 7c. TNT fuse countdown banner — screen-anchored so it's visible regardless of camera
     if game.tnt_placed {
@@ -4896,13 +4907,17 @@ fn stamp_objects(game: &mut GameState) {
     // seed-derived so this is identical on client and server.
     let theme = crate::world::terrain::Theme::of(game.terrain.is_cavern, game.terrain.template_id);
     for i in 0..game.terrain.scenery.len() {
-        let obj = game.terrain.scenery[i];
-        let (half_w, height) = obj.footprint(theme);
-        let cx = obj.x as i32;
-        let cy = obj.y as i32;
+        let (cx, cy, half_w, height) = {
+            let obj = &game.terrain.scenery[i];
+            let (half_w, height) = obj.footprint(theme);
+            (obj.x as i32, obj.y as i32, half_w, height)
+        };
         for dy in -height..=0i32 {
             for dx in -half_w..=half_w {
-                game.terrain.stamp_object(cx + dx, cy + dy);
+                let (wx, wy) = (cx + dx, cy + dy);
+                if game.terrain.scenery[i].pixel_intact(wx, wy, theme) {
+                    game.terrain.stamp_object(wx, wy);
+                }
             }
         }
     }
@@ -5150,6 +5165,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if dmg > 0 {
                                     game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                     game.teams[ti].soldiers[si].take_damage(dmg);
+                                    game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: last_clear_x, y: last_clear_y, amount: dmg.min(255) as u8 });
                                 }
                                 game.teams[ti].soldiers[si].pos.x = last_clear_x;
                                 game.teams[ti].soldiers[si].pos.y = land_y;
@@ -5256,6 +5272,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if dmg > 0 {
                                     game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                     game.teams[ti].soldiers[si].take_damage(dmg);
+                                    game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8 });
                                     let ati = game.active_team();
                                     if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                                 }
@@ -5294,6 +5311,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             if dmg > 0 {
                                 game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                 game.teams[ti].soldiers[si].take_damage(dmg);
+                                game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8 });
                                 let ati = game.active_team();
                                 if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                             }
@@ -5356,6 +5374,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                     if dmg > 0 {
                                         game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                         game.teams[ti].soldiers[si].take_damage(dmg);
+                                        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8 });
                                         let ati = game.active_team();
                                         if ti == ati && si == game.teams[ati].active {
                                             game.active_worm_hit = true;
@@ -5437,6 +5456,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
 pub fn update_visuals(game: &mut GameState) {
     game.step_explosions();
     crate::renderer::fx::step_fx(&mut game.fx, &game.terrain, game.wind.value());
+    crate::renderer::fx::step_fx_text(&mut game.fx_text);
     for team in &mut game.teams {
         for s in &mut team.soldiers {
             if s.hp_display_ticks > 0 { s.hp_display_ticks -= 1; }

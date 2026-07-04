@@ -197,6 +197,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         crate_watch_ticks:   _, // local pre-turn crate-camera phase
         smoke_particles:     _, // client-only bazooka smoke
         fx:                  _, // client-only particle system
+        fx_text:             _, // client-only damage-number popups
         pending_deaths:      _, // transient pre-explosion wait
         meteor_chain:        _, // transient per-tick flag
     } = g;

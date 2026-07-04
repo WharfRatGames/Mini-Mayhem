@@ -17,6 +17,9 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Mound-series terrain removed — a low-weight sine-relief layered onto every non-cavern map's density field, producing a repeating "series of mounds" look regardless of the WA collage silhouette, has been disabled (v0.5.4.403)
 - [x] Terrain generation ~40% faster — precomputed hill_col[], octaves 4→3 (~4.4M fewer noise calls per map, v0.5.4.394)
 - [x] Crater carving (destructible terrain)
+- [x] Scenery destructible exactly like terrain — per-pixel mask over each object's
+      footprint, cleared by the same blast-circle rule as terrain.solid; explosions
+      only eat the part of a tree/rock/crate they actually overlap (in working tree)
 - [x] Euler projectile ballistics
 - [x] Wind simulation
 - [x] Gravity, bounce, and friction physics

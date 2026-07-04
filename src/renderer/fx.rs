@@ -34,6 +34,16 @@ pub struct FxParticle {
     pub col:  Bgra,
 }
 
+/// A floating "-N" damage number popping up over a soldier's HP counter,
+/// Worms-style. Rises fast then decelerates, fading out near the end of life.
+pub struct FxDamageText {
+    pub pos:    WorldPos,
+    pub vy:     f32,
+    pub age:    u32,
+    pub life:   u32,
+    pub amount: u8,
+}
+
 /// Tiny xorshift PRNG — these are non-networked visuals, determinism unneeded.
 #[inline]
 fn rng(state: &mut u32) -> u32 {
@@ -56,6 +66,11 @@ fn seed_at(pos: WorldPos, salt: u32) -> u32 {
 /// Push particles, respecting the global cap.
 fn push(fx: &mut Vec<FxParticle>, p: FxParticle) {
     if fx.len() < FX_MAX { fx.push(p); }
+}
+
+/// Push damage texts, respecting the global cap.
+fn push_text(texts: &mut Vec<FxDamageText>, t: FxDamageText) {
+    if texts.len() < FX_MAX { texts.push(t); }
 }
 
 // ── Spawners ─────────────────────────────────────────────────────────────────
@@ -140,6 +155,19 @@ pub fn dig(fx: &mut Vec<FxParticle>, pos: WorldPos, dir: f32, dirt: Bgra) {
     }
 }
 
+/// Vertical offset from a soldier's foot position up to where the HP counter
+/// box is drawn — mirrors `draw_hp_number_lifted`'s `fy - SOLDIER_H - 28`.
+const HP_COUNTER_LIFT: f32 = 56.0;
+
+/// Spawn a floating "-N" damage number over the HP counter above `pos`
+/// (soldier's foot position). Pops up fast then decelerates, so it visibly
+/// separates from the counter before fading — matching the HP counter's own
+/// tick-down (`Soldier::displayed_hp`).
+pub fn damage_popup(texts: &mut Vec<FxDamageText>, pos: WorldPos, amount: u8) {
+    let start = WorldPos::new(pos.x, pos.y - HP_COUNTER_LIFT);
+    push_text(texts, FxDamageText { pos: start, vy: -2.4, age: 0, life: 45, amount });
+}
+
 // ── Networked spawn events ───────────────────────────────────────────────────
 
 /// A request to spawn one of the bursts above. Recorded by `GameState::emit_fx`
@@ -153,11 +181,12 @@ pub enum FxEvent {
     Splash    { x: f32, y: f32 },
     Dust      { x: f32, y: f32, count: u32, kick: f32, dir: f32 },
     Dig       { x: f32, y: f32, dir: f32, col: [u8; 3] },
+    DamagePopup { x: f32, y: f32, amount: u8 },
 }
 
-/// Spawn the particles described by `ev` into `fx` (used both at the local
-/// emit site and when a live client replays a received event).
-pub fn apply_event(fx: &mut Vec<FxParticle>, ev: &FxEvent) {
+/// Spawn the particles described by `ev` into `fx`/`texts` (used both at the
+/// local emit site and when a live client replays a received event).
+pub fn apply_event(fx: &mut Vec<FxParticle>, texts: &mut Vec<FxDamageText>, ev: &FxEvent) {
     match *ev {
         FxEvent::Explosion { x, y, radius, col } =>
             explosion(fx, WorldPos::new(x, y), radius, Bgra::new(col[0], col[1], col[2])),
@@ -167,6 +196,8 @@ pub fn apply_event(fx: &mut Vec<FxParticle>, ev: &FxEvent) {
             dust(fx, WorldPos::new(x, y), count, kick, dir),
         FxEvent::Dig { x, y, dir, col } =>
             dig(fx, WorldPos::new(x, y), dir, Bgra::new(col[0], col[1], col[2])),
+        FxEvent::DamagePopup { x, y, amount } =>
+            damage_popup(texts, WorldPos::new(x, y), amount),
     }
 }
 
@@ -201,6 +232,16 @@ pub fn step_fx(fx: &mut Vec<FxParticle>, terrain: &Terrain, wind: f32) {
             && p.pos.x > -4.0 && p.pos.x < WORLD_W as f32 + 4.0
             && p.pos.y < WATER_Y as f32 + 8.0
     });
+}
+
+/// Advance damage-number popups: rise, decelerate, age out.
+pub fn step_fx_text(texts: &mut Vec<FxDamageText>) {
+    for t in texts.iter_mut() {
+        t.pos.y += t.vy;
+        t.vy *= 0.95; // decelerate — fast pop, slow drift
+        t.age += 1;
+    }
+    texts.retain(|t| t.age < t.life);
 }
 
 // ── Draw ─────────────────────────────────────────────────────────────────────
@@ -239,5 +280,26 @@ pub fn draw_fx(buf: &mut WorldBuffer, fx: &[FxParticle], cam_x: u32) {
                 if t > 0.5 { buf.set_pixel(x, y - 1, p.col); }
             }
         }
+    }
+}
+
+/// Draw floating damage-number popups, culled to the viewport. Bright red,
+/// scaled up slightly for the first half of life then holds until it fades.
+pub fn draw_fx_text(buf: &mut WorldBuffer, texts: &[FxDamageText], cam_x: u32) {
+    let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+    let vx0 = cam_x as f32;
+    let vx1 = vx0 + SCREEN_W as f32;
+
+    for t in texts {
+        if t.pos.x < vx0 - 20.0 || t.pos.x >= vx1 + 20.0 { continue; }
+        let frac = 1.0 - t.age as f32 / t.life.max(1) as f32; // 1 fresh → 0 dead
+        let text = format!("-{}", t.amount);
+        let scale = if frac > 0.75 { 2 } else { 1 };
+        let w = super::font::str_width_scaled(&text, scale);
+        let x = t.pos.x as i32 - w / 2;
+        let y = t.pos.y as i32;
+        // Fade to a dimmer red near the end of life instead of true alpha blending.
+        let col = if frac > 0.25 { Bgra::new(235, 40, 40) } else { Bgra::new(130, 30, 30) };
+        super::font::draw_str_scaled(buf, &text, x, y, col, scale);
     }
 }

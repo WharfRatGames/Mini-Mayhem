@@ -1,14 +1,34 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.405 (deployed 2026-07-03 to Pi server/API/dashboards/GitHub/
+Current version: 0.5.4.406 (deployed 2026-07-03 to Pi server/API/dashboards/GitHub/
   Windows OTA; Miyoo .126 updated + hash-verified, .110 offline — picks up OTA on next boot)
 
-In working tree, NOT built/deployed (target 0.5.4.406):
-  1) scenery objects now crater like terrain — explosions (crater radius >= 8)
-     destroy any scenery object whose footprint intersects the blast circle;
-     removal lives inside Crater::carve so every path (local sim, server, live
-     client crater_log replay, both TAT loops) stays deterministic with no
-     StateMsg changes; small-arms chips and torch nibbles leave scenery alone;
+In working tree, NOT built/deployed (target 0.5.4.407):
+  1) scenery objects now crater EXACTLY like terrain, replacing .406's
+     all-or-nothing removal — SceneryObject carries a lazy per-pixel mask
+     (Option<Vec<bool>>, world-pixel resolution over its footprint box;
+     None = fully intact, so untouched objects cost nothing). Crater::carve
+     clears mask bits within the blast circle the same way it clears
+     terrain.solid; an object is dropped only once every tracked pixel is
+     gone, so a graze at a tree's edge nicks the corner and leaves the rest
+     standing instead of vaporizing the whole object. Collision
+     (stamp_objects) and rendering (renderer/scenery.rs's Scaled wrapper)
+     both honor the mask; rendering keeps the old one-shot fill_rect fast
+     path whenever an object's mask is still None (i.e. nearly always) and
+     only falls to per-pixel plotting for objects an explosion has actually
+     clipped. Still lives inside Crater::carve so every path (local sim,
+     server, live client crater_log replay, both TAT loops) stays
+     deterministic with no StateMsg changes; small-arms chips and torch
+     nibbles (r<8) still leave scenery alone;
+  2) backflip jumps 10% higher — initial vertical launch velocity in the Y-button
+     handler (src/game/loop_runner.rs) raised from -6.5 to -6.82 (height scales
+     with v^2, so velocity scales by sqrt(1.1)); lives inside simulate_with_muzzle
+     so it's automatically correct across all 5 paths.
+
+Deployed 2026-07-03 (v0.5.4.406):
+  1) scenery objects craterable — explosions (crater radius >= 8) destroyed any
+     scenery object whose footprint intersected the blast circle (whole-object
+     removal; refined to per-pixel masking above, not yet deployed);
   2) steep-angle bazooka shots no longer detonate on the shooter — the muzzle
      spawn sits inside the shooter's own hit box at high aim angles and the
      rocket soldier-hit check had no owner exclusion; Projectile now tracks

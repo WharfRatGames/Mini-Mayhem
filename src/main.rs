@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.406";
+const VERSION: &str = "0.5.4.407";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -865,7 +865,7 @@ fn main() {
                     if let Some(s) = crate::audio::Sfx::from_u8(*id) { crate::audio::play(s); }
                 }
                 for ev in &pending_fx {
-                    crate::renderer::fx::apply_event(&mut game.fx, ev);
+                    crate::renderer::fx::apply_event(&mut game.fx, &mut game.fx_text, ev);
                 }
             }
             let got_state = latest_state.is_some();

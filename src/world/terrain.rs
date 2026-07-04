@@ -84,11 +84,19 @@ impl Theme {
 /// A single decorative scenery object placed on the terrain surface.
 /// `x`/`y` are world-space pixel coordinates of the bottom-center of the sprite.
 /// `sprite` is the variant index within the map's scenery theme (see scenery.rs).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct SceneryObject {
     pub x: u32,
     pub y: u32,
     pub sprite: u8,
+    /// Per-pixel destruction state over the collision footprint box, in
+    /// world-pixel (post-scale) resolution: row-major over
+    /// `(y-height..=y) x (x-half_w..=x+half_w)`, true = still intact.
+    /// `None` means fully intact — the common case, so untouched objects
+    /// don't pay for an allocation. Craters clear bits within their radius
+    /// exactly like they clear terrain pixels (see `carve`), so an explosion
+    /// only eats the part of the object it actually overlaps.
+    pub mask: Option<Vec<bool>>,
 }
 
 impl SceneryObject {
@@ -116,6 +124,52 @@ impl SceneryObject {
 
     /// Unscaled (1×) sprite footprint, matching the raw pixel-art dimensions
     /// in renderer/scenery.rs.
+    /// True if the pixel at world (wx, wy) is still intact (not yet carved
+    /// away by a crater). Pixels outside the footprint box (thin decorative
+    /// overflow like torch flames, which the box deliberately excludes) are
+    /// always intact — only the tracked collision box is ever masked.
+    pub fn pixel_intact(&self, wx: i32, wy: i32, theme: Theme) -> bool {
+        let (half_w, height) = self.footprint(theme);
+        let lx = wx - self.x as i32 + half_w;
+        let ly = self.y as i32 - wy;
+        if lx < 0 || ly < 0 || lx > 2 * half_w || ly > height {
+            return true;
+        }
+        match &self.mask {
+            None => true,
+            Some(m) => {
+                let w = 2 * half_w + 1;
+                m.get((ly * w + lx) as usize).copied().unwrap_or(true)
+            }
+        }
+    }
+
+    /// Clear mask bits within a crater (ccx, ccy, sqrt(r2)) that fall inside
+    /// this object's footprint box — same per-pixel rule `Crater::carve` uses
+    /// on terrain. Returns true once every tracked pixel is destroyed (caller
+    /// should then drop the object).
+    pub fn carve(&mut self, theme: Theme, ccx: f32, ccy: f32, r2: f32) -> bool {
+        let (half_w, height) = self.footprint(theme);
+        let w = 2 * half_w + 1;
+        let mask = self.mask.get_or_insert_with(|| vec![true; (w * (height + 1)) as usize]);
+        let mut any_left = false;
+        for ly in 0..=height {
+            let wy = self.y as i32 - ly;
+            for lx in 0..w {
+                let idx = (ly * w + lx) as usize;
+                if !mask[idx] { continue; }
+                let wx = self.x as i32 - half_w + lx;
+                let (dx, dy) = (wx as f32 - ccx, wy as f32 - ccy);
+                if dx * dx + dy * dy <= r2 {
+                    mask[idx] = false;
+                } else {
+                    any_left = true;
+                }
+            }
+        }
+        !any_left
+    }
+
     fn base_footprint(&self, theme: Theme) -> (i32, i32) {
         match theme {
             Theme::Pastoral => match self.sprite {
@@ -1149,7 +1203,7 @@ impl Terrain {
                 if placed.iter().any(|o| o.x.abs_diff(col) < MIN_SPACING) { continue; }
                 srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let sprite = (srng >> 33) as u8 % count;
-                let obj = SceneryObject { x: col, y: surface_y, sprite };
+                let obj = SceneryObject { x: col, y: surface_y, sprite, mask: None };
                 let (half_w, height) = obj.footprint(Theme::of(terrain.is_cavern, terrain.template_id));
                 let base = surface_y as i32;
                 // Objects sit ON the terrain surface, never inside it — but real

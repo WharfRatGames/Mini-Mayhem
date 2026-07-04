@@ -388,6 +388,9 @@ pub struct GameState {
     /// Event-driven effect particles — explosion fallout, dust, sparks, splashes
     /// (visual only — not networked). Spawned at event sites, stepped in simulate().
     pub fx: Vec<crate::renderer::fx::FxParticle>,
+    /// Floating "-N" damage-number popups over soldiers' HP counters
+    /// (visual only — not networked). Spawned at event sites, stepped in simulate().
+    pub fx_text: Vec<crate::renderer::fx::FxDamageText>,
     /// Soldiers waiting to explode before their headstone is placed.
     pub pending_deaths: Vec<PendingDeathExplosion>,
     /// Active plasma torch tunneling session; None = not torching.
@@ -458,6 +461,7 @@ impl GameState {
             blood_splats: Vec::new(),
             smoke_particles: Vec::new(),
             fx: Vec::new(),
+            fx_text: Vec::new(),
             pending_deaths: Vec::new(),
             plasma_torch: None,
             garcia: None,
@@ -560,7 +564,7 @@ impl GameState {
     /// runs no sim — replays the identical burst. Use this for every
     /// gameplay-event fx instead of calling `fx::*` directly.
     pub fn emit_fx(&mut self, ev: crate::renderer::fx::FxEvent) {
-        crate::renderer::fx::apply_event(&mut self.fx, &ev);
+        crate::renderer::fx::apply_event(&mut self.fx, &mut self.fx_text, &ev);
         self.fx_events.push(ev);
     }
 

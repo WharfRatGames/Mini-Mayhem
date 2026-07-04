@@ -78,6 +78,14 @@
   Anything that must stay consistent with cratering across modes (e.g.
   scenery destruction) belongs INSIDE carve, not in the explosion code;
   it then needs no StateMsg fields.
+- Scenery destruction is per-pixel, matching terrain exactly: SceneryObject
+  has `mask: Option<Vec<bool>>` (world-pixel resolution over its footprint
+  box, None = fully intact/no allocation). Crater::carve clears bits within
+  the blast circle same as terrain.solid; object drops only once every bit
+  is gone. Both stamp_objects (collision) and renderer/scenery.rs's Scaled
+  wrapper (rendering) must consult the mask — Scaled keeps the old one-shot
+  fill_rect path when mask is None (cheap, the common case) and only falls
+  to per-pixel plotting for objects an explosion has actually clipped.
 - The muzzle spawn point (pos.y-4-sin*12) is inside the shooter's own hit
   box at steep aim angles. Projectile::owner + cleared_owner exclude the
   shooter as a target until the projectile leaves their box once — any new

@@ -1,16 +1,34 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.405 (deployed 2026-07-03)
+## Version: 0.5.4.406 (deployed 2026-07-03)
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## In working tree, NOT built/deployed (target 0.5.4.406)
-- **Scenery craters like terrain** — explosions now destroy scenery objects. The removal
-  lives inside `Crater::carve` (`src/world/crater.rs`): any crater with radius ≥ 8 removes
-  every scenery object whose collision footprint intersects the blast circle. Living in
-  `carve` makes it automatically consistent across all paths — local sim, server, the live
-  client's `crater_log` replay, and both TAT loops all carve the same craters, so scenery
-  removal is deterministic everywhere with no `StateMsg` changes. Small carves (pistol/
-  revolver/MAC-10 chips r≤4, plasma-torch nibbles) leave scenery standing.
+## In working tree, NOT built/deployed (target 0.5.4.407)
+- **Scenery craters EXACTLY like terrain** — refines .406's all-or-nothing scenery removal
+  into true per-pixel destruction. `SceneryObject` (`src/world/terrain.rs`) now carries
+  `mask: Option<Vec<bool>>` — a lazy per-pixel intact/destroyed grid over its collision
+  footprint box, in world-pixel (post-scale) resolution; `None` means fully intact, so an
+  object untouched by any explosion (the common case) pays no allocation. `Crater::carve`
+  (`src/world/crater.rs`) clears mask bits within the blast circle the same per-pixel rule
+  it already uses on `terrain.solid`, and only drops the object once every tracked pixel is
+  gone — a graze at the edge of a big tree now nicks the corner instead of vaporizing the
+  whole tree. Both collision (`stamp_objects` in `src/game/loop_runner.rs`) and rendering
+  (`renderer/scenery.rs`'s `Scaled` wrapper) honor the mask; rendering keeps the previous
+  one-shot `fill_rect` fast path whenever `mask` is still `None` and only falls to per-pixel
+  plotting for objects an explosion has actually clipped, so undamaged scenery (nearly all
+  of it, at any moment) costs nothing extra. Still lives inside `Crater::carve` so every
+  path (local sim, server, live client `crater_log` replay, both TAT loops) stays
+  deterministic with no `StateMsg` changes; small carves (pistol/revolver/MAC-10 chips
+  r≤4, plasma-torch nibbles) still leave scenery standing.
+- **Backflip 10% higher** — Y-button backflip's initial vertical launch velocity
+  (`src/game/loop_runner.rs`) raised from `-6.5` to `-6.82` (jump height scales with
+  velocity², so a 10% height increase needs `v·√1.1`). Lives inside `simulate_with_muzzle`,
+  so it's automatically correct across all 5 gameplay paths.
+
+## Deployed 2026-07-03 (v0.5.4.406)
+- **Scenery destruction (initial, all-or-nothing)** — explosions (crater radius ≥ 8)
+  destroyed any scenery object whose collision footprint intersected the blast circle.
+  Superseded by the per-pixel mask above (not yet deployed).
 - **Steep-angle bazooka self-detonation fixed** — the muzzle spawn point
   (`pos.y - 4 - sin(angle)*12`) sits inside the shooter's own hit box at high aim angles,
   and the rocket hit box (`dx<12, dy∈(-34,4)`) had no owner exclusion — a mid-charge
