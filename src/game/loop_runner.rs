@@ -2108,7 +2108,7 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
             game.teams[t].soldiers[s].death_cause = crate::game::soldier::DeathCause::Explosion;
             let hit_pos = game.teams[t].soldiers[s].pos;
             game.teams[t].soldiers[s].take_damage(dmg);
-            game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: hit_pos.x, y: hit_pos.y, amount: dmg.min(255) as u8 });
+            game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: hit_pos.x, y: hit_pos.y, amount: dmg.min(255) as u8, team: t as u8 });
             let new_state = match &game.teams[t].soldiers[s].state {
                 SoldierState::Airborne { vel, spinning } => SoldierState::Airborne {
                     vel: Vec2::new(vel.x + vx, vel.y + vy),
@@ -2270,7 +2270,7 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
             // airtime >= 20 would cancel `spinning` on the first airborne tick).
             target.airtime = 0;
         }
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: hit_pos.x, y: hit_pos.y, amount: BAT_DAMAGE.min(255) as u8 });
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: hit_pos.x, y: hit_pos.y, amount: BAT_DAMAGE.min(255) as u8, team: target_ti as u8 });
     }
 
     game.teams[ti].soldiers[si].has_fired = true;
@@ -2379,7 +2379,8 @@ fn fire_revolver_shot(game: &mut GameState, ti: usize, si: usize, muzzle_overrid
         // Do NOT set active_worm_hit here — the shooter can never be hit by their own
         // ray (excluded in the march), and teammate hits should not cut the sequence short.
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 75));
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: rx, y: ry, amount: DAMAGE.min(255) as u8 });
+        let spos = game.teams[hti].soldiers[hsi].pos;
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: spos.x, y: spos.y, amount: DAMAGE.min(255) as u8, team: hti as u8 });
 
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
@@ -2475,7 +2476,8 @@ fn fire_pistol_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override:
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 75));
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: rx, y: ry, amount: DAMAGE.min(255) as u8 });
+        let spos = game.teams[hti].soldiers[hsi].pos;
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: spos.x, y: spos.y, amount: DAMAGE.min(255) as u8, team: hti as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -2612,7 +2614,8 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: rx, y: ry, amount: DAMAGE.min(255) as u8 });
+        let spos = game.teams[hti].soldiers[hsi].pos;
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: spos.x, y: spos.y, amount: DAMAGE.min(255) as u8, team: hti as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -2758,7 +2761,8 @@ fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Op
             };
         }
         game.blood_splats.push((crate::world::WorldPos::new(rx, ry), 40));
-        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: rx, y: ry, amount: DAMAGE.min(255) as u8 });
+        let spos = game.teams[hti].soldiers[hsi].pos;
+        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: spos.x, y: spos.y, amount: DAMAGE.min(255) as u8, team: hti as u8 });
     } else if rx >= 0.0 && rx < crate::world::WORLD_W as f32
            && ry >= 0.0 && ry < crate::world::WATER_Y as f32 {
         if !hitscan_hit_crate(game, rx, ry) {
@@ -5165,7 +5169,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if dmg > 0 {
                                     game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                     game.teams[ti].soldiers[si].take_damage(dmg);
-                                    game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: last_clear_x, y: last_clear_y, amount: dmg.min(255) as u8 });
+                                    game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: last_clear_x, y: last_clear_y, amount: dmg.min(255) as u8, team: ti as u8 });
                                 }
                                 game.teams[ti].soldiers[si].pos.x = last_clear_x;
                                 game.teams[ti].soldiers[si].pos.y = land_y;
@@ -5272,7 +5276,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if dmg > 0 {
                                     game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                     game.teams[ti].soldiers[si].take_damage(dmg);
-                                    game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8 });
+                                    game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8, team: ti as u8 });
                                     let ati = game.active_team();
                                     if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                                 }
@@ -5311,7 +5315,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             if dmg > 0 {
                                 game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                 game.teams[ti].soldiers[si].take_damage(dmg);
-                                game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8 });
+                                game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8, team: ti as u8 });
                                 let ati = game.active_team();
                                 if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                             }
@@ -5374,7 +5378,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                     if dmg > 0 {
                                         game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                         game.teams[ti].soldiers[si].take_damage(dmg);
-                                        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8 });
+                                        game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup { x: cx, y: cy, amount: dmg.min(255) as u8, team: ti as u8 });
                                         let ati = game.active_team();
                                         if ti == ati && si == game.teams[ati].active {
                                             game.active_worm_hit = true;

@@ -961,3 +961,39 @@ fn sim_is_deterministic() {
         }
     }
 }
+
+/// Explosion damage must spawn a floating damage number for every hurt soldier
+/// (regression: apply_explosion_scaled applied damage without emitting
+/// FxEvent::DamagePopup, so bazooka/grenade/mine hits showed no popup), and the
+/// event must reach a live client through the fx_events round-trip.
+#[test]
+fn explosion_damage_emits_popup() {
+    use arty::renderer::fx::FxEvent;
+
+    let mut server = build_game(650);
+    let target = server.teams[1].soldiers[0].pos;
+    let hp_before = server.teams[1].soldiers[0].hp;
+    server.fx_events.clear();
+    server.apply_explosion(target, WeaponKind::Bazooka);
+    assert!(server.teams[1].soldiers[0].hp < hp_before, "explosion must damage the target");
+
+    // Sim side: local popup spawned, in the damaged soldier's team colour.
+    let popup = server.fx_events.iter().find_map(|ev| match *ev {
+        FxEvent::DamagePopup { amount, team, .. } => Some((amount, team)),
+        _ => None,
+    });
+    let (amount, team) = popup.expect("explosion damage must emit FxEvent::DamagePopup");
+    assert!(amount > 0);
+    assert_eq!(team, 1, "popup carries the damaged soldier's team");
+
+    // Live-client side: the event rides StateMsg.fx_events and respawns the text.
+    let state = build_state(&server, 0, 0);
+    let mut client = build_game(server.map_seed);
+    let mut cam = Camera::new(0.0, 0.0);
+    client.fx_text.clear();
+    apply_server_state(&mut client, &mut cam, &state, 0);
+    for ev in &state.fx_events {
+        arty::renderer::fx::apply_event(&mut client.fx, &mut client.fx_text, ev);
+    }
+    assert!(!client.fx_text.is_empty(), "live client must spawn the popup text");
+}

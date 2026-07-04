@@ -42,6 +42,7 @@ pub struct FxDamageText {
     pub age:    u32,
     pub life:   u32,
     pub amount: u8,
+    pub team:   u8,
 }
 
 /// Tiny xorshift PRNG — these are non-networked visuals, determinism unneeded.
@@ -163,9 +164,9 @@ const HP_COUNTER_LIFT: f32 = 56.0;
 /// (soldier's foot position). Pops up fast then decelerates, so it visibly
 /// separates from the counter before fading — matching the HP counter's own
 /// tick-down (`Soldier::displayed_hp`).
-pub fn damage_popup(texts: &mut Vec<FxDamageText>, pos: WorldPos, amount: u8) {
+pub fn damage_popup(texts: &mut Vec<FxDamageText>, pos: WorldPos, amount: u8, team: u8) {
     let start = WorldPos::new(pos.x, pos.y - HP_COUNTER_LIFT);
-    push_text(texts, FxDamageText { pos: start, vy: -2.4, age: 0, life: 45, amount });
+    push_text(texts, FxDamageText { pos: start, vy: -1.2, age: 0, life: 90, amount, team });
 }
 
 // ── Networked spawn events ───────────────────────────────────────────────────
@@ -181,7 +182,7 @@ pub enum FxEvent {
     Splash    { x: f32, y: f32 },
     Dust      { x: f32, y: f32, count: u32, kick: f32, dir: f32 },
     Dig       { x: f32, y: f32, dir: f32, col: [u8; 3] },
-    DamagePopup { x: f32, y: f32, amount: u8 },
+    DamagePopup { x: f32, y: f32, amount: u8, team: u8 },
 }
 
 /// Spawn the particles described by `ev` into `fx`/`texts` (used both at the
@@ -196,8 +197,8 @@ pub fn apply_event(fx: &mut Vec<FxParticle>, texts: &mut Vec<FxDamageText>, ev: 
             dust(fx, WorldPos::new(x, y), count, kick, dir),
         FxEvent::Dig { x, y, dir, col } =>
             dig(fx, WorldPos::new(x, y), dir, Bgra::new(col[0], col[1], col[2])),
-        FxEvent::DamagePopup { x, y, amount } =>
-            damage_popup(texts, WorldPos::new(x, y), amount),
+        FxEvent::DamagePopup { x, y, amount, team } =>
+            damage_popup(texts, WorldPos::new(x, y), amount, team),
     }
 }
 
@@ -238,7 +239,7 @@ pub fn step_fx(fx: &mut Vec<FxParticle>, terrain: &Terrain, wind: f32) {
 pub fn step_fx_text(texts: &mut Vec<FxDamageText>) {
     for t in texts.iter_mut() {
         t.pos.y += t.vy;
-        t.vy *= 0.95; // decelerate — fast pop, slow drift
+        t.vy *= 0.96; // decelerate — quick ~30px rise, then hold until fade
         t.age += 1;
     }
     texts.retain(|t| t.age < t.life);
@@ -283,8 +284,9 @@ pub fn draw_fx(buf: &mut WorldBuffer, fx: &[FxParticle], cam_x: u32) {
     }
 }
 
-/// Draw floating damage-number popups, culled to the viewport. Bright red,
-/// scaled up slightly for the first half of life then holds until it fades.
+/// Draw floating damage-number popups, culled to the viewport. Bare number in
+/// the damaged soldier's team colour (matching its HP counter box), darkening
+/// toward black over the last quarter of life instead of true alpha blending.
 pub fn draw_fx_text(buf: &mut WorldBuffer, texts: &[FxDamageText], cam_x: u32) {
     let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
     let vx0 = cam_x as f32;
@@ -293,13 +295,18 @@ pub fn draw_fx_text(buf: &mut WorldBuffer, texts: &[FxDamageText], cam_x: u32) {
     for t in texts {
         if t.pos.x < vx0 - 20.0 || t.pos.x >= vx1 + 20.0 { continue; }
         let frac = 1.0 - t.age as f32 / t.life.max(1) as f32; // 1 fresh → 0 dead
-        let text = format!("-{}", t.amount);
-        let scale = if frac > 0.75 { 2 } else { 1 };
+        let text = format!("{}", t.amount);
+        let scale = 1;
         let w = super::font::str_width_scaled(&text, scale);
         let x = t.pos.x as i32 - w / 2;
         let y = t.pos.y as i32;
-        // Fade to a dimmer red near the end of life instead of true alpha blending.
-        let col = if frac > 0.25 { Bgra::new(235, 40, 40) } else { Bgra::new(130, 30, 30) };
-        super::font::draw_str_scaled(buf, &text, x, y, col, scale);
+        let base = super::draw_sprites::TEAM_COLOURS[(t.team as usize).min(3)];
+        let k = if frac > 0.25 { 1.0 } else { frac * 4.0 }; // fade last 25% of life
+        let col = Bgra::new(
+            (base.r as f32 * k) as u8,
+            (base.g as f32 * k) as u8,
+            (base.b as f32 * k) as u8,
+        );
+        super::font::draw_str_shadow_scaled(buf, &text, x, y, col, scale);
     }
 }

@@ -600,8 +600,10 @@ impl GameState {
         let active_si = self.teams[active_ti].active;
         let active_hp_before = self.teams[active_ti].soldiers[active_si].hp;
         let mut last_damaged: Option<WorldPos> = None;
+        // Damage popups to emit once the &mut teams borrow ends: (pos, dmg, team).
+        let mut popups: Vec<(WorldPos, u32, u8)> = Vec::new();
 
-        for team in &mut self.teams {
+        for (ti, team) in self.teams.iter_mut().enumerate() {
             for soldier in &mut team.soldiers {
                 if !soldier.is_alive() { continue; }
                 let dx = soldier.pos.x - pos.x;
@@ -625,6 +627,7 @@ impl GameState {
                     soldier.kill_weapon = Some(kind);
                     soldier.take_damage(dmg);
                     last_damaged = Some(soldier.pos);
+                    popups.push((soldier.pos, dmg, ti as u8));
                 }
 
                 // Bee stings sting for damage only — never launch soldiers airborne.
@@ -668,6 +671,14 @@ impl GameState {
                     soldier.state = s;
                 }
             }
+        }
+
+        // Floating damage numbers over each hurt soldier's HP counter — one per
+        // soldier, networked via the fx_events channel like every gameplay fx.
+        for (spos, dmg, ti) in popups {
+            self.emit_fx(crate::renderer::fx::FxEvent::DamagePopup {
+                x: spos.x, y: spos.y, amount: dmg.min(255) as u8, team: ti,
+            });
         }
 
         // Flag if active worm was hit so retreat can be skipped

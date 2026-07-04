@@ -19,7 +19,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Crater carving (destructible terrain)
 - [x] Scenery destructible exactly like terrain — per-pixel mask over each object's
       footprint, cleared by the same blast-circle rule as terrain.solid; explosions
-      only eat the part of a tree/rock/crate they actually overlap (in working tree)
+      only eat the part of a tree/rock/crate they actually overlap (v0.5.4.407)
 - [x] Euler projectile ballistics
 - [x] Wind simulation
 - [x] Gravity, bounce, and friction physics
@@ -35,13 +35,14 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] 8×8 pixel font
 - [x] Camera follow and free pan (horizontal and vertical; L1+Up/Down vertical pan v0.5.4.387; R1+Up/Down with snap-back v0.5.4.389; aim no longer rotates while panning with R1, v0.5.4.394)
 - [x] Fixed invisible soldiers — camera-relative draw culling now used for soldiers/headstones/projectiles/explosions instead of a fixed screen window (v0.5.4.395)
-- [x] 30fps pacing groundwork — exact 33.333ms tick, absolute-deadline frame pacing (sleep overshoot no longer compounds), NEON-vectorizable fb row flip, per-section µs profiler in TEST overlay (in working tree, pending deploy)
+- [x] 30fps pacing groundwork — exact 33.333ms tick, absolute-deadline frame pacing (sleep overshoot no longer compounds), NEON-vectorizable fb row flip, per-section µs profiler in TEST overlay (v0.5.4.398)
 - [x] All HUD elements screen-anchored to cam_y — stay at correct screen position when camera scrolls vertically (v0.5.4.389)
 - [x] Cursor weapons full vertical range — Garcia/Air Strike/Hand of Jerry can reach the waterline (v0.5.4.389)
 - [x] Hotseat local multiplayer
 - [x] Soldier skeletal animation (walk cycle, backflip, airborne lean)
 - [x] WA-timed backflip — whole-skeleton rotation follows the real WA backflip animation's 22-frame curve (eased takeoff, fast tumble, eased landing), measured from frames extracted by new `tools/extract_wa_sprite.py` (v0.5.4.405)
-- [x] Faster match load — landform-top texture sampling answered from the solid_runs column cache instead of a per-pixel upward scan (build_world_cache 235→102ms desktop); row-major loop order in the world/bg cache builders; background PNG + terrain tile decode prewarmed on worker threads during map generation (in working tree, pending deploy)
+- [x] Faster match load — landform-top texture sampling answered from the solid_runs column cache instead of a per-pixel upward scan (build_world_cache 235→102ms desktop); row-major loop order in the world/bg cache builders; background PNG + terrain tile decode prewarmed on worker threads during map generation (v0.5.4.406)
+- [x] Backflip jumps 10% higher — initial launch velocity raised -6.5→-6.82 (v0.5.4.407)
 - [x] Team color rendering
 
 ---
@@ -73,8 +74,9 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Meteor Bomb main explosion damage cut 20% (45→36) (v0.5.4.401)
 - [x] Barrels and mines spawn on top of scenery objects instead of embedded inside them (v0.5.4.402)
 - [x] Scenery objects can no longer end up buried inside terrain raised by the emergency spawn-mound fallback (v0.5.4.403)
-- [x] Destructible scenery — explosions (crater radius ≥ 8) remove scenery objects overlapping the blast, deterministically in every mode via Crater::carve; small-arms chips and torch nibbles leave scenery standing (in working tree, pending deploy)
-- [x] Steep-angle bazooka self-detonation fixed — projectiles ignore their shooter until they've left the shooter's hit box once (Projectile::owner) (in working tree, pending deploy)
+- [x] Destructible scenery — explosions (crater radius ≥ 8) remove scenery objects overlapping the blast, deterministically in every mode via Crater::carve; small-arms chips and torch nibbles leave scenery standing (v0.5.4.406)
+- [x] Steep-angle bazooka self-detonation fixed — projectiles ignore their shooter until they've left the shooter's hit box once (Projectile::owner) (v0.5.4.406)
+- [x] Damage-number popups — getting hit pops a floating "-N" over the soldier's HP counter (Worms Armageddon style), rising and fading as the counter itself ticks down; routed through FxEvent/emit_fx so it auto-replicates to live clients with no StateMsg changes (v0.5.4.407)
 - [x] Pistol rapid-fire audio pop fixed — sound clip capped below the burst-shot interval so the audio device is never still busy when the next shot fires (v0.5.4.402)
 - [x] Hand of Jerry camera now follows its targeting cursor vertically, matching Air Strike and Homing Missile (v0.5.4.402)
 - [x] Hand of Jerry's smash sound now plays at the water line instead of far below it when dropped over open water (v0.5.4.403)

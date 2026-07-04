@@ -1,9 +1,21 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.406 (deployed 2026-07-03)
+## Version: 0.5.4.407 (deployed 2026-07-04)
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## In working tree, NOT built/deployed (target 0.5.4.407)
+## Deployed 2026-07-04 (v0.5.4.407)
+- **Damage-number popups** — getting hit now pops a floating "-N" over the soldier's
+  HP counter (Worms Armageddon style): spawns right at the counter
+  (`FxDamageText`/`FxEvent::DamagePopup` in `src/renderer/fx.rs`), rises and
+  decelerates (`step_fx_text`), fades from bright to dim red, and despawns after
+  ~45 ticks. Spawned via `game.emit_fx(...)` at every real damage site in
+  `src/game/loop_runner.rs` (explosions, bat, hitscan weapons, fall damage) —
+  skips the instant-death `take_damage(999)` calls (drowning/map-edge), which
+  aren't meaningful HP deltas. Rides the existing `FxEvent`/`fx_events` channel
+  so it auto-replicates to live clients with no `StateMsg` changes; `fx_text`
+  classified not-networked in the `net_sync.rs`/`tests/parity.rs` checklists,
+  same as the existing particle `fx` field. The HP counter's own tick-down
+  animation (`Soldier::displayed_hp`) already existed and needed no changes.
 - **Scenery craters EXACTLY like terrain** — refines .406's all-or-nothing scenery removal
   into true per-pixel destruction. `SceneryObject` (`src/world/terrain.rs`) now carries
   `mask: Option<Vec<bool>>` — a lazy per-pixel intact/destroyed grid over its collision
@@ -28,7 +40,7 @@
 ## Deployed 2026-07-03 (v0.5.4.406)
 - **Scenery destruction (initial, all-or-nothing)** — explosions (crater radius ≥ 8)
   destroyed any scenery object whose collision footprint intersected the blast circle.
-  Superseded by the per-pixel mask above (not yet deployed).
+  Superseded by the per-pixel mask above (deployed 2026-07-04, v0.5.4.407).
 - **Steep-angle bazooka self-detonation fixed** — the muzzle spawn point
   (`pos.y - 4 - sin(angle)*12`) sits inside the shooter's own hit box at high aim angles,
   and the rocket hit box (`dx<12, dy∈(-34,4)`) had no owner exclusion — a mid-charge
