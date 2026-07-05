@@ -83,7 +83,7 @@ impl WeaponKind {
             Self::ClusterBomb    => 30,   // per cluster
             Self::Landmine       => 50,
             Self::Tnt            => 75,
-            Self::HolyHandGrenade => 100,
+            Self::HolyHandGrenade => 80,
             Self::AirStrike      => 50,
             Self::Minigun        => 12,   // per bullet
             Self::Uzi            => 5,    // per bullet (40% cut from 8)

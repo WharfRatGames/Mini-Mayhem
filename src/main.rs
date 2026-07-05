@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.413";
+const VERSION: &str = "0.5.4.414";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -2240,13 +2240,16 @@ fn show_update_screen(
     let bar_y = sh/2 + 10; let bar_h = 24i32;
     // Pi-served changelog (see pre-title block) — always current, no rebuild.
     let changelog_rx = spawn_changelog_fetch();
-    let max_lines = ((sh - 70 - 54) / 12).max(1) as usize;
+    const LOG_SCALE: i32 = 2;
+    const LOG_LINE_H: i32 = 8 * LOG_SCALE + 6; // glyph height at this scale + gap
+    let max_lines = ((sh - 70 - 54) / LOG_LINE_H).max(1) as usize;
     let mut changelog: Vec<String> = vec!["loading update notes...".to_string()];
     loop {
         input.poll();
         if let Ok(cl) = changelog_rx.try_recv() {
             changelog = cl.iter()
-                .flat_map(|line| wrap_text(line, 1, sw - 36))
+                .take(5) // last 5 versions' worth of notes
+                .flat_map(|line| wrap_text(line, LOG_SCALE, sw - 36))
                 .take(max_lines)
                 .collect();
         }
@@ -2286,7 +2289,7 @@ fn show_update_screen(
         let v = format!("VERSION {}", VERSION);
         draw_str_scaled(buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
         for (i, line) in changelog.iter().enumerate() {
-            draw_str(buf, line, 18, 54 + i as i32 * 12, Bgra::new(110, 130, 160));
+            draw_str_scaled(buf, line, 18, 54 + i as i32 * LOG_LINE_H, Bgra::new(190, 205, 230), LOG_SCALE);
         }
         draw_str_scaled(buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
         let b_label = if forced { "B = BACK" } else { "B = SKIP" };
