@@ -14,7 +14,7 @@ if ! grep -q "^$VERSION" deploy/changelog.txt 2>/dev/null; then
     exit 1
 fi
 BINARY="target/armv7-unknown-linux-gnueabihf/miyoo/mini-mayhem"
-SERVER_BINARY="target/aarch64-unknown-linux-gnu/release/server"
+SERVER_BINARY="target/aarch64-unknown-linux-gnu/server/server"
 scp "$BINARY" arty-pi:/var/www/html/arty/mini-mayhem
 ssh arty-pi "echo $VERSION > /var/www/html/arty/version.txt"
 echo "Update server now serving $VERSION"
