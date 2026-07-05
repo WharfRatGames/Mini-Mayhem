@@ -56,14 +56,14 @@ impl Keyboard {
         false
     }
 
-    pub fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
+    pub fn draw(&self, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
 
         // Total keyboard width based on longest row (QWERTYUIOP = 10 keys)
         let total_w = 10 * (KEY_W + KEY_GAP) - KEY_GAP;
         let kb_x = cam_x + sw / 2 - total_w / 2;
-        let kb_y = sh - (ROWS.len() as i32 * (KEY_H + KEY_GAP)) - 44; // extra room for spacebar label
+        let kb_y = cam_y + sh - (ROWS.len() as i32 * (KEY_H + KEY_GAP)) - 44; // extra room for spacebar label
 
         // Text field at top
         let field_y = kb_y - 28;
@@ -115,6 +115,6 @@ impl Keyboard {
         draw_str(buf, spc, kb_x + space_w/2 - str_width(spc)/2, space_y + KEY_H + 3, space_fg);
 
         // Hints
-        draw_str(buf, "A=type  B=del  Start=confirm", cam_x + sw/2 - str_width("A=type  B=del  Start=confirm")/2, sh - 6, Bgra::new(60, 60, 90));
+        draw_str(buf, "A=type  B=del  Start=confirm", cam_x + sw/2 - str_width("A=type  B=del  Start=confirm")/2, cam_y + sh - 6, Bgra::new(60, 60, 90));
     }
 }

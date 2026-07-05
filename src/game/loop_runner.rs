@@ -3663,7 +3663,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let wx = cr.pos.x as i32;
         let wy = cr.pos.y as i32;
         if cr.pos.x < vx0 - 32.0 || cr.pos.x >= vx1 + 32.0 { continue; }
-        if wy < -80 || wy >= sh { continue; }
+        if wy < cam_y as i32 - 80 || wy >= cam_y as i32 + sh { continue; }
 
         if !cr.landed && cr.fall_ticks <= 60 {
             // Parachute canopy (2× original size)
@@ -3727,7 +3727,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             let wx = barrel.pos.x as i32;
             let wy = barrel.pos.y as i32;
             if barrel.pos.x < vx0 - 16.0 || barrel.pos.x >= vx1 + 16.0 { continue; }
-            if wy < -20 || wy >= sh { continue; }
+            if wy < cam_y as i32 - 20 || wy >= cam_y as i32 + sh { continue; }
             let flicker = matches!(barrel.state, BarrelState::Triggered { .. })
                 && (game.tick / 3) % 2 == 0;
             let body_col = if flicker { Bgra::new(255, 140, 40) } else { Bgra::new(160, 30, 20) };
@@ -3752,7 +3752,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let wx = mine.pos.x as i32;
         let wy = mine.pos.y as i32;
         if mine.pos.x < vx0 - 16.0 || mine.pos.x >= vx1 + 16.0 { continue; }
-        if wy < -20 || wy >= sh { continue; }
+        if wy < cam_y as i32 - 20 || wy >= cam_y as i32 + sh { continue; }
         let dk  = Bgra::new(15,  50, 15);   // dark outline
         let mid = Bgra::new(40, 100, 30);   // body
         let hi  = Bgra::new(60, 135, 45);   // top highlight
@@ -3881,7 +3881,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let wx = patch.pos.x as i32;
         let wy = patch.pos.y as i32;
         if patch.pos.x < vx0 - 10.0 || patch.pos.x >= vx1 + 10.0 { continue; }
-        if wy < -20 || wy >= sh { continue; }
+        if wy < cam_y as i32 - 20 || wy >= cam_y as i32 + sh { continue; }
 
         let mid   = Bgra::new(255, 130, 15);
         let inner = Bgra::new(255, 205, 60);

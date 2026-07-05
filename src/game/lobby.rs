@@ -444,7 +444,7 @@ impl LobbyScreen {
                 let hint = "B=BACK";
                 draw_str(buf, hint, cam_x + sw/2 - str_width(hint)/2, hint_y, Bgra::new(70, 70, 100));
             }
-            Screen::Join(kb) => { kb.draw(buf, cam_x); }
+            Screen::Join(kb) => { kb.draw(buf, cam_x, 0); }
             Screen::Pending(matches, cursor, scroll_offset) => {
                 let list_top = 52;
                 if matches.is_empty() {

@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.415";
+const VERSION: &str = "0.5.4.416";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -777,11 +777,11 @@ fn main() {
         if bug_reporter.is_none()
             && input.just_pressed(input::Button::Menu)
         {
-            bug_reporter = Some(bug_report::BugReporter::capture(&buf, cam.left_edge()));
+            bug_reporter = Some(bug_report::BugReporter::capture(&buf, cam.left_edge(), cam.top_edge()));
         }
         if let Some(ref mut reporter) = bug_reporter {
             let cancelled = reporter.tick(&input);
-            reporter.draw(&mut buf, cam.left_edge());
+            reporter.draw(&mut buf, cam.left_edge(), cam.top_edge());
             buf.blit_to_fb(&mut fb, cam.left_edge(), cam.top_edge());
             if cancelled || reporter.is_done() {
                 bug_reporter = None;
@@ -2910,11 +2910,11 @@ fn run_tat_game(
         input.poll();
 
         if bug_reporter.is_none() && input.just_pressed(input::Button::Menu) {
-            bug_reporter = Some(bug_report::BugReporter::capture(buf, cam.left_edge()));
+            bug_reporter = Some(bug_report::BugReporter::capture(buf, cam.left_edge(), cam.top_edge()));
         }
         if let Some(ref mut reporter) = bug_reporter {
             let cancelled = reporter.tick(input);
-            reporter.draw(buf, cam.left_edge());
+            reporter.draw(buf, cam.left_edge(), cam.top_edge());
             buf.blit_to_fb(fb, cam.left_edge(), cam.top_edge());
             if cancelled || reporter.is_done() {
                 bug_reporter = None;

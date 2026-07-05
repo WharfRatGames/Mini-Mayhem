@@ -9,7 +9,7 @@ use crate::renderer::fb::Bgra;
 use crate::renderer::font::{draw_str, draw_str_shadow, draw_str_scaled, draw_str_shadow_scaled, str_width, str_width_scaled};
 use crate::renderer::keyboard::Keyboard;
 use crate::renderer::hud::COLOR_DARK_BG;
-use crate::world::{SCREEN_W, SCREEN_H, WORLD_W};
+use crate::world::{SCREEN_W, SCREEN_H, WORLD_W, WORLD_H};
 use crate::input::buttons::Button;
 use crate::input::state::InputState;
 
@@ -64,11 +64,12 @@ pub struct BugReporter {
 }
 
 impl BugReporter {
-    pub fn capture(world: &WorldBuffer, cam_x: u32) -> Self {
+    pub fn capture(world: &WorldBuffer, cam_x: u32, cam_y: u32) -> Self {
         let cam_x = cam_x.min(WORLD_W.saturating_sub(SCREEN_W));
+        let cam_y = cam_y.min(WORLD_H.saturating_sub(SCREEN_H));
         let mut pixels = Vec::with_capacity((SCREEN_W * SCREEN_H * 4) as usize);
         for y in 0..SCREEN_H {
-            let src = (y * WORLD_W + cam_x) as usize * 4;
+            let src = ((y + cam_y) * WORLD_W + cam_x) as usize * 4;
             pixels.extend_from_slice(&world.raw_data()[src..src + SCREEN_W as usize * 4]);
         }
         Self {
@@ -173,58 +174,59 @@ impl BugReporter {
         }
     }
 
-    pub fn draw(&self, buf: &mut WorldBuffer, cam_x: u32) {
+    pub fn draw(&self, buf: &mut WorldBuffer, cam_x: u32, cam_y: u32) {
         let cam_xi = cam_x.min(WORLD_W.saturating_sub(SCREEN_W)) as i32;
+        let cam_yi = cam_y.min(WORLD_H.saturating_sub(SCREEN_H)) as i32;
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
 
         // Frozen screenshot dimmed behind UI
         for y in 0..sh {
             for x in 0..sw {
-                let px = buf.get_pixel(cam_xi + x, y);
-                buf.set_pixel(cam_xi + x, y, Bgra::new(px.r / 4, px.g / 4, px.b / 4));
+                let px = buf.get_pixel(cam_xi + x, cam_yi + y);
+                buf.set_pixel(cam_xi + x, cam_yi + y, Bgra::new(px.r / 4, px.g / 4, px.b / 4));
             }
         }
 
         // Header bar
-        buf.fill_rect(cam_xi, 0, SCREEN_W, HEADER_H as u32, Bgra::new(18, 22, 48));
-        buf.fill_rect(cam_xi, HEADER_H, SCREEN_W, 1, dim_line());
+        buf.fill_rect(cam_xi, cam_yi, SCREEN_W, HEADER_H as u32, Bgra::new(18, 22, 48));
+        buf.fill_rect(cam_xi, cam_yi + HEADER_H, SCREEN_W, 1, dim_line());
 
         match &self.phase {
-            Phase::Category => self.draw_category(buf, cam_xi, sw, sh),
-            Phase::Keyboard => self.draw_keyboard(buf, cam_xi, sw, sh),
-            Phase::Sending(_) | Phase::Done(_) => self.draw_status(buf, cam_xi, sw, sh),
+            Phase::Category => self.draw_category(buf, cam_xi, cam_yi, sw, sh),
+            Phase::Keyboard => self.draw_keyboard(buf, cam_xi, cam_yi, sw, sh),
+            Phase::Sending(_) | Phase::Done(_) => self.draw_status(buf, cam_xi, cam_yi, sw, sh),
         }
     }
 
-    fn draw_header(&self, buf: &mut WorldBuffer, cam_x: i32, sw: i32, title: &str) {
+    fn draw_header(&self, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32, sw: i32, title: &str) {
         let tw = str_width_scaled(title, 2);
-        draw_str_shadow_scaled(buf, title, cam_x + sw/2 - tw/2, 9, Bgra::new(255, 210, 50), 2);
+        draw_str_shadow_scaled(buf, title, cam_x + sw/2 - tw/2, cam_y + 9, Bgra::new(255, 210, 50), 2);
     }
 
-    fn draw_hint_bar(&self, buf: &mut WorldBuffer, cam_x: i32, sw: i32, sh: i32, hints: &[(&str, &str)]) {
-        buf.fill_rect(cam_x, sh - 20, SCREEN_W, 20, Bgra::new(12, 14, 35));
-        buf.fill_rect(cam_x, sh - 21, SCREEN_W, 1, dim_line());
+    fn draw_hint_bar(&self, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32, sw: i32, sh: i32, hints: &[(&str, &str)]) {
+        buf.fill_rect(cam_x, cam_y + sh - 20, SCREEN_W, 20, Bgra::new(12, 14, 35));
+        buf.fill_rect(cam_x, cam_y + sh - 21, SCREEN_W, 1, dim_line());
         let mut x = cam_x + 8;
         for (btn, label) in hints {
             let btn_w = str_width(btn);
             let lbl_w = str_width(label);
-            draw_str(buf, btn,   x, sh - 14, Bgra::new(255, 210, 50));
+            draw_str(buf, btn,   x, cam_y + sh - 14, Bgra::new(255, 210, 50));
             x += btn_w + 2;
-            draw_str(buf, label, x, sh - 14, Bgra::new(140, 144, 180));
+            draw_str(buf, label, x, cam_y + sh - 14, Bgra::new(140, 144, 180));
             x += lbl_w + 14;
         }
     }
 
-    fn draw_category(&self, buf: &mut WorldBuffer, cam_x: i32, sw: i32, sh: i32) {
-        self.draw_header(buf, cam_x, sw, "BUG REPORT");
-        self.draw_hint_bar(buf, cam_x, sw, sh, &[
+    fn draw_category(&self, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32, sw: i32, sh: i32) {
+        self.draw_header(buf, cam_x, cam_y, sw, "BUG REPORT");
+        self.draw_hint_bar(buf, cam_x, cam_y, sw, sh, &[
             ("A", "toggle"), ("Up/Dn", "move"), ("Start", "next"), ("B", "cancel"),
         ]);
 
         let row_h   = 32i32;
         let total_h = BUG_CATEGORIES.len() as i32 * row_h;
-        let list_y  = (sh - total_h) / 2;
+        let list_y  = cam_y + (sh - total_h) / 2;
 
         for (i, &cat) in BUG_CATEGORIES.iter().enumerate() {
             let y       = list_y + i as i32 * row_h;
@@ -248,8 +250,8 @@ impl BugReporter {
         }
     }
 
-    fn draw_keyboard(&self, buf: &mut WorldBuffer, cam_x: i32, sw: i32, sh: i32) {
-        self.draw_header(buf, cam_x, sw, "DESCRIBE THE BUG");
+    fn draw_keyboard(&self, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32, sw: i32, sh: i32) {
+        self.draw_header(buf, cam_x, cam_y, sw, "DESCRIBE THE BUG");
 
         // Tags line below header
         let cats: String = BUG_CATEGORIES.iter().enumerate()
@@ -259,20 +261,20 @@ impl BugReporter {
             .join(", ");
         let tag_text = format!("Tags: {}", cats);
         let tw = str_width(&tag_text);
-        draw_str(buf, &tag_text, cam_x + sw/2 - tw/2, HEADER_H + 6, Bgra::new(100, 160, 220));
+        draw_str(buf, &tag_text, cam_x + sw/2 - tw/2, cam_y + HEADER_H + 6, Bgra::new(100, 160, 220));
 
-        self.keyboard.draw(buf, cam_x);
+        self.keyboard.draw(buf, cam_x, cam_y);
     }
 
-    fn draw_status(&self, buf: &mut WorldBuffer, cam_x: i32, sw: i32, sh: i32) {
-        self.draw_header(buf, cam_x, sw, "BUG REPORT");
+    fn draw_status(&self, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32, sw: i32, sh: i32) {
+        self.draw_header(buf, cam_x, cam_y, sw, "BUG REPORT");
         let col = if matches!(self.phase, Phase::Done(true)) {
             Bgra::new(80, 220, 100)
         } else {
             Bgra::new(200, 200, 80)
         };
         let mw = str_width_scaled(&self.status_msg, 2);
-        draw_str_shadow_scaled(buf, &self.status_msg, cam_x + sw/2 - mw/2, sh/2 - 8, col, 2);
+        draw_str_shadow_scaled(buf, &self.status_msg, cam_x + sw/2 - mw/2, cam_y + sh/2 - 8, col, 2);
     }
 }
 

@@ -172,33 +172,41 @@ impl SceneryObject {
 
     fn base_footprint(&self, theme: Theme) -> (i32, i32) {
         match theme {
+            // Round/organic sprites (rocks, bushes, piles) get a tighter box than
+            // their full visual spread — a rectangle around an irregular sprite
+            // always overhangs the corners, so these are trimmed toward the solid
+            // core instead of the decorative edges. Blocky sprites (posts, crates,
+            // walls, logs) already match their visual bounds closely and are left
+            // as-is. A fully precise fix needs a real per-pixel mask per sprite
+            // (SceneryObject::mask is currently only populated by crater carving,
+            // never at spawn) — this is a pragmatic tightening, not that.
             Theme::Pastoral => match self.sprite {
                 0 => (6, 24),  // flower
                 1 => (10, 16), // mushroom
-                2 => (12, 10), // mossy rock
+                2 => (9, 8),   // mossy rock (was 12,10)
                 3 => (14, 25), // fence post + rails
-                4 => (13, 18), // bush
+                4 => (10, 14), // bush (was 13,18)
                 5 => (6, 32),  // sunflower
                 6 => (18, 10), // log
-                _ => (12, 9),  // pebble cluster
+                _ => (9, 7),   // pebble cluster (was 12,9)
             },
             Theme::Rugged => match self.sprite {
-                0 => (11, 40), // pine tree
-                1 => (15, 20), // boulder
+                0 => (9, 38),  // pine tree canopy (was 11,40)
+                1 => (12, 16), // boulder (was 15,20)
                 2 => (10, 18), // wooden crate
                 3 => (12, 14), // dead stump
                 4 => (18, 22), // broken wall
-                5 => (14, 15), // lichen rock
-                _ => (10, 21), // cairn
+                5 => (11, 12), // lichen rock (was 14,15)
+                _ => (8, 18),  // cairn (was 10,21)
             },
             Theme::Underground => match self.sprite {
-                0 => (14, 32), // crystal cluster
-                1 => (16, 14), // bone pile
+                0 => (11, 30), // crystal cluster (was 14,32)
+                1 => (12, 11), // bone pile (was 16,14)
                 2 => (3, 22),  // torch (handle+coal; flame not solid)
-                3 => (9, 14),  // skull
+                3 => (7, 12),  // skull (was 9,14)
                 4 => (20, 9),  // fallen stalactite shard
                 5 => (10, 16), // rusted chain pile
-                _ => (12, 18), // ribcage
+                _ => (9, 15),  // ribcage (was 12,18)
             },
         }
     }

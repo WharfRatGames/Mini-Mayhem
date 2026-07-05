@@ -1,10 +1,10 @@
 
 
 /// Safe fall distance in pixels (net downward displacement). Falls at or below this cause no damage.
-pub const SAFE_FALL_PX: f32 = 80.0;
+pub const SAFE_FALL_PX: f32 = 130.0;
 
 /// Damage per pixel of net downward fall beyond the safe threshold.
-pub const FALL_DAMAGE_PER_PX: f32 = 0.15;
+pub const FALL_DAMAGE_PER_PX: f32 = 0.10;
 
 /// Tracks a single worm's fall state across physics ticks.
 /// Created fresh when a worm leaves solid ground, discarded when it lands.
@@ -105,10 +105,10 @@ mod tests {
 
     #[test]
     fn large_fall_deals_proportional_damage() {
-        // 200px fall: (200-80)*0.15 = 18 damage
-        assert_eq!(fall_damage(200.0), 18);
-        // 300px fall: (300-80)*0.15 = 33 damage
-        assert_eq!(fall_damage(300.0), 33);
+        // 200px fall: (200-130)*0.10 = 7 damage
+        assert_eq!(fall_damage(200.0), 7);
+        // 300px fall: (300-130)*0.10 = 17 damage
+        assert_eq!(fall_damage(300.0), 17);
     }
 
     // ── FallTracker ───────────────────────────────────────────────────────────
@@ -147,8 +147,8 @@ mod tests {
     fn land_beyond_safe_distance_deals_damage() {
         let mut t = FallTracker::new();
         t.begin_fall(100.0);
-        let dmg = t.land(100.0 + SAFE_FALL_PX + 20.0); // 20px excess → 20*0.15 = 3
-        assert_eq!(dmg, 3);
+        let dmg = t.land(100.0 + SAFE_FALL_PX + 20.0); // 20px excess → 20*0.10 = 2
+        assert_eq!(dmg, 2);
     }
 
     #[test]
@@ -224,19 +224,19 @@ mod tests {
     fn multiple_falls_work_independently() {
         let mut t = FallTracker::new();
 
-        // First fall: 50px excess → 50*0.15 = 7.5 → rounds to 8
+        // First fall: 50px excess → 50*0.10 = 5
         t.begin_fall(100.0);
         let dmg1 = t.land(100.0 + SAFE_FALL_PX + 50.0);
-        assert_eq!(dmg1, 8);
+        assert_eq!(dmg1, 5);
 
-        // Second fall: 10px excess → 10*0.15 = 1.5 → rounds to 2
+        // Second fall: 10px excess → 10*0.10 = 1
         t.begin_fall(200.0);
         let dmg2 = t.land(200.0 + SAFE_FALL_PX + 10.0);
-        assert_eq!(dmg2, 2);
+        assert_eq!(dmg2, 1);
     }
 
     #[test]
-    fn safe_fall_constant_is_80_pixels() {
-        assert_eq!(SAFE_FALL_PX, 80.0);
+    fn safe_fall_constant_is_130_pixels() {
+        assert_eq!(SAFE_FALL_PX, 130.0);
     }
 }

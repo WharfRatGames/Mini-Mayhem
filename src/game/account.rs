@@ -254,19 +254,19 @@ impl AccountScreen {
                 draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], cam_x, 0);
             }
             LoginScreen::Username => {
-                self.username.draw(buf, cam_x);
+                self.username.draw(buf, cam_x, 0);
                 draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
             }
             LoginScreen::Password => {
-                self.password.draw(buf, cam_x);
+                self.password.draw(buf, cam_x, 0);
                 draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
             }
             LoginScreen::ConfirmPassword => {
-                self.confirm_password.draw(buf, cam_x);
+                self.confirm_password.draw(buf, cam_x, 0);
                 draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
             }
             LoginScreen::ChangePassword { .. } => {
-                self.password.draw(buf, cam_x);
+                self.password.draw(buf, cam_x, 0);
                 draw_button_hints(buf, &[("START", "CONFIRM")], cam_x, 0);
             }
         }
@@ -506,7 +506,7 @@ impl RosterEditor {
                 self.field = (self.field + 1).min(5);
             }
             if let Some(kb) = &self.keyboard {
-                kb.draw(buf, cam_x);
+                kb.draw(buf, cam_x, 0);
             }
             return None;
         }
