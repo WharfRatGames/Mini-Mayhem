@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.412";
+const VERSION: &str = "0.5.4.413";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1643,19 +1643,31 @@ fn place_map_barrels(game: &mut game::state::GameState) {
         rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
         let offset = (rng % spread as u64) as u32;
         let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
-        if let Some(surf_y) = game.terrain.surface_y_at_with_scenery(x) {
-            // pos.y = first air pixel above terrain or scenery (surf_y - 1); physics rests here.
-            let pos = WorldPos::new(x as f32, surf_y as f32 - 1.0);
-            if (surf_y as f32) < crate::world::WATER_Y as f32 - 10.0
-                && !too_close_to_soldiers(game, pos)
-            {
-                game.barrels.push(Barrel {
-                    pos,
-                    vel: crate::world::Vec2::new(0.0, 0.0),
-                    hp: 60,
-                    state: BarrelState::Normal,
-                });
+        // On cave maps (is_cavern) the surface is the sealed rock cap — barrels
+        // placed via surface_y_at_with_scenery land on the unreachable roof.
+        // Use the same standable-cave-floor lookup as maybe_drop_crate so
+        // barrels rest inside an actual accessible chamber.
+        let pos = if game.terrain.is_cavern {
+            match game.terrain.standable_cave_foot_simple(x as i32) {
+                Some(foot_y) => WorldPos::new(x as f32, foot_y as f32 - 1.0),
+                None => continue, // no standable cave floor at this x
             }
+        } else {
+            match game.terrain.surface_y_at_with_scenery(x) {
+                // pos.y = first air pixel above terrain or scenery (surf_y - 1); physics rests here.
+                Some(surf_y) => WorldPos::new(x as f32, surf_y as f32 - 1.0),
+                None => continue,
+            }
+        };
+        if pos.y < crate::world::WATER_Y as f32 - 10.0
+            && !too_close_to_soldiers(game, pos)
+        {
+            game.barrels.push(Barrel {
+                pos,
+                vel: crate::world::Vec2::new(0.0, 0.0),
+                hp: 60,
+                state: BarrelState::Normal,
+            });
         }
     }
 }

@@ -40,12 +40,31 @@ use arty::game::{
 };
 use arty::world::WorldPos;
 
+/// Like `thread::spawn`, but catches a panic inside `f` and logs it instead of
+/// letting it unwind off the top of the thread silently. Paired with
+/// `panic = "unwind"` on the server build profile (see Cargo.toml), this means
+/// one match's bug can only take down that match's thread — every other
+/// concurrent match on this process keeps running.
+fn spawn_guarded<F>(name: &'static str, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    thread::spawn(move || {
+        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            let msg = e.downcast_ref::<&str>().map(|s| s.to_string())
+                .or_else(|| e.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".to_string());
+            log::error!("[{name}] thread panicked, match ended: {msg}");
+        }
+    });
+}
+
 const PORT_DEFAULT: u16 = 7777;
 const TICK_DURATION: Duration = Duration::from_millis(1000 / 30);
 /// Token sent by clients who want to enter the ranked queue (not a reconnect).
 const RANKED_QUEUE_TOKEN: &str = "RANKED";
 
-type RankedQueue = Arc<Mutex<Vec<ArcStream>>>;
+type RankedQueue = Arc<Mutex<Vec<(String, ArcStream)>>>;
 
 fn main() {
     // Log to a text file (in addition to terminal/journal when run attached).
@@ -83,57 +102,91 @@ fn main() {
     let ranked_queue: RankedQueue = Arc::new(Mutex::new(Vec::new()));
     let lobby: SharedLobby = Arc::new(Mutex::new(Lobby::default()));
     loop {
-        let (stream, _addr, token) = accept_one(&listener, &tls_config);
-
-        // Casual play (empty session token) goes into the shared lobby, where
-        // up to 4 players ready up before the match starts.
-        if token.is_empty() {
-            let lobby2 = lobby.clone();
-            let mid = match_id.clone();
-            let cr2 = casual_registry.clone();
-            thread::spawn(move || casual_conn(stream, lobby2, mid, cr2));
-            continue;
-        }
-
-        // Reconnect: check ranked registry, then casual registry.
-        {
-            let slot = registry.lock().unwrap_or_else(|e| e.into_inner()).get(&token).cloned();
-            if let Some(slot) = slot {
-                if reconnect_into(&slot, &stream) { continue; }
-            }
-        }
-        {
-            let cs = casual_registry.lock().unwrap_or_else(|e| e.into_inner()).get(&token).cloned();
-            if let Some(cs) = cs {
-                if casual_reconnect_into(&cs, &stream) { continue; }
-            }
-        }
-
-        // Ranked queue: a player connecting with RANKED_QUEUE_TOKEN wants a
-        // ranked match. Drain dead waiters first, then pair if someone else is
-        // already waiting, otherwise add this player to the queue.
-        if token == RANKED_QUEUE_TOKEN {
-            let username = read_line(&mut *stream.lock().unwrap_or_else(|e| e.into_inner()), 64)
-                .unwrap_or_else(|| "?".to_string());
-            // Drain dead waiters, then either pair immediately or enqueue.
-            let mut q = ranked_queue.lock().unwrap_or_else(|e| e.into_inner());
-            q.retain(|s| stream_alive(s));
-            if q.is_empty() {
-                q.push(stream);
-                info!("Ranked: {} queued ({} waiting)", username, q.len());
-            } else {
-                let s0 = q.remove(0);
-                drop(q); // release lock before spawning
-                let mid = match_id.fetch_add(1, Ordering::Relaxed) + 1;
-                let registry2 = registry.clone();
-                info!("Ranked: pairing {} into match {mid}", username);
-                thread::spawn(move || run_ranked_match(mid, s0, stream, registry2));
-            }
-            continue;
-        }
-
-        info!("Unknown token — ignoring connection");
+        // Raw TCP accept only — the TLS handshake and app-level handshake
+        // (magic/version/token) happen in handshake_one, which does blocking
+        // crypto work. Doing that inline here would serialize every new
+        // connection's handshake through this single accept thread: a burst
+        // of simultaneous connects (real players joining together, or just
+        // port-scanner noise) would queue up one-at-a-time on one core
+        // instead of spreading across the Pi's 4 cores, spiking load average
+        // even though steady-state per-match CPU is cheap. Handing the
+        // handshake off to its own thread per connection fixes that.
+        let (tcp, addr) = match listener.accept() {
+            Ok(pair) => pair,
+            Err(e) => { info!("accept error: {e}"); continue; }
+        };
+        let tls_config2      = tls_config.clone();
+        let lobby2           = lobby.clone();
+        let match_id2        = match_id.clone();
+        let casual_registry2 = casual_registry.clone();
+        let registry2        = registry.clone();
+        let ranked_queue2    = ranked_queue.clone();
+        spawn_guarded("handle_connection", move || {
+            handle_connection(tcp, addr, &tls_config2, lobby2, match_id2, casual_registry2, registry2, ranked_queue2);
+        });
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_connection(
+    tcp:             TcpStream,
+    addr:            std::net::SocketAddr,
+    tls_config:      &Arc<rustls::ServerConfig>,
+    lobby:           SharedLobby,
+    match_id:        Arc<AtomicU64>,
+    casual_registry: CasualRegistry,
+    registry:        Registry,
+    ranked_queue:    RankedQueue,
+) {
+    let (stream, token) = match handshake_one(tcp, addr, tls_config) {
+        Some(pair) => pair,
+        None => return,
+    };
+
+    // Casual play (empty session token) goes into the shared lobby, where
+    // up to 4 players ready up before the match starts.
+    if token.is_empty() {
+        casual_conn(stream, lobby, match_id, casual_registry);
+        return;
+    }
+
+    // Reconnect: check ranked registry, then casual registry.
+    {
+        let slot = registry.lock().unwrap_or_else(|e| e.into_inner()).get(&token).cloned();
+        if let Some(slot) = slot {
+            if reconnect_into(&slot, &stream) { return; }
+        }
+    }
+    {
+        let cs = casual_registry.lock().unwrap_or_else(|e| e.into_inner()).get(&token).cloned();
+        if let Some(cs) = cs {
+            if casual_reconnect_into(&cs, &stream) { return; }
+        }
+    }
+
+    // Ranked queue: a player connecting with RANKED_QUEUE_TOKEN wants a
+    // ranked match. Drain dead waiters first, then pair if someone else is
+    // already waiting, otherwise add this player to the queue.
+    if token == RANKED_QUEUE_TOKEN {
+        let username = read_line(&mut *stream.lock().unwrap_or_else(|e| e.into_inner()), 64)
+            .unwrap_or_else(|| "?".to_string());
+        // Drain dead waiters, then either pair immediately or enqueue.
+        let mut q = ranked_queue.lock().unwrap_or_else(|e| e.into_inner());
+        q.retain(|(_, s)| stream_alive(s));
+        if q.is_empty() {
+            q.push((username.clone(), stream));
+            info!("Ranked: {} queued ({} waiting)", username, q.len());
+        } else {
+            let (username0, s0) = q.remove(0);
+            drop(q); // release lock before spawning
+            let mid = match_id.fetch_add(1, Ordering::Relaxed) + 1;
+            info!("Ranked: pairing {username0} (team 0) vs {username} (team 1) into match {mid}");
+            run_ranked_match(mid, s0, stream, registry);
+        }
+        return;
+    }
+
+    info!("Unknown token — ignoring connection");
 }
 
 struct SharedConn {
@@ -854,7 +907,7 @@ fn handle_lobby_msg(
         let mid = match_id.fetch_add(1, Ordering::Relaxed) + 1;
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-        thread::spawn(move || run_lobby_match(mid, members, seed, casual_registry));
+        spawn_guarded("run_lobby_match", move || run_lobby_match(mid, members, seed, casual_registry));
     } else {
         broadcast_lobby(lobby);
     }
@@ -867,6 +920,11 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
     let n = members.len();
     let colors: Vec<u8> = members.iter().map(|m| m.color_id.unwrap_or(0)).collect();
     mboth!(&mut mfile, match_id, "casual lobby match starting with {n} players");
+    for (i, m) in members.iter().enumerate() {
+        if let Some(j) = m.join.as_ref() {
+            mboth!(&mut mfile, match_id, "  team {i}: account={} character={}", j.username, j.name);
+        }
+    }
 
     // For 2-player matches: generate reconnect tokens and register slots.
     let tokens: Vec<String> = if n == 2 {
@@ -1318,7 +1376,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.412";
+const REQUIRED_VERSION: &str = "0.5.4.413";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION
@@ -1368,48 +1426,47 @@ fn load_tls_config() -> Arc<rustls::ServerConfig> {
         .expect("TLS config error"))
 }
 
-/// Accept one client: TCP accept → TLS handshake → app handshake → return ArcStream.
-fn accept_one(listener: &TcpListener, tls_config: &Arc<rustls::ServerConfig>) -> (ArcStream, std::net::SocketAddr, String) {
-    loop {
-        let (mut tcp, addr) = match listener.accept() {
-            Ok(pair) => pair,
-            Err(e) => { info!("accept error: {e}"); continue; }
-        };
-        tcp.set_read_timeout(Some(Duration::from_secs(5))).ok();
-        tcp.set_nodelay(true).ok();
+/// TLS handshake → app handshake for one already-accepted TCP connection.
+/// Runs on its own thread (spawned per-connection by the accept loop) so a
+/// burst of simultaneous connects does its (comparatively expensive) crypto
+/// work in parallel across cores instead of serializing on the accept thread.
+/// Returns None (and logs why) on any handshake failure — caller just drops
+/// the connection.
+fn handshake_one(mut tcp: TcpStream, addr: std::net::SocketAddr, tls_config: &Arc<rustls::ServerConfig>) -> Option<(ArcStream, String)> {
+    tcp.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    tcp.set_nodelay(true).ok();
 
-        // TLS handshake
-        let conn = match ServerConnection::new(Arc::clone(tls_config)) {
-            Ok(c) => c,
-            Err(e) => { info!("TLS init error from {addr}: {e}"); continue; }
-        };
-        let mut tls = rustls::StreamOwned::new(conn, tcp);
+    // TLS handshake
+    let conn = match ServerConnection::new(Arc::clone(tls_config)) {
+        Ok(c) => c,
+        Err(e) => { info!("TLS init error from {addr}: {e}"); return None; }
+    };
+    let mut tls = rustls::StreamOwned::new(conn, tcp);
 
-        // Application handshake over TLS
-        let mut magic = [0u8; 4];
-        match tls.read_exact(&mut magic) {
-            Ok(_) if &magic == MAGIC => {}
-            _ => { info!("Rejected (bad magic): {addr}"); continue; }
-        }
-        let ver = match read_line(&mut tls, 16) {
-            Some(v) => v,
-            None => { info!("Handshake read failed: {addr}"); continue; }
-        };
-        if !version_ok(&ver) {
-            info!("Rejected old version {ver}: {addr}");
-            let _ = tls.write_all(b"REJECTED:VERSION\n");
-            continue;
-        }
-        let _ = tls.write_all(b"OK\n");
-        let token = match read_line(&mut tls, 70) {
-            Some(t) => t,
-            None => { info!("Handshake read failed: {addr}"); continue; }
-        };
-        // Clear handshake timeout; normal I/O timeouts are set per-connection downstream.
-        tls.get_ref().set_read_timeout(None).ok();
-        info!("Player (v{ver}): {addr}");
-        return (Arc::new(Mutex::new(tls)), addr, token);
+    // Application handshake over TLS
+    let mut magic = [0u8; 4];
+    match tls.read_exact(&mut magic) {
+        Ok(_) if &magic == MAGIC => {}
+        _ => { info!("Rejected (bad magic): {addr}"); return None; }
     }
+    let ver = match read_line(&mut tls, 16) {
+        Some(v) => v,
+        None => { info!("Handshake read failed: {addr}"); return None; }
+    };
+    if !version_ok(&ver) {
+        info!("Rejected old version {ver}: {addr}");
+        let _ = tls.write_all(b"REJECTED:VERSION\n");
+        return None;
+    }
+    let _ = tls.write_all(b"OK\n");
+    let token = match read_line(&mut tls, 70) {
+        Some(t) => t,
+        None => { info!("Handshake read failed: {addr}"); return None; }
+    };
+    // Clear handshake timeout; normal I/O timeouts are set per-connection downstream.
+    tls.get_ref().set_read_timeout(None).ok();
+    info!("Player (v{ver}): {addr}");
+    Some((Arc::new(Mutex::new(tls)), token))
 }
 
 fn msg_to_input(msg: &InputMsg) -> arty::input::InputState {

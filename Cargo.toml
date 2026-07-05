@@ -56,3 +56,12 @@ strip         = true
 inherits  = "release"
 panic     = "abort"
 strip     = true
+
+# The Pi game server runs many concurrent matches as threads in one process.
+# panic = "abort" (release's default) kills the whole process — every match —
+# on a single thread's panic. unwind keeps Rust's normal per-thread isolation:
+# a panicking match thread just returns Err from its JoinHandle; every other
+# match keeps running.
+[profile.server]
+inherits = "release"
+panic    = "unwind"
