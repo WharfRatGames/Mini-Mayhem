@@ -1148,7 +1148,11 @@ fn flush_damage_tallies(game: &mut GameState) {
     if world_hot && game.shotgun_shots_left == 0 { return; }
 
     let mut popups: Vec<(f32, f32, u32, u8)> = Vec::new();
-    for (ti, team) in game.teams.iter_mut().enumerate() {
+    for team in game.teams.iter_mut() {
+        // The popup is tinted with the team's picked colour (color_id), NOT the
+        // team index — in 4-player casual, lobby colour picks make these differ,
+        // and the number must match the victim's HP box.
+        let col = team.color_id;
         for s in &mut team.soldiers {
             if s.pending_damage == 0 { continue; }
             // Actively burning: fire DoT is still adding damage, so keep
@@ -1157,14 +1161,14 @@ fn flush_damage_tallies(game: &mut GameState) {
             // HP box then ticks down to 0.
             if s.on_fire_ticks > 0 { continue; }
             if s.damage_settle > 0 { s.damage_settle -= 1; continue; }
-            popups.push((s.pos.x, s.pos.y, s.pending_damage, ti as u8));
+            popups.push((s.pos.x, s.pos.y, s.pending_damage, col));
             s.pending_damage = 0;
             s.hp_countdown_delay = crate::game::soldier::HP_COUNTDOWN_DELAY_TICKS;
         }
     }
-    for (x, y, dmg, team) in popups {
+    for (x, y, dmg, color_id) in popups {
         game.emit_fx(crate::renderer::fx::FxEvent::DamagePopup {
-            x, y, amount: dmg.min(255) as u8, team,
+            x, y, amount: dmg.min(255) as u8, color_id,
         });
     }
 }
@@ -2082,7 +2086,6 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
     // ── The real shot: single ray, single hit ─────────────────────────────────
     let mut px = muzzle_x;
     let mut py = muzzle_y;
-    let mut hit_soldier: Option<(usize, usize)> = None;
     let mut stopped = false;
     for _ in 0..RANGE {
         px += dx;
@@ -2120,7 +2123,6 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
                 let ddy = py - spy;
                 let hit_top = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { -30.0 } else { -22.0 };
                 if ddx < 8.0 && ddy > hit_top && ddy < 2.0 {
-                    hit_soldier = Some((t, s));
                     stopped = true;
                     break 'soldiers;
                 }
@@ -2130,32 +2132,61 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
     }
     let (end_x, end_y) = (px, py);
 
-    // Apply the hit: full shot damage + knockback along the ray.
+    // ── WA-style gun blast: damage falls off with distance from the impact ─────
+    // The ray stops at the first surface it meets (terrain, worm, barrel, crate)
+    // and the "blast" is centred there — matching WA, where a Shotgun/Handgun/Uzi
+    // bullet spawns a tiny explosion at its line-of-fire hit. Each worm takes
+    // damage by how close its body centre is to that point: a clean, centred hit
+    // deals the full 25 (CORE_R plateau), while a graze or a shot that clips
+    // terrain beside the worm deals proportionally less, and beyond MAX_R
+    // nothing. This is why a shot can land for under 25 — and why a near-miss
+    // that stops on terrain next to a worm now still splashes it, instead of the
+    // old all-or-nothing bounding-box hit.
+    const CORE_R: f32 = 18.0;  // within this, full damage (covers a clean body hit)
+    const MAX_R:  f32 = 40.0;  // beyond this, no damage
     let active_ti = game.active_team();
     let active_si = game.teams[active_ti].active;
     let active_hp_before = game.teams[active_ti].soldiers[active_si].hp;
-    if let Some((t, s)) = hit_soldier {
-        let vx = dx * SHOT_FORCE;
-        let vy = dy * SHOT_FORCE - 1.0;
-        let sol = &mut game.teams[t].soldiers[s];
-        sol.death_cause = crate::game::soldier::DeathCause::Explosion;
-        sol.take_damage(SHOT_DMG);
-        // Damage shows per SHOT: collapse the settle window so this shell's
-        // number pops immediately; the second shell tallies separately.
-        sol.damage_settle = 0;
-        let new_state = match &sol.state {
-            SoldierState::Airborne { vel, spinning } => Some(SoldierState::Airborne {
-                vel: Vec2::new(vel.x + vx, vel.y + vy),
-                spinning: *spinning,
-            }),
-            SoldierState::Idle | SoldierState::Walking { .. } => Some(SoldierState::Airborne {
-                vel: Vec2::new(vx, vy),
-                spinning: false,
-            }),
-            SoldierState::Dead => None,
-        };
-        if let Some(st) = new_state { game.teams[t].soldiers[s].state = st; }
-        // Blood splats fanned out behind the impact.
+    let mut any_hit = false;
+    for t in 0..n_teams {
+        for s in 0..n_sol[t] {
+            if !game.teams[t].soldiers[s].is_alive() { continue; }
+            let spx = game.teams[t].soldiers[s].pos.x;
+            let spy = game.teams[t].soldiers[s].pos.y;
+            let hit_top = if crate::renderer::skeleton::SOLDIER_STYLE_V2 { -30.0 } else { -22.0 };
+            let body_cy = spy + (hit_top + 2.0) * 0.5;   // vertical centre of the body
+            let cdx = end_x - spx;
+            let cdy = end_y - body_cy;
+            let dist = (cdx * cdx + cdy * cdy).sqrt();
+            if dist >= MAX_R { continue; }
+            let falloff = ((MAX_R - dist) / (MAX_R - CORE_R)).min(1.0);
+            let dmg = (SHOT_DMG as f32 * falloff).round() as u32;
+            if dmg == 0 { continue; }
+            any_hit = true;
+            let vx = dx * SHOT_FORCE * falloff;
+            let vy = dy * SHOT_FORCE * falloff - 1.0;
+            let sol = &mut game.teams[t].soldiers[s];
+            sol.death_cause = crate::game::soldier::DeathCause::Explosion;
+            sol.take_damage(dmg);
+            // Damage shows per SHOT: collapse the settle window so this shell's
+            // number pops immediately; the second shell tallies separately.
+            sol.damage_settle = 0;
+            let new_state = match &sol.state {
+                SoldierState::Airborne { vel, spinning } => Some(SoldierState::Airborne {
+                    vel: Vec2::new(vel.x + vx, vel.y + vy),
+                    spinning: *spinning,
+                }),
+                SoldierState::Idle | SoldierState::Walking { .. } => Some(SoldierState::Airborne {
+                    vel: Vec2::new(vx, vy),
+                    spinning: false,
+                }),
+                SoldierState::Dead => None,
+            };
+            if let Some(st) = new_state { game.teams[t].soldiers[s].state = st; }
+        }
+    }
+    // Blood splats fanned out behind the impact (visual only).
+    if any_hit {
         let mut rng = seed as u64;
         for _ in 0..3 {
             rng = rng.wrapping_mul(2654435761).wrapping_add(1);

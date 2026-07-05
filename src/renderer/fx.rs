@@ -42,7 +42,7 @@ pub struct FxDamageText {
     pub age:    u32,
     pub life:   u32,
     pub amount: u8,
-    pub team:   u8,
+    pub color_id:   u8,
 }
 
 /// Tiny xorshift PRNG — these are non-networked visuals, determinism unneeded.
@@ -164,9 +164,9 @@ const HP_COUNTER_LIFT: f32 = 56.0;
 /// (soldier's foot position). Pops up fast then decelerates, so it visibly
 /// separates from the counter before fading — matching the HP counter's own
 /// tick-down (`Soldier::displayed_hp`).
-fn damage_popup(texts: &mut Vec<FxDamageText>, pos: WorldPos, amount: u8, team: u8) {
+fn damage_popup(texts: &mut Vec<FxDamageText>, pos: WorldPos, amount: u8, color_id: u8) {
     let start = WorldPos::new(pos.x, pos.y - HP_COUNTER_LIFT);
-    push_text(texts, FxDamageText { pos: start, vy: -1.2, age: 0, life: 90, amount, team });
+    push_text(texts, FxDamageText { pos: start, vy: -1.2, age: 0, life: 90, amount, color_id });
 }
 
 // ── Networked spawn events ───────────────────────────────────────────────────
@@ -182,7 +182,7 @@ pub enum FxEvent {
     Splash    { x: f32, y: f32 },
     Dust      { x: f32, y: f32, count: u32, kick: f32, dir: f32 },
     Dig       { x: f32, y: f32, dir: f32, col: [u8; 3] },
-    DamagePopup { x: f32, y: f32, amount: u8, team: u8 },
+    DamagePopup { x: f32, y: f32, amount: u8, color_id: u8 },
 }
 
 /// Spawn the particles described by `ev` into `fx`/`texts` (used both at the
@@ -197,8 +197,8 @@ pub fn apply_event(fx: &mut Vec<FxParticle>, texts: &mut Vec<FxDamageText>, ev: 
             dust(fx, WorldPos::new(x, y), count, kick, dir),
         FxEvent::Dig { x, y, dir, col } =>
             dig(fx, WorldPos::new(x, y), dir, Bgra::new(col[0], col[1], col[2])),
-        FxEvent::DamagePopup { x, y, amount, team } =>
-            damage_popup(texts, WorldPos::new(x, y), amount, team),
+        FxEvent::DamagePopup { x, y, amount, color_id } =>
+            damage_popup(texts, WorldPos::new(x, y), amount, color_id),
     }
 }
 
@@ -300,7 +300,7 @@ pub fn draw_fx_text(buf: &mut WorldBuffer, texts: &[FxDamageText], cam_x: u32) {
         let w = super::font::str_width_scaled(&text, scale);
         let x = t.pos.x as i32 - w / 2;
         let y = t.pos.y as i32;
-        let base = super::draw_sprites::TEAM_COLOURS[(t.team as usize).min(3)];
+        let base = super::draw_sprites::TEAM_COLOURS[(t.color_id as usize).min(3)];
         let k = if frac > 0.25 { 1.0 } else { frac * 4.0 }; // fade last 25% of life
         let col = Bgra::new(
             (base.r as f32 * k) as u8,

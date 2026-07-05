@@ -120,7 +120,19 @@
       "Bash(curl --max-time 8 -v https://crumbonium.duckdns.org/arty/version.txt)",
       "Bash(echo \"exit:$?\")",
       "Bash(sudo apt-get install -y xvfb x11-apps scrot)",
-      "Bash(convert /tmp/sacred_ordnance.ppm /tmp/sacred_ordnance.png)"
+      "Bash(convert /tmp/sacred_ordnance.ppm /tmp/sacred_ordnance.png)",
+      "Bash(journalctl --user -u jellyfin* --since \"1 hour ago\" -n 50)",
+      "Bash(systemctl --user status jellyfin*)",
+      "Bash(bash deploy/build_and_deploy.sh 0.5.4.377)",
+      "Bash(tee /tmp/deploy377.log)",
+      "Bash(pactl set-sink-volume *)",
+      "Bash(pactl get-sink-volume *)",
+      "Bash(cargo zigbuild *)",
+      "Bash(SKIP_MODES_CHECK=1 git commit *)",
+      "Bash(systemctl list-units *)",
+      "Bash(systemctl list-unit-files *)",
+      "Bash(sed -i 's/const VERSION: &str = \"0.5.4.411\"/const VERSION: \\\\&str = \"0.5.4.412\"/' /home/dusty/arty/src/main.rs)",
+      "Bash(sed -i 's/const REQUIRED_VERSION: &str = \"0.5.4.411\"/const REQUIRED_VERSION: \\\\&str = \"0.5.4.412\"/' /home/dusty/arty/src/server/main.rs)"
     ]
   }
 }

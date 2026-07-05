@@ -1,9 +1,73 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.407 (deployed 2026-07-04)
+## Version: 0.5.4.413 (source 2026-07-05, not yet built) · last build 0.5.4.412 (2026-07-04, not deployed)
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 
-## Deployed 2026-07-04 (v0.5.4.407)
+## Source 2026-07-05 (v0.5.4.413, not yet built — VERSION/REQUIRED_VERSION not bumped)
+- **Shotgun damage falloff (WA gun-blast model)** — `fire_shotgun` in
+  `loop_runner.rs` no longer deals a flat 25 to whichever worm the ray's bounding
+  box crossed (and nothing when it stopped on terrain a pixel short). The single
+  hitscan ray still stops at the first surface (terrain / worm / barrel / crate),
+  but the impact point now spawns a small gun blast: each worm takes damage by how
+  close its body centre is to that point — full 25 inside a `CORE_R=18` plateau
+  (a clean body hit is unchanged), linear falloff to 0 at `MAX_R=40`. So a graze
+  or a shot that clips ground beside a worm lands for under 25, and a near-miss
+  onto terrain next to a worm now splashes it instead of doing nothing. Knockback
+  scales with the same falloff. Purely inside the sim (all 5 paths share
+  `fire_shotgun`); no new `StateMsg` fields, parity 22/22.
+
+## Built 2026-07-04 (v0.5.4.412, pending deploy)
+- **Live damage popups always visible** — `damage_focus` (x, y, ticks_left of the most
+  recently damaged soldier) is now synced in `StateMsg` (was server-only bookkeeping);
+  the live client's camera holds on the damaged soldier during the Retreating phase
+  (mirroring what hotseat's `update_camera` already did), so the popup + HP countdown
+  actually land on screen instead of playing out off-camera.
+- **Damage-popup colours fixed** — `FxEvent::DamagePopup`/`FxDamageText` now carry
+  `color_id` (the lobby-picked `TEAM_COLOURS` index) instead of raw team index, so the
+  floating number matches the victim's HP box in 4-colour live casual.
+- **Client start barrier** — after `show_match_intro`, the live client sends ready
+  `InputMsg`s and holds on a "WAITING FOR PLAYERS..." screen until the server's state
+  reaches `tick >= 1` (35s deadline, longer than the server's 30s gate). Both players
+  now enter the arena and see the turn timer start on the same server tick;
+  reconnects fall through immediately since the match is already ticking.
+
+## Deployed 2026-07-04 (v0.5.4.411)
+- **Chain-reaction damage tallies** — `flush_damage_tallies` now holds all popups
+  while the world is "hot" (projectiles/explosions/pending deaths/black holes/Garcia/
+  airstrike/triggered mines+barrels/airborne soldiers in flight); the settle window
+  freezes during the hold so a mine/barrel cascade or a full burn shows one total
+  instead of a flurry of separate numbers. Shotgun is exempt (still one popup per
+  shot). Soldiers on fire keep tallying until the burn ends, then the total pops.
+- **Plasma torch bore widened** r15→r17 (34px) — the walk-through check needs 29px
+  over the full 14px body width; the old 30px bore left only a 1px margin and could
+  wedge soldiers inside the tunnel.
+- **Live match-start ready gate** (ranked + casual) — the server now holds tick 0 and
+  broadcasts a frozen state until every client has sent its first `InputMsg` (terrain
+  built + intro finished); `START_READY_TIMEOUT=30s` caps the wait. Nobody misses the
+  start of turn 1 anymore.
+
+## Deployed 2026-07-04 (v0.5.4.409–410)
+- **Damage tally** — hits landing within ~0.7s of each other aggregate into ONE popup
+  (`Soldier::pending_damage`/`damage_settle`, `flush_damage_tallies` in
+  `loop_runner.rs`); the HP counter holds for 2s after the popup
+  (`hp_countdown_delay`, synced via `NetSoldier`) before draining 1/tick. Shotgun
+  collapses the settle window per shot, so it still shows one number per shell.
+- **Parity enforcement overhaul** — nested compile-time checklists in `net_sync.rs`
+  for every gameplay struct; exhaustive `*Snap` destructures in `tests/parity.rs`
+  (caught and fixed `death_cause` not being applied client-side); fx spawn functions
+  made private to `fx.rs`; `no_channel_bypass_in_source` guard test; pre-commit
+  `cargo check --tests` gate (`SKIP_COMPILE_CHECK=1` escape hatch);
+  `.github/workflows/parity.yml` repeats the gate + full parity suite in CI.
+- **Spawn vertical dispersion** — `standable_foot_levels` (up to 3 levels per column,
+  relaxed headroom below the topmost), greedy min-vertical-distance landform
+  selection, `MIN_SEP_V=120` vertical separation between spawns. Emergency spawn
+  mounds removed entirely — `find_team_spawns` never mutates terrain anymore;
+  constraints relax through a fallback chain instead. Shotgun reworked to one
+  precise hitscan ray per trigger pull (up to 25 damage, 50 for both shots) — the
+  pellet scatter at the impact point is purely cosmetic. New tests:
+  `spawns_disperse_vertically`, `print_spawn_dist` (ignored helper).
+
+## Deployed 2026-07-04 (v0.5.4.408)
 - **Damage-number popups** — getting hit now pops a floating "-N" over the soldier's
   HP counter (Worms Armageddon style): spawns right at the counter
   (`FxDamageText`/`FxEvent::DamagePopup` in `src/renderer/fx.rs`), rises and

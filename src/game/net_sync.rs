@@ -173,6 +173,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                 (k.to_net_u8(), a.map_or(0xFFFF, |n| n as u32))
             }).collect(),
         }).collect(),
+        damage_focus: game.damage_focus.map(|(pos, ticks)| (pos.x, pos.y, ticks)),
     }
 }
 
@@ -498,6 +499,12 @@ pub fn apply_server_state(
             spawn_cam_left: 0.0, // client-only, updated by tick() before plane launches
         });
     }
+    // Camera damage-hold: mirror the server's damage_focus so the live client's
+    // camera can hold on the damaged soldier during retreat (popup + countdown
+    // stay on screen — otherwise they often play out off-camera).
+    game.damage_focus = state.damage_focus
+        .map(|(x, y, ticks)| (crate::world::WorldPos::new(x, y), ticks));
+
     // Sync weapon inventories so ammo counts and selection stay accurate.
     // For my_team: preserve the locally-managed selection (only clamp if the
     // list shrank).  For the opponent: use the server's selection (display only).
@@ -552,11 +559,12 @@ fn _gamestate_parity_checklist(g: &GameState) {
         crater_log: _, sounds: _, fx_events: _, graves: _, weapon_menu_open: _,
         weapon_menu_cursor: _, rope: _, messages: _, blood_splats: _,
         plasma_torch: _, garcia: _, airstrike: _, homing_missile: _,
+        damage_focus: _, // synced: StateMsg.damage_focus — live-client camera hold on the damaged soldier
         // ── Not networked: client-only visuals / server-internal sim state ──
         // (terrain is rebuilt on the client from `crater_log`; `explosions` from craters)
         terrain: _, crate_timer: _, map_seed: _, is_test: _, is_multiplayer: _,
         scrap_earned: _, explosions: _, active_worm_hit: _, retreat_locked: _,
-        damage_focus: _, server_fire_grace: _, shotgun_shots_left: _,
+        server_fire_grace: _, shotgun_shots_left: _,
         revolver_shots_left: _, minigun_shots_left: _, minigun_fire_timer: _, uzi_shots_left: _, uzi_fire_timer: _, pistol_shots_left: _, pistol_fire_timer: _, bullet_trails: _, rope_session: _,
         rope_used_this_turn: _, tnt_placed: _, crate_watch_ticks: _,
         smoke_particles: _, fx: _, fx_text: _, pending_deaths: _,

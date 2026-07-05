@@ -153,6 +153,11 @@ pub struct StateMsg {
     /// Weapon inventory per team: [(kind_u8, ammo_or_0xFFFF_for_infinite)].
     /// Lets the live client show accurate ammo counts and weapon list.
     pub team_weapons:       Vec<NetTeamWeapons>,
+    /// (x, y, ticks_left) of the most recently damaged soldier — the live
+    /// client's camera holds there during retreat (like update_camera does in
+    /// hotseat) so the damage popup + HP countdown are actually on screen.
+    #[serde(default)]
+    pub damage_focus:       Option<(f32, f32, u32)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

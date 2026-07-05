@@ -1097,17 +1097,18 @@ fn explosion_damage_emits_popup() {
     for tick in 0..60u32 {
         server_tick(&mut server, &input, None, None);
         let popup = server.fx_events.iter().find_map(|ev| match *ev {
-            FxEvent::DamagePopup { amount, team, .. } => Some((amount, team)),
+            FxEvent::DamagePopup { amount, color_id, .. } => Some((amount, color_id)),
             _ => None,
         });
-        if let Some((amount, team)) = popup {
-            found = Some((amount, team, build_state(&server, tick, 0)));
+        if let Some((amount, color_id)) = popup {
+            found = Some((amount, color_id, build_state(&server, tick, 0)));
             break;
         }
     }
-    let (amount, team, state) = found.expect("settled tally must emit FxEvent::DamagePopup");
+    let (amount, color_id, state) = found.expect("settled tally must emit FxEvent::DamagePopup");
     assert!(amount as u32 >= dealt, "popup shows the tallied total");
-    assert_eq!(team, 1, "popup carries the damaged soldier's team");
+    assert_eq!(color_id, server.teams[1].color_id,
+        "popup carries the damaged team's picked colour (matches the HP box)");
     assert!(
         server.teams[1].soldiers[0].hp_countdown_delay > 0,
         "popup must arm the HP-countdown hold"

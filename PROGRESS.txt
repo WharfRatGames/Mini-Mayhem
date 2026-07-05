@@ -1,10 +1,100 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.406 (deployed 2026-07-03 to Pi server/API/dashboards/GitHub/
-  Windows OTA; Miyoo .126 updated + hash-verified, .110 offline — picks up OTA on next boot)
+Current version: 0.5.4.413 SOURCE (2026-07-05) — NOT built/deployed/committed.
+  Shotgun damage falloff edited in loop_runner.rs; parity 22/22, cargo check
+  --tests clean. VERSION + REQUIRED_VERSION NOT yet bumped and binaries NOT
+  rebuilt (last build is still .412). Awaiting build/deploy instruction.
+  Previous build 0.5.4.412 BUILT (2026-07-04) — all three binaries, parity
+  22/22, VERSION + REQUIRED_VERSION bumped (StateMsg gained damage_focus),
+  changelog entry added; never deployed/committed.
 
-In working tree, NOT built/deployed (target 0.5.4.407):
-  1) scenery objects now crater EXACTLY like terrain, replacing .406's
+Source 2026-07-05 (v0.5.4.413, not yet built):
+  1) Shotgun damage falloff (WA gun-blast model). fire_shotgun's single
+     hitscan ray still stops at the first surface (terrain/worm/barrel/crate),
+     but the impact point now spawns a small gun blast: each worm takes damage
+     by distance from its body centre to that point — full 25 inside CORE_R=18
+     (clean body hit unchanged), linear falloff to 0 at MAX_R=40. A graze or a
+     shot that clips ground beside a worm lands for under 25; a near-miss onto
+     terrain next to a worm now splashes it instead of the old all-or-nothing
+     bounding-box hit. Knockback scales with the same falloff. All inside the
+     sim (5 paths share fire_shotgun); no new StateMsg fields.
+
+Built 2026-07-04 (v0.5.4.412, pending deploy):
+  1) Live damage popups always visible: damage_focus is now SYNCED in
+     StateMsg (was server-only); live client camera holds on the damaged
+     soldier during Retreating so the popup flush (>=20 ticks later) is
+     on-screen.
+  2) Popup colours fixed: FxEvent::DamagePopup / FxDamageText carry
+     color_id (lobby-picked TEAM_COLOURS index) instead of team index —
+     matches the HP box in 4-colour live casual.
+  3) Client start barrier: after show_match_intro in live, client sends
+     ready InputMsgs and holds on "WAITING FOR PLAYERS..." until
+     state.tick >= 1 (35s deadline > server's 30s gate). Both players
+     enter the arena on the same server tick; reconnects fall through.
+
+Previous version: 0.5.4.411 DEPLOYED (2026-07-04) — OTA/server/API/dashboards/
+  GitHub release/Discord/Windows OTA; BOTH Miyoos updated + hash-verified
+  (8d9ef6db..., script killed game before copy). Commit cdb2f70 on main.
+  Note: ircdash scp showed a transient permission-denied then deployed OK.
+
+Deployed 2026-07-04 (v0.5.4.411):
+  1) Chain-reaction damage tallies: flush_damage_tallies holds all popups
+     while the world is hot (projectiles/explosions/pending deaths/black
+     holes/Garcia/airstrike/Triggered mines+barrels/airborne soldiers);
+     settle window frozen during the hold. Shotgun between shots is exempt
+     (per-shot numbers). Soldiers with on_fire_ticks>0 keep tallying, so a
+     burn (fatal or not) shows one total; fatal burns pop after death and
+     the HP box ticks to 0.
+  2) Plasma torch bore widened r15->r17 (34px) — walk check needs 29px over
+     the full 14px body width; the old 30px bore's 1px margin wedged soldiers.
+  3) Live match-start ready gate (ranked + casual): server holds tick 0 and
+     broadcasts frozen state until every client sends its first InputMsg
+     (terrain built + intro done); START_READY_TIMEOUT=30s cap. Nobody
+     misses the start of turn 1 anymore.
+
+Deployed 2026-07-04 (v0.5.4.409-410):
+  1) Damage tally: hits landing within ~0.7s aggregate into ONE popup
+     (Soldier.pending_damage/damage_settle, flush_damage_tallies in
+     loop_runner.rs); HP counter holds 2s after the popup (hp_countdown_delay,
+     synced via NetSoldier), then drains 1/tick. Shotgun collapses the settle
+     window per shot — one number per shell.
+  2) Parity enforcement overhaul: nested compile checklists in net_sync.rs for
+     all gameplay structs; exhaustive *Snap destructures in tests/parity.rs
+     (caught+fixed death_cause not applied client-side); fx spawn fns private;
+     no_channel_bypass_in_source guard test; pre-commit cargo check --tests
+     gate (SKIP_COMPILE_CHECK=1 escape); .github/workflows/parity.yml CI.
+  3) Spawn vertical dispersion: standable_foot_levels (up to 3 levels/column,
+     relaxed headroom below the top), greedy min-vertical-distance landform
+     selection, MIN_SEP_V=120 vertical separation; EMERGENCY MOUNDS REMOVED
+     (find_team_spawns never mutates terrain; relaxation chain instead).
+     New tests: spawns_disperse_vertically, print_spawn_dist (ignored helper).
+
+Deployed 2026-07-04 (v0.5.4.408):
+  1) FIX: explosive weapons (bazooka/grenade/mine/airstrike/death explosions)
+     showed no damage number — apply_explosion_scaled never emitted
+     FxEvent::DamagePopup. Now one popup per hurt soldier.
+  2) Popups are team-coloured bare numbers (shadowed), spawn over the damaged
+     soldier's HP counter (hitscan used to spawn at ray impact), rise ~30px
+     decelerating, live 90 ticks (~1.5s), fade last 25%; HP counter's 1/tick
+     drain finishes within popup life.
+  3) FxEvent::DamagePopup + FxDamageText gained team:u8 (wire change → .408).
+     New regression test explosion_damage_emits_popup in tests/parity.rs.
+
+Deployed 2026-07-04 (v0.5.4.407):
+  1) damage-number popups — getting hit now pops a floating "-N" over the
+     soldier's HP counter (Worms Armageddon style): spawns right at the
+     counter (FxDamageText/FxEvent::DamagePopup in src/renderer/fx.rs), rises
+     and decelerates (step_fx_text), fades from bright to dim red, despawns
+     after ~45 ticks. Spawned via game.emit_fx(...) at every real damage site
+     in src/game/loop_runner.rs (explosions, bat, hitscan weapons, fall
+     damage) — skips the instant-death take_damage(999) calls (drowning/
+     map-edge), which aren't meaningful HP deltas. Rides the existing
+     FxEvent/fx_events channel so it auto-replicates to live clients with no
+     StateMsg changes; fx_text classified not-networked in the
+     net_sync.rs/tests/parity.rs checklists, same as the existing particle fx
+     field. The HP counter's own tick-down animation (Soldier::displayed_hp)
+     already existed and needed no changes;
+  2) scenery objects now crater EXACTLY like terrain, replacing .406's
      all-or-nothing removal — SceneryObject carries a lazy per-pixel mask
      (Option<Vec<bool>>, world-pixel resolution over its footprint box;
      None = fully intact, so untouched objects cost nothing). Crater::carve
@@ -20,7 +110,7 @@ In working tree, NOT built/deployed (target 0.5.4.407):
      server, live client crater_log replay, both TAT loops) stays
      deterministic with no StateMsg changes; small-arms chips and torch
      nibbles (r<8) still leave scenery alone;
-  2) backflip jumps 10% higher — initial vertical launch velocity in the Y-button
+  3) backflip jumps 10% higher — initial vertical launch velocity in the Y-button
      handler (src/game/loop_runner.rs) raised from -6.5 to -6.82 (height scales
      with v^2, so velocity scales by sqrt(1.1)); lives inside simulate_with_muzzle
      so it's automatically correct across all 5 paths.
@@ -28,7 +118,7 @@ In working tree, NOT built/deployed (target 0.5.4.407):
 Deployed 2026-07-03 (v0.5.4.406):
   1) scenery objects craterable — explosions (crater radius >= 8) destroyed any
      scenery object whose footprint intersected the blast circle (whole-object
-     removal; refined to per-pixel masking above, not yet deployed);
+     removal; refined to per-pixel masking above, deployed 2026-07-04 v0.5.4.407);
   2) steep-angle bazooka shots no longer detonate on the shooter — the muzzle
      spawn sits inside the shooter's own hit box at high aim angles and the
      rocket soldier-hit check had no owner exclusion; Projectile now tracks

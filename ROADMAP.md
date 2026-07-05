@@ -80,6 +80,15 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Pistol rapid-fire audio pop fixed — sound clip capped below the burst-shot interval so the audio device is never still busy when the next shot fires (v0.5.4.402)
 - [x] Hand of Jerry camera now follows its targeting cursor vertically, matching Air Strike and Homing Missile (v0.5.4.402)
 - [x] Hand of Jerry's smash sound now plays at the water line instead of far below it when dropped over open water (v0.5.4.403)
+- [x] Damage numbers tally instead of stacking — hits landing within ~0.7s aggregate into one popup, HP counter holds 2s before draining; shotgun still pops one number per shell (v0.5.4.409/.410)
+- [x] Spawn points spread across the whole vertical range of the map (valley floors, mid-level ledges, underside platforms), never by mutating terrain — constraints relax instead of stamping artificial mounds (v0.5.4.410)
+- [x] Shotgun reworked to a single precise hitscan ray per trigger pull (up to 25 damage, 50 for both shots) — the pellet scatter at the impact point is purely cosmetic (v0.5.4.410)
+- [x] Chain-reaction damage (mine/barrel cascades, death explosions, full burns) tallies into one popup instead of a flurry of separate numbers (v0.5.4.411)
+- [x] Plasma torch tunnels widened (bore r15→r17) so soldiers always fit through (v0.5.4.411)
+- [x] Live match-start ready gate — server holds turn 1 and broadcasts frozen state until every client has loaded in; both players see turn 1 start on the same tick (v0.5.4.411/.412)
+- [x] Live damage popups always land on screen — camera holds on the damaged soldier during retreat (`damage_focus` now synced) instead of playing out off-camera (v0.5.4.412)
+- [x] Damage-popup colour now matches the victim's picked lobby colour instead of raw team index — correct in 4-colour live casual (v0.5.4.412)
+- [x] Shotgun damage now falls off with distance from the impact point — a clean, centred hit still deals the full 25, but a graze or a shot that clips ground beside a worm deals proportionally less, and a near-miss onto terrain next to a worm now splashes it instead of doing nothing (WA gun-blast model; v0.5.4.413, source — not yet built)
 
 ---
 

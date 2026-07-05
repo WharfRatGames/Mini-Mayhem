@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.411";
+const VERSION: &str = "0.5.4.412";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -661,6 +661,41 @@ fn main() {
         }
         show_match_intro(&mut fb, &mut buf, &mut input, &game, my_team, &intro_usernames, false);
     }
+    // Live start barrier: the server holds turn 1 until every client has sent
+    // its first InputMsg, and broadcasts frozen tick-0 states while it waits.
+    // Signal ready here (intro done, terrain built) and hold until the first
+    // ticking state (tick >= 1) arrives, so both players enter the arena — and
+    // see the turn timer start — on the same server tick. On reconnect the
+    // match is already ticking, so this falls through immediately.
+    if let Some(ref mut conn) = net_conn {
+        use net::msg::InputMsg;
+        let t = &game.teams[my_team];
+        let selected_weapon_kind = t.weapons.get(t.selected_weapon)
+            .map(|(k, _)| k.to_net_u8()).unwrap_or(0);
+        let n = t.soldiers.len().min(4);
+        let mut h = [0u8;4]; let mut u = [0u8;4]; let mut b = [0u8;4]; let mut g = [0u8;4];
+        let mut w: [String;4] = Default::default();
+        for i in 0..n {
+            h[i] = t.soldiers[i].hat_id; u[i] = t.soldiers[i].uniform_color_id;
+            b[i] = t.soldiers[i].boot_color_id; g[i] = t.soldiers[i].gun_style_id;
+            w[i] = t.soldiers[i].name.clone();
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+        'ready: while std::time::Instant::now() < deadline {
+            input.poll();
+            conn.send(&InputMsg {
+                tick: 0, held: vec![], pressed: vec![], released: vec![],
+                aim_angle: game.aim.angle, selected_weapon_kind,
+                hat_ids: h, uniform_color_ids: u, boot_color_ids: b, gun_style_ids: g,
+                worm_names: w.clone(), muzzle_x: 0.0, muzzle_y: 0.0, quit: false,
+            });
+            while let Some(state) = conn.try_recv::<net::msg::StateMsg>() {
+                if state.tick >= 1 { break 'ready; }
+            }
+            draw_msg(&mut buf, &mut fb, "WAITING FOR PLAYERS...");
+            std::thread::sleep(TICK_DURATION);
+        }
+    }
 
     // VS CPU: player picks their team; selecting immediately starts the game
     if is_vs_cpu {
@@ -1062,6 +1097,14 @@ fn main() {
                 {
                     cam.follow_always(e.pos);
                 }
+            } else if matches!(game.turn.phase, game::turn::TurnPhase::Retreating { .. })
+                && game.damage_focus.map_or(false, |(_, ticks)| ticks > 0)
+            {
+                // Hold on the damaged soldier during retreat (mirrors the
+                // update_camera Retreating branch) so the damage popup and HP
+                // countdown play out on screen. The server clears damage_focus
+                // when the acting player moves, so the hold cancels here too.
+                if let Some((pos, _)) = game.damage_focus { cam.follow(pos); }
             } else {
                 // Airborne soldiers from knockback — use nearest-to-center heuristic
                 // (same as update_camera Watching branch) to avoid flip-flopping.
