@@ -420,32 +420,92 @@ SHOP_CATALOG = [
 
 # ── Challenges ───────────────────────────────────────────────────────────────
 
-DAILY_CHALLENGES = [
-    {"id":"d_play",    "desc":"Play any match",       "stat":"matches", "target":1,  "scrap":30},
-    {"id":"d_win",     "desc":"Win a match",           "stat":"wins",    "target":1,  "scrap":60},
-    {"id":"d_kills",   "desc":"Get 3 kills",           "stat":"kills",   "target":3,  "scrap":45},
+def _wk(id_, weapon, label, target, scrap):
+    """Build a 'get N kills with WEAPON' challenge. `weapon` must match
+    WeaponKind::display_name() in src/physics/projectile.rs exactly;
+    `label` is the human-readable name shown in the description."""
+    plural = "kill" if target == 1 else "kills"
+    return {"id":id_, "desc":f"Get {target} {plural} with the {label}",
+            "stat":"weapon_kills", "weapon":weapon, "target":target, "scrap":scrap}
+
+DAILY_POOL = [
+    {"id":"d_play1",    "desc":"Play any match",           "stat":"matches", "target":1,  "scrap":30},
+    {"id":"d_play3",    "desc":"Play 3 matches",           "stat":"matches", "target":3,  "scrap":50},
+    {"id":"d_win1",     "desc":"Win a match",               "stat":"wins",    "target":1,  "scrap":60},
+    {"id":"d_win2",     "desc":"Win 2 matches",             "stat":"wins",    "target":2,  "scrap":90},
+    {"id":"d_kills3",   "desc":"Get 3 kills",               "stat":"kills",   "target":3,  "scrap":45},
+    {"id":"d_kills5",   "desc":"Get 5 kills",               "stat":"kills",   "target":5,  "scrap":65},
+    {"id":"d_kills1",   "desc":"Get 1 kill",                "stat":"kills",   "target":1,  "scrap":25},
+    {"id":"d_play2",    "desc":"Play 2 matches",            "stat":"matches", "target":2,  "scrap":40},
+    _wk("d_wk_bazooka",  "BAZOOKA",  "Bazooka",  2, 45),
+    _wk("d_wk_shotgun",  "SHOTGUN",  "Shotgun",  2, 45),
+    _wk("d_wk_grenade",  "GRENADE",  "Grenade",  2, 45),
+    _wk("d_wk_tnt",      "TNT",      "TNT",      1, 40),
+    _wk("d_wk_pistol",   "PISTOL",   "Pistol",   3, 40),
+    _wk("d_wk_mac10",    "MAC-10",   "MAC-10",   3, 40),
+    _wk("d_wk_bat",      "BAT",      "Baseball Bat", 1, 35),
+    _wk("d_wk_revolver", "REVOLVER", "Revolver", 2, 45),
 ]
-WEEKLY_CHALLENGES = [
-    {"id":"w_play",    "desc":"Play 5 matches",        "stat":"matches", "target":5,  "scrap":150},
-    {"id":"w_win",     "desc":"Win 3 matches",         "stat":"wins",    "target":3,  "scrap":250},
-    {"id":"w_kills",   "desc":"Get 10 kills",          "stat":"kills",   "target":10, "scrap":200},
+WEEKLY_POOL = [
+    {"id":"w_play5",    "desc":"Play 5 matches",            "stat":"matches", "target":5,  "scrap":150},
+    {"id":"w_play10",   "desc":"Play 10 matches",           "stat":"matches", "target":10, "scrap":220},
+    {"id":"w_win3",     "desc":"Win 3 matches",              "stat":"wins",    "target":3,  "scrap":250},
+    {"id":"w_win5",     "desc":"Win 5 matches",              "stat":"wins",    "target":5,  "scrap":320},
+    {"id":"w_kills10",  "desc":"Get 10 kills",               "stat":"kills",   "target":10, "scrap":200},
+    {"id":"w_kills20",  "desc":"Get 20 kills",               "stat":"kills",   "target":20, "scrap":300},
+    {"id":"w_win1",     "desc":"Win a match",                "stat":"wins",    "target":1,  "scrap":100},
+    _wk("w_wk_bazooka",  "BAZOOKA",       "Bazooka",       8,  230),
+    _wk("w_wk_shotgun",  "SHOTGUN",       "Shotgun",       8,  230),
+    _wk("w_wk_grenade",  "GRENADE",       "Grenade",       8,  230),
+    _wk("w_wk_tnt",      "TNT",           "TNT",           4,  210),
+    _wk("w_wk_pistol",   "PISTOL",        "Pistol",        10, 200),
+    _wk("w_wk_mac10",    "MAC-10",        "MAC-10",        10, 200),
+    _wk("w_wk_bat",      "BAT",           "Baseball Bat",  4,  190),
+    _wk("w_wk_revolver", "REVOLVER",      "Revolver",      6,  220),
+    _wk("w_wk_airstrike","AIR STRIKE",    "Air Strike",    3,  240),
+    _wk("w_wk_clump",    "CLUMP BOMB",    "Clump Bomb",    5,  220),
 ]
-ALL_CHALLENGES = {c["id"]: c for c in DAILY_CHALLENGES + WEEKLY_CHALLENGES}
+ALL_CHALLENGES = {c["id"]: c for c in DAILY_POOL + WEEKLY_POOL}
+
+# Number of challenges shown per period. Which ones is picked deterministically
+# from the pool above, seeded by the period string, so every player sees the
+# same rotating set on a given day/week (fair — nobody can reroll for an
+# easier set) but the set itself changes from one period to the next.
+DAILY_COUNT  = 3
+WEEKLY_COUNT = 3
 
 def daily_period():  return time.strftime("%Y-%m-%d")
 def weekly_period(): return time.strftime("%Y-W%W")
 
-def update_challenges(db, uid2, matches=0, wins=0, kills=0):
+def _select_pool(pool, period, count):
+    seed = int(hashlib.md5(period.encode()).hexdigest(), 16)
+    rng = random.Random(seed)
+    picked = list(pool)
+    rng.shuffle(picked)
+    return picked[:count]
+
+def active_daily_challenges(dp=None):
+    return _select_pool(DAILY_POOL, dp or daily_period(), DAILY_COUNT)
+
+def active_weekly_challenges(wp=None):
+    return _select_pool(WEEKLY_POOL, wp or weekly_period(), WEEKLY_COUNT)
+
+def _challenge_val(ch, matches, wins, kills, weapon_kills):
+    if ch["stat"] == "weapon_kills":
+        return int((weapon_kills or {}).get(ch["weapon"], 0))
+    return {"matches":matches, "wins":wins, "kills":kills}.get(ch["stat"], 0)
+
+def update_challenges(db, uid2, matches=0, wins=0, kills=0, weapon_kills=None):
     dp = daily_period(); wp = weekly_period()
-    for ch in DAILY_CHALLENGES:
-        val = {"matches":matches,"wins":wins,"kills":kills}.get(ch["stat"],0)
+    for ch in active_daily_challenges(dp):
+        val = _challenge_val(ch, matches, wins, kills, weapon_kills)
         if val <= 0: continue
         db.execute("""INSERT INTO player_challenges(user_id,challenge_id,period,progress)
                       VALUES(?,?,?,?) ON CONFLICT(user_id,challenge_id,period)
                       DO UPDATE SET progress=MIN(progress+excluded.progress,?)""",
                    (uid2, ch["id"], dp, val, ch["target"]))
-    for ch in WEEKLY_CHALLENGES:
-        val = {"matches":matches,"wins":wins,"kills":kills}.get(ch["stat"],0)
+    for ch in active_weekly_challenges(wp):
+        val = _challenge_val(ch, matches, wins, kills, weapon_kills)
         if val <= 0: continue
         db.execute("""INSERT INTO player_challenges(user_id,challenge_id,period,progress)
                       VALUES(?,?,?,?) ON CONFLICT(user_id,challenge_id,period)
@@ -792,10 +852,10 @@ def _handle(db, sock, peer_ip="?"):
         ).fetchall()
         prog = {(r[0],r[1]): (r[2],r[3]) for r in rows}
         out = []
-        for ch in DAILY_CHALLENGES:
+        for ch in active_daily_challenges(dp):
             p, claimed = prog.get((ch["id"], dp), (0, 0))
             out.append({**ch, "period_type":"daily", "period":dp, "progress":p, "claimed":bool(claimed)})
-        for ch in WEEKLY_CHALLENGES:
+        for ch in active_weekly_challenges(wp):
             p, claimed = prog.get((ch["id"], wp), (0, 0))
             out.append({**ch, "period_type":"weekly", "period":wp, "progress":p, "claimed":bool(claimed)})
         send_json(sock, 200, out)
@@ -1108,7 +1168,8 @@ def _handle(db, sock, peer_ip="?"):
         kills_val  = int(data.get("kills", 0))
         deaths_val = int(data.get("deaths", 0))
         wk_in      = data.get("weapon_kills", {})
-        if isinstance(wk_in, dict) and wk_in:
+        wk_in      = wk_in if isinstance(wk_in, dict) else {}
+        if wk_in:
             wk_row = db.execute(f"SELECT {wk_col} FROM matches WHERE id=?", (mid,)).fetchone()
             wk_cur = json.loads(wk_row[0] or "{}") if wk_row else {}
             for w, c in wk_in.items():
@@ -1140,6 +1201,8 @@ def _handle(db, sock, peer_ip="?"):
                     _, elo_delta_l = update_elo(db, opp_uid, uid2)
                     elo_delta = elo_delta_l
         kills_val = int(data.get("kills", 0))
+        wk_live = data.get("weapon_kills", {})
+        wk_live = wk_live if isinstance(wk_live, dict) else {}
         scrap_earned = 75 if is_win else 25
         db.execute("UPDATE users SET scrap=scrap+? WHERE id=?", (scrap_earned, uid2))
         # Record the live match in the matches table for history
@@ -1160,7 +1223,7 @@ def _handle(db, sock, peer_ip="?"):
             db.execute("INSERT INTO matches(code,p0,p1,seed,ranked,mode,done,winner,p0_kills,p1_kills,p0_scrap,p1_scrap,finished_at) VALUES(?,?,?,0,?,?,1,?,?,?,?,?,?)",
                        (f"live_{uid2}_{now_ts}", p0_live, p1_live, 1 if is_ranked else 0, 'live', uid_winner_live, p0_kills_live, p1_kills_live, p0_scrap_live, p1_scrap_live, now_ts))
         db.commit()
-        update_challenges(db, uid2, matches=1, wins=1 if is_win else 0, kills=kills_val)
+        update_challenges(db, uid2, matches=1, wins=1 if is_win else 0, kills=kills_val, weapon_kills=wk_live)
         new_elo = get_elo(uid2)
         send_json(sock, 200, {"ok": True, "elo_delta": elo_delta,
                               "new_elo": new_elo, "rank": rank_name(new_elo),
@@ -1195,7 +1258,8 @@ def _handle(db, sock, peer_ip="?"):
         deaths_col = f"p{my_slot_idx}_deaths"
         wk_col     = f"p{my_slot_idx}_weapon_kills"
         wk_in      = data.get("weapon_kills", {})
-        if isinstance(wk_in, dict) and wk_in:
+        wk_in      = wk_in if isinstance(wk_in, dict) else {}
+        if wk_in:
             wk_row = db.execute(f"SELECT {wk_col} FROM matches WHERE id=?", (mid,)).fetchone()
             wk_cur = json.loads(wk_row[0] or "{}") if wk_row else {}
             for w, c in wk_in.items():
@@ -1219,7 +1283,7 @@ def _handle(db, sock, peer_ip="?"):
         scrap_col_tat = f"p{my_slot_tat}_scrap"
         db.execute(f"UPDATE matches SET finished_at=?, {scrap_col_tat}=? WHERE id=?", (int(time.time()), scrap_earned, mid))
         db.commit()
-        update_challenges(db, uid2, matches=1, wins=1 if is_win_tat else 0, kills=kills_val)
+        update_challenges(db, uid2, matches=1, wins=1 if is_win_tat else 0, kills=kills_val, weapon_kills=wk_in)
         new_elo = get_elo(uid2)
         send_json(sock, 200, {"ok": True, "elo_delta": my_delta,
                               "new_elo": new_elo, "rank": rank_name(new_elo),

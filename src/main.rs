@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.414";
+const VERSION: &str = "0.5.4.415";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -28,21 +28,26 @@ use game::{
 const TICK_HZ:       u64      = 30;
 const TICK_DURATION: Duration = Duration::from_micros(1_000_000 / TICK_HZ);
 
+// Tell keymon to stop intercepting the MENU button so we can read KEY_ESC and
+// show the in-game bug reporter instead. Every gameplay loop that wants Menu
+// to open the bug reporter (instead of the OS's own menu silently swallowing
+// the button, which looks like a freeze — no in-game screen ever appears)
+// must hold one of these for its duration. Dropped on return to the title
+// screen, which gets normal OS Menu behaviour back.
+#[cfg(not(feature = "desktop"))]
+struct MenuGuard;
+#[cfg(not(feature = "desktop"))]
+impl Drop for MenuGuard {
+    fn drop(&mut self) { let _ = std::fs::remove_file("/tmp/disable_menu_button"); }
+}
+#[cfg(not(feature = "desktop"))]
+fn menu_guard() -> MenuGuard { let _ = std::fs::write("/tmp/disable_menu_button", b""); MenuGuard }
+
 fn main() {
     // Release any audio/device fds inherited from the Onion launcher so that
     // aplay can open the ALSA device cleanly for sound effects.
     #[cfg(not(feature = "desktop"))]
     unsafe { for fd in 3i32..=255 { libc::close(fd); } }
-
-    // Tell keymon to stop intercepting the MENU button so we can read KEY_ESC.
-    // Written just before the inner game loop and removed on Drop (including on
-    // `continue 'game` back to title). Title screen gets normal OS Menu behaviour.
-    #[cfg(not(feature = "desktop"))]
-    struct MenuGuard;
-    #[cfg(not(feature = "desktop"))]
-    impl Drop for MenuGuard {
-        fn drop(&mut self) { let _ = std::fs::remove_file("/tmp/disable_menu_button"); }
-    }
 
     // ── Open hardware ─────────────────────────────────────────────────────────
     let mut fb = Framebuffer::open()
@@ -759,7 +764,7 @@ fn main() {
     // Enable Menu→KEY_ESC for the bug reporter during gameplay only.
     // Dropped on any `continue 'game` so the title screen gets normal OS Menu.
     #[cfg(not(feature = "desktop"))]
-    let _menu_guard = { let _ = std::fs::write("/tmp/disable_menu_button", b""); MenuGuard };
+    let _menu_guard = menu_guard();
     // Absolute-deadline pacing: sleeping the *remainder* each frame lets the
     // ~1-2ms Linux sleep overshoot compound into ~35-36ms frames (~28fps).
     // Advancing a fixed deadline instead absorbs overshoot in the next frame.
@@ -2888,6 +2893,12 @@ fn run_tat_game(
     loop { input.poll(); if !input.held(input::Button::A) { break; } std::thread::sleep(TICK_DURATION); }
 
     // Player takes their turn interactively, including retreat after firing.
+    // Enable Menu->bug reporter for this turn (see main()'s MenuGuard: without
+    // this, keymon intercepts MENU itself and the game looks frozen — the
+    // button press never reaches us to open the in-game reporter).
+    #[cfg(not(feature = "desktop"))]
+    let _menu_guard = menu_guard();
+    let mut bug_reporter: Option<bug_report::BugReporter> = None;
     let mut recorded_inputs: Vec<u16> = Vec::new();
     let mut fired = false;
     let mut pre_angle = game.aim.angle;
@@ -2897,6 +2908,23 @@ fn run_tat_game(
     loop {
         let frame_start = std::time::Instant::now();
         input.poll();
+
+        if bug_reporter.is_none() && input.just_pressed(input::Button::Menu) {
+            bug_reporter = Some(bug_report::BugReporter::capture(buf, cam.left_edge()));
+        }
+        if let Some(ref mut reporter) = bug_reporter {
+            let cancelled = reporter.tick(input);
+            reporter.draw(buf, cam.left_edge());
+            buf.blit_to_fb(fb, cam.left_edge(), cam.top_edge());
+            if cancelled || reporter.is_done() {
+                bug_reporter = None;
+            }
+            let elapsed = frame_start.elapsed().as_micros() as u64;
+            if elapsed < 33_333 {
+                std::thread::sleep(std::time::Duration::from_micros(33_333 - elapsed));
+            }
+            continue;
+        }
         if !fired {
             pre_angle = game.aim.angle;
             pre_power = game.aim.power;

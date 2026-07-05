@@ -152,9 +152,9 @@ fn team_loadout() -> Vec<(WeaponKind, Option<u32>)> {
         (WeaponKind::Uzi,      None),    // infinite (MAC-10)
         (WeaponKind::ClusterBomb,     Some(2)), // 2 uses
         (WeaponKind::MolotovCocktail, Some(2)), // 2 uses
-        (WeaponKind::Tnt,          Some(1)), // 1 use; locked until 5 rotations
+        (WeaponKind::Tnt,          Some(1)), // 1 use
         (WeaponKind::Landmine,     Some(2)), // 2 uses
-        (WeaponKind::BaseballBat,  Some(1)), // 1 use; locked until 3 full cycles
+        (WeaponKind::BaseballBat,  Some(1)), // 1 use
         (WeaponKind::PlasmaTorch,  Some(3)), // 3 uses; terrain tunneling tool
         (WeaponKind::HomingMissile, Some(1)), // 1 use; locked until 2 full cycles
     ];

@@ -273,6 +273,15 @@ pub struct NetSoldier {
     /// right death-message flavour pool (it generates the text locally).
     pub death_cause_u8:   u8,
     pub on_fire_ticks:    u8,
+    /// Weapon credited for the most recent damaging hit (WeaponKind::to_net_u8),
+    /// or 255 if none yet. Needed so the live client can report per-weapon kill
+    /// stats (missions, leaderboards) after the match — without this the live
+    /// client's local `kill_weapon` field never updates (it runs no sim) and
+    /// every live kill would report as "UNKNOWN". Survives a water/fall death
+    /// (kill credit is whichever weapon caused the fatal knockback, not the
+    /// drowning itself) because it's only overwritten by a new hit, never
+    /// cleared when death_cause becomes Water/Fall.
+    pub kill_weapon_u8:   u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

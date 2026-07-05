@@ -1373,7 +1373,6 @@ impl Terrain {
         let seg_y: Vec<i32> = wide.iter()
             .map(|s| s.iter().map(|&(_, y)| y).sum::<i32>() / s.len() as i32)
             .collect();
-
         // ── Greedy vertically-dispersed selection ────────────────────────────────
         // First pick: the widest landform. Every later pick maximizes the minimum
         // vertical distance to the soldiers already placed, with (capped) width as
@@ -1435,27 +1434,30 @@ impl Terrain {
 
         // Last resort (very fragmented/sparse half): the natural landforms couldn't
         // seat the whole team. NEVER mutate the terrain (no artificial mounds or
-        // platforms) — instead progressively relax the separation constraints over
-        // the same candidate pool. With multi-level candidates this rarely goes
-        // past the first step.
+        // platforms) — instead greedily disperse across the same candidate pool,
+        // same idea as the main wide-landform pass: each pick maximizes the worst-
+        // case separation (as a fraction of MIN_SEP/MIN_SEP_V, matching sep_ok's
+        // OR rule) to whoever's already placed. A first-fit left-to-right scan here
+        // would clump the whole team on the first usable cluster of columns on a
+        // badly fragmented map (e.g. a seed with zero landforms >=60px wide) even
+        // though a lone usable column exists far away — greedy dispersion picks
+        // that far column instead. Integer math only (no floats — must stay
+        // identical across x86/ARM).
         if spawns.len() < count {
-            // Step 1: halve the separation requirements.
-            for &(cx, cy) in &cands {
-                if spawns.len() >= count { break; }
-                if sep_ok(&used, cx, cy, MIN_SEP / 2, MIN_SEP_V / 2) {
-                    spawns.push(WorldPos::new(cx as f32, cy as f32));
-                    used.push((cx, cy));
-                }
-            }
-        }
-        if spawns.len() < count {
-            // Step 2: any candidate column, ignoring separation entirely (just
-            // never the exact same spot twice).
-            for &(cx, cy) in &cands {
-                if spawns.len() >= count { break; }
-                if used.iter().all(|&(ux, uy)| ux != cx || uy != cy) {
-                    spawns.push(WorldPos::new(cx as f32, cy as f32));
-                    used.push((cx, cy));
+            while spawns.len() < count {
+                let pick = cands.iter()
+                    .filter(|&&(cx, cy)| used.iter().all(|&(ux, uy)| ux != cx || uy != cy))
+                    .max_by_key(|&&(cx, cy)| {
+                        used.iter().map(|&(ux, uy)| {
+                            let dx = (ux - cx).abs() * 1000 / MIN_SEP;
+                            let dy = (uy - cy).abs() * 1000 / MIN_SEP_V;
+                            dx.max(dy)
+                        }).min().unwrap_or(i32::MAX)
+                    })
+                    .copied();
+                match pick {
+                    Some((cx, cy)) => { spawns.push(WorldPos::new(cx as f32, cy as f32)); used.push((cx, cy)); }
+                    None => break,
                 }
             }
         }

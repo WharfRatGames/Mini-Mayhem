@@ -1376,11 +1376,9 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
-    // TNT: instant placement on A press — no charge needed, locked until turn 5.
+    // TNT: instant placement on A press — no charge needed.
     if weapon == WeaponKind::Tnt {
-        if input.just_pressed(Button::A) && game.server_fire_grace == 0
-           && game.turn.turn_number >= 5 * game.teams.len() as u32
-        {
+        if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
             fire_tnt(game, ti, si);
@@ -2167,6 +2165,7 @@ fn fire_shotgun(game: &mut GameState, muzzle_override: Option<(f32, f32)>) {
             let vy = dy * SHOT_FORCE * falloff - 1.0;
             let sol = &mut game.teams[t].soldiers[s];
             sol.death_cause = crate::game::soldier::DeathCause::Explosion;
+            sol.kill_weapon = Some(crate::physics::WeaponKind::Shotgun);
             sol.take_damage(dmg);
             // Damage shows per SHOT: collapse the settle window so this shell's
             // number pops immediately; the second shell tallies separately.
@@ -3448,26 +3447,6 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, dark);
                 buf.fill_rect(icon_cx - 5, icon_cy - 3, 10, 6, icol);
             }
-        }
-
-        // TNT lock overlay: padlock icon + rotation countdown (5 complete rotations)
-        let tnt_unlock = 5 * num_teams as u32;
-        if *kind == WeaponKind::Tnt && turn_number < tnt_unlock {
-            let team_count = (num_teams as u32).max(1);
-            let rotations_done = turn_number / team_count;
-            let rotations_left = 5u32.saturating_sub(rotations_done);
-            let lk = Bgra::new(180, 180, 60); // golden lock
-            let lkd = Bgra::new(100, 100, 30);
-            buf.fill_rect(icon_cx - 5, icon_cy - 12, 3, 8, lk);
-            buf.fill_rect(icon_cx + 2, icon_cy - 12, 3, 8, lk);
-            buf.fill_rect(icon_cx - 5, icon_cy - 14, 10, 3, lk);
-            buf.fill_rect(icon_cx - 4, icon_cy - 13, 8, 2, lkd);
-            buf.fill_rect(icon_cx - 7, icon_cy - 5, 14, 10, lk);
-            buf.fill_rect(icon_cx - 6, icon_cy - 4, 12, 8, lkd);
-            buf.fill_rect(icon_cx - 1, icon_cy - 3,  2, 2, Bgra::new(30, 30, 20));
-            buf.fill_rect(icon_cx - 1, icon_cy - 1,  2, 4, Bgra::new(30, 30, 20));
-            let cdown = format!("T-{}", rotations_left);
-            draw_str(buf, &cdown, cx + cell_w - str_width(&cdown) - 6, cy + cell_h - 18, Bgra::new(220, 200, 60));
         }
 
         // Homing missile lock overlay: locked until 2 full turn cycles

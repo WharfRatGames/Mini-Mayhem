@@ -43,6 +43,7 @@ struct SoldierSnap {
     hp_countdown_delay: u32,
     on_fire_ticks_u8: u8,
     death_cause_u8: u8,
+    kill_weapon_u8: u8,
 }
 
 #[derive(Debug, PartialEq)]
@@ -238,7 +239,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
                 hp_display_ticks: _,        // not synced: client-local visibility timer
                 displayed_hp: _,    // not synced: client-local animation toward hp
                 damage_settle: _,   // not synced: server-side tally window
-                kill_weapon: _,     // not synced: server-side kill credit
+                kill_weapon,        // → kill_weapon_u8 (255 = None)
             } = s;
             let (state_disc, airborne_vel) = match state {
                 SoldierState::Idle           => (0, None),
@@ -263,6 +264,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
                         DeathCause::Fall => 2, DeathCause::Water => 3,
                     }
                 },
+                kill_weapon_u8: kill_weapon.map(|w| w.to_net_u8()).unwrap_or(255),
             }
         }).collect();
         let weapons = weapons.iter()

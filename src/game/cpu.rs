@@ -55,12 +55,8 @@ impl CpuState {
         };
 
         // Pick a random usable weapon with ammo remaining (infinite = None).
-        // TNT is locked until turn 5*team_count, same as the player input path
-        // (see server/main.rs) — the CPU must obey the same weapon-cycle lock.
-        let tnt_unlocked = game.turn.turn_number >= 5 * game.teams.len() as u32;
         let candidates: Vec<usize> = game.teams[cpu_team].weapons.iter().enumerate()
-            .filter(|(_, (kind, ammo))| AI_USABLE_WEAPONS.contains(kind) && ammo.map_or(true, |a| a > 0)
-                && (*kind != WeaponKind::Tnt || tnt_unlocked))
+            .filter(|(_, (kind, ammo))| AI_USABLE_WEAPONS.contains(kind) && ammo.map_or(true, |a| a > 0))
             .map(|(i, _)| i)
             .collect();
         let weapon_idx = if candidates.is_empty() { 0 } else {

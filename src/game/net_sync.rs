@@ -52,6 +52,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                     }
                 },
                 on_fire_ticks: s.on_fire_ticks.min(255) as u8,
+                kill_weapon_u8: s.kill_weapon.map(|w| w.to_net_u8()).unwrap_or(255),
             }
         })).collect(),
         projectiles: game.projectiles.iter().map(|p| {
@@ -221,6 +222,11 @@ pub fn apply_server_state(
                         3 => DeathCause::Water,
                         _ => DeathCause::Generic,
                     }
+                };
+                soldier.kill_weapon = if ns.kill_weapon_u8 == 255 {
+                    None
+                } else {
+                    Some(crate::physics::WeaponKind::from_net_u8(ns.kill_weapon_u8))
                 };
                 // Sync opponent cosmetics and names (local player's own are set from roster at game start)
                 if ns.team != my_team {
@@ -598,6 +604,9 @@ fn _soldier_parity_checklist(s: &crate::game::soldier::Soldier) {
         hp_countdown_delay: _, on_fire_ticks: _, death_cause: _,
         pending_damage: _, // folded into hp_countdown_delay on the wire (full hold while tallying)
         hat_id: _, uniform_color_id: _, boot_color_id: _, gun_style_id: _,
+        kill_weapon: _,   // → kill_weapon_u8 (255 = None); needed client-side to
+                          // report per-weapon kill stats (missions/leaderboards)
+                          // after a live match, since the live client runs no sim
         // ── Not networked ──
         team: _,          // not synced: structural identity, fixed at game setup
         fall: _,          // not synced: server-side fall-damage tracker
@@ -607,7 +616,6 @@ fn _soldier_parity_checklist(s: &crate::game::soldier::Soldier) {
         hp_display_ticks: _,        // not synced: client-local HP-box visibility timer
         displayed_hp: _,  // not synced: client-local animation toward hp
         damage_settle: _, // not synced: server-side tally window; popup ships via fx_events
-        kill_weapon: _,   // not synced: server-side kill credit; result arrives as a message
     } = s;
 }
 

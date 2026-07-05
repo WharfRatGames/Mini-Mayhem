@@ -222,6 +222,7 @@ impl WeaponKind {
             Self::Uzi             => "MAC-10",
             Self::MolotovCocktail => "MOLOTOV",
             Self::Pistol          => "PISTOL",
+            Self::BaseballBat     => "BAT",
             _                     => "WEAPON",
         }
     }

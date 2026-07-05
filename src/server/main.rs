@@ -572,10 +572,17 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
             for (si, soldier) in team.soldiers.iter().enumerate() {
                 let (hp_pre, alive_pre) = hp_before[ti][si];
                 use arty::game::soldier::DeathCause;
+                let weapon_label = soldier.kill_weapon.map(|w| w.display_name().to_string());
                 let cause_label = match soldier.death_cause {
-                    DeathCause::Fall  => "FALL".to_string(),
-                    DeathCause::Water => "DROWNING".to_string(),
-                    _ => soldier.kill_weapon.map(|w| w.display_name().to_string()).unwrap_or_else(|| "UNKNOWN".to_string()),
+                    DeathCause::Fall => match &weapon_label {
+                        Some(w) => format!("FALL ({w})"),
+                        None    => "FALL".to_string(),
+                    },
+                    DeathCause::Water => match &weapon_label {
+                        Some(w) => format!("DROWNING ({w})"),
+                        None    => "DROWNING".to_string(),
+                    },
+                    _ => weapon_label.unwrap_or_else(|| "UNKNOWN".to_string()),
                 };
                 if soldier.hp < hp_pre {
                     let dmg = hp_pre - soldier.hp;
@@ -1376,7 +1383,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.414";
+const REQUIRED_VERSION: &str = "0.5.4.415";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION
