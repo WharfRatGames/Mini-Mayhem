@@ -199,6 +199,8 @@ pub struct NetRope {
     pub hook_y:    f32,
     pub flying:    bool,
     pub length:    f32,
+    /// Wrap-point chain (anchor→soldier order) so the client draws the bent rope.
+    pub wrap:      Vec<(f32, f32)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

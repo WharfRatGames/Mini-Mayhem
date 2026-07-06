@@ -110,6 +110,16 @@ fn apply_anim(bones: &mut [Bone; N_BONES], anim: &SoldierAnim, f: f32) {
                 bones[ARM_L].angle = lean * 0.5 - 0.4;
             }
         }
+        SoldierAnim::RopeSwing { vel_x, vel_y } => {
+            let root_angle = vel_x.atan2(-vel_y);
+            bones[TORSO].angle = 0.0;
+            bones[HEAD].angle  = 0.05;
+            bones[LEG_R].angle = PI - 0.08;
+            bones[LEG_L].angle = PI + 0.08;
+            bones[ARM_R].angle = std::f32::consts::FRAC_PI_2 - 0.25;
+            bones[ARM_L].angle = std::f32::consts::FRAC_PI_2 - 0.55;
+            let _ = root_angle; // this dev tool doesn't apply root rotation
+        }
         SoldierAnim::Dead => {
             let flop = std::f32::consts::FRAC_PI_2 * f;
             bones[TORSO].angle = flop;

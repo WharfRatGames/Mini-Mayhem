@@ -298,30 +298,33 @@ fn draw_boulder(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 fn draw_wooden_crate(buf: &mut Scaled, cx: i32, by: i32) {
+    // Half-size crate: all coordinates/extents halved from the original art
+    // (which matched the (10,18) footprint before it was halved to (5,9)
+    // in terrain.rs).
     let wood  = Bgra::new(185, 145, 80);
     let dark  = Bgra::new(90, 65, 28);
     let light = Bgra::new(220, 185, 115);
     let plank = Bgra::new(160, 120, 60);
     // Box outline
-    buf.fill_rect(cx - 10, by - 18, 21, 18, dark);
+    buf.fill_rect(cx - 5, by - 9, 10, 9, dark);
     // Box fill
-    buf.fill_rect(cx - 9, by - 17, 19, 16, wood);
+    buf.fill_rect(cx - 4, by - 8, 9, 8, wood);
     // Top highlight
-    buf.fill_rect(cx - 9, by - 17, 19, 2, light);
-    buf.fill_rect(cx - 9, by - 17, 2, 16, light);
-    // Plank lines (horizontal)
-    buf.fill_rect(cx - 9, by - 11, 19, 1, dark);
-    buf.fill_rect(cx - 9, by - 10, 19, 1, plank);
+    buf.fill_rect(cx - 4, by - 8, 9, 1, light);
+    buf.fill_rect(cx - 4, by - 8, 1, 8, light);
+    // Plank line (horizontal)
+    buf.fill_rect(cx - 4, by - 5, 9, 1, dark);
+    buf.fill_rect(cx - 4, by - 4, 9, 1, plank);
     // Cross braces (X pattern)
-    for i in 0..14i32 {
-        buf.set_pixel(cx - 9 + i, by - 16 + i, dark);
-        buf.set_pixel(cx + 9 - i, by - 16 + i, dark);
+    for i in 0..7i32 {
+        buf.set_pixel(cx - 4 + i, by - 7 + i, dark);
+        buf.set_pixel(cx + 4 - i, by - 7 + i, dark);
     }
     // Nail dots at corners
-    buf.fill_rect(cx - 8, by - 16, 2, 2, dark);
-    buf.fill_rect(cx + 7, by - 16, 2, 2, dark);
-    buf.fill_rect(cx - 8, by - 3,  2, 2, dark);
-    buf.fill_rect(cx + 7, by - 3,  2, 2, dark);
+    buf.fill_rect(cx - 4, by - 7, 1, 1, dark);
+    buf.fill_rect(cx + 3, by - 7, 1, 1, dark);
+    buf.fill_rect(cx - 4, by - 2, 1, 1, dark);
+    buf.fill_rect(cx + 3, by - 2, 1, 1, dark);
 }
 
 fn draw_dead_stump(buf: &mut Scaled, cx: i32, by: i32) {

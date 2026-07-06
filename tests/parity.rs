@@ -82,7 +82,7 @@ struct BlackHoleSnap { pos: (f32, f32), lifetime: u32 }
 struct FirePatchSnap { pos: (f32, f32), vel: (f32, f32), landed: bool, lifetime: u32 }
 
 #[derive(Debug, PartialEq)]
-struct RopeSnap { anchor: (f32, f32), hook: (f32, f32), flying: bool, length: f32 }
+struct RopeSnap { anchor: (f32, f32), hook: (f32, f32), flying: bool, length: f32, wrap: Vec<(f32, f32)> }
 // rope.hook_vel is NOT synced: always reset to Vec2::ZERO in apply_server_state.
 
 #[derive(Debug, PartialEq)]
@@ -198,6 +198,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         bullet_trails:       _, // client-only visual trail
         rope_session:        _, // local acting-phase flag
         rope_used_this_turn: _, // local charge-consumption flag
+        rope_retreat_ticks:  _, // local rope-retreat countdown
         tnt_placed:          _, // local watching-phase flag
         crate_watch_ticks:   _, // local pre-turn crate-camera phase
         smoke_particles:     _, // client-only bazooka smoke
@@ -355,12 +356,13 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
     // ── rope ──────────────────────────────────────────────────────────────────
     let rope = rope.as_ref().map(|r| {
         let arty::game::state::RopeState {
-            anchor, hook, flying, length,
+            anchor, hook, flying, length, wrap,
             hook_vel: _, // not synced: apply_server_state resets to zero
         } = r;
         RopeSnap {
             anchor: (anchor.x, anchor.y), hook: (hook.x, hook.y),
             flying: *flying, length: *length,
+            wrap: wrap.iter().map(|p| (p.x, p.y)).collect(),
         }
     });
 
@@ -545,6 +547,7 @@ fn round_trip_preserves_synced_state() {
         flying:   true,
         length:   60.0,
         hook_vel: Vec2::new(1.0, -2.0),
+        wrap:     vec![WorldPos::new(510.0, 90.0), WorldPos::new(505.0, 95.0)],
     });
 
     // Plasma torch

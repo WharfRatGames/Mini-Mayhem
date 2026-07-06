@@ -119,6 +119,12 @@ pub struct RopeState {
     pub hook:     WorldPos,
     /// Hook velocity while flying.
     pub hook_vel: crate::world::Vec2,
+    /// Wrap-point chain: intermediate pivots the rope currently bends over, in
+    /// order from `anchor` toward the soldier. Empty = straight rope. The soldier
+    /// swings around the last wrap point (or `anchor` if empty). Grows when the
+    /// rope catches a corner, shrinks when it swings back and straightens out —
+    /// the reference game's multi-segment wrap/unwrap.
+    pub wrap:     Vec<WorldPos>,
 }
 
 /// A permanent grave marker left at the position a soldier died.
@@ -375,6 +381,9 @@ pub struct GameState {
     pub rope_session: bool,
     /// True if the grapple was fired at least once this turn — 1 charge consumed at turn end.
     pub rope_used_this_turn: bool,
+    /// Countdown of the post-rope move window: >0 after the rope is put away, keeping the
+    /// acting phase alive briefly so the player can retreat. Local turn-flow flag.
+    pub rope_retreat_ticks: u32,
     /// TNT fuse is burning in Watching phase; player may move to escape blast radius.
     pub tnt_placed: bool,
     /// Pre-turn crate phase: player input blocked, camera follows crate.
@@ -455,6 +464,7 @@ impl GameState {
             rope: None,
             rope_session: false,
             rope_used_this_turn: false,
+            rope_retreat_ticks: 0,
             tnt_placed: false,
             crate_watch_ticks: 0,
             messages: Vec::new(),

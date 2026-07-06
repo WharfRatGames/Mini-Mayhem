@@ -137,6 +137,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
             anchor_x: r.anchor.x, anchor_y: r.anchor.y,
             hook_x: r.hook.x, hook_y: r.hook.y,
             flying: r.flying, length: r.length,
+            wrap: r.wrap.iter().map(|p| (p.x, p.y)).collect(),
         }),
         team_names: game.teams.iter().map(|t| t.name.clone()).collect(),
         team_colors: game.teams.iter().map(|t| t.color_id).collect(),
@@ -462,6 +463,7 @@ pub fn apply_server_state(
             flying:   nr.flying,
             length:   nr.length,
             hook_vel: crate::world::Vec2::new(0.0, 0.0),
+            wrap:     nr.wrap.iter().map(|&(x, y)| WorldPos::new(x, y)).collect(),
         });
     }
 
@@ -572,7 +574,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         scrap_earned: _, explosions: _, active_worm_hit: _, retreat_locked: _,
         server_fire_grace: _, shotgun_shots_left: _,
         revolver_shots_left: _, minigun_shots_left: _, minigun_fire_timer: _, uzi_shots_left: _, uzi_fire_timer: _, pistol_shots_left: _, pistol_fire_timer: _, bullet_trails: _, rope_session: _,
-        rope_used_this_turn: _, tnt_placed: _, crate_watch_ticks: _,
+        rope_used_this_turn: _, rope_retreat_ticks: _, tnt_placed: _, crate_watch_ticks: _,
         smoke_particles: _, fx: _, fx_text: _, pending_deaths: _,
         meteor_chain: _, // not synced: transient per-tick flag, reset each tick
     } = g;
@@ -724,7 +726,7 @@ fn _grave_parity_checklist(g: &crate::game::state::Grave) {
 fn _rope_parity_checklist(r: &crate::game::state::RopeState) {
     let crate::game::state::RopeState {
         // ── Synced via NetRope ──
-        anchor: _, length: _, flying: _, hook: _,
+        anchor: _, length: _, flying: _, hook: _, wrap: _,
         // ── Not networked ──
         hook_vel: _, // not synced: server-side physics; client draws from positions
     } = r;

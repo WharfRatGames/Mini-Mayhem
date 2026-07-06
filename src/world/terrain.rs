@@ -193,7 +193,7 @@ impl SceneryObject {
             Theme::Rugged => match self.sprite {
                 0 => (9, 38),  // pine tree canopy (was 11,40)
                 1 => (12, 16), // boulder (was 15,20)
-                2 => (10, 18), // wooden crate
+                2 => (5, 9),   // wooden crate (half size)
                 3 => (12, 14), // dead stump
                 4 => (18, 22), // broken wall
                 5 => (11, 12), // lichen rock (was 14,15)

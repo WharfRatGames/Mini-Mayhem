@@ -20,13 +20,23 @@ use super::state::{GameState, GameMessage, RopeState};
 use super::soldier::SoldierState;
 
 // ── Grappling hook constants ──────────────────────────────────────────────────
-const ROPE_HOOK_SPEED:    f32 = 40.0;  // px/tick
-const ROPE_SWING_FORCE:   f32 = 2.0;   // tangential impulse px/tick² — snappy WA swing authority
-const ROPE_GRAVITY:       f32 = 2.5;   // pendulum gravity — fast, Worms-like build-up
-const ROPE_RETRACT:       f32 = 4.0;   // px/tick rope length change — snappy reel in/out
+const ROPE_HOOK_SPEED:    f32 = 33.0;  // px/tick — reference extends 20 px/frame @50fps = 1000 px/s → /30fps ≈ 33
+const ROPE_SWING_FORCE:   f32 = 0.27;  // tangential impulse — reference: 0.1 px/frame² @50fps (0x1999), ratio 0.1/0.3 to gravity
+const ROPE_GRAVITY:       f32 = 0.8;   // pendulum gravity, matched to reference: 0.3 px/frame² @ 50fps
+                                       // → 0.3·50²=750 px/s² → /30² ≈ 0.83 px/tick² (worm-scale ~0.73); use 0.8
+const ROPE_RETRACT:       f32 = 6.7;   // px/tick reel — reference: 4 px/frame @50fps (0x40000) = 200 px/s → /30
+                                       // reference rope: 8px segments, 64 max = 512px, min ~10px (ours kept screen-tuned below)
 const ROPE_MIN_LEN:       f32 = 20.0;
 const ROPE_MAX_LEN:       f32 = 320.0;
 const ROPE_MAX_SPEED:     f32 = 40.0;  // px/tick per component — prevents tunnelling
+// Firing-angle limit: restricted mode can't fire below horizontal; unrestricted
+// allows 54° below horizon (-0.9425 rad). Compile-time toggle to avoid a synced field.
+const ROPE_MAX_DOWN_ANGLE:            f32 = 0.0;
+const ROPE_MAX_DOWN_ANGLE_UNRESTRICT: f32 = -0.9425;
+const ROPE_UNRESTRICT:                bool = false;
+const ROPE_KNOCK_STRENGTH: f32 = 0.7;  // fraction of roper velocity imparted to a knocked soldier
+const ROPE_KNOCK_MIN_SPEED: f32 = 3.0; // roper must move at least this fast to knock
+const ROPE_RETREAT_TICKS:  u32 = 45;   // ~1.5s move window after the rope is put away
 
 // ── Message pools ─────────────────────────────────────────────────────────────
 
@@ -330,6 +340,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             game.pistol_fire_timer   = 0;
             game.rope                = None;
             game.rope_session        = false;
+            game.rope_retreat_ticks  = 0;
             game.tnt_placed          = false;
             game.plasma_torch        = None;
             game.garcia              = None;
@@ -681,6 +692,15 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
     }
 
     apply_all_gravity(game, input);
+
+    // Rope-retreat window: once the rope is put away (soldier off the rope) the
+    // session stays alive for a short move window, then ends the acting phase.
+    if game.rope_retreat_ticks > 0 && game.rope.is_none() {
+        game.rope_retreat_ticks -= 1;
+        if game.rope_retreat_ticks == 0 {
+            game.rope_session = false;
+        }
+    }
 }
 
 fn process_camera_pan(cam: &mut Camera, input: &InputState, game: &GameState) {
@@ -1232,10 +1252,40 @@ pub fn process_aim(game: &mut GameState, input: &InputState, aim_angle_override:
     }
 }
 
+/// True if the segment a→b is free of solid terrain (endpoints excluded), sampled every 3px.
+fn rope_seg_clear(terrain: &crate::world::Terrain, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
+    let dx = bx - ax; let dy = by - ay;
+    let dist = (dx * dx + dy * dy).sqrt().max(0.1);
+    let steps = (dist / 3.0).ceil() as u32;
+    for s in 1..steps {
+        let t = s as f32 / steps as f32;
+        if terrain.is_solid((ax + dx * t) as i32, (ay + dy * t) as i32) { return false; }
+    }
+    true
+}
+
+/// Marching from a toward b, returns the distance of the last clear sample before the
+/// first solid pixel (the corner the rope bends over), or None if the segment is clear.
+fn rope_find_corner(terrain: &crate::world::Terrain, ax: f32, ay: f32, bx: f32, by: f32) -> Option<f32> {
+    let dx = bx - ax; let dy = by - ay;
+    let dist = (dx * dx + dy * dy).sqrt().max(0.1);
+    let ux = dx / dist; let uy = dy / dist;
+    let steps = (dist / 3.0) as u32;
+    let mut last_clear = 0.0f32;
+    for step in 1..=steps {
+        let d = step as f32 * 3.0;
+        if terrain.is_solid((ax + ux * d) as i32, (ay + uy * d) as i32) { return Some(last_clear); }
+        last_clear = d;
+    }
+    None
+}
+
 fn fire_rope_hook(game: &mut GameState, ti: usize, si: usize) {
     use crate::world::{WorldPos, Vec2};
     let fm    = game.teams[ti].soldiers[si].facing as f32;
-    let angle = game.aim.angle;
+    // Firing-angle limit: can't fire below horizontal unless unrestricted (54° below).
+    let limit = if ROPE_UNRESTRICT { ROPE_MAX_DOWN_ANGLE_UNRESTRICT } else { ROPE_MAX_DOWN_ANGLE };
+    let angle = game.aim.angle.max(limit);
     let mx = game.teams[ti].soldiers[si].pos.x + fm * 10.0;
     let my = game.teams[ti].soldiers[si].pos.y - 8.0;
     let muzzle = WorldPos::new(mx, my);
@@ -1247,6 +1297,7 @@ fn fire_rope_hook(game: &mut GameState, ti: usize, si: usize) {
         flying:   true,
         hook:     muzzle,
         hook_vel: Vec2::new(hvx, hvy),
+        wrap:     Vec::new(),
     });
     // Soldier stays on the ground while hook is flying — becomes Airborne when hook attaches.
 }
@@ -1259,7 +1310,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
     use crate::physics::projectile::WeaponKind;
     let weapon = game.active_team_ref().current_weapon();
 
-    // ── Plasma torch active: hold A to keep burning; release A to stop ──────────
+    // ── Plasma torch active: A starts it; press A again (not release) to stop ──
     if game.plasma_torch.is_some() {
         if input.just_pressed(Button::Up) {
             let d = game.plasma_torch.as_ref().unwrap().dir;
@@ -1269,8 +1320,8 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             let d = game.plasma_torch.as_ref().unwrap().dir;
             game.plasma_torch.as_mut().unwrap().dir = d.step_down();
         }
-        // Release A early → extinguish torch and end turn
-        if input.just_released(Button::A) {
+        // Press A again → extinguish torch and end turn
+        if input.just_pressed(Button::A) {
             let ti = game.active_team();
             let si = game.teams[ti].active;
             game.plasma_torch = None;
@@ -2322,7 +2373,7 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
     const BAT_REACH:  f32 = 28.0; // horizontal range in front
     const BAT_HEIGHT: f32 = 22.0; // vertical window
     const BAT_POWER:  f32 = 15.0;
-    const BAT_DAMAGE: u32 = 30;
+    const BAT_DAMAGE: u32 = 26; // was 30, -15%
 
     let sx = game.teams[ti].soldiers[si].pos.x;
     let sy = game.teams[ti].soldiers[si].pos.y;
@@ -3807,7 +3858,14 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 } else {
                     None
                 };
+                // Attached to the (non-flying) rope: lay the body out along the
+                // swing direction instead of the default airborne pose. The rope
+                // only ever attaches to the active soldier.
+                let on_rope = ti == active_ti && si == active_si
+                    && game.rope.as_ref().map_or(false, |r| !r.flying);
                 let anim = match &soldier.state {
+                    SoldierState::Airborne { vel, .. } if on_rope =>
+                        SoldierAnim::RopeSwing { vel_x: vel.x, vel_y: vel.y },
                     SoldierState::Airborne { vel, spinning: true } =>
                         SoldierAnim::Airborne { vel_x: vel.x, vel_y: vel.y, airtime: soldier.airtime, spinning: true },
                     SoldierState::Airborne { vel, spinning: false } =>
@@ -3929,9 +3987,13 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                 }
             }
         }
-        // White-hot core near the base
+        // White-hot core near the base — must track the same sway as the body
+        // above it, or it visually detaches into a floating white square when
+        // the flame sways away from center.
         if patch.landed {
-            buf.fill_rect(wx - 1, base_y - h / 3, 3, (h / 3).max(1) as u32, core);
+            let ry0 = h / 3;
+            let sway0 = ((phase + ry0 as f32 * 0.6).sin() * (ry0 as f32 / (h as f32 - 1.0)).powi(2) * 2.6).round() as i32;
+            buf.fill_rect(wx + sway0 - 1, base_y - ry0, 3, (h / 3).max(1) as u32, core);
         }
     }
 
@@ -4497,12 +4559,27 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let rtx = game.active_team();
         let rsx = game.teams[rtx].active;
         let spos = game.teams[rtx].soldiers[rsx].pos;
-        let end = if rope.flying { rope.hook } else { rope.anchor };
         let rope_col = Bgra::new(180, 200, 140);
         let hook_col = Bgra::new(220, 180, 80);
-        buf.draw_line(spos.x as i32, spos.y as i32 - 6, end.x as i32, end.y as i32, rope_col);
-        buf.draw_line(spos.x as i32 + 1, spos.y as i32 - 5, end.x as i32, end.y as i32, rope_col);
-        buf.fill_rect(end.x as i32 - 2, end.y as i32 - 2, 4, 4, hook_col);
+        if rope.flying {
+            // Straight line to the in-flight hook.
+            let end = rope.hook;
+            buf.draw_line(spos.x as i32, spos.y as i32 - 6, end.x as i32, end.y as i32, rope_col);
+            buf.draw_line(spos.x as i32 + 1, spos.y as i32 - 5, end.x as i32, end.y as i32, rope_col);
+            buf.fill_rect(end.x as i32 - 2, end.y as i32 - 2, 4, 4, hook_col);
+        } else {
+            // Polyline: soldier → each wrap pivot (nearest first) → anchor. `wrap` runs
+            // anchor→soldier, so walk it in reverse from the soldier's hand.
+            let mut px = spos.x as i32;
+            let mut py = spos.y as i32 - 6;
+            for pivot in rope.wrap.iter().rev() {
+                buf.draw_line(px, py, pivot.x as i32, pivot.y as i32, rope_col);
+                px = pivot.x as i32;
+                py = pivot.y as i32;
+            }
+            buf.draw_line(px, py, rope.anchor.x as i32, rope.anchor.y as i32, rope_col);
+            buf.fill_rect(rope.anchor.x as i32 - 2, rope.anchor.y as i32 - 2, 4, 4, hook_col);
+        }
     }
 
     // 7b-pre. Blood splats — drawn on top of soldiers so they're visible over sprites
@@ -4977,8 +5054,22 @@ fn stamp_objects(game: &mut GameState) {
         }
     }
 
-    // Scenery objects are purely decorative — no hitbox (soldiers/projectiles
-    // pass through them; only the terrain bitmap and other hazards collide).
+    // Scenery objects are solid: soldiers can stand on / climb them, and
+    // projectiles collide with them, using the same footprint box the
+    // renderer draws (and craters carve).
+    let theme = crate::world::terrain::Theme::of(game.terrain.is_cavern, game.terrain.template_id);
+    for obj in &game.terrain.scenery.clone() {
+        let (half_w, height) = obj.footprint(theme);
+        let cx = obj.x as i32;
+        let cy = obj.y as i32;
+        for dy in 0..=height {
+            for dx in -half_w..=half_w {
+                if obj.pixel_intact(cx + dx, cy - dy, theme) {
+                    game.terrain.stamp_object(cx + dx, cy - dy);
+                }
+            }
+        }
+    }
 
     // Armed / triggered mines: 8×8 px footprint
     for mine in &game.mines {
@@ -5089,6 +5180,16 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     // ── Rope constraint physics (active soldier only) ─────────
                     let is_active = ti == ati && si == asi;
                     if is_active {
+                        // WA: a perfectly-vertical rope while the soldier touches the
+                        // ground auto-detaches (the soldier just stands up). vdy>0 means
+                        // the soldier hangs below the anchor; 2px matches corner-wrap epsilon.
+                        if let Some(rope) = game.rope.as_ref().filter(|r| !r.flying) {
+                            let vdx = game.teams[ti].soldiers[si].pos.x - rope.anchor.x;
+                            let vdy = game.teams[ti].soldiers[si].pos.y - rope.anchor.y;
+                            if on_ground && vdy > 0.0 && vdx.abs() < 2.0 {
+                                game.rope = None;
+                            }
+                        }
                         if let Some(rope) = game.rope.as_ref().filter(|r| !r.flying) {
                             let mut anchor = rope.anchor;
                             // Target length BEFORE any corner-wrap this tick. The
@@ -5101,42 +5202,42 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             let cx = game.teams[ti].soldiers[si].pos.x;
                             let cy = game.teams[ti].soldiers[si].pos.y;
 
-                            // ── Corner wrap (single-segment) ─────────────────────────
-                            // Sample the line anchor→soldier every 6px. If it crosses
-                            // terrain, re-anchor at the last clear sample (the corner the
-                            // rope bends over) and shorten the free segment. This keeps a
-                            // one-anchor system (no chain) yet lets the soldier swing
-                            // around pillars / overhangs — the signature WA rope move.
+                            // ── Corner wrap (multi-segment chain) ─────────────────────
+                            // The rope bends over every terrain corner between the fixed
+                            // anchor and the soldier, storing each pivot in `wrap`. It
+                            // wraps forward when the free segment catches a new corner and
+                            // unwraps in reverse when the soldier swings back and a pivot
+                            // straightens out — the reference game's multi-corner rope.
+                            // `free_len` (= rope.length) is the swing radius around the last
+                            // pivot; fixed segments carry the rest of the rope.
                             {
-                                let wdx = cx - anchor.x;
-                                let wdy = cy - anchor.y;
-                                let wdist = (wdx * wdx + wdy * wdy).sqrt().max(0.1);
-                                let ux = wdx / wdist;
-                                let uy = wdy / wdist;
-                                let check_steps = (wdist / 6.0) as u32;
-                                let mut last_clear = 0.0f32;
-                                let mut hit = false;
-                                for step in 1..=check_steps {
-                                    let d = step as f32 * 6.0;
-                                    let sx = anchor.x + ux * d;
-                                    let sy = anchor.y + uy * d;
-                                    if game.terrain.is_solid(sx as i32, sy as i32) { hit = true; break; }
-                                    last_clear = d;
+                                // Snapshot chain state (releases the game.rope borrow before
+                                // we sample game.terrain, then write results back).
+                                let (anchor0, mut chain, mut free_len) = {
+                                    let r = game.rope.as_ref().unwrap();
+                                    (r.anchor, r.wrap.clone(), r.length)
+                                };
+                                // Unwrap: peel any trailing pivots the soldier has straightened
+                                // past (direct line from the prior pivot is clear again).
+                                while let Some(&last) = chain.last() {
+                                    let prev = if chain.len() >= 2 { chain[chain.len() - 2] } else { anchor0 };
+                                    if rope_seg_clear(&game.terrain, prev.x, prev.y, cx, cy) {
+                                        free_len += ((last.x - prev.x).powi(2) + (last.y - prev.y).powi(2)).sqrt();
+                                        chain.pop();
+                                    } else { break; }
                                 }
-                                // Only re-anchor when the corner is a meaningful distance
-                                // from the current anchor (>=2px) to avoid per-pixel jitter.
-                                if hit && last_clear >= 2.0 {
-                                    let new_anchor = crate::world::WorldPos::new(
-                                        anchor.x + ux * last_clear,
-                                        anchor.y + uy * last_clear,
-                                    );
-                                    let remaining = (rope.length - last_clear).max(ROPE_MIN_LEN);
-                                    if let Some(ref mut rm) = game.rope {
-                                        rm.anchor = new_anchor;
-                                        rm.length = remaining;
+                                // Wrap: catch a new corner between the current pivot and soldier.
+                                let pivot = chain.last().copied().unwrap_or(anchor0);
+                                if let Some(cd) = rope_find_corner(&game.terrain, pivot.x, pivot.y, cx, cy) {
+                                    if cd >= 2.0 {
+                                        let dx = cx - pivot.x; let dy = cy - pivot.y;
+                                        let d = (dx * dx + dy * dy).sqrt().max(0.1);
+                                        chain.push(crate::world::WorldPos::new(pivot.x + dx / d * cd, pivot.y + dy / d * cd));
+                                        free_len = (free_len - cd).max(1.0);
                                     }
-                                    anchor = new_anchor;
                                 }
+                                anchor = chain.last().copied().unwrap_or(anchor0);
+                                if let Some(ref mut rm) = game.rope { rm.wrap = chain; rm.length = free_len; }
                             }
                             // Post-wrap target length and rope direction from the
                             // (possibly moved) anchor.
@@ -5150,9 +5251,19 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
 
                             // 1. Pendulum gravity
                             vel.y = (vel.y + ROPE_GRAVITY).min(ROPE_MAX_SPEED);
-                            // 2. Swing force from Left/Right input
-                            if input.held(Button::Left)  { vel.x -= ROPE_SWING_FORCE; }
-                            if input.held(Button::Right) { vel.x += ROPE_SWING_FORCE; }
+                            // 2. Swing force from Left/Right input — applied ALONG the
+                            //    rope tangent (perpendicular to rope dir), not a fixed
+                            //    horizontal push, so it accelerates correctly everywhere
+                            //    on the arc. At rest (dir=(0,1)): right=(dir_y,-dir_x)=(1,0),
+                            //    left=(-dir_y,dir_x). World-relative (independent of facing).
+                            if input.held(Button::Right) {
+                                vel.x +=  dir_y * ROPE_SWING_FORCE;
+                                vel.y += -dir_x * ROPE_SWING_FORCE;
+                            }
+                            if input.held(Button::Left) {
+                                vel.x += -dir_y * ROPE_SWING_FORCE;
+                                vel.y +=  dir_x * ROPE_SWING_FORCE;
+                            }
                             // 3. Angular momentum conservation on rope-length change.
                             //    When the rope shortens, tangential speed must increase to
                             //    conserve angular momentum (L = r × v_tangential = constant).
@@ -5249,6 +5360,33 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 game.teams[ti].soldiers[si].pos.y = ny;
                                 game.teams[ti].soldiers[si].airtime += 1;
                                 game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel, spinning };
+                                // Rope-knocking: a fast-moving roper shoves other soldiers
+                                // it collides with. Fixed index order for replay determinism.
+                                let roper_speed = (vel.x * vel.x + vel.y * vel.y).sqrt();
+                                if roper_speed >= ROPE_KNOCK_MIN_SPEED {
+                                    use crate::renderer::draw_sprites::{SOLDIER_W, SOLDIER_H};
+                                    let kvel = crate::world::Vec2::new(
+                                        vel.x * ROPE_KNOCK_STRENGTH,
+                                        vel.y * ROPE_KNOCK_STRENGTH,
+                                    );
+                                    for oti in 0..game.teams.len() {
+                                        for osi in 0..game.teams[oti].soldiers.len() {
+                                            if oti == ti && osi == si { continue; }
+                                            let os = &game.teams[oti].soldiers[osi];
+                                            if !os.is_alive() { continue; }
+                                            // Only knock a soldier that isn't already flying.
+                                            if matches!(os.state, SoldierState::Airborne { .. }) { continue; }
+                                            let ox = os.pos.x;
+                                            let ohead = os.pos.y - SOLDIER_H as f32;
+                                            if (nx - ox).abs() < SOLDIER_W as f32
+                                                && (ny - SOLDIER_H as f32 - ohead).abs() <= SOLDIER_H as f32
+                                            {
+                                                game.teams[oti].soldiers[osi].state =
+                                                    SoldierState::Airborne { vel: kvel, spinning: false };
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             continue; // skip normal gravity below
                         }
@@ -5334,7 +5472,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 }
                                 if game.rope_session && ti == game.active_team() && si == game.teams[game.active_team()].active {
                                     game.rope = None;
-                                    game.rope_session = false;
+                                    game.rope_retreat_ticks = ROPE_RETREAT_TICKS; // keep session alive for a retreat window
                                 }
                                 landed = true;
                                 break;
@@ -5372,7 +5510,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             }
                             if game.rope_session && ti == game.active_team() && si == game.teams[game.active_team()].active {
                                 game.rope = None;
-                                game.rope_session = false;
+                                game.rope_retreat_ticks = ROPE_RETREAT_TICKS; // keep session alive for a retreat window
                             }
                             landed = true;
                             break;
@@ -5446,7 +5584,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 // Grapple is a free movement tool — player can still fire a weapon.
                                 if game.rope_session && ti == game.active_team() && si == game.teams[game.active_team()].active {
                                     game.rope = None;
-                                    game.rope_session = false;
+                                    game.rope_retreat_ticks = ROPE_RETREAT_TICKS; // keep session alive for a retreat window
                                     // turn continues — no on_fired()
                                 }
                                 landed = true;

@@ -29,6 +29,9 @@ pub enum SoldierAnim {
     Idle,
     Walking { tick: u32 },
     Airborne { vel_x: f32, vel_y: f32, airtime: u32, spinning: bool },
+    /// Hanging from the ninja rope: the whole body lays out along the swing
+    /// direction instead of staying upright, like WA's rope pose.
+    RopeSwing { vel_x: f32, vel_y: f32 },
     Dead,
 }
 
@@ -134,6 +137,28 @@ const SPIN_CURVE: [f32; 22] = [
     3.8334, 4.2609, 4.6343, 4.9798, 5.2886, 5.5381,
     5.6760, 5.8121, 5.9360, 6.0302,
 ];
+
+/// Rope swing: lay the body out along the direction of travel (mostly
+/// horizontal through the bottom of the arc) instead of staying upright.
+/// Returns the root_angle for whole-skeleton rotation.
+fn pose_rope_swing(bones: &mut [Bone; N_BONES], vel_x: f32, vel_y: f32) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    // Bone-local angle 0 points straight up; rotating the root so the body
+    // vector aligns with the velocity direction lays the soldier flat when
+    // swinging fast (bottom of the arc) and more upright near the ends.
+    let root_angle = vel_x.atan2(-vel_y);
+
+    bones[TORSO].angle = 0.0;
+    bones[HEAD].angle  = 0.05;
+    // Legs trail straight back together
+    bones[LEG_R].angle = PI - 0.08;
+    bones[LEG_L].angle = PI + 0.08;
+    // One arm reaches up toward the rope hand-hold, the other trails back
+    bones[ARM_R].angle = FRAC_PI_2 - 0.25;
+    bones[ARM_L].angle = FRAC_PI_2 - 0.55;
+
+    root_angle
+}
 
 /// Returns (root_angle) — the whole-skeleton rotation angle for this airtime tick.
 /// Pose bones hold the tuck shape; root rotation carries them around.
@@ -567,6 +592,8 @@ pub fn draw_soldier_skeletal(
             pose_spin(&mut bones, *airtime, f),
         SoldierAnim::Airborne { vel_x, vel_y, .. } =>
             { pose_airborne(&mut bones, *vel_x, *vel_y); 0.0 }
+        SoldierAnim::RopeSwing { vel_x, vel_y } =>
+            pose_rope_swing(&mut bones, *vel_x, *vel_y),
         SoldierAnim::Dead =>
             { pose_dead(&mut bones, f); 0.0 }
     };
