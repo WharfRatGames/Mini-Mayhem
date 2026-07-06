@@ -1,9 +1,28 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.417 SOURCE (2026-07-05, not yet built/deployed) · 0.5.4.416 DEPLOYED · commit 1a1692b on main
+## Version: 0.5.4.417 DEPLOYED (2026-07-05) · commit fef40f1 on main
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
+## Miyoo push: .126 OK (hash-verified) · .110 unreachable ("no route to host"), needs manual push once back online
 
-## Source 2026-07-05 (v0.5.4.417 — not yet built/committed/deployed; VERSION + REQUIRED_VERSION bumped to .417)
+## Deployed 2026-07-05 (v0.5.4.417 — VERSION + REQUIRED_VERSION bumped to .417)
+
+### Scenery hitboxes removed entirely (`loop_runner.rs`)
+Following .416's footprint-tightening pass, scenery (rocks/bushes/crates/crystals/etc.) is now
+purely cosmetic — deleted the `stamp_objects()` loop that wrote scenery footprints into the
+object collision mask. Soldiers and projectiles now pass straight through scenery.
+
+### Grapple wall-stick fix (`loop_runner.rs`, `apply_all_gravity`)
+Swinging into a wall used to hard-detach the rope and force-land the soldier at the last clear
+point (with fall damage) — read as getting "stuck to the wall." Now wall contact stops the
+soldier at the last clear point with velocity zeroed but keeps the rope attached; gravity/tension
+pulls them free next tick instead of forcing a landing. Lives inside `apply_all_gravity`, called
+from `simulate_with_muzzle` — automatically covered on all 5 paths per the parity rules, no
+`StateMsg` changes needed.
+
+### Dead gray-barrel prop removed (`renderer/scenery.rs`)
+Deleted `draw_barrel` and its dispatch arm — part of an unreachable 4th "Tropical" scenery
+archetype (`draw_tropical`) never wired into the live `Theme` enum (Underground/Pastoral/Rugged
+only), so it was inert dead code, not something actually seen in-game.
 
 ### Terrain relief compression — maps too vertical to play (`wa_templates.rs`, `terrain.rs`)
 Generated maps had 100–290px cliffs/pillars; soldiers walk up only 8px, jump ~16px, backflip

@@ -64,7 +64,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Barrel explosions and chain reactions (14–20 barrels per map)
 - [x] Map landmines 16–24 per map (v0.5.4.391)
 - [x] Themed scenery objects — 28 per map, styled per WA template / cavern mode (v0.5.4.390/.391)
-- [x] Solid scenery — per-sprite collision footprints stamped into the object mask; soldiers stand on them, projectiles collide; placement rejects spots embedded in slopes/overhangs (v0.5.4.398)
+- [x] Solid scenery — per-sprite collision footprints stamped into the object mask; soldiers stand on them, projectiles collide; placement rejects spots embedded in slopes/overhangs (v0.5.4.398) — **hitbox removed entirely in v0.5.4.417**; scenery is now purely cosmetic
 - [x] Big grounded scenery — 2–3× scale with matching collision footprints; always seated on ground (cave floors on cavern maps); spawns keep clear of solid props (v0.5.4.399)
 - [x] Pistol trimmed to 5-shot burst (v0.5.4.399) — actually firing all 5 shots fixed in v0.5.4.401 (shot counter was set after the first shot instead of before)
 - [x] Soldiers can stand on top of other soldiers — square landings stand on the other's head instead of always sliding off (v0.5.4.400)
@@ -95,6 +95,9 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Fixed mines/barrels/crates/fire-patches not rendering when the camera is scrolled vertically to view the lower half of a tall map, while remaining fully solid/live in the sim — could look like an object detonated "out of nowhere" (v0.5.4.416)
 - [x] Fixed spawn placement clumping the whole team into one tiny cluster on badly fragmented maps with no wide landforms — fallback now greedily maximizes separation instead of first-fit scanning (v0.5.4.415)
 - [x] Terrain relief compressed ~2× so maps are actually playable — WA-collage cliffs were 100–290px tall while soldiers walk up 8px / jump ~16px / backflip ~46px, stranding valley soldiers below unreachable tops; mask now sampled zoomed-out around a mid-band anchor + a depth ramp that guarantees connected ground and melts floating chunks + per-column cave crust; island p95 cliff 126–287px → 28–57px, guard test `island_relief_is_traversable` (v0.5.4.417)
+- [x] Scenery hitboxes removed entirely — following .416's footprint-tightening pass, decorative props (rocks/bushes/crates/crystals/etc.) no longer collide at all; soldiers and projectiles pass straight through (v0.5.4.417)
+- [x] Grapple wall-stick fix — swinging into a wall used to hard-detach the rope and force-land the soldier at the last clear point (read as getting stuck); now the soldier stops at the last clear point with velocity zeroed but stays attached, so gravity/tension pulls them free next tick instead of forcing a landing (v0.5.4.417)
+- [x] Dead gray-barrel scenery prop removed — `draw_barrel` was part of an unreachable 4th "Tropical" scenery archetype never wired into the live Theme enum (Underground/Pastoral/Rugged only); inert dead code, not something ever seen in-game (v0.5.4.417)
 
 ---
 

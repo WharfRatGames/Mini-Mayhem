@@ -1,14 +1,36 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.417 SOURCE (2026-07-05, not yet built/deployed) over
-  0.5.4.416 DEPLOYED (2026-07-05) — server/OTA/API/dashboard/GitHub release/
-  Discord live. Miyoo push FAILED both devices ("unreachable") on the .416
-  deploy specifically; .110/.126 were reachable earlier the same day and got
-  .415 pushed by hand (scp+kill+restart, bypassing the deploy script), then
-  went offline again before .416. Commit 1a1692b on main.
+Current version: 0.5.4.417 DEPLOYED (2026-07-05) — server/OTA/API/dashboard/
+  GitHub release/Discord live. Commit fef40f1 on main. Miyoo push: .126 OK
+  (hash-verified); .110 unreachable ("no route to host") — same device that
+  failed to reach on .416, still offline, needs a manual push once back on
+  the network.
 
-Source 2026-07-05 (v0.5.4.417 — not yet built/committed/deployed; VERSION and
-  REQUIRED_VERSION bumped to .417):
+Deployed 2026-07-05 (v0.5.4.417 — VERSION and REQUIRED_VERSION bumped to .417):
+
+  E) SCENERY NO LONGER HAS A HITBOX. Following up .416's footprint-tightening
+     pass, scenery (rocks/bushes/crates/crystals/etc.) is now purely cosmetic:
+     removed the stamp_objects() loop in loop_runner.rs that wrote scenery
+     footprints into the object collision mask. Soldiers and projectiles pass
+     through scenery entirely.
+
+  F) GRAPPLE WALL-STICK FIX. Swinging into a wall used to hard-detach the
+     rope and force-land the soldier at the last clear point (with fall
+     damage), which read as "stuck to the wall." Now on wall contact the
+     soldier stops at the last clear point with velocity zeroed but stays
+     attached to the rope — gravity/tension pulls them free next tick instead
+     of snapping them into a forced landing. (loop_runner.rs, inside
+     apply_all_gravity — called from simulate_with_muzzle, so automatically
+     covered on all 5 paths per the parity rules.)
+
+  G) DEAD GRAY-BARREL PROP REMOVED. draw_barrel + its dispatch arm in
+     renderer/scenery.rs deleted — part of an unreachable 4th "Tropical"
+     scenery archetype (draw_tropical) never wired into the live Theme enum
+     (Underground/Pastoral/Rugged only), so this was inert dead code.
+
+  Gates: cargo check --tests clean, parity 22/22 (including the 2 unaffected
+  by this change). Built + committed + deployed together with items A-D below
+  (which were still source-only pending build at the time they were written).
 
   A) TERRAIN RELIEF COMPRESSION — maps too vertical to play.
      Generated maps had 100-290px cliffs/pillars; soldiers walk up 8px, jump
