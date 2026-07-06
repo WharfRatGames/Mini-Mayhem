@@ -635,12 +635,22 @@ impl Terrain {
             let band_span = band_h as f64;
             let mut cdens = vec![1.0f64; band_w * band_h];
             const SIDE_SEAL: i32 = 12; // solid side walls (enclosed map)
-            for y in SKY_FLOOR..CAVE_FLOOR {
+            // Parallel fill — pure per-pixel math over disjoint row chunks;
+            // bit-identical to the serial loop (see island branch note).
+            let n_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+            let rows_per = band_h.div_ceil(n_threads);
+            std::thread::scope(|scope| {
+                for (chunk_i, chunk) in cdens.chunks_mut(rows_per * band_w).enumerate() {
+                    let y_start = SKY_FLOOR + (chunk_i * rows_per) as i32;
+                    let cave_a = &cave_a; let cparams = &cparams;
+                    scope.spawn(move || {
+            for (row_i, row) in chunk.chunks_mut(band_w).enumerate() {
+                let y = y_start + row_i as i32;
                 let ny = y as f64 / WORLD_H as f64;
                 let ty = (y - SKY_FLOOR) as f64 / band_span; // 0 ceiling → 1 floor
                 for x in 0..WORLD_W as i32 {
                     let nx = x as f64 / WORLD_W as f64;
-                    let mut d = super::wa_templates::collage_density(&cparams, nx, ty)
+                    let mut d = super::wa_templates::collage_density(cparams, nx, ty)
                         + cave_a.get([nx * 6.0, ny * 6.0]) * 0.10;
                     // Floor bias: guarantee a solid base in the bottom ~12% of the
                     // band so inverted-mask holes can't open straight into water.
@@ -655,44 +665,63 @@ impl Terrain {
                     if x < SIDE_SEAL || x >= WORLD_W as i32 - SIDE_SEAL {
                         d = 2.0;
                     }
-                    cdens[(y - SKY_FLOOR) as usize * band_w + x as usize] = d;
+                    row[x as usize] = d;
                 }
             }
+                    });
+                }
+            });
             // Separable box blur (r=4), padding with SOLID (1.0) outside the band
             // — the cap above and base below are rock, unlike the island branch's
             // air padding.
             let rb: i32 = 4;
             let mut ctmp = vec![0.0f64; band_w * band_h];
-            for ry in 0..band_h {
-                let row = ry * band_w;
-                for rx in 0..band_w as i32 {
-                    let mut sum = 0.0;
-                    let mut cnt = 0.0;
-                    for dx in -rb..=rb {
-                        let xx = (rx + dx).clamp(0, band_w as i32 - 1) as usize;
-                        sum += cdens[row + xx];
-                        cnt += 1.0;
-                    }
-                    ctmp[row + rx as usize] = sum / cnt;
+            // Parallel over disjoint row chunks — bit-identical to serial.
+            std::thread::scope(|scope| {
+                for (chunk_i, chunk) in ctmp.chunks_mut(rows_per * band_w).enumerate() {
+                    let cdens = &cdens;
+                    scope.spawn(move || {
+                        for (row_i, out_row) in chunk.chunks_mut(band_w).enumerate() {
+                            let row = (chunk_i * rows_per + row_i) * band_w;
+                            for rx in 0..band_w as i32 {
+                                let mut sum = 0.0;
+                                let mut cnt = 0.0;
+                                for dx in -rb..=rb {
+                                    let xx = (rx + dx).clamp(0, band_w as i32 - 1) as usize;
+                                    sum += cdens[row + xx];
+                                    cnt += 1.0;
+                                }
+                                out_row[rx as usize] = sum / cnt;
+                            }
+                        }
+                    });
                 }
-            }
-            for rx in 0..band_w {
-                for ry in 0..band_h as i32 {
-                    let mut sum = 0.0;
-                    let mut cnt = 0.0;
-                    for dy in -rb..=rb {
-                        let yy = ry + dy;
-                        let v = if yy < 0 || yy >= band_h as i32 {
-                            1.0
-                        } else {
-                            ctmp[yy as usize * band_w + rx]
-                        };
-                        sum += v;
-                        cnt += 1.0;
-                    }
-                    cdens[ry as usize * band_w + rx] = sum / cnt;
+            });
+            std::thread::scope(|scope| {
+                for (chunk_i, chunk) in cdens.chunks_mut(rows_per * band_w).enumerate() {
+                    let ctmp = &ctmp;
+                    scope.spawn(move || {
+                        for (row_i, out_row) in chunk.chunks_mut(band_w).enumerate() {
+                            let ry = (chunk_i * rows_per + row_i) as i32;
+                            for rx in 0..band_w {
+                                let mut sum = 0.0;
+                                let mut cnt = 0.0;
+                                for dy in -rb..=rb {
+                                    let yy = ry + dy;
+                                    let v = if yy < 0 || yy >= band_h as i32 {
+                                        1.0
+                                    } else {
+                                        ctmp[yy as usize * band_w + rx]
+                                    };
+                                    sum += v;
+                                    cnt += 1.0;
+                                }
+                                out_row[rx] = sum / cnt;
+                            }
+                        }
+                    });
                 }
-            }
+            });
             // Threshold into the bitmap: carve air where the smoothed field is
             // below 0.5 (the inverted collage marks chambers as low density).
             for ry in 0..band_h {
@@ -834,7 +863,19 @@ impl Terrain {
         let region_h = (WATER_Y - TERRAIN_MIN_Y) as usize;
         let mut dens = vec![0.0f64; region_w * region_h];
 
-        for y in TERRAIN_MIN_Y as usize..WATER_Y as usize {
+        // Parallel fill: rows are independent and the per-pixel math is a pure
+        // function of (x, y), so splitting the buffer into row chunks produces
+        // bit-identical output to the serial loop on every machine/thread count.
+        let n_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let rows_per = region_h.div_ceil(n_threads);
+        std::thread::scope(|scope| {
+            for (chunk_i, chunk) in dens.chunks_mut(rows_per * region_w).enumerate() {
+                let y_start = TERRAIN_MIN_Y as usize + chunk_i * rows_per;
+                let base = &base; let warp_a = &warp_a; let warp_b = &warp_b;
+                let cparams = &cparams; let hill_col = &hill_col;
+                scope.spawn(move || {
+        for (row_i, row) in chunk.chunks_mut(region_w).enumerate() {
+            let y = y_start + row_i;
             let ny = y as f64 / WORLD_H as f64;
             let ty = (y as f64 - TERRAIN_MIN_Y as f64) / terrain_range_f;
             for x in 0..WORLD_W as usize {
@@ -876,6 +917,16 @@ impl Terrain {
                     density += hill_col[x] * 0.3;
                 }
 
+                // 4a. Depth ramp: solidness grows with depth so every column has
+                // connected ground near GROUND_T, high floating collage chunks
+                // melt into air, and the total surface-height band collapses to
+                // roughly terrain_range / DEPTH_RAMP px. This is what keeps
+                // valley soldiers able to walk/backflip to any top — without it
+                // the raw collage yields marooned pillars and floating islands.
+                const GROUND_T: f64 = 0.62;
+                const DEPTH_RAMP: f64 = 9.0;
+                density += (ty - GROUND_T) * DEPTH_RAMP;
+
                 // 4b. Top sky-margin: erode density near the top so terrain tapers
                 // off below the ceiling instead of clamping flat against
                 // TERRAIN_MIN_Y. Guarantees headroom and kills flat top-edge plateaus;
@@ -896,9 +947,12 @@ impl Terrain {
                     }
                 }
 
-                dens[(y - TERRAIN_MIN_Y as usize) * region_w + x] = density;
+                row[x] = density;
             }
         }
+                });
+            }
+        });
 
         // ── Phase 2c: Separable box blur of the density field, then threshold ─────
         // Rounds the contour where the field crosses `threshold` (metaball-style),
@@ -910,39 +964,56 @@ impl Terrain {
         // eroding them away.
         let r: i32 = 4;
         let mut tmp = vec![0.0f64; region_w * region_h];
+        // Both passes parallelized over disjoint row chunks — pure reads of the
+        // other buffer, so output is bit-identical to the serial loops.
         // Horizontal pass: clamp x at the region edges (terrain continues sideways).
-        for ry in 0..region_h {
-            let row = ry * region_w;
-            for rx in 0..region_w as i32 {
-                let mut sum = 0.0;
-                let mut cnt = 0.0;
-                for dx in -r..=r {
-                    let xx = (rx + dx).clamp(0, region_w as i32 - 1) as usize;
-                    sum += dens[row + xx];
-                    cnt += 1.0;
-                }
-                tmp[row + rx as usize] = sum / cnt;
+        std::thread::scope(|scope| {
+            for (chunk_i, chunk) in tmp.chunks_mut(rows_per * region_w).enumerate() {
+                let dens = &dens;
+                scope.spawn(move || {
+                    for (row_i, out_row) in chunk.chunks_mut(region_w).enumerate() {
+                        let row = (chunk_i * rows_per + row_i) * region_w;
+                        for rx in 0..region_w as i32 {
+                            let mut sum = 0.0;
+                            let mut cnt = 0.0;
+                            for dx in -r..=r {
+                                let xx = (rx + dx).clamp(0, region_w as i32 - 1) as usize;
+                                sum += dens[row + xx];
+                                cnt += 1.0;
+                            }
+                            out_row[rx as usize] = sum / cnt;
+                        }
+                    }
+                });
             }
-        }
+        });
         // Vertical pass: rows outside [0, region_h) read as AIR (0.0) so the top
         // tapers to sky and the bottom to water rather than smearing solid.
-        for rx in 0..region_w {
-            for ry in 0..region_h as i32 {
-                let mut sum = 0.0;
-                let mut cnt = 0.0;
-                for dy in -r..=r {
-                    let yy = ry + dy;
-                    let v = if yy < 0 || yy >= region_h as i32 {
-                        0.0
-                    } else {
-                        tmp[yy as usize * region_w + rx]
-                    };
-                    sum += v;
-                    cnt += 1.0;
-                }
-                dens[ry as usize * region_w + rx] = sum / cnt;
+        std::thread::scope(|scope| {
+            for (chunk_i, chunk) in dens.chunks_mut(rows_per * region_w).enumerate() {
+                let tmp = &tmp;
+                scope.spawn(move || {
+                    for (row_i, out_row) in chunk.chunks_mut(region_w).enumerate() {
+                        let ry = (chunk_i * rows_per + row_i) as i32;
+                        for rx in 0..region_w {
+                            let mut sum = 0.0;
+                            let mut cnt = 0.0;
+                            for dy in -r..=r {
+                                let yy = ry + dy;
+                                let v = if yy < 0 || yy >= region_h as i32 {
+                                    0.0
+                                } else {
+                                    tmp[yy as usize * region_w + rx]
+                                };
+                                sum += v;
+                                cnt += 1.0;
+                            }
+                            out_row[rx] = sum / cnt;
+                        }
+                    }
+                });
             }
-        }
+        });
         // Threshold the smoothed field into the solid bitmap. Dropped slightly below
         // `threshold`: the blur pulls small WA-silhouette stepping-stones' contours
         // inward, so this keeps them above threshold (and above the min_frag=50
@@ -981,7 +1052,7 @@ impl Terrain {
                 let cx = (rnd(&mut rng, 0.18, 0.64) * WORLD_W as f64) as i32; // 0.18–0.82
                 let ground = terrain.surface_y_at(cx as u32)
                     .unwrap_or(TERRAIN_MAX_Y) as i32;
-                let gap   = rnd(&mut rng, 30.0, 45.0) as i32;  // 30–75px air gap
+                let gap   = rnd(&mut rng, 30.0, 14.0) as i32;  // 30–44px air gap — backflip (~46px) can reach the ledge
                 let shelf_y = (ground - gap).max(TERRAIN_MIN_Y as i32 + 6);
                 let half_w = rnd(&mut rng, 45.0, 55.0) as i32; // 45–100px reach
                 let th     = (rnd(&mut rng, 9.0, 10.0) as i32).max(6); // 9–19px thick
@@ -1007,16 +1078,30 @@ impl Terrain {
         }
 
         // ── Phase 3: Cave punch ───────────────────────────────────────────────────
-        // Carve air tunnels where two-layer cave noise lands in a band. Skip the
-        // surface crust (ty<=0.18) so spawning stays reliable.
+        // Carve air tunnels where two-layer cave noise lands in a band. Keep
+        // CRUST_PX of rock below each column's ACTUAL surface. The old fixed-band
+        // crust (ty <= 0.18) assumed terrain reached the top of the band; with the
+        // depth-ramped/compressed relief all terrain sits below that line, so a
+        // fixed crust protects nothing and the punch hollows out the ground right
+        // under soldiers' feet.
+        const CRUST_PX: u32 = 44;
+        let carve_floor: Vec<u32> = if cave {
+            (0..WORLD_W)
+                .map(|x| {
+                    let top = (TERRAIN_MIN_Y..WATER_Y)
+                        .find(|&y| terrain.is_solid(x as i32, y as i32))
+                        .unwrap_or(WATER_Y);
+                    (top + CRUST_PX).min(WATER_Y)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         if cave {
-            // Keep a thick surface crust so spawning stays reliable.
-            let crust = 0.18;
             for y in TERRAIN_MIN_Y..WATER_Y {
-                let ty = (y as f64 - TERRAIN_MIN_Y as f64) / terrain_range_f;
-                if ty <= crust { continue; }
                 let ny = y as f64 / WORLD_H as f64;
                 for x in 0..WORLD_W {
+                    if y <= carve_floor[x as usize] { continue; }
                     if !terrain.is_solid(x as i32, y as i32) { continue; }
                     let nx = x as f64 / WORLD_W as f64;
                     let c = (cave_a.get([nx * cave_sx, ny * cave_sy])
@@ -1029,18 +1114,19 @@ impl Terrain {
         }
 
         // Phase 3.5 — Air dilation for cave-punched non-cavern maps.
-        // Same 2-pass Moore dilation as the is_cavern fill+carve path, but clamped
-        // below the crust (ty > 0.18) so surface terrain is not eroded.
+        // Same 2-pass Moore dilation as the is_cavern fill+carve path, clamped to
+        // the same per-column carve floor as the punch so surface terrain (and the
+        // crust under it) is never eroded.
         if cave && !is_cavern {
-            let cave_min_y = TERRAIN_MIN_Y as i32 + (terrain_range_f * 0.18) as i32 + 1;
             for _ in 0..2 {
                 let snap = terrain.solid.clone();
-                for y in cave_min_y..WATER_Y as i32 - 1 {
+                for y in TERRAIN_MIN_Y as i32..WATER_Y as i32 - 1 {
                     for x in 1..WORLD_W as i32 - 1 {
+                        if y <= carve_floor[x as usize] as i32 { continue; }
                         if !snap[world_index(x as u32, y as u32)] { continue; }
                         let has_air_neighbor = (-1i32..=1).any(|dy| {
                             let yy = y + dy;
-                            if yy < cave_min_y || yy >= WATER_Y as i32 { return false; }
+                            if yy <= carve_floor[x as usize] as i32 || yy >= WATER_Y as i32 { return false; }
                             (-1i32..=1).any(|dx| {
                                 if dx == 0 && dy == 0 { return false; }
                                 let xx = x + dx;

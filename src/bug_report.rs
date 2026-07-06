@@ -110,7 +110,9 @@ impl BugReporter {
                 Ok(_) => "Report sent! Thank you.".into(),
                 Err(e) => format!("Send failed: {}", &e[..e.len().min(40)]),
             };
-            self.send_timer = 360;
+            // Success is a quick confirmation; a failure message stays up longer
+            // so there's time to actually read what went wrong.
+            self.send_timer = if ok { 75 } else { 150 };
         }
         false
     }
@@ -169,7 +171,7 @@ impl BugReporter {
             Err(e) => {
                 self.phase = Phase::Done(false);
                 self.status_msg = format!("Send failed: {}", e);
-                self.send_timer = 360;
+                self.send_timer = 150;
             }
         }
     }
@@ -180,11 +182,16 @@ impl BugReporter {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
 
-        // Frozen screenshot dimmed behind UI
+        // Frozen screenshot dimmed behind UI. Read from the pristine `self.screenshot`
+        // capture, not the live `buf` — `buf` is the persistent world buffer and this
+        // draw() runs every tick while the reporter is open, so dimming buf's own
+        // (already-dimmed) pixels would compound frame after frame and crush to black
+        // within a couple of ticks instead of showing a steady dimmed screenshot.
         for y in 0..sh {
             for x in 0..sw {
-                let px = buf.get_pixel(cam_xi + x, cam_yi + y);
-                buf.set_pixel(cam_xi + x, cam_yi + y, Bgra::new(px.r / 4, px.g / 4, px.b / 4));
+                let i = ((y * sw + x) * 4) as usize;
+                let (b, g, r) = (self.screenshot[i], self.screenshot[i + 1], self.screenshot[i + 2]);
+                buf.set_pixel(cam_xi + x, cam_yi + y, Bgra::new(r / 4, g / 4, b / 4));
             }
         }
 

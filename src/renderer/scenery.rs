@@ -356,7 +356,6 @@ fn draw_dead_stump(buf: &mut Scaled, cx: i32, by: i32) {
 fn draw_tropical(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
     match sprite {
         0 => draw_palm_tree(buf, cx, by),
-        1 => draw_barrel(buf, cx, by),
         2 => draw_tent_shanty(buf, cx, by),
         3 => draw_anchor(buf, cx, by),
         4 => draw_coconut(buf, cx, by),
@@ -408,35 +407,6 @@ fn draw_palm_tree(buf: &mut Scaled, cx: i32, by: i32) {
         buf.fill_rect(top_x + i - 1, top_y - i * 2 - 1, 5, 2, gdark);
         buf.fill_rect(top_x + i,     top_y - i * 2 - 1, 3, 1, green);
     }
-}
-
-fn draw_barrel(buf: &mut Scaled, cx: i32, by: i32) {
-    let wood  = Bgra::new(155, 105, 48);
-    let dark  = Bgra::new(80, 50, 18);
-    let hoop  = Bgra::new(85, 80, 75);
-    let hdark = Bgra::new(40, 38, 35);
-    let hi    = Bgra::new(195, 150, 80);
-    // Barrel body outline
-    buf.fill_rect(cx - 6, by - 2,  13, 2, dark);
-    buf.fill_rect(cx - 7, by - 4,  15, 4, dark);
-    buf.fill_rect(cx - 7, by - 16, 15, 14, dark);
-    buf.fill_rect(cx - 6, by - 18, 13, 3, dark);
-    // Barrel body fill (bulges in middle)
-    buf.fill_rect(cx - 5, by - 1,  11, 1, wood);
-    buf.fill_rect(cx - 6, by - 3,  13, 1, wood);
-    buf.fill_rect(cx - 6, by - 15, 13, 12, wood);
-    buf.fill_rect(cx - 5, by - 17, 11, 2, wood);
-    // Highlight (left side)
-    buf.fill_rect(cx - 5, by - 15, 2, 12, hi);
-    buf.fill_rect(cx - 4, by - 16, 1, 12, hi);
-    // Hoops
-    buf.fill_rect(cx - 7, by - 5,  15, 2, hdark);
-    buf.fill_rect(cx - 6, by - 5,  13, 1, hoop);
-    buf.fill_rect(cx - 7, by - 12, 15, 2, hdark);
-    buf.fill_rect(cx - 6, by - 12, 13, 1, hoop);
-    // Lid top
-    buf.fill_rect(cx - 5, by - 17, 11, 2, hoop);
-    buf.fill_rect(cx - 4, by - 17,  9, 1, Bgra::new(120, 115, 108));
 }
 
 fn draw_tent_shanty(buf: &mut Scaled, cx: i32, by: i32) {

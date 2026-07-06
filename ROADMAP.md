@@ -54,7 +54,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Bazooka, Grenade, Shotgun, MAC-10, Pistol, TNT, Landmine, Ninja Rope, Baseball Bat, Plasma Torch, Clump Bomb, Homing Missile, Molotov (loadout)
 - [x] Blasthive, Meteor Bomb, Revolver, Black Hole Bomb, Air Strike, Garcia, Hand of Jerry, Sacred Ordnance (crate-only)
 - [x] Molotov Cocktail — 48 fire patches, ~2.5 min burn, WA-style pooling fire physics (pending)
-- [x] Weapon unlock timers (Bat / TNT / Air Strike / Homing Missile)
+- [x] Weapon unlock timers (Air Strike / Homing Missile) — Bat's timer was already dead/unenforced and TNT's was removed outright in v0.5.4.415, both now available from turn 1
 - [x] Adjustable grenade/clump bomb fuse (L1/R1)
 - [x] Crate drops (weapon, health, scrap)
 - [x] Rarity-tier weapon pool (Common / Uncommon / Rare / Ultra Rare)
@@ -88,7 +88,13 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Live match-start ready gate — server holds turn 1 and broadcasts frozen state until every client has loaded in; both players see turn 1 start on the same tick (v0.5.4.411/.412)
 - [x] Live damage popups always land on screen — camera holds on the damaged soldier during retreat (`damage_focus` now synced) instead of playing out off-camera (v0.5.4.412)
 - [x] Damage-popup colour now matches the victim's picked lobby colour instead of raw team index — correct in 4-colour live casual (v0.5.4.412)
-- [x] Shotgun damage now falls off with distance from the impact point — a clean, centred hit still deals the full 25, but a graze or a shot that clips ground beside a worm deals proportionally less, and a near-miss onto terrain next to a worm now splashes it instead of doing nothing (WA gun-blast model; v0.5.4.413, source — not yet built)
+- [x] Shotgun damage now falls off with distance from the impact point — a clean, centred hit still deals the full 25, but a graze or a shot that clips ground beside a worm deals proportionally less, and a near-miss onto terrain next to a worm now splashes it instead of doing nothing (WA gun-blast model; v0.5.4.413)
+- [x] Sacred Ordnance max damage reduced 100 → 80 (v0.5.4.414)
+- [x] Fall damage retuned — safe threshold 80px → 130px, damage rate 0.15/px → 0.10/px (v0.5.4.416)
+- [x] Scenery hitboxes tightened for 11 round/irregular sprite types (rocks, bushes, piles, boulders, crystals, skulls, cairns) toward their visual core instead of a rectangle around the full sprite spread; full per-pixel masks would be the complete fix (v0.5.4.416)
+- [x] Fixed mines/barrels/crates/fire-patches not rendering when the camera is scrolled vertically to view the lower half of a tall map, while remaining fully solid/live in the sim — could look like an object detonated "out of nowhere" (v0.5.4.416)
+- [x] Fixed spawn placement clumping the whole team into one tiny cluster on badly fragmented maps with no wide landforms — fallback now greedily maximizes separation instead of first-fit scanning (v0.5.4.415)
+- [x] Terrain relief compressed ~2× so maps are actually playable — WA-collage cliffs were 100–290px tall while soldiers walk up 8px / jump ~16px / backflip ~46px, stranding valley soldiers below unreachable tops; mask now sampled zoomed-out around a mid-band anchor + a depth ramp that guarantees connected ground and melts floating chunks + per-column cave crust; island p95 cliff 126–287px → 28–57px, guard test `island_relief_is_traversable` (v0.5.4.417)
 
 ---
 
@@ -106,6 +112,10 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] OTA (over-the-air) auto-update on launch
 - [x] Update UX overhaul — title-screen UPDATE AVAILABLE banner, re-check on MULTIPLAYER select, cancellable non-blocking check gate (fixes Casual Live freeze), handshake off main thread, version-reject opens install screen (v0.5.4.400)
 - [x] Python/SQLite REST API (accounts, match history, leaderboard)
+- [x] Live-match weapon-kill stats fixed — `kill_weapon` was never synced to the live client (the parity checklist claimed it "arrives as a message", which never actually happened), so every live-match kill reported weapon "UNKNOWN" for missions/leaderboards even though it was set correctly server-side; TAT/hotseat (real local simulation) were unaffected. Added `NetSoldier.kill_weapon_u8` (v0.5.4.415)
+- [x] Server hardening — `panic=unwind` server build profile (was inheriting `release`'s `panic=abort`, so one match panicking could abort the whole process and take every other in-progress match down with it) + `catch_unwind` per match thread; TLS+app handshake moved off the single accept-loop thread into a per-connection thread so a burst of simultaneous connects parallelizes instead of serializing (v0.5.4.413)
+- [x] API DB latency fixed — TAT list / test-match start / all DB reads were slow: one shared SQLite connection serialized every request (→ per-request `open_db()` with WAL + `synchronous=NORMAL`), zero indexes (→ 11 added), `/matches/pending` N+1 (→ single JOIN), `/match/create` triple-commit (→ one txn); Python-only, deployed to Pi 2026-07-05 (v0.5.4.417 cycle)
+- [x] Terrain generation parallelized across all cores (density field + box blur, island + cavern) — was the multi-second freeze between selecting a mode and the match appearing on the Miyoo; bit-identical output so no desync (260ms → 60–90ms desktop, ~2× Miyoo, ~3× Pi) (v0.5.4.417)
 
 ---
 
@@ -118,7 +128,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Leaderboard (top wins + top kills, per-mode)
 - [x] Scrap currency (soft, earned from matches + login + challenges)
 - [x] Warbonds currency (premium)
-- [x] Daily and weekly challenges
+- [x] Daily and weekly challenges — expanded from 3 fixed challenges each to a pool of 16 daily / 17 weekly candidates (including per-weapon kill challenges); 3 are deterministically selected per period (seeded by the period string), so every player sees the same rotating set on a given day/week but it changes day-to-day/week-to-week (v0.5.4.415)
 - [x] Shop (hats, gun styles, uniform colors, boot colors, headstones)
 - [x] Daily login rewards + streak bonuses
 - [x] Cosmetic sync in live multiplayer (opponent's hats/uniforms/guns visible)
@@ -128,6 +138,11 @@ A living document of what's shipped, what's in progress, and what's coming.
 
 ## 🚧 In Progress / Near-Term
 
+- [ ] **Bug reporter fixes, not yet built/committed** — screenshot dimming bug (was re-dimming
+      the live WorldBuffer every tick instead of the pristine capture, crushing to black
+      within 1-2 ticks), Discord forwarding fixed (missing `?key=` on the bot notify call was
+      causing a silent 403), "report sent" screen shortened from 12s to 2.5s/5s
+      (success/failure)
 - [ ] **Scrap earned on game-over screen** — show how much scrap you earned from the match before returning to title
 - [ ] **Profile screen** — view owned cosmetics, current balance, win/loss record from within the game
 - [ ] **Roster editor live preview** — see your soldier update in real time while picking cosmetics

@@ -1,12 +1,162 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.413 SOURCE (2026-07-05) — NOT built/deployed/committed.
-  Shotgun damage falloff edited in loop_runner.rs; parity 22/22, cargo check
-  --tests clean. VERSION + REQUIRED_VERSION NOT yet bumped and binaries NOT
-  rebuilt (last build is still .412). Awaiting build/deploy instruction.
-  Previous build 0.5.4.412 BUILT (2026-07-04) — all three binaries, parity
-  22/22, VERSION + REQUIRED_VERSION bumped (StateMsg gained damage_focus),
-  changelog entry added; never deployed/committed.
+Current version: 0.5.4.417 SOURCE (2026-07-05, not yet built/deployed) over
+  0.5.4.416 DEPLOYED (2026-07-05) — server/OTA/API/dashboard/GitHub release/
+  Discord live. Miyoo push FAILED both devices ("unreachable") on the .416
+  deploy specifically; .110/.126 were reachable earlier the same day and got
+  .415 pushed by hand (scp+kill+restart, bypassing the deploy script), then
+  went offline again before .416. Commit 1a1692b on main.
+
+Source 2026-07-05 (v0.5.4.417 — not yet built/committed/deployed; VERSION and
+  REQUIRED_VERSION bumped to .417):
+
+  A) TERRAIN RELIEF COMPRESSION — maps too vertical to play.
+     Generated maps had 100-290px cliffs/pillars; soldiers walk up 8px, jump
+     ~16px, backflip ~46px, so valley soldiers were stranded below tops with
+     no way to reach or attack. Three deterministic levers, island + cavern:
+       - Relief compression (wa_templates.rs): mask sampled "zoomed out" 2x
+         around a mid-band anchor (RELIEF_COMPRESSION=2.0, ANCHOR=0.55).
+         sample_segment returns air above / solid below the mask (both map
+         types) rather than clamping edge rows into vertical streaks.
+       - Depth ramp (terrain.rs): solidness grows with depth (GROUND_T=0.62,
+         DEPTH_RAMP=9.0) — connected ground near the waterline, floating
+         chunks melt to air, height band collapses. Kills marooned pillars.
+       - Per-column cave crust (terrain.rs): cave-punch/dilation keep
+         CRUST_PX=44 of rock below each column's ACTUAL surface (old fixed
+         ty<=0.18 band assumed terrain reached the top of the band -> with the
+         lower profile it protected nothing and hollowed ground under feet).
+       - Overhang shelf air gap capped 30-44px (was 30-75) -> backflip-reach.
+     Result: island p95 cliff 126-287px -> 28-57px over 12 seeds; still reads
+     as WA collage. New guard test island_relief_is_traversable in
+     wa_collage_check.rs. Changes maps for existing seeds -> in-progress TAT
+     matches regenerate/desync (accepted; hence the version bump).
+
+  B) TERRAIN GENERATION PARALLELIZED — slow match start in EVERY mode.
+     generate_tactical ran 5 OpenSimplex + collage evals per pixel single-
+     threaded (~260ms desktop, several sec on Miyoo Cortex-A7) = the freeze
+     after selecting a mode. Density-field fill + both box-blur passes (island
+     and cavern branches) now run across all cores via scoped threads over
+     disjoint row chunks. Pure per-pixel math -> BIT-IDENTICAL output (verified
+     by full-bitmap hash over 10 seeds vs serial), no desync risk, no map
+     change on its own. 260ms -> 60-90ms desktop; ~2x Miyoo, ~3x Pi.
+
+  C) TAT / DB LATENCY — API server (deploy/arty_api.py, DEPLOYED to Pi).
+     TAT list, test-match start, all DB reads slow. Fixed:
+       - One shared SQLite connection serialized every request -> per-request
+         open_db() (WAL + synchronous=NORMAL + 5s busy timeout); parallel reads.
+       - Zero indexes -> added 11 (users(token), matches(p0/p1,done),
+         rosters(user_id), pool tables, cosmetics, challenges) via CREATE INDEX
+         IF NOT EXISTS on startup.
+       - /matches/pending N+1 (2 user queries/match) -> single LEFT JOIN.
+       - /match/create committed 3x per ranked pairing -> one txn per path.
+     Deployed + verified live (indexes present, /matches/pending ~5-10ms). DB
+     backed up first (arty.db.bak-20260705). Python-only, no protocol change.
+
+  D) BUG REPORTER FOLLOW-UP (client + API):
+       1) Screenshot dimming: BugReporter::draw() re-dimmed the LIVE
+          WorldBuffer every tick (px/4 on already-divided pixels) instead of
+          the pristine self.screenshot capture -> black in 1-2 ticks. Now
+          reads self.screenshot every frame.
+       2) Bug reports never reached Discord: arty_api.py's /notify/bug_report
+          call missing ?key=<ADMIN_KEY> -> silent 403. Fixed (shipped with C).
+       3) "Report sent" screen held 12s -> 2.5s success / 5s failure.
+
+  Gates: cargo check --tests clean, parity 22/22, wa_collage_check 6/6,
+  py_compile clean on arty_api.py.
+
+Deployed 2026-07-05 (v0.5.4.416):
+  1) Bug reporter camera fix: capture()/draw() and the shared Keyboard::draw()
+     only accounted for cam.left_edge(), never cam.top_edge() — if the camera
+     was scrolled vertically when Menu was pressed, the reporter UI drew at
+     world-rows [0,SCREEN_H) while blit_to_fb displayed [cam_top,+SCREEN_H) ->
+     "opens on top half of screen only". Fixed across bug_report.rs,
+     keyboard.rs, and the 6 call sites in account.rs/lobby.rs (pass cam_y).
+  2) Invisible-object render bug (real, user-reported "detonated invisible
+     mine"): render_my_team's viewport culling for mines/barrels/crates/
+     fire-patches compared raw world-Y against SCREEN_H with no cam_y offset
+     (graves/soldiers/explosions already did this correctly). Any of these
+     sitting in the lower half of a tall map never rendered once the camera
+     scrolled down to actually look at that area, while remaining fully
+     solid/live in the sim. Fixed all 4 call sites in loop_runner.rs.
+  3) Fall damage retuned: safe threshold 80px->130px, rate 0.15/px->0.10/px.
+  4) Scenery hitboxes tightened for 11 round/irregular sprite types (rocks,
+     bushes, piles, boulders, crystals, skulls, cairns) toward their visual
+     core — a rectangular box around an irregular sprite always overhangs
+     the corners more than it does for blocky sprites (posts/crates/walls/
+     logs), which already fit well. Full per-pixel masks (SceneryObject.mask
+     is currently only populated by crater carving, never at spawn) would be
+     the complete fix; out of scope this pass.
+
+Deployed 2026-07-05 (v0.5.4.415):
+  1) TNT and Baseball Bat turn-locks removed. Bat's "locked 3 full cycles"
+     was already dead/unenforced (comment only, no actual gate anywhere);
+     TNT's real gate (turn_number >= 5*num_teams in fire path + a padlock
+     icon overlay) removed from loop_runner.rs and cpu.rs (AI obeyed the
+     same gate). Guide text updated.
+  2) find_team_spawns last-resort fallback rewritten: was a first-fit scan
+     over `cands` in x-ascending order, which clumps the whole team into
+     the first usable cluster of columns on a badly fragmented map (repro
+     seed 18bf66258fd61523: only 4 raw landform segments total, ZERO
+     >=60px wide) even when an isolated usable column exists far away.
+     Now greedily picks whichever remaining candidate maximizes worst-case
+     separation (matching sep_ok's OR rule as a continuous score, integer
+     math only) — verified it now grabs the distant outlier first.
+  3) Menu->bug-reporter MenuGuard was only wired into main()'s loop; TAT's
+     interactive turn loop (run_tat_game) never disabled keymon's MENU
+     interception, so pressing Menu during a TAT turn let the OS's own menu
+     silently eat the button (looked like a freeze, no report screen ever
+     shown). Hoisted MenuGuard to module scope, wired into run_tat_game too.
+  4) kill_weapon was never synced to the live client (NetSoldier had no
+     field for it — explicitly exempted in the parity checklist as "arrives
+     as a message", which never actually happened). Every live-match kill
+     reported weapon "UNKNOWN" for missions/leaderboards even though the
+     field was set correctly server-side; TAT/hotseat were unaffected (real
+     local simulation). Added NetSoldier.kill_weapon_u8 (255=None) via the
+     existing WeaponKind to/from_net_u8 helpers, wired through build_state/
+     apply_server_state, both parity checklists updated.
+  5) Found while wiring weapon-kill missions: Shotgun's hitscan path never
+     set kill_weapon at all; BaseballBat had no display_name() entry (fell
+     through to generic "WEAPON"). Both fixed.
+  6) Missions: DAILY_POOL/WEEKLY_POOL expanded 3->16/17 candidates each
+     (deploy/arty_api.py), including per-weapon kill challenges. 3 are
+     deterministically selected per day/week (seeded by the period string
+     via hashlib.md5 -> random.Random) so every player sees the identical
+     rotating set on a given day but it changes day-to-day/week-to-week.
+     Hand of Jerry weekly mission swapped for Clump Bomb (HoJ is ~3% crate
+     drop — a 2-kill weekly target was unattainable).
+
+Deployed 2026-07-05 (v0.5.4.414):
+  1) Sacred Ordnance (Holy Hand Grenade) max damage 100 -> 80.
+  2) HOW TO PLAY guide overhaul: update-screen text bumped to scale 2 (was
+     unscaled), capped at last 5 patch notes; corrected stale numbers (TNT
+     112->75, Air Strike 75->50, Blasthive 12->5/sting, Hand of Jerry
+     85->45/bounce, Grapple Hook "3 uses"->5, Shotgun's now-single-ray
+     falloff mechanic, a Revolver stat contradiction between two guide
+     pages); added entries for 5 previously-undocumented loadout weapons
+     (Pistol, MAC-10, Molotov Cocktail, Clump Bomb, Homing Missile).
+
+Deployed 2026-07-05 (v0.5.4.413):
+  1) Cavern-map barrels (place_map_barrels in main.rs) used raw
+     surface_y_at_with_scenery, landing on the sealed rock cap on cavern
+     maps instead of inside an accessible chamber — same bug maybe_drop_crate
+     already worked around via standable_cave_foot_simple. Fixed to match.
+  2) Server hardening found while load-testing (spun up 20 synchronous
+     matches, then a 10-min trickle-in/hold/trickle-out test): [profile.server]
+     added (panic=unwind instead of release's panic=abort) so one match
+     panicking can't abort the whole process and take every other in-progress
+     match down with it; each match-running thread wrapped in catch_unwind.
+     TLS+app handshake moved off the single accept-loop thread into a
+     per-connection thread so a burst of simultaneous connects parallelizes
+     handshake cost across cores instead of serializing behind each other.
+     Server match-start log now prints each player's account/character name
+     per team, not just team indices.
+  3) Deploy script bug (self-inflicted, found + fixed same day): update_server.sh
+     hardcoded the server binary path to the OLD release-profile output dir;
+     after the piserver alias switched to --profile server, every deploy was
+     silently repushing a stale .412 binary (still panic=abort, still
+     REQUIRED_VERSION 0.5.4.412) regardless of requested version. Confirmed
+     live via a raw protocol test (a .412 handshake got "OK" from a server
+     claiming to be .413). Fixed path, verified with the same test.
 
 Source 2026-07-05 (v0.5.4.413, not yet built):
   1) Shotgun damage falloff (WA gun-blast model). fire_shotgun's single

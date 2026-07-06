@@ -136,7 +136,17 @@ a live generator; the old `generate_worms` has been removed.
   don't compile under `cargo test --lib`; the integration test is unaffected.
 - Do not build for the Miyoo device or deploy without explicit instruction; bump
   the `VERSION` string in `src/main.rs` **and** `REQUIRED_VERSION` in
-  `src/server/main.rs` (line ~1224) first — the server requires an exact version
+  `src/server/main.rs` (line ~1386) first — the server requires an exact version
   match and rejects every other client. The deploy script does **not** update
   `REQUIRED_VERSION` automatically.
   Quick check: `grep -n 'VERSION' src/main.rs src/server/main.rs`
+- The server build profile is `[profile.server]` (`panic = "unwind"`, not `release`'s
+  `panic = "abort"` — one match panicking must not abort the whole process and take every
+  other in-progress match down with it), built via `cargo piserver`
+  (`.cargo/config.toml`). Its output lives under
+  `target/aarch64-unknown-linux-gnu/server/server` — **not** the `release` profile's
+  directory. `deploy/update_server.sh`'s `SERVER_BINARY` path must match wherever the active
+  profile/alias actually writes its output; a past mismatch here silently repushed a stale
+  binary (wrong `REQUIRED_VERSION`, wrong panic behavior) on every deploy until caught by a
+  raw protocol test. If you change the server's cargo profile or alias, grep
+  `update_server.sh` for `SERVER_BINARY` and update it in the same change.

@@ -4977,25 +4977,8 @@ fn stamp_objects(game: &mut GameState) {
         }
     }
 
-    // Scenery: solid like barrels — soldiers stand on them, projectiles collide.
-    // Footprints are per-sprite (see SceneryObject::footprint); positions are
-    // seed-derived so this is identical on client and server.
-    let theme = crate::world::terrain::Theme::of(game.terrain.is_cavern, game.terrain.template_id);
-    for i in 0..game.terrain.scenery.len() {
-        let (cx, cy, half_w, height) = {
-            let obj = &game.terrain.scenery[i];
-            let (half_w, height) = obj.footprint(theme);
-            (obj.x as i32, obj.y as i32, half_w, height)
-        };
-        for dy in -height..=0i32 {
-            for dx in -half_w..=half_w {
-                let (wx, wy) = (cx + dx, cy + dy);
-                if game.terrain.scenery[i].pixel_intact(wx, wy, theme) {
-                    game.terrain.stamp_object(wx, wy);
-                }
-            }
-        }
-    }
+    // Scenery objects are purely decorative — no hitbox (soldiers/projectiles
+    // pass through them; only the terrain bitmap and other hazards collide).
 
     // Armed / triggered mines: 8×8 px footprint
     for mine in &game.mines {
@@ -5234,23 +5217,15 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 }
                             }
                             if hit {
-                                // Swinging into ground — detach rope and land at last clear pos
-                                let land_y = land_on_surface(&game.terrain, last_clear_x, last_clear_y) as f32;
-                                let dmg = game.teams[ti].soldiers[si].fall.land(land_y);
-                                if dmg > 0 {
-                                    game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
-                                    game.teams[ti].soldiers[si].take_damage(dmg);
-                                }
+                                // Swinging into a wall — stop at the last clear point but stay
+                                // attached to the rope (no sticking/landing); gravity + rope
+                                // tension will pull the soldier away from the wall next tick.
+                                vel.x = 0.0;
+                                vel.y = 0.0;
                                 game.teams[ti].soldiers[si].pos.x = last_clear_x;
-                                game.teams[ti].soldiers[si].pos.y = land_y;
-                                game.teams[ti].soldiers[si].airtime = 0;
-                                if game.teams[ti].soldiers[si].is_dead() {
-                                    game.teams[ti].soldiers[si].state = SoldierState::Dead;
-                                } else {
-                                    game.teams[ti].soldiers[si].state = SoldierState::Idle;
-                                }
-                                game.rope = None;
-                                game.rope_session = false; // landed — session over, turn continues
+                                game.teams[ti].soldiers[si].pos.y = last_clear_y;
+                                game.teams[ti].soldiers[si].airtime += 1;
+                                game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel, spinning };
                             } else if ny >= crate::world::WATER_Y as f32 {
                                 // Drowned
                                 game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Water;

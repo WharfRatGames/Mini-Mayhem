@@ -14,9 +14,8 @@ def _status_refresh_loop():
     global _status_cached
     while True:
         try:
-            db2 = sqlite3.connect(DB, timeout=2)
+            db2 = open_db(timeout=2)
             try:
-                db2.execute("PRAGMA journal_mode=WAL")
                 total_users   = db2.execute("SELECT COUNT(*) FROM users").fetchone()[0]
                 active_today  = db2.execute("SELECT COUNT(DISTINCT p0) + COUNT(DISTINCT p1) FROM matches WHERE done=1 AND finished_at > ?", (int(time.time()) - 86400,)).fetchone()[0]
                 total_matches = db2.execute("SELECT COUNT(*) FROM matches WHERE done=1").fetchone()[0]
@@ -96,9 +95,8 @@ def _lobbies_refresh_loop():
     while True:
         try:
             now = int(time.time())
-            db2 = sqlite3.connect(DB, timeout=2)
+            db2 = open_db(timeout=2)
             try:
-                db2.execute("PRAGMA journal_mode=WAL")
                 live_games = db2.execute("""
                     SELECT lq.user_id, u1.username, lq.elo,
                            lq.paired_with, u2.username, lq2.elo,
@@ -155,6 +153,13 @@ threading.Thread(target=_lobbies_refresh_loop, daemon=True).start()
 # Cap concurrent request threads so a burst of connections can't saturate all cores.
 _req_sem = threading.Semaphore(20)
 DB = os.path.expanduser("~/mayhem-server/arty.db")
+
+def open_db(timeout=10):
+    c = sqlite3.connect(DB, timeout=timeout)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA synchronous=NORMAL")
+    c.execute("PRAGMA busy_timeout=5000")
+    return c
 _key_file = os.path.expanduser("~/mayhem-server/admin_key.txt")
 ADMIN_KEY = open(_key_file).read().strip() if os.path.exists(_key_file) else os.environ.get("ARTY_ADMIN_KEY", "changeme")
 
@@ -299,6 +304,19 @@ def init_db(c):
             claimed      INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (user_id, challenge_id, period)
         );
+    """)
+    c.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_users_token        ON users(token);
+        CREATE INDEX IF NOT EXISTS idx_matches_p0         ON matches(p0, done);
+        CREATE INDEX IF NOT EXISTS idx_matches_p1         ON matches(p1, done);
+        CREATE INDEX IF NOT EXISTS idx_rosters_user       ON rosters(user_id);
+        CREATE INDEX IF NOT EXISTS idx_ranked_pool_user   ON ranked_pool(user_id);
+        CREATE INDEX IF NOT EXISTS idx_ranked_pool_match  ON ranked_pool(match_id);
+        CREATE INDEX IF NOT EXISTS idx_casual_pool_user   ON casual_pool(user_id);
+        CREATE INDEX IF NOT EXISTS idx_casual_pool_match  ON casual_pool(match_id);
+        CREATE INDEX IF NOT EXISTS idx_live_queue_user    ON live_queue(user_id);
+        CREATE INDEX IF NOT EXISTS idx_cosmetics_user     ON player_cosmetics(user_id);
+        CREATE INDEX IF NOT EXISTS idx_challenges_user    ON player_challenges(user_id);
     """)
     # One-time cleanup: remove pool rows for already-finished matches (historical accumulation)
     c.execute("DELETE FROM ranked_pool WHERE match_id IS NOT NULL AND match_id IN (SELECT id FROM matches WHERE done=1)")
@@ -601,14 +619,19 @@ def send_json(s, status, obj):
 
 # ── Request handler ───────────────────────────────────────────────────────────
 
-def handle(db, sock, peer_ip="?"):
+def handle(sock, peer_ip="?"):
     with _req_sem:
+        db = None
         try:
+            db = open_db()
             _handle(db, sock, peer_ip)
         except Exception as e:
             try: send_json(sock, 500, {"error": str(e)})
             except: pass
         finally:
+            if db is not None:
+                try: db.close()
+                except: pass
             try: sock.close()
             except: pass
 
@@ -1061,10 +1084,8 @@ def _handle(db, sock, peer_ip="?"):
                 if abs(my_elo - opp_elo) <= window:
                     code = gen_code()
                     db.execute("INSERT INTO matches(code,p0,p1,seed,ranked,has_mines,has_barrels,mode,turn_started_at,turn_timeout) VALUES(?,?,?,?,1,1,1,'tat',?,?)", (code, opp_uid, uid2, seed, seed, 14*24*3600))
-                    db.commit()
                     mid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
                     db.execute("UPDATE ranked_pool SET match_id=? WHERE id=?", (mid, pool_id))
-                    db.commit()
                     # Add pool entry for creator (already matched)
                     db.execute("INSERT INTO ranked_pool(user_id,elo,joined_at,match_id) VALUES(?,?,?,?)", (uid2, my_elo, now, mid))
                     db.commit()
@@ -1086,7 +1107,6 @@ def _handle(db, sock, peer_ip="?"):
                 pool_id, opp_uid = opponent
                 code = gen_code()
                 db.execute("INSERT INTO matches(code,p0,p1,seed,ranked,has_mines,has_barrels,mode,turn_started_at,turn_timeout) VALUES(?,?,?,?,0,1,1,'tat',?,?)", (code, opp_uid, uid2, seed, seed, 14*24*3600))
-                db.commit()
                 mid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
                 db.execute("UPDATE casual_pool SET match_id=? WHERE id=?", (mid, pool_id))
                 db.execute("INSERT INTO casual_pool(user_id,joined_at,match_id) VALUES(?,?,?)", (uid2, now, mid))
@@ -1393,15 +1413,17 @@ def _handle(db, sock, peer_ip="?"):
                 update_elo(db, e_winner, e_loser)
         if expired: db.commit()
         rows = db.execute(
-            "SELECT id,p0,p1,turn,code,ranked,turn_started_at,turn_timeout FROM matches WHERE (p0=? OR p1=?) AND done=0 AND p1 IS NOT NULL",
-            (uid2,uid2)
+            "SELECT m.id,m.p0,m.p1,m.turn,m.code,m.ranked,m.turn_started_at,m.turn_timeout,u.username,u.elo"
+            " FROM matches m LEFT JOIN users u ON u.id = CASE WHEN m.p0=? THEN m.p1 ELSE m.p0 END"
+            " WHERE (m.p0=? OR m.p1=?) AND m.done=0 AND m.p1 IS NOT NULL",
+            (uid2,uid2,uid2)
         ).fetchall()
         out = []
-        for mid,p0,p1,turn,code,is_ranked,ts,tt in rows:
-            opp = uname(p1 if uid2==p0 else p0)
+        for mid,p0,p1,turn,code,is_ranked,ts,tt,opp_name,opp_elo in rows:
+            opp = opp_name if opp_name else "unknown"
             my_slot = 0 if uid2==p0 else 1
             opp_uid_val = p1 if uid2==p0 else p0
-            opp_elo_val = (get_elo(opp_uid_val) or 1000) if opp_uid_val else 1000
+            opp_elo_val = (opp_elo or 1000) if opp_uid_val else 1000
             days_rem = max(0, tt - (now_ts - ts)) // 86400 if (tt and ts) else -1
             out.append({"match_id":mid,"code":code,"opponent":opp,"your_turn":turn==my_slot,"ranked":bool(is_ranked),"opponent_elo":opp_elo_val,"days_remaining":days_rem})
         send_json(sock, 200, out)
@@ -1687,7 +1709,7 @@ def _handle(db, sock, peer_ip="?"):
                 "description": description,
                 "png_b64": _b64.b64encode(png_data).decode() if png_data else None,
             }).encode()
-            bot_req = _ur.Request("http://127.0.0.1:7779/notify/bug_report", data=payload,
+            bot_req = _ur.Request(f"http://127.0.0.1:7779/notify/bug_report?key={ADMIN_KEY}", data=payload,
                 headers={"Content-Type": "application/json"})
             with _ur.urlopen(bot_req, timeout=5) as r:
                 r.read()
@@ -1704,9 +1726,9 @@ def _handle(db, sock, peer_ip="?"):
 
 def main():
     os.nice(5)  # yield to the game server under CPU pressure
-    db = sqlite3.connect(DB, check_same_thread=False, timeout=10)
-    db.execute("PRAGMA journal_mode=WAL")
+    db = open_db()
     init_db(db)
+    db.close()
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", PORT))
@@ -1716,7 +1738,7 @@ def main():
     while True:
         try:
             s, addr = srv.accept()
-            threading.Thread(target=handle, args=(db, s, addr[0]), daemon=True).start()
+            threading.Thread(target=handle, args=(s, addr[0]), daemon=True).start()
         except Exception:
             traceback.print_exc()
 

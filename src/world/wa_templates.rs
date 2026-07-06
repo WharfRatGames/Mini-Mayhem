@@ -60,6 +60,16 @@ struct SegmentSource {
 
 const MAX_SEGMENTS: usize = 4;
 
+/// Vertical relief compression for mask sampling. 1.0 = the mask's silhouette
+/// spans the full terrain band (original behavior, ~104px+ cliffs). 2.0 halves
+/// all surface height variation so most cliffs fall at/under the ~46px
+/// backflip ceiling and valley soldiers can reach tops without a rope.
+const RELIEF_COMPRESSION: f64 = 2.0;
+/// Mask row that lands at the terrain band's vertical middle when sampling.
+/// Slightly below mask center so the compressed silhouette keeps a sensible
+/// ground level rather than floating high in the band.
+const ANCHOR: f64 = 0.55;
+
 /// All seed-derived collage parameters, computed once before the pixel loop.
 pub struct CollageParams {
     n_segs: usize,
@@ -153,13 +163,20 @@ pub fn collage_params(seed: u64, cavern: bool) -> CollageParams {
         };
         let mut best_cov = -1.0f64;
         for _ in 0..8 {
+            // Vertical relief compression: sample the mask "zoomed out" by
+            // RELIEF_COMPRESSION around the ANCHOR row, so surface height
+            // variation shrinks by the same factor. Uncompressed (1.0), WA
+            // cliffs arrive ~104px+ tall — far beyond the ~46px backflip
+            // ceiling — stranding soldiers in valleys below pillar tops.
+            let jitter = rnd(&mut r, -0.05, 0.10);
+            let y_scale = RELIEF_COMPRESSION * rnd(&mut r, 0.90, 0.20);
             let cand = SegmentSource {
                 data: set[mask as usize],
                 mask,
                 shift: (lcg(&mut r) % WA_MASK_W as u64) as u32,
                 mirror: lcg(&mut r) & 1 == 1,
-                y_off: rnd(&mut r, -0.05, 0.10),
-                y_scale: rnd(&mut r, 0.90, 0.20),
+                y_off: 0.5 - y_scale * ANCHOR + jitter,
+                y_scale,
             };
             let cov = segment_coverage(&cand, lo, hi);
             if cov > best_cov {
@@ -236,8 +253,19 @@ pub fn dominant_template_id(p: &CollageParams) -> u8 {
     p.segs[best].mask
 }
 
-fn sample_segment(seg: &SegmentSource, nx: f64, ny: f64) -> f64 {
-    let my_f = (ny * seg.y_scale + seg.y_off).clamp(0.0, 1.0 - 1e-9);
+fn sample_segment(seg: &SegmentSource, nx: f64, ny: f64, invert: bool) -> f64 {
+    let my_f = ny * seg.y_scale + seg.y_off;
+    // Out-of-mask rows (relief compression samples past the art's bounds).
+    // Above the mask: raw sea — post-invert that's sky on islands and sealed
+    // rock cap on caverns. Below the mask: solid post-invert on BOTH map types
+    // (island underground / cavern floor rock). Clamping instead would extrude
+    // the mask's edge row into vertical streaks.
+    if my_f < 0.0 {
+        return 0.0;
+    }
+    if my_f >= 1.0 {
+        return if invert { 0.0 } else { 1.0 };
+    }
     let mut mx = ((nx.rem_euclid(1.0) * WA_MASK_W as f64) as u32 + seg.shift) % WA_MASK_W;
     if seg.mirror {
         mx = WA_MASK_W - 1 - mx;
@@ -256,7 +284,7 @@ fn segment_coverage(seg: &SegmentSource, lo: f64, hi: f64) -> f64 {
         let nx = lo + (hi - lo) * (i as f64 + 0.5) / SX as f64;
         for j in 0..SY {
             let ny = (j as f64 + 0.5) / SY as f64;
-            if sample_segment(seg, nx, ny) > 0.5 {
+            if sample_segment(seg, nx, ny, false) > 0.5 {
                 solid += 1;
             }
         }
@@ -289,7 +317,7 @@ pub fn collage_density(p: &CollageParams, nx: f64, ny: f64) -> f64 {
     let near_left = i > 0 && nx < p.bounds[i] + p.fade;
     let near_right = i < p.n_segs - 1 && nx > p.bounds[i + 1] - p.fade;
     let d = if !near_left && !near_right {
-        sample_segment(&p.segs[i], nx, ny)
+        sample_segment(&p.segs[i], nx, ny, p.invert)
     } else {
         // Blend across the closer boundary: weight of the right-hand segment
         // ramps 0→1 over [b - fade, b + fade].
@@ -299,8 +327,8 @@ pub fn collage_density(p: &CollageParams, nx: f64, ny: f64) -> f64 {
             (i, i + 1, p.bounds[i + 1])
         };
         let t = smoothstep((nx - (bound - p.fade)) / (2.0 * p.fade));
-        let sa = sample_segment(&p.segs[a], nx, ny);
-        let sb = sample_segment(&p.segs[b], nx, ny);
+        let sa = sample_segment(&p.segs[a], nx, ny, p.invert);
+        let sb = sample_segment(&p.segs[b], nx, ny, p.invert);
         sa + (sb - sa) * t
     };
     if p.invert { 1.0 - d } else { d }

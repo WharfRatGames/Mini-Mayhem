@@ -1094,9 +1094,13 @@ fn explosion_damage_emits_popup() {
     );
 
     // Tick until the tally flushes; capture the popup and that tick's state.
+    // The popup is deferred until the world settles (DAMAGE_SETTLE_TICKS=20 with
+    // no new hits) — and the explosion first knocks the target airborne, so the
+    // window must cover knockback-fall settle time plus the tally, which varies
+    // with where the victim lands on the terrain.
     let input = InputState::new();
     let mut found: Option<(u8, u8, arty::net::msg::StateMsg)> = None;
-    for tick in 0..60u32 {
+    for tick in 0..120u32 {
         server_tick(&mut server, &input, None, None);
         let popup = server.fx_events.iter().find_map(|ev| match *ev {
             FxEvent::DamagePopup { amount, color_id, .. } => Some((amount, color_id)),

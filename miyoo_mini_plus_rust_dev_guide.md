@@ -111,7 +111,14 @@ Query the actual screen size at runtime with the `FBIOGET_VSCREENINFO` ioctl rat
 // Start=28   Select=97
 ```
 
-The MENU button (center) is intercepted by Onion's `keymon` daemon for system shortcuts. It is not available to your app.
+The MENU button (center) is intercepted by Onion's `keymon` daemon for system shortcuts by
+default. It **can** be freed for your app: write a sentinel file (this project uses
+`/tmp/disable_menu_button`, created for the duration your app wants MENU and removed on
+Drop/exit) and keymon stops intercepting it, delivering it as a normal key event on
+`/dev/input/event0` like any other button. Confirmed working on-device (Arty uses this to
+open an in-game bug reporter on MENU). Exact mechanism/trigger file is keymon-internal and
+undocumented upstream — this project reverse-engineered it by observation, so treat the
+sentinel path as this-project-specific rather than a documented Onion API.
 
 ---
 
@@ -129,4 +136,4 @@ Use ALSA directly via `dlopen("libasound.so.2")` — load it at runtime rather t
 | App runs at ~3 FPS | Always build `--release` |
 | App doesn't appear in launcher | Check `config.json` is valid JSON with a relative icon path |
 | Binary won't run | `chmod +x yourapp launch.sh` after copying |
-| MENU button does nothing | It's taken by the OS — don't use it |
+| MENU button does nothing | Taken by keymon by default — write `/tmp/disable_menu_button` while your app wants it, remove it on exit |

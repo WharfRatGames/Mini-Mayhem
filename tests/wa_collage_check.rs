@@ -107,6 +107,52 @@ fn island_maps_find_spawns() {
     }
 }
 
+/// Guard for the compressed-relief redesign: soldiers walk up 8px, jump ~16px,
+/// backflip ~46px. Island surfaces must stay mostly traversable — p95 of the
+/// surface-height change across 12px windows at/under ~60px (chasms and pit
+/// hazards intentionally exceed it, hence p95 not max), and nearly every
+/// column must have ground at all (the depth ramp guarantees it outside
+/// chasms/edge water).
+#[test]
+fn island_relief_is_traversable() {
+    let mut checked = 0;
+    for seed in 0..40u64 {
+        let t = Terrain::generate_tactical(seed);
+        if t.is_cavern {
+            continue;
+        }
+        checked += 1;
+        let surface = |x: i32| (0..WATER_Y as i32).find(|&y| t.is_solid(x, y));
+        let mut deltas: Vec<i32> = Vec::new();
+        let mut covered = 0usize;
+        let n = (WORLD_W - 12) as i32;
+        for x in 0..n {
+            if surface(x).is_some() {
+                covered += 1;
+            }
+            if let (Some(a), Some(b)) = (surface(x), surface(x + 12)) {
+                deltas.push((a - b).abs());
+            }
+        }
+        // Intentional hazards (2–4 chasms/pits per map, Phase 5) have legitimately
+        // tall walls, so a small fraction of steep columns is expected. What must
+        // never return is pervasive verticality: pre-redesign maps had 30%+ of
+        // columns steeper than 60px; hazard slots alone stay well under 8%.
+        let steep = deltas.iter().filter(|&&d| d > 60).count();
+        let frac = steep as f64 / deltas.len().max(1) as f64;
+        assert!(
+            frac <= 0.08,
+            "island seed {seed}: {:.1}% of columns have >60px cliffs — terrain too vertical to traverse",
+            frac * 100.0
+        );
+        assert!(
+            covered as f64 / n as f64 >= 0.80,
+            "island seed {seed}: only {covered}/{n} columns have ground"
+        );
+    }
+    assert!(checked > 0, "no island maps sampled");
+}
+
 #[test]
 fn both_source_masks_appear_as_dominant() {
     let mut seen = std::collections::HashSet::new();
