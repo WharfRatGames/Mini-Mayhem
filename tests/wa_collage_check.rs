@@ -134,15 +134,16 @@ fn island_relief_is_traversable() {
                 deltas.push((a - b).abs());
             }
         }
-        // Intentional hazards (2–4 chasms/pits per map, Phase 5) have legitimately
-        // tall walls, so a small fraction of steep columns is expected. What must
-        // never return is pervasive verticality: pre-redesign maps had 30%+ of
-        // columns steeper than 60px; hazard slots alone stay well under 8%.
+        // Taller maps are intended now that the grapple reaches cliffs beyond
+        // backflip range, so a moderate fraction of steep columns is fine — that's
+        // the vertical, reference-game feel. The guard only catches PERVASIVE
+        // verticality (pre-redesign maps had 30%+ of columns steeper than 60px),
+        // which would make a map unreadable / ungrappleable.
         let steep = deltas.iter().filter(|&&d| d > 60).count();
         let frac = steep as f64 / deltas.len().max(1) as f64;
         assert!(
-            frac <= 0.08,
-            "island seed {seed}: {:.1}% of columns have >60px cliffs — terrain too vertical to traverse",
+            frac <= 0.20,
+            "island seed {seed}: {:.1}% of columns have >60px cliffs — terrain pervasively vertical",
             frac * 100.0
         );
         assert!(

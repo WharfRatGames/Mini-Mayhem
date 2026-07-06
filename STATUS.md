@@ -1,8 +1,32 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.417 DEPLOYED (2026-07-05) · commit fef40f1 on main
+## Version: 0.5.4.419 (built/testing 2026-07-06) · prior 0.5.4.418 DEPLOYED (commit 3719e5f on main)
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
 ## Miyoo push: .126 OK (hash-verified) · .110 unreachable ("no route to host"), needs manual push once back online
+
+## Building 2026-07-06 (v0.5.4.419 — VERSION + REQUIRED_VERSION bumped to .419)
+
+### Grapple ground-stick fixed (`loop_runner.rs`)
+Swinging on the rope could sink the soldier into the ground and freeze it. Root cause: the swing
+swept-collision loop started *ahead* of the soldier's position and defaulted `last_clear` to the
+(already-embedded) point, so the hit branch pinned the soldier there at zero velocity every tick;
+attach never lifted the soldier clear either. Added `rope_unstick()` — lifts an embedded rope
+soldier straight up to the nearest clear body-column position — called at the top of the swing
+block each tick and right after attach. Runs in `simulate` (all 5 paths); no `StateMsg` change.
+
+### Map verticality restored (`wa_templates.rs`, `terrain.rs`)
+Partial revert of .417's relief compression, now that the grapple can reach tall/isolated tops:
+`RELIEF_COMPRESSION` 2.0→1.25, `DEPTH_RAMP` 9.0→4.0, `GROUND_T` 0.62→0.66 (surface band
+~84px→~190px), ledge gap 30–44px→30–60px. Maps are much taller/more vertical again. The
+`island_relief_is_traversable` test guard was relaxed (>60px-cliff fraction 8%→20%) to permit
+grapple-reachable verticality. Terrain is seed-derived (not networked) but client+server must run
+identical code — hence the version bump.
+
+## Deployed 2026-07-06 (v0.5.4.418 — commit 3719e5f)
+Grapple physics overhaul from reverse-engineering WA.exe: WA-accurate gravity/hook/swing/reel
+constants (tangential swing), firing-angle limit, vertical auto-detach, rope-knocking, retreat
+window, and a multi-corner `RopeState.wrap` chain (synced via `NetRope.wrap`, parity-covered).
+Rope-swing body pose; wooden crates halved.
 
 ## Deployed 2026-07-05 (v0.5.4.417 — VERSION + REQUIRED_VERSION bumped to .417)
 

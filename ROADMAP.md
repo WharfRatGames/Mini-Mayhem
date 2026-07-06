@@ -16,6 +16,8 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Guaranteed-walkable spawns — footing checks now require escape room beyond at least one edge of the footprint, rejecting wall-to-wall soldier-width slots that were standable but unwalkable (v0.5.4.403)
 - [x] Mound-series terrain removed — a low-weight sine-relief layered onto every non-cavern map's density field, producing a repeating "series of mounds" look regardless of the WA collage silhouette, has been disabled (v0.5.4.403)
 - [x] Terrain generation ~40% faster — precomputed hill_col[], octaves 4→3 (~4.4M fewer noise calls per map, v0.5.4.394)
+- [x] Grappling hook physics overhaul — swing tuned to reverse-engineered reference constants (gentler gravity/swing, tangential along-arc control, faster reel), firing-angle limit, vertical auto-detach on ground, rope-knocking, post-rope retreat window, and a multi-corner rope that bends around and unwinds off terrain corners (v0.5.4.418); ground-stick fix so the soldier rests on the surface instead of sinking (v0.5.4.419)
+- [x] Map verticality restored — .417's relief compression relaxed (RELIEF_COMPRESSION 2.0→1.25, DEPTH_RAMP 9.0→4.0) so cliffs/peaks/valleys are tall again, now that the grapple reaches isolated tops (v0.5.4.419)
 - [x] Crater carving (destructible terrain)
 - [x] Scenery destructible exactly like terrain — per-pixel mask over each object's
       footprint, cleared by the same blast-circle rule as terrain.solid; explosions

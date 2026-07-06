@@ -1280,6 +1280,21 @@ fn rope_find_corner(terrain: &crate::world::Terrain, ax: f32, ay: f32, bx: f32, 
     None
 }
 
+/// Lift a rope soldier straight up out of terrain to the nearest position where
+/// its body column is clear, bounded. Uses the same column predicate as the swept
+/// swing collision so "clear" is consistent. Without this an embedded soldier gets
+/// pinned: the swept check starts ahead of the (embedded) position and rests it at
+/// `last_clear` = the embedded point with zero velocity, re-triggered every tick.
+fn rope_unstick(game: &mut GameState, ti: usize, si: usize) {
+    use crate::renderer::draw_sprites::SOLDIER_H;
+    let x = game.teams[ti].soldiers[si].pos.x as i32;
+    for _ in 0..(SOLDIER_H + 8) {
+        let y = game.teams[ti].soldiers[si].pos.y as i32;
+        if !(0..=SOLDIER_H).any(|h| game.terrain.is_solid(x, y - h)) { break; }
+        game.teams[ti].soldiers[si].pos.y -= 1.0;
+    }
+}
+
 fn fire_rope_hook(game: &mut GameState, ti: usize, si: usize) {
     use crate::world::{WorldPos, Vec2};
     let fm    = game.teams[ti].soldiers[si].facing as f32;
@@ -5140,6 +5155,9 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             vel: crate::world::Vec2::new(vel_horiz, -vel_up),
                             spinning: false,
                         };
+                        // Lift clear of the ground so a low/horizontal attach doesn't
+                        // start the soldier embedded (which would immediately stick).
+                        rope_unstick(game, ati, asi);
                     }
                     attached = true;
                     break;
@@ -5183,12 +5201,20 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         // WA: a perfectly-vertical rope while the soldier touches the
                         // ground auto-detaches (the soldier just stands up). vdy>0 means
                         // the soldier hangs below the anchor; 2px matches corner-wrap epsilon.
+                        // Suppressed while Down is held: the player is actively paying out
+                        // rope to lower themselves further, not standing up.
                         if let Some(rope) = game.rope.as_ref().filter(|r| !r.flying) {
                             let vdx = game.teams[ti].soldiers[si].pos.x - rope.anchor.x;
                             let vdy = game.teams[ti].soldiers[si].pos.y - rope.anchor.y;
-                            if on_ground && vdy > 0.0 && vdx.abs() < 2.0 {
+                            if on_ground && vdy > 0.0 && vdx.abs() < 2.0 && !input.held(Button::Down) {
                                 game.rope = None;
                             }
+                        }
+                        // Push the soldier out of any terrain it's embedded in BEFORE the
+                        // swing math, so the swept collision starts from a clear point and
+                        // can't pin an embedded soldier at zero velocity (the ground-stick).
+                        if game.rope.as_ref().map_or(false, |r| !r.flying) {
+                            rope_unstick(game, ti, si);
                         }
                         if let Some(rope) = game.rope.as_ref().filter(|r| !r.flying) {
                             let mut anchor = rope.anchor;
@@ -5281,6 +5307,11 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 }
                             }
                             // 4. Project velocity onto tangent plane (remove outward radial).
+                            //    Safe to do unconditionally now: step 7 is a hard positional
+                            //    constraint that re-snaps the soldier onto the rope-length
+                            //    circle every tick (matching WA's FUN_005009c0), so the rope
+                            //    is always taut by construction — reel-out moves the soldier
+                            //    by directly growing the circle, not by gravity filling slack.
                             let radial = vel.x * dir_x + vel.y * dir_y;
                             if radial > 0.0 {
                                 vel.x -= dir_x * radial;
@@ -5296,23 +5327,29 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             // 6. Step with tangential velocity
                             let mut nx = cx + vel.x;
                             let mut ny = cy + vel.y;
-                            // 7. Position clamp to rope length
+                            // 7. Hard positional constraint (WA-style): re-snap onto the
+                            //    circle of the CURRENT rope length every tick, not just when
+                            //    exceeding it. This is what makes reel-out actually move the
+                            //    soldier — growing `effective_len` immediately pushes them
+                            //    outward along the current rope direction, deterministically,
+                            //    instead of waiting on gravity to fall into new slack.
                             let dx = nx - anchor.x;
                             let dy = ny - anchor.y;
-                            let dist = (dx * dx + dy * dy).sqrt();
-                            if dist > effective_len && dist > 0.1 {
-                                nx = anchor.x + dx / dist * effective_len;
-                                ny = anchor.y + dy / dist * effective_len;
-                            }
+                            let dist = (dx * dx + dy * dy).sqrt().max(0.1);
+                            nx = anchor.x + dx / dist * effective_len;
+                            ny = anchor.y + dy / dist * effective_len;
                             // 5. Terrain collision — swept check along the full movement
                             // path so angled/horizontal swings can't phase through walls.
-                            // Still skips the first tick (total speed < 3) so newly-attached
-                            // rope doesn't immediately cancel by detecting the ground underfoot.
+                            // Threshold is low (0.5) so the slow WA-speed pendulum still
+                            // collides: with gentle gravity the descent is well under the
+                            // old 3px/tick guard, which let the soldier sink straight through
+                            // the ground. Hitting terrain only rests the soldier at the last
+                            // clear point (still attached), so running it at low speed is safe.
                             let move_len = ((nx - cx).abs() + (ny - cy).abs()).ceil() as i32 + 1;
                             let mut last_clear_x = cx;
                             let mut last_clear_y = cy;
                             let mut hit = false;
-                            if (vel.x * vel.x + vel.y * vel.y).sqrt() > 3.0 {
+                            if (vel.x * vel.x + vel.y * vel.y).sqrt() > 0.5 {
                                 for s in 1..=move_len {
                                     let t = s as f32 / move_len as f32;
                                     let sx = cx + (nx - cx) * t;

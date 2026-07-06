@@ -23,19 +23,28 @@ pub const WA_MASK_W: u32 = 1920;
 pub const WA_MASK_H: u32 = 696;
 
 /// Open/island-style WA silhouettes (terrain surrounded by sky + water).
-static WA_ISLAND_MASKS: [&[u8]; 2] = [
+/// Extracted from real WA MapGen output across several game types (island,
+/// bazooka-and-grenades, destructible-WfW, roper) via `tools/extract_wa_mask.py`.
+static WA_ISLAND_MASKS: [&[u8]; 10] = [
     include_bytes!("wa_masks/island0.bin"),
     include_bytes!("wa_masks/island1.bin"),
+    include_bytes!("wa_masks/island2.bin"),
+    include_bytes!("wa_masks/island3.bin"),
+    include_bytes!("wa_masks/island4.bin"),
+    include_bytes!("wa_masks/island5.bin"),
+    include_bytes!("wa_masks/island6.bin"),
+    include_bytes!("wa_masks/island7.bin"),
+    include_bytes!("wa_masks/island8.bin"),
+    include_bytes!("wa_masks/island9.bin"),
 ];
 
 /// Enclosed cavern-style WA silhouettes (solid border, play area carved
-/// inside). None extracted yet — until real cavern masks are added via
-/// `tools/extract_wa_mask.py --cavern`, cavern maps collage the island art
-/// *inverted* (WA land shapes become carved chambers), which keeps the WA
-/// edge character. Drop `cavernN.bin` files in `wa_masks/` and list them
-/// here to switch over; `collage_params` picks this set automatically once
-/// it is non-empty.
-static WA_CAVERN_MASKS: [&[u8]; 0] = [];
+/// inside) — extracted from real WA MapGen "Cavern" game-type output.
+/// `collage_params` picks this set automatically for cavern seeds.
+static WA_CAVERN_MASKS: [&[u8]; 2] = [
+    include_bytes!("wa_masks/cavern0.bin"),
+    include_bytes!("wa_masks/cavern1.bin"),
+];
 
 fn mask_bit(mask: &[u8], x: u32, y: u32) -> bool {
     let row_bytes = WA_MASK_W / 8;
@@ -64,7 +73,9 @@ const MAX_SEGMENTS: usize = 4;
 /// spans the full terrain band (original behavior, ~104px+ cliffs). 2.0 halves
 /// all surface height variation so most cliffs fall at/under the ~46px
 /// backflip ceiling and valley soldiers can reach tops without a rope.
-const RELIEF_COMPRESSION: f64 = 2.0;
+/// 1.25 restores most of the reference-game cliff height now that the grapple is
+/// the intended way to reach tall/isolated tops (taller, more vertical maps).
+const RELIEF_COMPRESSION: f64 = 1.25;
 /// Mask row that lands at the terrain band's vertical middle when sampling.
 /// Slightly below mask center so the compressed silhouette keeps a sensible
 /// ground level rather than floating high in the band.

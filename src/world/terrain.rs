@@ -923,8 +923,11 @@ impl Terrain {
                 // roughly terrain_range / DEPTH_RAMP px. This is what keeps
                 // valley soldiers able to walk/backflip to any top — without it
                 // the raw collage yields marooned pillars and floating islands.
-                const GROUND_T: f64 = 0.62;
-                const DEPTH_RAMP: f64 = 9.0;
+                // GROUND_T raised and DEPTH_RAMP relaxed to widen the surface band
+                // (~84px → ~190px) for taller, more vertical maps — the grapple now
+                // reaches isolated tops, so a gentler ramp is acceptable.
+                const GROUND_T: f64 = 0.66;
+                const DEPTH_RAMP: f64 = 4.0;
                 density += (ty - GROUND_T) * DEPTH_RAMP;
 
                 // 4b. Top sky-margin: erode density near the top so terrain tapers
@@ -1052,7 +1055,7 @@ impl Terrain {
                 let cx = (rnd(&mut rng, 0.18, 0.64) * WORLD_W as f64) as i32; // 0.18–0.82
                 let ground = terrain.surface_y_at(cx as u32)
                     .unwrap_or(TERRAIN_MAX_Y) as i32;
-                let gap   = rnd(&mut rng, 30.0, 14.0) as i32;  // 30–44px air gap — backflip (~46px) can reach the ledge
+                let gap   = rnd(&mut rng, 30.0, 30.0) as i32;  // 30–60px air gap — taller overhang shelves (grapple reaches the higher ones)
                 let shelf_y = (ground - gap).max(TERRAIN_MIN_Y as i32 + 6);
                 let half_w = rnd(&mut rng, 45.0, 55.0) as i32; // 45–100px reach
                 let th     = (rnd(&mut rng, 9.0, 10.0) as i32).max(6); // 9–19px thick

@@ -30,10 +30,12 @@
 
 | Button | Action |
 |---|---|
-| **A** | Fire hook |
-| **Up / Down** | Shorten / lengthen rope |
-| **Left / Right** | Swing |
+| **A** | Fire hook — while attached, tap again to detach; tap again in mid-air to re-hook (repeat swing) |
+| **Up / Down** | Reel the rope in / out (shorten / lengthen) |
+| **Left / Right** | Swing along the arc (build momentum from the sides) |
 | **B** | Release rope |
+
+> The rope can't be fired below the horizontal. Swinging into an enemy knocks them aside without ending your turn, and you get a short window to move after coming off the rope.
 
 ## Plasma Torch
 

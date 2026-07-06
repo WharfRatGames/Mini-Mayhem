@@ -1,12 +1,37 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.417 DEPLOYED (2026-07-05) — server/OTA/API/dashboard/
-  GitHub release/Discord live. Commit fef105dd on main. Miyoo push: .126 OK
-  (hash-verified); .110 unreachable ("no route to host") — same device that
-  failed to reach on .416, still offline, needs a manual push once back on
-  the network.
+Current version: 0.5.4.419 (built/testing 2026-07-06) — grapple ground-stick fix
+  + map verticality restored. Pending device playtest on .126, then full deploy.
+  Prior: 0.5.4.418 DEPLOYED (2026-07-06, commit 3719e5f) — grapple physics
+  overhaul + multi-corner rope wrap.
 
-In working tree, not yet built/deployed as of 2026-07-06 (post-.417):
+  --- 0.5.4.419 (this pass) ---
+  ROPE GROUND-STICK FIX. The swing swept-collision never tested its start point
+  and rested an embedded soldier at last_clear (the embedded point) with zero
+  velocity → permanent freeze; attach never lifted the soldier clear of ground.
+  Added rope_unstick(game,ti,si) (loop_runner.rs) — lifts an embedded rope
+  soldier straight up to the nearest clear body-column position; called at the
+  top of the swing block every tick AND right after attach. No new state (runs in
+  simulate → all 5 paths). The earlier 3.0->0.5 threshold change was the wrong
+  root cause.
+  MAP VERTICALITY RESTORED (partial revert of .417 relief compression, now that
+  the grapple reaches tall tops): RELIEF_COMPRESSION 2.0->1.25 (wa_templates.rs),
+  DEPTH_RAMP 9.0->4.0 + GROUND_T 0.62->0.66 (terrain.rs; surface band ~84px->
+  ~190px), ledge gap 30-44px->30-60px. Relaxed the island_relief_is_traversable
+  guard (>60px-cliff fraction 8%->20%) to allow grapple-reachable verticality.
+  Requires client+server version match (bumped VERSION + REQUIRED_VERSION to .419).
+
+  --- 0.5.4.418 (DEPLOYED 2026-07-06) ---
+  GRAPPLE OVERHAUL from reverse-engineering WA.exe (Ghidra) for real physics
+  constants: gravity 0.3px/frame (ROPE_GRAVITY 2.5->0.8), hook extend 20px/frame
+  (ROPE_HOOK_SPEED 40->33), swing impulse 0.1px/frame (ROPE_SWING_FORCE 2.0->0.27,
+  now tangential along the arc), reel 4px/frame (ROPE_RETRACT 4.0->6.7). Added
+  firing-angle limit (no below-horizontal), vertical-rope auto-detach on ground,
+  rope-knocking, post-rope retreat window, and a RopeState.wrap chain: the rope
+  now bends around multiple corners and unwinds in reverse (synced via
+  NetRope.wrap, parity-covered). Rope-swing body pose; wooden crates halved.
+
+In working tree from the .418 pass (deployed unless noted):
 
   H) BAT DAMAGE -15%. fire_baseball_bat's BAT_DAMAGE 30->26. Existing
      knockback (launches every soldier caught in the swing arc airborne,
