@@ -1,8 +1,36 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.419 (built/testing 2026-07-06) · prior 0.5.4.418 DEPLOYED (commit 3719e5f on main)
+## Version: 0.5.4.420 DEPLOYED (2026-07-07, commit e87c72e = revert of 958313b) · 0.5.4.421 was
+## shipped 2026-07-06 then fully reverted 2026-07-07 — see "Reverted" section below.
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
-## Miyoo push: .126 OK (hash-verified) · .110 unreachable ("no route to host"), needs manual push once back online
+## Miyoo push: .126 OK (hash-verified, re-pushed 0.5.4.420 after the revert) · .110 not touched this
+## session (last known: unreachable, "no route to host")
+
+## Reverted 2026-07-07 (v0.5.4.421 — bazooka physics port)
+Ported bazooka-only gravity/wind/launch/charge constants from live dynamic analysis of the
+reference WA.exe (Wine + gdb). Fixed a real bug post-ship (auto-fire compared against the shared
+`MAX_CHARGE=1.3` overcharge band instead of true full charge `1.0`, so every shot over-charged and
+over-launched vs. the ported numbers). Playtesting still said it didn't feel like WA. Seven RE
+rounds (3 static, 4 dynamic) hunting for a readable charge-accumulator in worm/game-struct memory
+found nothing — the only real data is a velocity-fit extrapolation (~26 frames/~0.52s @50fps from
+4 measured shots), not a direct read. Reverted the whole commit (`git revert 958313b` → `e87c72e`)
+rather than ship unconfirmed numbers; this also reverted three unrelated bundled changes (rope
+wall-clip fix, grapple-onto-scenery, HP-tick-down turn-hold, cavern skull shrink, WA random-drop
+spawns) that will need redoing separately if still wanted. GitHub release `v0.5.4.421` and its
+Discord patch-notes post were deleted; `changelog.txt`/`posted_versions.txt` on the Pi cleaned up.
+Bazooka is back to the shared `GRAVITY=0.3`/`WIND_SCALE=0.08`/`launch=20.0`/`CHARGE_RATE=0.02`
+physics every other weapon uses. RE trail preserved in the `reference-wa-ghidra-re` and
+`reference-wa-wine-dynamic-analysis` memory notes.
+
+## Deployed 2026-07-06/07 (v0.5.4.420 — commit 181d291)
+Rope reel-out fix (paying out rope with Down now actually lowers the soldier — physics was
+unconditionally stripping outward-radial velocity even when slack had just been added) plus a
+WA-accurate hard positional rope constraint (re-snaps onto the current-length circle every tick,
+reverse-engineered from WA's `FUN_005009c0`, rather than a soft gravity-fills-slack pendulum). WA
+mask library grown 2→12 (10 island, 2 cavern) by extracting real WA `MapGen.exe` output under
+Wine across several game types — caverns now use real extracted cavern art instead of inverted
+island art. VERSION + REQUIRED_VERSION bumped (terrain-determinism contract: mask growth changes
+RNG-selected output for existing seeds).
 
 ## Building 2026-07-06 (v0.5.4.419 — VERSION + REQUIRED_VERSION bumped to .419)
 

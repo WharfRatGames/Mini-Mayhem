@@ -209,8 +209,12 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     }
 
     // ── Crate pre-turn phase: block player input (timer already ran above) ────
-    if game.crate_watch_ticks > 0 {
-        game.crate_watch_ticks -= 1;
+    // Held while the countdown is running OR any crate is still falling — a
+    // crate can outlive the fixed countdown (e.g. terrain destroyed under a
+    // landed crate re-triggers its fall), and the camera must not cut away
+    // to the active soldier while a crate is still in the air.
+    if game.crate_watch_ticks > 0 || game.crates.iter().any(|c| !c.landed) {
+        game.crate_watch_ticks = game.crate_watch_ticks.saturating_sub(1);
         apply_all_gravity(game, &crate::input::InputState::new());
         game.step_crates();
         game.collect_crates();
@@ -320,11 +324,14 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             use crate::game::soldier::SoldierState as SS;
             let ti0 = game.active_team();
             let si0 = game.teams[ti0].active;
-            if game.teams[ti0].soldiers[si0].is_alive()
-                && matches!(game.teams[ti0].soldiers[si0].state, SS::Airborne { .. })
+            let damage_tallying = game.teams.iter().flat_map(|t| t.soldiers.iter())
+                .any(|s| s.pending_damage > 0 || s.damage_settle > 0 || s.hp_countdown_delay > 0);
+            if (game.teams[ti0].soldiers[si0].is_alive()
+                && matches!(game.teams[ti0].soldiers[si0].state, SS::Airborne { .. }))
+                || damage_tallying
             {
                 apply_all_gravity(game, input);
-                // soldier still in the air — hold off turn advance until they land
+                // soldier still in the air, or damage still tallying/counting down — hold off turn advance
             } else {
             game.active_worm_hit   = false;
             game.retreat_locked    = false;

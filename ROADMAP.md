@@ -18,6 +18,9 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Terrain generation ~40% faster — precomputed hill_col[], octaves 4→3 (~4.4M fewer noise calls per map, v0.5.4.394)
 - [x] Grappling hook physics overhaul — swing tuned to reverse-engineered reference constants (gentler gravity/swing, tangential along-arc control, faster reel), firing-angle limit, vertical auto-detach on ground, rope-knocking, post-rope retreat window, and a multi-corner rope that bends around and unwinds off terrain corners (v0.5.4.418); ground-stick fix so the soldier rests on the surface instead of sinking (v0.5.4.419)
 - [x] Map verticality restored — .417's relief compression relaxed (RELIEF_COMPRESSION 2.0→1.25, DEPTH_RAMP 9.0→4.0) so cliffs/peaks/valleys are tall again, now that the grapple reaches isolated tops (v0.5.4.419)
+- [x] Rope reel-out fix + WA-accurate hard rope constraint — paying out rope with Down now actually lowers the soldier; rope hard-snaps to the current-length circle every tick like WA's real constraint instead of waiting on gravity to fill slack (v0.5.4.420)
+- [x] WA mask library grown 2→12 (10 island, 2 cavern) — extracted from real WA `MapGen.exe` output under Wine across several game types; caverns now use real extracted cavern art instead of inverted island art (v0.5.4.420)
+- [ ] Bazooka physics matching WA's real feel — v0.5.4.421 ported reference-derived gravity/wind/launch/charge constants but playtesting said it still didn't match WA; reverted 2026-07-07 after 7 RE rounds failed to find a confirmable charge-duration ground truth. Bazooka is back to the shared weapon physics; revisit if a reliable measurement method turns up
 - [x] Crater carving (destructible terrain)
 - [x] Scenery destructible exactly like terrain — per-pixel mask over each object's
       footprint, cleared by the same blast-circle rule as terrain.solid; explosions

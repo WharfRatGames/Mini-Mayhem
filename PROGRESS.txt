@@ -1,9 +1,58 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.419 (built/testing 2026-07-06) — grapple ground-stick fix
-  + map verticality restored. Pending device playtest on .126, then full deploy.
-  Prior: 0.5.4.418 DEPLOYED (2026-07-06, commit 3719e5f) — grapple physics
-  overhaul + multi-corner rope wrap.
+Current version: 0.5.4.420 DEPLOYED to Miyoo .126 (2026-07-07). 0.5.4.421 (bazooka
+  physics port) was built, shipped, then fully reverted the same day after
+  playtesting showed it didn't match Worms Armageddon's actual feel (see
+  "0.5.4.421 — REVERTED" below). Prior: 0.5.4.419 — grapple ground-stick fix +
+  map verticality restored. Before that: 0.5.4.418 DEPLOYED (2026-07-06, commit
+  3719e5f) — grapple physics overhaul + multi-corner rope wrap.
+
+  --- 0.5.4.421 — SHIPPED THEN REVERTED (2026-07-06/07) ---
+  Ported per-weapon bazooka gravity/wind/launch/charge constants extracted by
+  live dynamic analysis (Wine + gdb) of the reference WA.exe binary
+  (BAZOOKA_GRAVITY 0.667, WIND_SCALE 0.794, LAUNCH 14.38, CHARGE_RATE 0.0625).
+  Two real bugs were found and fixed post-ship: the bazooka's auto-fire check
+  compared against the shared MAX_CHARGE=1.3 overcharge band instead of true
+  full charge (1.0), so it always charged ~33% longer and launched ~30% harder
+  than the ported constants intended. After fixing that, playtesting still said
+  the charge/gravity/wind/range didn't feel like WA. Seven further rounds of
+  reverse engineering (3 static/Ghidra, 4 dynamic/live-Wine) tried to pin down
+  the exact charge-to-full duration via a readable in-memory accumulator —
+  none was found in either the worm struct or the game/world struct, across a
+  fully byte-diffed 20,000-frame window spanning a live fire event. The only
+  real data obtained was a velocity-fit extrapolation (~26 frames/~0.52s @50fps
+  from 4 clean measured shots), not a direct accumulator read. Given repeated
+  RE dead ends and no way to independently confirm the feel, the whole .421
+  commit (958313b) was reverted via `git revert` (commit e87c72e) rather than
+  keep shipping numbers nobody could validate. This also reverted three
+  unrelated changes bundled into the same commit (rope wall-clip fix, grapple-
+  onto-scenery, HP-tick-down turn-hold, cavern skull shrink, WA random-drop
+  spawns) — those will need to be redone separately if still wanted. GitHub
+  release v0.5.4.421 and its Discord patch-notes post were deleted; changelog
+  and posted_versions.txt on the Pi were cleaned up. Bazooka is back to the
+  shared GRAVITY=0.3/WIND_SCALE=0.08/launch=20.0/CHARGE_RATE=0.02 physics every
+  other weapon uses. The reverse-engineering trail (ruled-out memory offsets,
+  rig setup, measured data) is preserved in the reference-wa-ghidra-re and
+  reference-wa-wine-dynamic-analysis memory notes for a future attempt.
+
+  --- 0.5.4.420 (DEPLOYED 2026-07-06/07, commit 181d291) ---
+  ROPE REEL-OUT FIX + WA-ACCURATE HARD CONSTRAINT. Holding Down to pay out
+  more rope silently did nothing: physics unconditionally stripped outward-
+  radial velocity every tick even when rope.length had just grown (slack to
+  fall into), so the soldier stayed pinned at the old radius. Reverse-
+  engineered WA's actual rope constraint (FUN_005009c0): a HARD POSITIONAL
+  CONSTRAINT that re-snaps onto the circle of the current length every tick,
+  not a soft gravity-fills-slack pendulum. Reworked to match — the swing
+  target is unconditionally reprojected onto the effective_len circle every
+  tick (grow and shrink), so reel-out deterministically moves the soldier.
+  WA MASK LIBRARY GROWN 2->12. Extracted 8 new island-style + 2 new
+  cavern-style silhouettes from real WA MapGen.exe output (ran under Wine +
+  Xvfb, driven via xdotool, across Island/Bazooka-and-Grenades/Cavern/Roper/
+  Destructible-WfW game types) via tools/extract_wa_mask.py. WA_ISLAND_MASKS
+  2->10, WA_CAVERN_MASKS 0->2 — cavern seeds now use real extracted cavern
+  art instead of inverted island art. VERSION + REQUIRED_VERSION bumped to
+  .420 (terrain-determinism contract: mask growth changes RNG-selected
+  output for existing seeds).
 
   --- 0.5.4.419 (this pass) ---
   ROPE GROUND-STICK FIX. The swing swept-collision never tested its start point

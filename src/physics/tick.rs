@@ -16,6 +16,12 @@ pub const TERMINAL_VELOCITY: f32 = 18.0;
 /// This scale converts that to pixels per tick² of horizontal acceleration.
 pub const WIND_SCALE: f32 = 0.08;
 
+/// Bazooka-specific wind scale — stronger than the shared `WIND_SCALE` so that
+/// strong wind can visibly hook a rocket around terrain, or even reverse its
+/// horizontal direction mid-flight (a signature WA trick). Hand-tuned, not
+/// derived from a measured constant — adjust based on playtest feel.
+pub const BAZOOKA_WIND_SCALE: f32 = 0.32;
+
 /// Apply one physics tick to a projectile.
 ///
 /// Updates velocity and position using Euler integration:
@@ -33,7 +39,8 @@ pub fn tick(proj: &mut Projectile, wind: f32) {
     if proj.kind != WeaponKind::HomingMissile {
         proj.vel.y += GRAVITY;
         if proj.kind.affected_by_wind() {
-            proj.vel.x += wind * WIND_SCALE;
+            let scale = if proj.kind == WeaponKind::Bazooka { BAZOOKA_WIND_SCALE } else { WIND_SCALE };
+            proj.vel.x += wind * scale;
         }
     }
 
