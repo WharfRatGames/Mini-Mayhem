@@ -7,8 +7,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 ## ✅ Phase 1 — Terrain & Physics
 *Core engine foundation*
 
-- [x] Terrain generated from real Worms Armageddon map art — masks extracted from the original game's land.dat/MapGen output, baked as Rust constants, seed picks mask/shift/mirror (v0.5.4.392)
-- [x] Mask library grown 2→12 (10 island, 2 cavern) by harvesting real MapGen.exe output under Wine across several game types; caverns now use real extracted cavern art instead of inverted island art (v0.5.4.420)
+- [x] Terrain generated from real Worms Armageddon map art — 2 masks extracted from the original game's land.dat, baked as Rust constants, seed picks mask/shift/mirror (v0.5.4.392)
 - [x] Seed-based WA collage generation — every seed splices/warps/crossfades segments of real WA art into a novel silhouette; caverns carve chambers from the same art inverted; extraction tool `tools/extract_wa_mask.py` (land.dat/PNG → mask.bin) (v0.5.4.396)
 - [x] Collage generation fast path — domain warp on a precomputed bilinear grid; caverns generate faster than the old procedural generator (v0.5.4.397)
 - [x] Archetype system removed — replaced by template_id (WA mask) + is_cavern (~20% odds); chasms/overhangs/caves now seed-random on any map (v0.5.4.393)
@@ -18,14 +17,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Mound-series terrain removed — a low-weight sine-relief layered onto every non-cavern map's density field, producing a repeating "series of mounds" look regardless of the WA collage silhouette, has been disabled (v0.5.4.403)
 - [x] Terrain generation ~40% faster — precomputed hill_col[], octaves 4→3 (~4.4M fewer noise calls per map, v0.5.4.394)
 - [x] Grappling hook physics overhaul — swing tuned to reverse-engineered reference constants (gentler gravity/swing, tangential along-arc control, faster reel), firing-angle limit, vertical auto-detach on ground, rope-knocking, post-rope retreat window, and a multi-corner rope that bends around and unwinds off terrain corners (v0.5.4.418); ground-stick fix so the soldier rests on the surface instead of sinking (v0.5.4.419)
-- [x] Bazooka physics ported from reference constants extracted by live dynamic analysis — per-weapon gravity/wind/launch/charge (bazooka-only, other weapons untouched): ~0.5 s charge-to-full, flatter/shorter arc, ~10× stronger wind, overcharge retained; CPU aim sim updated to match (v0.5.4.421)
-- [x] Rope reel-out fix + WA-accurate hard constraint — paying out rope with Down now actually lowers the soldier (previously did nothing); rope hard-snaps to the current-length circle every tick like WA's real constraint, instead of waiting on gravity to fill slack (v0.5.4.420, DEPLOYED)
-- [x] Rope wall-clip fix — swept-collision gate now keys off actual displacement instead of `vel`, closing a teleport-through-walls hole the hard constraint introduced (in working tree, not yet versioned/deployed)
-- [x] Rope can grapple onto scenery objects (rocks, trees, crates, etc.), not just terrain — hook attach, swing collision, and corner-wrap now check the same blocked-mask scenery/barrels/mines already use for player movement (in working tree, not yet versioned/deployed)
-- [x] Turns always wait for HP counters to finish ticking down before advancing to the next team (in working tree, not yet versioned/deployed)
 - [x] Map verticality restored — .417's relief compression relaxed (RELIEF_COMPRESSION 2.0→1.25, DEPTH_RAMP 9.0→4.0) so cliffs/peaks/valleys are tall again, now that the grapple reaches isolated tops (v0.5.4.419)
-- [x] Cavern skull scenery prop shrunk to 1/3 size — `SceneryObject::scale()` special-cases the Underground skull sprite to scale 1 instead of the usual size band; collision footprint follows automatically (in working tree, not yet versioned/deployed)
-- [x] Spawn placement rewritten to WA-style random drop — each soldier is dropped at a random x and lands on the first standable spot, retrying a fresh random x on failed footing/separation, instead of deliberately clustering the team onto wide landforms; deterministic (xorshift64 seeded from the terrain itself), "no artificial mounds" fallback kept for sparse maps (in working tree, not yet versioned/deployed)
 - [x] Crater carving (destructible terrain)
 - [x] Scenery destructible exactly like terrain — per-pixel mask over each object's
       footprint, cleared by the same blast-circle rule as terrain.solid; explosions
@@ -160,7 +152,6 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [ ] **Profile screen** — view owned cosmetics, current balance, win/loss record from within the game
 - [ ] **Roster editor live preview** — see your soldier update in real time while picking cosmetics
 - [ ] **Port 443 / HTTPS** — router port-forwarding for TLS on the API (nginx config and cert are ready; awaiting port forward)
-- [ ] **WA-accurate bazooka/wind constants** — multi-round Ghidra RE effort against WA.exe to extract the real charge→velocity and wind constants (same technique that found the rope constants); six rounds in, unresolved — gravity re-confirmed and a reusable decompile pipeline is staged, but the charge accumulator and wind variable remain unlocated. No constants changed in Arty yet.
 
 ---
 

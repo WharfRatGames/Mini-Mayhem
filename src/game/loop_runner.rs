@@ -320,18 +320,11 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             use crate::game::soldier::SoldierState as SS;
             let ti0 = game.active_team();
             let si0 = game.teams[ti0].active;
-            // Any soldier still tallying damage or mid-drain on their HP counter —
-            // hold the turn open so the player always sees the number finish
-            // ticking down before control passes to the next team.
-            let hp_still_animating = game.teams.iter().flat_map(|t| t.soldiers.iter())
-                .any(|s| s.pending_damage > 0 || s.displayed_hp != s.hp);
             if game.teams[ti0].soldiers[si0].is_alive()
                 && matches!(game.teams[ti0].soldiers[si0].state, SS::Airborne { .. })
             {
                 apply_all_gravity(game, input);
                 // soldier still in the air — hold off turn advance until they land
-            } else if hp_still_animating {
-                // hold off turn advance until every HP counter finishes ticking down
             } else {
             game.active_worm_hit   = false;
             game.retreat_locked    = false;
@@ -1266,7 +1259,7 @@ fn rope_seg_clear(terrain: &crate::world::Terrain, ax: f32, ay: f32, bx: f32, by
     let steps = (dist / 3.0).ceil() as u32;
     for s in 1..steps {
         let t = s as f32 / steps as f32;
-        if terrain.is_blocked((ax + dx * t) as i32, (ay + dy * t) as i32) { return false; }
+        if terrain.is_solid((ax + dx * t) as i32, (ay + dy * t) as i32) { return false; }
     }
     true
 }
@@ -1281,7 +1274,7 @@ fn rope_find_corner(terrain: &crate::world::Terrain, ax: f32, ay: f32, bx: f32, 
     let mut last_clear = 0.0f32;
     for step in 1..=steps {
         let d = step as f32 * 3.0;
-        if terrain.is_blocked((ax + ux * d) as i32, (ay + uy * d) as i32) { return Some(last_clear); }
+        if terrain.is_solid((ax + ux * d) as i32, (ay + uy * d) as i32) { return Some(last_clear); }
         last_clear = d;
     }
     None
@@ -1297,7 +1290,7 @@ fn rope_unstick(game: &mut GameState, ti: usize, si: usize) {
     let x = game.teams[ti].soldiers[si].pos.x as i32;
     for _ in 0..(SOLDIER_H + 8) {
         let y = game.teams[ti].soldiers[si].pos.y as i32;
-        if !(0..=SOLDIER_H).any(|h| game.terrain.is_blocked(x, y - h)) { break; }
+        if !(0..=SOLDIER_H).any(|h| game.terrain.is_solid(x, y - h)) { break; }
         game.teams[ti].soldiers[si].pos.y -= 1.0;
     }
 }
@@ -1657,8 +1650,6 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
     const CHARGE_RATE: f32 = 0.02;  // 0.6/s at 30 Hz; full charge ~50 ticks
 
     let is_bazooka = weapon == WeaponKind::Bazooka;
-    // The bazooka charges to full much faster, matching WA (~0.52 s to full).
-    let charge_rate = if is_bazooka { crate::physics::BAZOOKA_CHARGE_RATE } else { CHARGE_RATE };
 
     if !input.held(Button::A) {
         if !game.aim.charge_armed {
@@ -1671,7 +1662,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         // Longer charge meter for every weapon: charge can build up to MAX_CHARGE.
         // power=1.0 still maps to the same velocity as before (feel unchanged for a
         // normal full charge); the extra band 1.0..MAX_CHARGE is bonus range.
-        game.aim.power = (game.aim.power + charge_rate).min(MAX_CHARGE);
+        game.aim.power = (game.aim.power + CHARGE_RATE).min(MAX_CHARGE);
         if is_bazooka && game.aim.power >= MAX_CHARGE {
             fire_weapon(game);
             game.aim.power = 0.0;
@@ -2086,15 +2077,9 @@ fn fire_weapon(game: &mut GameState) {
 
     let fm    = game.teams[ti].soldiers[si].facing as f32;
     let angle = game.aim.angle;
-    // Launch speed at a full (power=1.0) charge. The bazooka uses WA's measured
-    // muzzle speed; every other weapon keeps the original 20. The extra
-    // 1.0..MAX_CHARGE band adds launch speed (hence range) as overcharge.
-    let launch_scale = if kind == WeaponKind::Bazooka {
-        crate::physics::BAZOOKA_LAUNCH
-    } else {
-        20.0
-    };
-    let power = game.aim.power.min(MAX_CHARGE) * launch_scale;
+    // power=1.0 → 20 (unchanged); the extra 1.0..MAX_CHARGE band adds launch speed
+    // (hence range) only when the player fills the extended meter.
+    let power = game.aim.power.min(MAX_CHARGE) * 20.0;
 
     let sy = game.teams[ti].soldiers[si].pos.y - 4.0 - angle.sin() * 12.0;
     let sx = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 12.0;
@@ -5141,7 +5126,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     attached = true; // use flag to break without reborrow
                     break;
                 }
-                if game.terrain.is_blocked(hx as i32, hy as i32) {
+                if game.terrain.is_solid(hx as i32, hy as i32) {
                     let soldier_pos = game.teams[ati].soldiers[asi].pos;
                     let dx = hx - soldier_pos.x;
                     let dy = hy - soldier_pos.y;
@@ -5364,20 +5349,13 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             let mut last_clear_x = cx;
                             let mut last_clear_y = cy;
                             let mut hit = false;
-                            // Gate on actual displacement (nx,ny vs cx,cy), not `vel` —
-                            // the hard positional constraint above can move the target
-                            // position well beyond what `vel` alone would produce (e.g. a
-                            // corner wrap/unwrap re-anchoring the circle), and gating on
-                            // `vel` let those jumps skip the sweep entirely and teleport
-                            // straight through walls with no collision check at all.
-                            let disp = ((nx - cx) * (nx - cx) + (ny - cy) * (ny - cy)).sqrt();
-                            if disp > 0.5 {
+                            if (vel.x * vel.x + vel.y * vel.y).sqrt() > 0.5 {
                                 for s in 1..=move_len {
                                     let t = s as f32 / move_len as f32;
                                     let sx = cx + (nx - cx) * t;
                                     let sy = cy + (ny - cy) * t;
                                     if (0..=crate::renderer::draw_sprites::SOLDIER_H)
-                                        .any(|h| game.terrain.is_blocked(sx as i32, sy as i32 - h))
+                                        .any(|h| game.terrain.is_solid(sx as i32, sy as i32 - h))
                                     {
                                         hit = true;
                                         break;

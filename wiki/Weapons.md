@@ -9,7 +9,7 @@ Weapons fall into two categories: **loadout weapons** (every team starts with th
 These are available to every team from the start of every match.
 
 ### Bazooka ∞
-The bread-and-butter direct-fire rocket. Charges to full power fast (~half a second) and fires a flat, hard, medium-range arc that is very sensitive to wind — lead your aim into the wind. Hold past full to overcharge for extra reach. Medium blast radius; explodes on terrain contact.
+The bread-and-butter direct-fire rocket. Medium blast radius, travels in an arc affected by wind. Explodes on terrain contact.
 
 ### Grenade ∞
 Bounces off terrain before exploding on a timed fuse (1–5 seconds, adjustable with L1/R1 before throwing). Not affected by wind.
@@ -21,7 +21,7 @@ Fires 5 pellets in a tight spread. High damage at close range, minimal knockback
 Full-auto burst — fires a rapid stream of bullets in a tight arc. Medium damage per hit, very fast fire rate. Effective at close-to-medium range.
 
 ### Ninja Rope ∞
-Fires a grappling hook that sticks to terrain or scenery (rocks, trees, crates, and the like). Swing across gaps and up to high ground on a real pendulum — pump the swing from the sides of the arc to build height, and reel the rope in and out to control your radius. The rope bends around corners and unwinds as you swing back, so it wraps naturally through caves and around pillars. Fire again in mid-air to re-hook for a repeat swing. Swinging into an enemy knocks them aside without ending your turn. Does no damage itself.
+Fires a grappling hook that sticks to terrain. Swing across gaps and up to high ground on a real pendulum — pump the swing from the sides of the arc to build height, and reel the rope in and out to control your radius. The rope bends around corners and unwinds as you swing back, so it wraps naturally through caves and around pillars. Fire again in mid-air to re-hook for a repeat swing. Swinging into an enemy knocks them aside without ending your turn. Does no damage itself.
 
 ### TNT × 1
 Place it and run — the fuse burns for a random 4–5 seconds. Massive blast radius and damage. Unlocked after 5 full turn rotations.

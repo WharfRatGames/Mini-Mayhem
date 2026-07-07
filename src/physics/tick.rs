@@ -16,28 +16,6 @@ pub const TERMINAL_VELOCITY: f32 = 18.0;
 /// This scale converts that to pixels per tick² of horizontal acceleration.
 pub const WIND_SCALE: f32 = 0.08;
 
-// ── Bazooka: literal Worms Armageddon physics ────────────────────────────────
-// Extracted by dynamic analysis of the real WA.exe (see the arty memory notes).
-// WA runs at 50 fps; Arty at 30 Hz. Same pixel space, so per-tick values are the
-// WA-per-frame values rescaled: velocity ×(50/30), acceleration ×(50/30)².
-// The bazooka uses these instead of the shared GRAVITY/WIND_SCALE/launch scale;
-// every other projectile is untouched.
-
-/// Bazooka gravity. WA measured 0.24 px/frame² @50fps → ×(50/30)².
-pub const BAZOOKA_GRAVITY: f32 = 0.6667;
-
-/// Bazooka wind acceleration at full meter (wind = ±1.0). WA measured a max of
-/// ~0.286 px/frame² @50fps (wind unit = 1/35 px/frame², ~±10 units) → ×(50/30)².
-pub const BAZOOKA_WIND_SCALE: f32 = 0.794;
-
-/// Bazooka launch speed at a full (power = 1.0) charge. WA measured 8.63 px/frame
-/// @50fps → ×(50/30). Overcharge (power up to MAX_CHARGE) scales past this.
-pub const BAZOOKA_LAUNCH: f32 = 14.38;
-
-/// Charge ticks to reach a full (power = 1.0) bazooka charge. WA fills in ~0.52 s
-/// and auto-fires at full; 0.52 s × 30 Hz ≈ 16 ticks → rate 1/16 per tick.
-pub const BAZOOKA_CHARGE_RATE: f32 = 0.0625;
-
 /// Apply one physics tick to a projectile.
 ///
 /// Updates velocity and position using Euler integration:
@@ -52,13 +30,10 @@ pub const BAZOOKA_CHARGE_RATE: f32 = 0.0625;
 pub fn tick(proj: &mut Projectile, wind: f32) {
     // ── Acceleration ──────────────────────────────────────────────────────────
     // Homing missiles maintain constant speed — no gravity or wind drift.
-    // The bazooka uses its own WA-derived gravity/wind; all others share the defaults.
     if proj.kind != WeaponKind::HomingMissile {
-        let is_bazooka = proj.kind == WeaponKind::Bazooka;
-        proj.vel.y += if is_bazooka { BAZOOKA_GRAVITY } else { GRAVITY };
+        proj.vel.y += GRAVITY;
         if proj.kind.affected_by_wind() {
-            let ws = if is_bazooka { BAZOOKA_WIND_SCALE } else { WIND_SCALE };
-            proj.vel.x += wind * ws;
+            proj.vel.x += wind * WIND_SCALE;
         }
     }
 
@@ -119,9 +94,9 @@ mod tests {
     fn gravity_increases_y_velocity_each_tick() {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
         tick(&mut p, 0.0);
-        assert!((p.vel.y - BAZOOKA_GRAVITY).abs() < 1e-5, "vy should equal BAZOOKA_GRAVITY after one tick");
+        assert!((p.vel.y - GRAVITY).abs() < 1e-5, "vy should equal GRAVITY after one tick");
         tick(&mut p, 0.0);
-        assert!((p.vel.y - BAZOOKA_GRAVITY * 2.0).abs() < 1e-5, "vy should equal 2×BAZOOKA_GRAVITY after two ticks");
+        assert!((p.vel.y - GRAVITY * 2.0).abs() < 1e-5, "vy should equal 2×GRAVITY after two ticks");
     }
 
     #[test]
@@ -146,7 +121,7 @@ mod tests {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
         tick(&mut p, 1.0);
         assert!(p.vel.x > 0.0, "positive wind should push projectile right");
-        assert!((p.vel.x - BAZOOKA_WIND_SCALE).abs() < 1e-5);
+        assert!((p.vel.x - WIND_SCALE).abs() < 1e-5);
     }
 
     #[test]
@@ -154,14 +129,14 @@ mod tests {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
         tick(&mut p, -1.0);
         assert!(p.vel.x < 0.0, "negative wind should push projectile left");
-        assert!((p.vel.x + BAZOOKA_WIND_SCALE).abs() < 1e-5);
+        assert!((p.vel.x + WIND_SCALE).abs() < 1e-5);
     }
 
     #[test]
     fn wind_accumulates_over_ticks() {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
         tick_n(&mut p, 1.0, 5);
-        assert!((p.vel.x - BAZOOKA_WIND_SCALE * 5.0).abs() < 1e-4,
+        assert!((p.vel.x - WIND_SCALE * 5.0).abs() < 1e-4,
             "wind should accumulate over 5 ticks");
     }
 
@@ -179,38 +154,6 @@ mod tests {
         let mut p = bazooka(100.0, 100.0, 3.0, 0.0);
         tick(&mut p, 0.0);
         assert!((p.vel.x - 3.0).abs() < 1e-5);
-    }
-
-    // ── Bazooka WA physics (per-weapon, does not touch other weapons) ──────────
-
-    #[test]
-    fn bazooka_uses_wa_gravity_other_weapons_keep_default() {
-        let mut baz  = bazooka(100.0, 100.0, 0.0, 0.0);
-        let mut gren = grenade(100.0, 100.0, 0.0, 0.0);
-        tick(&mut baz, 0.0);
-        tick(&mut gren, 0.0);
-        assert!((baz.vel.y - BAZOOKA_GRAVITY).abs() < 1e-5,
-            "bazooka should use WA gravity {BAZOOKA_GRAVITY}");
-        assert!((gren.vel.y - GRAVITY).abs() < 1e-5,
-            "non-bazooka should keep the default gravity {GRAVITY}");
-        assert!(BAZOOKA_GRAVITY > GRAVITY, "WA bazooka gravity is heavier than the old default");
-    }
-
-    #[test]
-    fn bazooka_charge_reaches_full_in_about_half_second_at_30hz() {
-        // WA fills the bazooka power meter in ~0.52 s and auto-fires at full.
-        let ticks_to_full = (1.0 / BAZOOKA_CHARGE_RATE).ceil() as u32;
-        assert_eq!(ticks_to_full, 16, "full charge in 16 ticks");
-        let secs = ticks_to_full as f32 / 30.0;
-        assert!((secs - 0.53).abs() < 0.05, "≈0.5 s to full charge, got {secs:.2}s");
-    }
-
-    #[test]
-    fn bazooka_full_charge_launch_matches_wa() {
-        // WA full-charge muzzle speed = 8.63 px/frame @50 fps → ×(50/30) px/tick.
-        let expected = 8.63 * (50.0 / 30.0);
-        assert!((BAZOOKA_LAUNCH - expected).abs() < 0.05,
-            "full-charge launch {BAZOOKA_LAUNCH} should ≈ {expected:.2} px/tick");
     }
 
     // ── Terminal velocity ─────────────────────────────────────────────────────

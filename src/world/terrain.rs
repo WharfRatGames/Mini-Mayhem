@@ -105,8 +105,6 @@ impl SceneryObject {
     /// the renderer (scenery.rs) and `footprint` — MUST stay deterministic and
     /// identical on client and server.
     pub fn scale(&self, theme: Theme) -> i32 {
-        // Cavern skull prop renders 1/3 the size of other small props.
-        if theme == Theme::Underground && self.sprite == 3 { return 1; }
         let (_, h) = self.base_footprint(theme);
         if h <= 18 { 3 } else { 2 }
     }
@@ -1338,14 +1336,9 @@ impl Terrain {
     /// post-generation terrain. Pure function of the terrain (identical on client
     /// and server) — it never mutates the map. Candidates are restricted to the
     /// interior `[x_lo, x_hi]` band (callers pass left/right halves) and never
-    /// within `SPAWN_EDGE_MARGIN` of a world edge.
-    ///
-    /// WA-style placement: each soldier is "dropped" at a random x and lands on
-    /// the first standable spot found there (like Worms Armageddon's random worm
-    /// placement), retrying a new random x if that column has no footing or lands
-    /// too close to a teammate. This scatters the team across the map instead of
-    /// deliberately maximizing dispersion across landforms. On very sparse terrain
-    /// (random drops keep failing) separation constraints relax rather than
+    /// within `SPAWN_EDGE_MARGIN` of a world edge. Returns up to `count`
+    /// well-separated standable spots, actively spread across the map's vertical
+    /// range; on very sparse terrain separation constraints relax rather than
     /// stamping artificial platforms.
     pub fn find_team_spawns(&mut self, x_lo: u32, x_hi: u32, count: usize) -> Vec<WorldPos> {
         // 140px keeps same-team soldiers far enough apart that one explosion can't
@@ -1372,74 +1365,182 @@ impl Terrain {
             .collect();
         let clear_of_scenery = |x: i32| scenery_boxes.iter().all(|&(ox, hw)| (x - ox).abs() > hw);
 
-        // Deterministic xorshift64 RNG, pure function of the generated terrain
-        // plus the query — same client and server, no external seed threaded in.
-        let mut rng: u64 = 0x9E37_79B9_7F4A_7C15
-            ^ (self.template_id as u64).wrapping_shl(1)
-            ^ ((self.is_cavern as u64).wrapping_shl(9))
-            ^ (self.surface_texture as u64).wrapping_shl(17)
-            ^ (x_lo as u64).wrapping_shl(32)
-            ^ (x_hi as u64)
-            ^ (count as u64).wrapping_shl(48);
-        for &v in self.spawn_y.iter().step_by(97) {
-            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(v as u64 + 1);
-        }
-        if rng == 0 { rng = 0x2545_F491_4F6C_DD1D; }
-        let mut next_rand = move || { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; rng };
-
-        // WA-style random drop: pick a random x, land on the first standable spot
-        // there (cave floor on cavern maps, surface footing otherwise), retry a
-        // fresh random x if that column has no footing or is too close to a
-        // teammate already placed.
-        const MAX_TRIES: u32 = 60;
-        let width = (hi - lo).max(1) as u64;
-        for _ in 0..count {
-            let mut placed = false;
-            for _ in 0..MAX_TRIES {
-                let rx = lo + (next_rand() % (width + 1)) as i32;
-                let spot = if self.is_cavern {
-                    self.standable_cave_foot_y(rx)
-                } else {
-                    self.standable_foot_y(rx)
-                };
-                if let Some(fy) = spot {
-                    if clear_of_scenery(rx) && sep_ok(&used, rx, fy, MIN_SEP, MIN_SEP_V) {
-                        spawns.push(WorldPos::new(rx as f32, fy as f32));
-                        used.push((rx, fy));
-                        placed = true;
-                        break;
+        // Cave maps (WA style): all soldiers spawn underground. No surface layer exists.
+        if self.is_cavern {
+            let mut cave_cands: Vec<(i32, i32)> = Vec::new();
+            let mut x = lo;
+            while x <= hi {
+                if let Some(fy) = self.standable_cave_foot_y(x) {
+                    if clear_of_scenery(x) { cave_cands.push((x, fy)); }
+                }
+                x += 1;
+            }
+            for _i in 0..count {
+                let pools: [&[(i32, i32)]; 1] = [&cave_cands];
+                'slot: for pool in pools {
+                    for &(cx, cy) in pool {
+                        if sep_ok(&used, cx, cy, MIN_SEP, MIN_SEP_V) {
+                            spawns.push(WorldPos::new(cx as f32, cy as f32));
+                            used.push((cx, cy));
+                            break 'slot;
+                        }
                     }
                 }
             }
-            if !placed { break; } // sparse/fragmented map — fall through to the pool below
+            if spawns.len() >= count { return spawns; }
+            // Fall through to generic surface spawning if still short.
         }
 
-        // Fallback pool for maps too sparse/fragmented for random drops to fill the
-        // whole team within MAX_TRIES: every standable level per column (the top of
-        // a hill AND the valley floor / ledge beneath an overhang), scanned densely.
-        if spawns.len() < count {
-            let mut cands: Vec<(i32, i32)> = Vec::new();
-            let mut x = lo;
-            while x <= hi {
-                let levels: Vec<i32> = if self.is_cavern {
-                    self.standable_cave_foot_y(x).into_iter().collect()
-                } else {
-                    self.standable_foot_levels(x)
-                };
-                for fy in levels {
-                    if clear_of_scenery(x) { cands.push((x, fy)); }
-                }
-                x += 4;
+        // Pre-scan for underground cave floors so we can reserve slots for them.
+        // Non-cavern maps with punched caves should seat some soldiers underground
+        // for vertical variety; cap the surface pass so those slots stay open.
+        let cave_quota = if !self.is_cavern {
+            let mut n = 0usize;
+            let mut cx = lo + 60;
+            while cx <= hi - 60 {
+                if self.standable_cave_foot_simple(cx).is_some() { n += 1; }
+                cx += 120;
             }
+            (count / 2).min(n)
+        } else { 0 };
+        let surface_cap = count.saturating_sub(cave_quota);
 
-            // Greedily disperse across the pool: each pick maximizes the worst-case
-            // separation (as a fraction of MIN_SEP/MIN_SEP_V, matching sep_ok's OR
-            // rule) to whoever's already placed. NEVER mutate the terrain (no
-            // artificial mounds or platforms) — a first-fit left-to-right scan here
-            // would clump the rest of the team on the first usable cluster of columns
-            // even though a lone usable column exists far away; greedy dispersion
-            // picks that far column instead. Integer math only (no floats — must
-            // stay identical across x86/ARM).
+        // ── Surface spawns on substantial landforms of similar size ───────────────
+        // Group standable surface columns into landform "tops": runs of columns whose
+        // surface is continuous (no chasm gap) and at a similar height. Thin tops
+        // (pillars/columns left by chasms) are rejected, and the team is placed on the
+        // WIDEST tops first — so soldiers share comparable ground instead of each being
+        // marooned on its own column.
+        const MIN_LAND_W:    i32 = 60; // a spawn landform top must be at least this wide
+        const GAP_TOL:       i32 = 12; // x-gap (px) that breaks a landform (a chasm)
+        const STEP_TOL:      i32 = 45; // surface y-jump (px) that breaks a landform (a wall)
+        const GROUND_DEPTH:  i32 = 26; // solid px required below the foot (excludes thin
+                                       // floating shelves / cantilever tips — not real ground)
+
+        // Every standable level per column enters the pool — the top of a hill AND
+        // the valley floor / ledge beneath an overhang — so lower ground competes.
+        let mut cands: Vec<(i32, i32)> = Vec::new(); // (x, foot_y): x asc, then y asc
+        let mut x = lo;
+        while x <= hi {
+            for fy in self.standable_foot_levels(x) {
+                // Must stand on a solid mass, not a thin slab/ledge.
+                if (1..=GROUND_DEPTH).all(|d| self.is_solid(x, fy + d)) && clear_of_scenery(x) {
+                    cands.push((x, fy));
+                }
+            }
+            x += 4;
+        }
+        // Segment candidates into landform tops. Multiple y-levels can coexist over
+        // the same x-range, so run an open-segment sweep instead of a single chain:
+        // a candidate extends the open segment whose last point is nearest in y
+        // (within STEP_TOL, not already extended at this column), else starts a new
+        // one. Purely index-ordered — deterministic on client and server.
+        let mut open: Vec<(Vec<(i32, i32)>, bool)> = Vec::new(); // (points, extended-at-this-x)
+        let mut segments: Vec<Vec<(i32, i32)>> = Vec::new();
+        let mut last_x = i32::MIN;
+        for &(cx, cy) in &cands {
+            if cx != last_x {
+                let mut i = 0;
+                while i < open.len() {
+                    if cx - open[i].0.last().unwrap().0 > GAP_TOL {
+                        segments.push(open.remove(i).0);
+                    } else {
+                        open[i].1 = false;
+                        i += 1;
+                    }
+                }
+                last_x = cx;
+            }
+            let best = (0..open.len())
+                .filter(|&i| !open[i].1)
+                .map(|i| (i, (open[i].0.last().unwrap().1 - cy).abs()))
+                .filter(|&(_, dy)| dy <= STEP_TOL)
+                .min_by_key(|&(i, dy)| (dy, i));
+            match best {
+                Some((i, _)) => { open[i].0.push((cx, cy)); open[i].1 = true; }
+                None => open.push((vec![(cx, cy)], true)),
+            }
+        }
+        segments.extend(open.into_iter().map(|(s, _)| s));
+        // Keep tops wide enough to not be pillars.
+        let seg_w = |s: &Vec<(i32, i32)>| s.last().unwrap().0 - s[0].0;
+        let wide: Vec<&Vec<(i32, i32)>> =
+            segments.iter().filter(|s| seg_w(s) >= MIN_LAND_W).collect();
+        // Integer mean height per landform, for the vertical-dispersion score.
+        let seg_y: Vec<i32> = wide.iter()
+            .map(|s| s.iter().map(|&(_, y)| y).sum::<i32>() / s.len() as i32)
+            .collect();
+        // ── Greedy vertically-dispersed selection ────────────────────────────────
+        // First pick: the widest landform. Every later pick maximizes the minimum
+        // vertical distance to the soldiers already placed, with (capped) width as
+        // a secondary term — so the team spreads DOWN the map instead of stacking
+        // on the highest tops. 100px of new vertical ground outweighs 400px of
+        // extra width. Integer math only.
+        let mut seg_used: Vec<bool> = vec![false; wide.len()];
+        while spawns.len() < surface_cap {
+            let pick = (0..wide.len()).filter(|&i| !seg_used[i]).max_by_key(|&i| {
+                let vdist = used.iter()
+                    .map(|&(_, uy)| (uy - seg_y[i]).abs())
+                    .min().unwrap_or(10_000);
+                (vdist.min(10_000) * 4 + seg_w(wide[i]).min(600),
+                 -wide[i][0].0,      // tie: leftmost
+                 -(i as i32))        // tie: lowest index
+            });
+            let Some(si) = pick else { break };
+            seg_used[si] = true;
+            let seg = wide[si];
+
+            // Spread soldiers EVENLY across the landform, filling its whole width
+            // instead of bunching them at one end. Never closer than MIN_SEP
+            // horizontally unless MIN_SEP_V apart vertically (one blast can't catch two).
+            let x0 = seg[0].0;
+            let x1 = seg.last().unwrap().0;
+            let remaining = surface_cap - spawns.len();
+            let cap = ((x1 - x0) / MIN_SEP + 1).clamp(1, remaining as i32);
+            let gap = ((x1 - x0) as f32 / (cap - 1).max(1) as f32).max(MIN_SEP as f32);
+            for i in 0..cap {
+                if spawns.len() >= surface_cap { break; }
+                let target = x0 + (gap * i as f32) as i32;
+                // Snap the evenly-spaced target to the nearest standable column that
+                // is still separated from everyone already placed.
+                if let Some(&(cx, cy)) = seg.iter()
+                    .filter(|&&(px, py)| sep_ok(&used, px, py, MIN_SEP, MIN_SEP_V))
+                    .min_by_key(|&&(px, _)| (px - target).abs())
+                {
+                    spawns.push(WorldPos::new(cx as f32, cy as f32));
+                    used.push((cx, cy));
+                }
+            }
+        }
+
+        // Cave-floor spawns: for non-cavern maps with punched caves, actively mix
+        // underground positions in to spread soldiers vertically. We reserved some
+        // slots from the surface pass (capped above); fill them here.
+        if !self.is_cavern && spawns.len() < count {
+            let mut cx = lo + 60;
+            while cx <= hi - 60 && spawns.len() < count {
+                if let Some(fy) = self.standable_cave_foot_simple(cx) {
+                    if sep_ok(&used, cx, fy, MIN_SEP, MIN_SEP_V) && clear_of_scenery(cx) {
+                        spawns.push(WorldPos::new(cx as f32, fy as f32));
+                        used.push((cx, fy));
+                    }
+                }
+                cx += 80;
+            }
+        }
+
+        // Last resort (very fragmented/sparse half): the natural landforms couldn't
+        // seat the whole team. NEVER mutate the terrain (no artificial mounds or
+        // platforms) — instead greedily disperse across the same candidate pool,
+        // same idea as the main wide-landform pass: each pick maximizes the worst-
+        // case separation (as a fraction of MIN_SEP/MIN_SEP_V, matching sep_ok's
+        // OR rule) to whoever's already placed. A first-fit left-to-right scan here
+        // would clump the whole team on the first usable cluster of columns on a
+        // badly fragmented map (e.g. a seed with zero landforms >=60px wide) even
+        // though a lone usable column exists far away — greedy dispersion picks
+        // that far column instead. Integer math only (no floats — must stay
+        // identical across x86/ARM).
+        if spawns.len() < count {
             while spawns.len() < count {
                 let pick = cands.iter()
                     .filter(|&&(cx, cy)| used.iter().all(|&(ux, uy)| ux != cx || uy != cy))
