@@ -8,7 +8,8 @@ pub mod step;
 pub mod wind;
 
 pub use projectile::{Projectile, WeaponKind, FuseState};
-pub use tick::{tick, tick_n, GRAVITY, TERMINAL_VELOCITY, WIND_SCALE};
+pub use tick::{tick, tick_n, GRAVITY, TERMINAL_VELOCITY, WIND_SCALE,
+    BAZOOKA_GRAVITY, BAZOOKA_WIND_SCALE, BAZOOKA_LAUNCH, BAZOOKA_CHARGE_RATE};
 pub use collision::{swept_collision, CollisionResult};
 pub use outcome::{resolve, Outcome};
 pub use fall::{FallTracker, fall_damage, SAFE_FALL_PX, FALL_DAMAGE_PER_PX};

@@ -82,7 +82,7 @@ impl CpuState {
 
         // Find best shot from current (or approx moved) position
         let shoot_sx = sx + walk_dir as f32 * walk_ticks as f32 * 2.0; // rough position estimate
-        let wind = game.wind.value() * 0.05;
+        let wind = game.wind.value(); // simulate() applies BAZOOKA_WIND_SCALE, matching real fire
 
         let mut best_angle = std::f32::consts::FRAC_PI_4;
         let mut best_power = 0.6f32;
@@ -99,7 +99,7 @@ impl CpuState {
             let angle = ai as f32 * std::f32::consts::PI / 180.0;
             for pi in [35u32, 50, 65, 80, 95] {
                 let power_frac = pi as f32 / 100.0;
-                let power = power_frac * 20.0;
+                let power = power_frac * crate::physics::BAZOOKA_LAUNCH;
                 let (lx, ly) = simulate(shoot_sx, sy, angle, power, facing, wind, &game.terrain);
                 let mut miss = ((lx - target.x).powi(2) + (ly - target.y).powi(2)).sqrt();
                 // Apply LOS penalty once — all angles share the same penalty here
@@ -137,11 +137,13 @@ fn simulate(sx: f32, sy: f32, angle: f32, power: f32, facing: f32,
             wind: f32, terrain: &crate::world::Terrain) -> (f32, f32) {
     let mut x  = sx + angle.cos() * facing * 12.0;
     let mut y  = sy - angle.sin() * 12.0;
-    let mut vx = angle.cos() * power * facing / 5.0;
-    let mut vy = -angle.sin() * power / 5.0;
+    // Matches the real bazooka fire physics: launch = power (= frac × BAZOOKA_LAUNCH),
+    // WA gravity/wind, shared terminal velocity.
+    let mut vx = angle.cos() * power * facing;
+    let mut vy = -angle.sin() * power;
     for _ in 0..300 {
-        vx += wind;
-        vy = (vy + 0.5).min(12.0);
+        vx += wind * crate::physics::BAZOOKA_WIND_SCALE;
+        vy = (vy + crate::physics::BAZOOKA_GRAVITY).min(crate::physics::TERMINAL_VELOCITY);
         x += vx; y += vy;
         if x < 0.0 || x >= WORLD_W as f32 { break; }
         if y >= WATER_Y as f32 { break; }

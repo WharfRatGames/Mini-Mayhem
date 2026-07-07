@@ -1,8 +1,108 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.419 (built/testing 2026-07-06) · prior 0.5.4.418 DEPLOYED (commit 3719e5f on main)
+## Version: 0.5.4.421 DEPLOYED (2026-07-06 on main) — bazooka physics overhaul, shipped together with the post-.420 working-tree work (rope wall-clip fix, grapple-onto-scenery, turn-end HP-tick wait, cavern skull scenery shrunk, WA-style random-drop spawns)
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
-## Miyoo push: .126 OK (hash-verified) · .110 unreachable ("no route to host"), needs manual push once back online
+## Miyoo push: .110 and .126 both unreachable on the .421 deploy — OTA pending (update server serving .421; devices pull on next launch)
+
+## Shipped in 0.5.4.421 (2026-07-06)
+
+### Bazooka physics port (reference-accurate, bazooka-only) — `physics/tick.rs`, `loop_runner.rs`, `cpu.rs`
+Per-weapon constants extracted by live dynamic analysis of the reference binary and rescaled from its
+50 fps to Arty's 30 Hz: `BAZOOKA_GRAVITY` 0.667, `BAZOOKA_WIND_SCALE` 0.794, `BAZOOKA_LAUNCH` 14.38,
+`BAZOOKA_CHARGE_RATE` 0.0625 (full charge in ~16 ticks ≈ 0.5 s). `tick()` branches per-weapon for
+gravity/wind; the fire site (`simulate_with_muzzle`) and `process_aim` use per-weapon launch/charge;
+overcharge (auto-fire at MAX_CHARGE 1.3) retained. **Every other weapon keeps the shared
+GRAVITY/WIND_SCALE/launch defaults** — no global rebalance. CPU aim sim (`cpu.rs::simulate`) updated
+to match (removed the old ÷5, uses the bazooka constants). New unit + parity tests; `cargo test
+--test parity` 22/22. VERSION + REQUIRED_VERSION bumped to .421. Net feel: ~0.5 s charge, flatter
+shorter arc (~310 px at 45° full vs ~1330 px before), ~10× stronger wind.
+
+## In working tree 2026-07-06 (shipped in .421)
+
+### Rope wall-clip fix (`loop_runner.rs`, `apply_all_gravity`)
+The .420 hard positional constraint (below) could displace the swing target (`nx,ny`) well beyond
+what `vel` alone would produce — e.g. a corner wrap/unwrap re-anchoring the circle. The swept
+terrain-collision check was gated on `vel` magnitude (`> 0.5`), so those larger jumps skipped the
+gate and the soldier's position was set directly to `nx,ny` with **no collision check at all** — a
+clean teleport through walls. Gate now keys off actual displacement (`nx,ny` vs `cx,cy`) instead of
+`vel`. Lives in `apply_all_gravity` → automatically covered on all 5 paths.
+
+### Grapple onto scenery objects (`loop_runner.rs`)
+Hook attach, the swing swept-collision check, and both corner-wrap helpers (`rope_seg_clear`,
+`rope_find_corner`) all checked `terrain.is_solid` (terrain layer only). Scenery/barrels/mines are
+stamped into a separate `objects` layer, visible only via `terrain.is_blocked` — the same check
+player movement already uses to treat scenery as solid. Rope code now uses `is_blocked` throughout,
+so the hook can catch on rocks/trees/crates and the swing correctly collides with/wraps around them.
+
+### Turn always waits for HP tick-down (`loop_runner.rs`, `TurnPhase::Ending`)
+Turn could advance to the next team while a damaged soldier's HP counter was still tallying
+(`pending_damage > 0`) or mid-drain (`displayed_hp != hp`), especially if the retreat window (105
+ticks) was shorter than the tally+countdown+drain sequence for a big hit. `TurnPhase::Ending` now
+holds the turn open under the same condition as the existing airborne-soldier guard, until every
+soldier's HP display has settled. Lives in `simulate_with_muzzle` → automatically covered on all 5
+paths.
+
+### Cavern skull scenery prop shrunk to 1/3 size (`world/terrain.rs`, `SceneryObject::scale`)
+The Underground-theme skull prop (`draw_skull`, sprite 3) rendered too large relative to other
+cave scenery. `SceneryObject::scale()` special-cases `Theme::Underground` sprite 3 to always
+return scale `1` instead of the usual size-banded `2`/`3` — collision footprint shrinks to match
+automatically since both derive from the same `scale()` call, so no separate hitbox fix was
+needed.
+
+### Spawn placement rewritten to WA-style random drop (`world/terrain.rs`, `find_team_spawns`)
+Replaced the deliberate "landform" placement pass (grouped standable columns into wide platforms,
+greedily maximized vertical dispersion across them) with a Worms-Armageddon-style random drop:
+each soldier is dropped at a random x and lands on the first standable spot in that column (cave
+floor on cavern maps, surface footing otherwise), retrying a fresh random x up to 60 times if the
+column has no footing or lands too close to a teammate (`MIN_SEP`/`MIN_SEP_V` unchanged — still
+the TNT-safety separation rule). The old "cave quota" mixing that force-placed some soldiers
+underground on non-cavern maps for vertical variety was removed — it doesn't match how WA drops
+worms (a real fall wouldn't reach sealed caves either), so dropping it makes the random-drop model
+more physically consistent. Determinism preserved via a xorshift64 RNG seeded from the terrain's
+own generated content (template_id, is_cavern, surface_texture, spawn_y samples) plus the query
+params — still a pure function of the terrain, identical client/server. The "no artificial
+mounds" fallback dispersion pool is kept for sparse/fragmented maps where random drops can't fill
+the team. Parity 22/22.
+
+### WA bazooka charge→velocity + wind constants — reverse-engineering in progress, UNRESOLVED
+Multi-round Ghidra RE effort against `assets/Worms Armageddon/WA.exe` to extract the real bazooka
+launch-velocity formula and wind-to-projectile-velocity constant (same technique that previously
+found the rope/grapple constants — see `reference-wa-ghidra-re` memory). Six rounds in as of
+2026-07-06: gravity re-confirmed (0.3px/frame² @ 50fps, already matches Arty's `GRAVITY`), a
+working Ghidra 12.1.2 + pyghidra decompile pipeline is now staged and reusable, and a large amount
+of territory has been ruled out (worm-tick function, muzzle-geometry function, the entire worm
+action-state switch, the weapon dispatcher, the hitscan trace loop, a static per-weapon
+damage/blast/knockback table at `worm[0xdb]` — see `reference-wa-weapon-stats-table` memory, and a
+misidentified "power-meter" field at `worm+0x24c` that turned out to be the aim angle). The actual
+charge accumulator and wind variable remain unlocated; one open theory is that WA's projectile
+"physics" is computed once analytically at fire time (angle+power+wind → landing point) rather
+than via a per-tick gravity-integration loop, since no such loop has been found despite extensive
+search. **No constants have been applied to Arty's code from this investigation** — current
+`GRAVITY=0.3`, `WIND_SCALE=0.08`, and the bazooka's `power.min(MAX_CHARGE)*20.0` launch formula
+are unchanged. Toolchain + decompiled listings staged in ephemeral scratchpad — gone if not
+resumed before it's cleared; full trail recorded in the `reference-wa-ghidra-re` memory for
+continuation.
+
+## Deployed 2026-07-06 (v0.5.4.420 — commit 181d291, VERSION + REQUIRED_VERSION bumped to .420)
+
+### Rope reel-out fix + WA-accurate hard constraint (`loop_runner.rs`, `apply_all_gravity`)
+Holding Down to pay out more rope silently did nothing: the physics unconditionally stripped any
+outward-radial velocity every tick (step 4), even when `rope.length` had just grown and there was
+slack to fall into — so the soldier stayed pinned at the old radius. Reverse-engineered WA's actual
+rope constraint (`FUN_005009c0`, see `reference-wa-ghidra-re` memory): it's a **hard positional
+constraint** that re-snaps the worm onto the circle of the *current* rope length every tick, not a
+soft gravity-fills-slack pendulum. Reworked to match: step 7 now unconditionally reprojects the
+swing target onto the circle of `effective_len` every tick (both growing and shrinking), so reel-out
+deterministically moves the soldier instead of waiting on gravity.
+
+### WA mask library grown 2→12 (`wa_templates.rs`, `src/world/wa_masks/`)
+Extracted 8 new island-style and 2 new cavern-style silhouettes from real WA `MapGen.exe` output
+(ran under Wine + Xvfb, driven via `xdotool`, across Island/Bazooka-and-Grenades/Cavern/Roper/
+Destructible-WfW game types — Fort/Shopper/RopeRace/WalkForWeapons/WallXWall/GrenadeWars turned out
+to be blocky sprite/maze minigame layouts, not organic terrain, and were skipped) via
+`tools/extract_wa_mask.py`. `WA_ISLAND_MASKS` 2→10, `WA_CAVERN_MASKS` 0→2 — cavern seeds now use
+real extracted cavern art instead of inverted island art. Requires client+server version match
+(bumped VERSION + REQUIRED_VERSION to .420, same as the rope fix above — one deploy, one version).
 
 ## Building 2026-07-06 (v0.5.4.419 — VERSION + REQUIRED_VERSION bumped to .419)
 
