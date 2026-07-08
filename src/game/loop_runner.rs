@@ -1337,24 +1337,51 @@ fn unstick_embedded_soldier(game: &mut GameState, ti: usize, si: usize) -> bool 
     use crate::renderer::draw_sprites::{SOLDIER_HALF_W, SOLDIER_H};
     let x  = game.teams[ti].soldiers[si].pos.x as i32;
     let y0 = game.teams[ti].soldiers[si].pos.y as i32;
-    let x_l = x - SOLDIER_HALF_W as i32;
-    let x_r = x + SOLDIER_HALF_W as i32;
-    let clear = |game: &GameState, yy: i32| {
+    let clear = |game: &GameState, xx: i32, yy: i32| {
+        let x_l = xx - SOLDIER_HALF_W as i32;
+        let x_r = xx + SOLDIER_HALF_W as i32;
         !(0..=SOLDIER_H).any(|h|
             game.terrain.is_blocked(x_l, yy - h)
-                || game.terrain.is_blocked(x, yy - h)
+                || game.terrain.is_blocked(xx, yy - h)
                 || game.terrain.is_blocked(x_r, yy - h))
     };
-    if clear(game, y0) { return true; } // not actually embedded
+    if clear(game, x, y0) { return true; } // not actually embedded
     let max_search = SOLDIER_H as i32 + 24;
+    // Vertical search first — cheapest, and matches the common cavern-ceiling case.
     for d in 1..=max_search {
-        if clear(game, y0 - d) {
+        if clear(game, x, y0 - d) {
             game.teams[ti].soldiers[si].pos.y = (y0 - d) as f32;
             return true;
         }
-        if clear(game, y0 + d) {
+        if clear(game, x, y0 + d) {
             game.teams[ti].soldiers[si].pos.y = (y0 + d) as f32;
             return true;
+        }
+    }
+    // Horizontal search: a pocket that's thick top-to-bottom (deeper than
+    // max_search) can still be open to the side, e.g. wedged against a wall
+    // inside a thick overhang.
+    for d in 1..=max_search {
+        if clear(game, x - d, y0) {
+            game.teams[ti].soldiers[si].pos.x = (x - d) as f32;
+            return true;
+        }
+        if clear(game, x + d, y0) {
+            game.teams[ti].soldiers[si].pos.x = (x + d) as f32;
+            return true;
+        }
+    }
+    // Last resort: teleport to the nearest column with a known-standable spot
+    // rather than leaving the soldier visibly stuck in terrain forever — a
+    // short teleport out of an unreachable pocket beats a permanently embedded
+    // soldier that can never land and blocks the turn from ever advancing.
+    for d in 0..=max_search * 4 {
+        for xx in [x - d, x + d] {
+            if let Some(fy) = game.terrain.standable_foot_levels(xx).into_iter().next() {
+                game.teams[ti].soldiers[si].pos.x = xx as f32;
+                game.teams[ti].soldiers[si].pos.y = fy as f32;
+                return true;
+            }
         }
     }
     false
@@ -1648,6 +1675,11 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             // Torch burn sound is driven by audio::update_torch() in render() from the
             // live torch state, so it plays only WHILE the torch is active (and stops
             // on early release) — no one-shot emit_sound here.
+            // Stop the turn timer the moment the torch is deployed (matches every other
+            // weapon) rather than only once it finishes burning; step_plasma_torch keeps
+            // running via the `in_torch` bypass above regardless of turn phase.
+            game.teams[ti].soldiers[si].has_fired = true;
+            game.turn.on_fired();
         }
         return;
     }

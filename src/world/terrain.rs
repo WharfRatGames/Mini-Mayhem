@@ -1620,7 +1620,18 @@ impl Terrain {
                     }
                 }
             }
-            let (px, py) = spot.unwrap_or((base, (TERRAIN_MIN_Y as i32 + TERRAIN_MAX_Y as i32) / 2));
+            let mut fallback = spot.unwrap_or((base, (TERRAIN_MIN_Y as i32 + TERRAIN_MAX_Y as i32) / 2));
+            // Guarantee distinctness even in this fully-pathological branch: integer
+            // division can map two different spawn indices to the same `base` column
+            // on a narrow/fragmented band, and if both inner searches above also come
+            // up empty, they'd otherwise collide on the exact same point. Nudge
+            // vertically until clear of every already-placed spawn — exact placement
+            // doesn't matter here (no standable terrain was found anyway), only that
+            // no two soldiers ever land on the same pixel.
+            while used.iter().any(|&(ux, uy)| ux == fallback.0 && uy == fallback.1) {
+                fallback.1 += 24;
+            }
+            let (px, py) = fallback;
             spawns.push(WorldPos::new(px as f32, py as f32));
             used.push((px, py));
         }
