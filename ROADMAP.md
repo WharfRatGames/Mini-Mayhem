@@ -114,7 +114,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 
 - [x] Authoritative server simulation (clients send inputs only, server runs physics)
 - [x] TCP game server on Raspberry Pi 4
-- [x] Live 1v1 real-time matches
+- [x] Live real-time matches, casual queue supports 2-4 players (`run_casual_match`, `src/server/main.rs:923`); ranked stays 1v1
 - [x] Take a Turn (async) matches
 - [x] Version handshake (client/server must match)
 - [x] Reconnect window (3-minute grace period for disconnects — both casual and ranked)
@@ -123,6 +123,8 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] OTA (over-the-air) auto-update on launch
 - [x] Update UX overhaul — title-screen UPDATE AVAILABLE banner, re-check on MULTIPLAYER select, cancellable non-blocking check gate (fixes Casual Live freeze), handshake off main thread, version-reject opens install screen (v0.5.4.400)
 - [x] Python/SQLite REST API (accounts, match history, leaderboard)
+- [x] Server monitoring dashboard — `deploy/dashboard/index.html`, served at `/arty/dashboard/`, pulls `/admin/status` (total users, active-today, match counts, live/ranked queue depth, recent matches, top ELO) plus `/admin/temp` and `/admin/lobbies`, all background-cached in `arty_api.py`
+- [x] Port 443 / HTTPS — router port-forward opened; client's `https_post`/`https_get` (`src/https.rs`) already dialed `crumbonium.duckdns.org:443` directly, so no client change needed once the port opened (confirmed live, 2026-07-08)
 - [x] Live-match weapon-kill stats fixed — `kill_weapon` was never synced to the live client (the parity checklist claimed it "arrives as a message", which never actually happened), so every live-match kill reported weapon "UNKNOWN" for missions/leaderboards even though it was set correctly server-side; TAT/hotseat (real local simulation) were unaffected. Added `NetSoldier.kill_weapon_u8` (v0.5.4.415)
 - [x] Server hardening — `panic=unwind` server build profile (was inheriting `release`'s `panic=abort`, so one match panicking could abort the whole process and take every other in-progress match down with it) + `catch_unwind` per match thread; TLS+app handshake moved off the single accept-loop thread into a per-connection thread so a burst of simultaneous connects parallelizes instead of serializing (v0.5.4.413)
 - [x] API DB latency fixed — TAT list / test-match start / all DB reads were slow: one shared SQLite connection serialized every request (→ per-request `open_db()` with WAL + `synchronous=NORMAL`), zero indexes (→ 11 added), `/matches/pending` N+1 (→ single JOIN), `/match/create` triple-commit (→ one txn); Python-only, deployed to Pi 2026-07-05 (v0.5.4.417 cycle)
@@ -157,7 +159,6 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [ ] **Scrap earned on game-over screen** — show how much scrap you earned from the match before returning to title
 - [ ] **Profile screen** — view owned cosmetics, current balance, win/loss record from within the game
 - [ ] **Roster editor live preview** — see your soldier update in real time while picking cosmetics
-- [ ] **Port 443 / HTTPS** — router port-forwarding for TLS on the API (nginx config and cert are ready; awaiting port forward)
 
 ---
 
@@ -167,10 +168,8 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [ ] **Replay system** — save and replay matches locally
 - [ ] **Additional weapons** — new crate-only weapons to expand the pool (Robot/Sheep-style walker added 2026-07-08; still open for more)
 - [ ] **Map variety** — more real WA terrain masks beyond the current 2, additional sub-variants (library grown 2→18 total across island/cavern as of 2026-07-08; still open for more)
-- [ ] **Server monitoring dashboard** — uptime, active matches, player counts
 - [ ] **Rate limiting on API** — per-IP rate limits on `/register` and `/login` to prevent brute force
 - [ ] **Input stream logging** — full per-match input logs for future replay analysis and anti-cheat
-- [ ] **4-player live matches** — extend live mode beyond 1v1
 - [ ] **Tournament bracket** — organized competitive play with bracket progression
 - [ ] **Seasonal resets** — periodic ELO soft-resets with season reward cosmetics
 
