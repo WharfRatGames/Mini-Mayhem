@@ -459,6 +459,7 @@ async function showPlayerDetail(username) {
           <button class="grant-btn" onclick="grantWarbonds('${u.username}')">+ Grant Warbonds</button>
           <button class="grant-btn" onclick="grantAllCosmetics('${u.username}')" style="border-color:#a060ff55;color:#a060ff">★ Grant All Cosmetics</button>
           <button class="grant-btn" onclick="resetPassword('${u.username}')" style="border-color:#e0803055;color:#e08030">⟳ Reset Password</button>
+          <button class="grant-btn" onclick="deleteAccount('${u.username}')" style="border-color:#e0505055;color:#e05050">🗑 Delete Account</button>
         </div>
       </div>`;
   } catch(e) { panel.innerHTML = ''; }
@@ -521,6 +522,19 @@ async function resetPassword(username) {
   });
   const d = await res.json();
   if (d.ok) alert(`Password reset flagged for ${username}. They will be prompted to choose a new password on next login.`);
+  else alert('Error: ' + (d.error || 'unknown'));
+}
+
+async function deleteAccount(username) {
+  const typed = prompt(`This permanently deletes ${username}'s account, rosters, cosmetics, and currency history. This cannot be undone.\n\nType the username to confirm:`);
+  if (typed !== username) { if (typed !== null) alert('Username did not match — cancelled.'); return; }
+  const res = await fetch('/api/admin/delete_account', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({admin_key: adminKey, username})
+  });
+  const d = await res.json();
+  if (d.ok) { alert(`${username} deleted.`); showDetail('players'); }
   else alert('Error: ' + (d.error || 'unknown'));
 }
 

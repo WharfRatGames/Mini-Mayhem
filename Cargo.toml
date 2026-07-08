@@ -23,6 +23,10 @@ path = "src/api/main.rs"
 name = "sprite-sheet"
 path = "src/bin/sprite_sheet.rs"
 
+[[bin]]
+name = "scenery-gallery"
+path = "src/bin/scenery_gallery.rs"
+
 [dependencies]
 noise          = "0.9"
 libc           = "0.2"

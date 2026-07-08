@@ -146,6 +146,11 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
             blink_timer: g.blink_timer,
             falling: g.falling, fall_y: g.fall_y, vel_y: g.vel_y, bounce_count: g.bounce_count,
         }),
+        robot: game.robot.as_ref().map(|r| NetRobot {
+            x: r.x, y: r.y, vel_y: r.vel_y, vel_x: r.vel_x, facing: r.facing,
+            fuse_ticks: r.fuse_ticks, grounded: r.grounded, walk_ticks: r.walk_ticks,
+            owner_team: r.owner_team, just_jumped: r.just_jumped,
+        }),
         homing_missile: game.homing_missile.as_ref().map(|hm| NetHomingMissile {
             cursor_x: hm.cursor_x, render_x: hm.render_x,
             cursor_y: hm.cursor_y, render_y: hm.render_y,
@@ -175,7 +180,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                 (k.to_net_u8(), a.map_or(0xFFFF, |n| n as u32))
             }).collect(),
         }).collect(),
-        damage_focus: game.damage_focus.map(|(pos, ticks)| (pos.x, pos.y, ticks)),
+        damage_focus: game.damage_focus.map(|pos| (pos.x, pos.y)),
     }
 }
 
@@ -487,6 +492,15 @@ pub fn apply_server_state(
             falling: ng.falling, fall_y: ng.fall_y, vel_y: ng.vel_y, bounce_count: ng.bounce_count,
         });
     }
+    // Sync Robot walker
+    {
+        use crate::game::state::RobotState;
+        game.robot = state.robot.as_ref().map(|nr| RobotState {
+            x: nr.x, y: nr.y, vel_y: nr.vel_y, vel_x: nr.vel_x, facing: nr.facing,
+            fuse_ticks: nr.fuse_ticks, grounded: nr.grounded, walk_ticks: nr.walk_ticks,
+            owner_team: nr.owner_team, just_jumped: nr.just_jumped,
+        });
+    }
     // Sync Homing Missile targeting cursor
     {
         use crate::game::state::HomingMissileState;
@@ -511,7 +525,7 @@ pub fn apply_server_state(
     // camera can hold on the damaged soldier during retreat (popup + countdown
     // stay on screen — otherwise they often play out off-camera).
     game.damage_focus = state.damage_focus
-        .map(|(x, y, ticks)| (crate::world::WorldPos::new(x, y), ticks));
+        .map(|(x, y)| crate::world::WorldPos::new(x, y));
 
     // Sync weapon inventories so ammo counts and selection stay accurate.
     // For my_team: preserve the locally-managed selection (only clamp if the
@@ -566,7 +580,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         fire_patches: _, black_holes: _, wind: _, aim: _, result: _, tick: _,
         crater_log: _, sounds: _, fx_events: _, graves: _, weapon_menu_open: _,
         weapon_menu_cursor: _, rope: _, messages: _, blood_splats: _,
-        plasma_torch: _, garcia: _, airstrike: _, homing_missile: _,
+        plasma_torch: _, garcia: _, robot: _, airstrike: _, homing_missile: _,
         damage_focus: _, // synced: StateMsg.damage_focus — live-client camera hold on the damaged soldier
         // ── Not networked: client-only visuals / server-internal sim state ──
         // (terrain is rebuilt on the client from `crater_log`; `explosions` from craters)
@@ -740,6 +754,16 @@ fn _garcia_parity_checklist(g: &crate::game::state::GarciaState) {
         cursor_x: _, render_x: _, cursor_y: _, render_y: _, blink_timer: _,
         falling: _, fall_y: _, vel_y: _, bounce_count: _,
     } = g;
+}
+
+/// Adding a field to `RobotState` breaks this.
+#[allow(dead_code)]
+fn _robot_parity_checklist(r: &crate::game::state::RobotState) {
+    let crate::game::state::RobotState {
+        // ── Synced via NetRobot ──
+        x: _, y: _, vel_y: _, vel_x: _, facing: _, fuse_ticks: _, grounded: _, walk_ticks: _,
+        owner_team: _, just_jumped: _,
+    } = r;
 }
 
 /// Adding a field to `HomingMissileState` breaks this.

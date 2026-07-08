@@ -134,6 +134,7 @@ pub struct StateMsg {
     /// Colour identity (0-3) per compact team index.
     pub team_colors:        Vec<u8>,
     pub garcia:             Option<NetGarcia>,
+    pub robot:              Option<NetRobot>,
     pub airstrike:          Option<NetAirstrike>,
     pub homing_missile:     Option<NetHomingMissile>,
     /// Active plasma-torch direction: 0=none, 1=UpForward, 2=Forward, 3=DownForward.
@@ -153,11 +154,11 @@ pub struct StateMsg {
     /// Weapon inventory per team: [(kind_u8, ammo_or_0xFFFF_for_infinite)].
     /// Lets the live client show accurate ammo counts and weapon list.
     pub team_weapons:       Vec<NetTeamWeapons>,
-    /// (x, y, ticks_left) of the most recently damaged soldier — the live
-    /// client's camera holds there during retreat (like update_camera does in
-    /// hotseat) so the damage popup + HP countdown are actually on screen.
+    /// (x, y) of the most recently damaged soldier — the live client's camera
+    /// holds there during retreat (like update_camera does in hotseat) until
+    /// the damage tally finishes, so the popup + HP countdown are on screen.
     #[serde(default)]
-    pub damage_focus:       Option<(f32, f32, u32)>,
+    pub damage_focus:       Option<(f32, f32)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +229,20 @@ pub struct NetGarcia {
     pub fall_y:      f32,
     pub vel_y:       f32,
     pub bounce_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetRobot {
+    pub x:          f32,
+    pub y:          f32,
+    pub vel_y:      f32,
+    pub vel_x:      f32,
+    pub facing:     i32,
+    pub fuse_ticks: u32,
+    pub grounded:   bool,
+    pub walk_ticks: u32,
+    pub owner_team: usize,
+    pub just_jumped: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

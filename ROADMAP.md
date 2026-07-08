@@ -165,8 +165,8 @@ A living document of what's shipped, what's in progress, and what's coming.
 
 - [ ] **Spectator mode** — watch a live match in progress without participating
 - [ ] **Replay system** — save and replay matches locally
-- [ ] **Additional weapons** — new crate-only weapons to expand the pool
-- [ ] **Map variety** — more real WA terrain masks beyond the current 2, additional sub-variants
+- [ ] **Additional weapons** — new crate-only weapons to expand the pool (Robot/Sheep-style walker added 2026-07-08; still open for more)
+- [ ] **Map variety** — more real WA terrain masks beyond the current 2, additional sub-variants (library grown 2→18 total across island/cavern as of 2026-07-08; still open for more)
 - [ ] **Server monitoring dashboard** — uptime, active matches, player counts
 - [ ] **Rate limiting on API** — per-IP rate limits on `/register` and `/login` to prevent brute force
 - [ ] **Input stream logging** — full per-match input logs for future replay analysis and anti-cheat

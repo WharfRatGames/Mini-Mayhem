@@ -55,6 +55,56 @@ pub fn draw_garcia_sprite(buf: &mut WorldBuffer, cx: i32, cy: i32, render_w: i32
     }
 }
 
+/// Draw the autonomous walking Robot: a small procedural clockwork-robot
+/// sprite, mirrored by `facing` (1 = right, -1 = left). `feet_y` is the
+/// Robot's ground-contact y (matches `RobotState.y`, the same feet-baseline
+/// convention soldiers use), `w`/`h` are the overall body footprint.
+/// `walk_ticks` drives the 2-frame leg-stride animation while `grounded` is
+/// true; when airborne both legs hang together (no stride).
+pub fn draw_robot_sprite(buf: &mut WorldBuffer, x: i32, feet_y: i32, facing: i32, w: i32, h: i32, walk_ticks: u32, grounded: bool) {
+    let steel    = Bgra::new(140, 148, 160);
+    let steel_dk = Bgra::new(60,  66,  76);
+    let eye      = Bgra::new(70, 210, 255);
+    let mouth_c  = Bgra::new(20, 22, 26);
+
+    let half_w = w / 2;
+    let top    = feet_y - h;
+    let head_h = h / 3;
+    let leg_h  = 4;
+    let body_top = top + head_h;
+    let body_h   = (h - head_h - leg_h).max(1);
+
+    // Legs — drawn first so the body/head overlap their tops cleanly.
+    // Alternating stride: one leg steps forward (toward facing), the other
+    // back, swapping every few ticks; stand square when airborne.
+    let stride = if grounded { ((walk_ticks / 6) % 2 == 0) } else { true };
+    let leg_off = if grounded { 2 } else { 0 };
+    let (l_dx, r_dx) = if stride { (facing * leg_off, -facing * leg_off) } else { (-facing * leg_off, facing * leg_off) };
+    let leg_y = feet_y - leg_h;
+    buf.fill_rect(x - half_w + 1 + l_dx, leg_y, 3, leg_h as u32, steel_dk);
+    buf.fill_rect(x + half_w - 4 + r_dx, leg_y, 3, leg_h as u32, steel_dk);
+
+    // Body
+    buf.fill_rect(x - half_w, body_top, w as u32, body_h as u32, steel_dk);
+    buf.fill_rect(x - half_w + 1, body_top + 1, (w - 2) as u32, (body_h - 2).max(1) as u32, steel);
+
+    // Head
+    let head_w = w - 2;
+    buf.fill_rect(x - head_w / 2, top, head_w as u32, head_h as u32, steel_dk);
+    buf.fill_rect(x - head_w / 2 + 1, top + 1, (head_w - 2) as u32, (head_h - 2) as u32, steel);
+
+    // Eye — offset toward the facing direction
+    let eye_x = x + facing * (head_w / 4);
+    buf.fill_rect(eye_x - 1, top + head_h / 2 - 1, 3, 3, eye);
+
+    // Mouth — small grille slit near the bottom of the head, below the eye
+    buf.fill_rect(eye_x - 2, top + head_h - 2, 5, 1, mouth_c);
+
+    // Antenna
+    buf.fill_rect(x - 1, top - 4, 2, 4, steel_dk);
+    buf.fill_circle(x, top - 5, 2, eye);
+}
+
 // ── Team colours ──────────────────────────────────────────────────────────────
 
 /// The four team colours. Index matches team slot 0-3.

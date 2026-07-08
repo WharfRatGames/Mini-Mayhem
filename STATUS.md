@@ -1,5 +1,80 @@
 # Mini Mayhem — Project Status
 
+## Working tree, NOT version-bumped or deployed to Pi/GitHub (2026-07-08, post-.421)
+Ad-hoc test builds of everything below were pushed straight to Miyoo `.126` several times
+this session (no VERSION/REQUIRED_VERSION bump each time, per explicit instruction) — the
+device still reports itself as `0.5.4.421` despite running newer code. A real version bump
+is still needed before any live/TAT deploy (terrain-gen and net-sync changes below both
+require client/server to match).
+
+- **New weapon: Robot** (`WeaponKind::Robot`, WA Sheep-style autonomous walker). Placed like
+  TNT (instant, no aim/charge). Walks/climbs 0-8px steps; when blocked by something taller it
+  launches a single automatic obstacle-clearing jump (ballistic arc, terrain-detection driven,
+  not player input) and reverses only if it lands still blocked — matches WA's Sheep exactly.
+  10s fixed real-time fuse (ticks unconditionally every tick regardless of turn/phase), numeric
+  countdown over its head for the final 5s. Detonates on fuse expiry, water contact, being
+  caught in another explosion, or a manual A-press by the placing team during their own turn
+  (server only forwards the active team's input, so true any-time remote detonation isn't
+  wired — same-turn only). Placing team's own turn holds in Watching until it detonates, then
+  the normal retreat window opens. Rare-tier crate drop. 75 max damage / 45 blast radius / 18
+  knockback. In-world sprite has a 2-frame walk-cycle leg animation, glowing eyes, mouth, and
+  antenna; matching robot-head weapon-menu icon. Fully synced (`RobotState`/`NetRobot`/parity
+  checklist in net_sync.rs + tests/parity.rs). Two real bugs found and fixed post-implementation:
+  (1) the jump never actually happened — the immediate ballistic step called
+  `robot_snap_to_surface`, which re-landed it on the ground it just launched from (still within
+  the 10px landing-scan window) before it ever visibly moved; (2) horizontal clearance was
+  tested at the pre-jump ground height instead of the risen height, so it never saw an obstacle
+  as cleared. Fixed by only landing-checking once past the arc's apex (`vel_y > 0`) and testing
+  clearance at the post-move y.
+- **Explosion direct-hit bonus REMOVED for all weapons.** `apply_explosion_scaled` used to add
+  a flat +20 (capped at 99) whenever a soldier was within 10px of the blast center, for every
+  explosive except Blasthive/Bazooka/HomingMissile. Removed entirely — `max_damage()` is now
+  the true ceiling for every weapon regardless of distance, no exceptions.
+- **Movement smoothing over curved terrain** (crater lips, hills). `snap_to_surface` and
+  `is_on_ground` (loop_runner.rs) widened from 3 fixed probe columns (left/center/right edge)
+  to the full soldier body width, so they agree with `try_move_horizontal`'s already-full-width
+  check — a curve's true peak between the 3 old sample points no longer gets missed, which used
+  to read as a jerky extra step. `try_move_horizontal` itself needed no change (already correct).
+- **WA mask library grown 12→18** (14 island, 4 cavern) — new masks extracted from fresh
+  `MapGen.exe` output under Wine/Xvfb (headless CLI: `-t TYPE -o FILE -w`, much simpler than
+  driving the full game), post-processed with a connected-component cleanup pass (morphological
+  opening + border-touching component filter) to strip decorative sprites (trees/cacti/skulls)
+  that MapGen bakes into its preview PNG, keeping only the real terrain silhouette. Chosen for
+  genuinely curvy/rounded contours (rolling hills, wavy canyons, blobby cave chambers).
+- **Spawn placement**: (a) cavern spawn-clustering bug fixed — a strict single-pass separation
+  scan used to silently skip a soldier outright once a chamber was too small to fit everyone
+  with full separation, and the fallback logic (built for open-air/surface terrain) couldn't
+  rescue cavern maps, so skipped soldiers defaulted to the same point. Replaced with the same
+  greedy max-min-separation dispersion pattern already used elsewhere, so a cramped chamber now
+  spreads as far as it actually allows. (b) `MIN_SEP`/`MIN_SEP_V` loosened 140/120→70/60px after
+  dynamic analysis of real WA (Wine) showed it does NOT enforce meaningful separation between a
+  team's worms (observed two same-team worms spawn ~20-30px apart) — kept a modest floor rather
+  than matching WA's fully loose placement. (c) scenery clearance margin widened footprint+10→
+  footprint+24 so two nearby decorations' exclusion zones merge and swallow gaps too narrow to
+  actually stand/move in, instead of leaving a technically-clear sliver. (d) barrels now also
+  check horizontal scenery clearance (`too_close_to_scenery`, main.rs) — they always checked
+  landing height against scenery but never horizontal distance, so one could land stacked
+  directly against/on top of a decoration.
+- **Stuck-soldier turn-lock fix**: blast knockback into a cramped cavern ceiling could embed a
+  soldier in terrain; the airborne swept-movement loop would revert to that exact (embedded)
+  spot every tick since its first sub-step was already blocked, so the soldier never landed,
+  `state` stayed `Airborne` forever, and the turn could never advance. Added
+  `unstick_embedded_soldier` watchdog: nudges up or down (whichever clears first) before normal
+  airborne physics; forces `Idle` if truly nowhere clear is found nearby.
+- **Boulder (Rugged scenery) height reduced** 48px→33px — was just over the ~46px backflip
+  apex, making it un-climbable; confirmed via a new labeled scenery reference gallery (below).
+- **Weapon menu scroll fix**: Up/Down used to wrap as soon as they hit the *current column's
+  own* item count (columns can be shorter than the grid when item count isn't a multiple of 4),
+  so a short column could never reach a row that only existed in a longer column — and since
+  scrolling follows the cursor's row, the view could get stuck short of the bottom. Now falls
+  back to column 0 (always full-length by construction) whenever the current column lacks an
+  item at the target row.
+- **New dev tool**: `cargo run --bin scenery-gallery` renders every scenery sprite per theme
+  (Pastoral/Rugged/Underground) into a labeled `assets/scenery_gallery.png` with footprint
+  dimensions — added after having to guess which sprite a "gray dome" bug report meant.
+- Gates: `cargo check --tests` clean, `cargo test --test parity` 23/23, `cargo test --test
+  wa_collage_check` 6/6.
+
 ## Version: 0.5.4.421 DEPLOYED to Pi/server/GitHub/Discord (2026-07-07, commit 04240d8) —
 ## bazooka wind-hook + crate-camera fix + damage-tally turn-end fix. This is a *new* build that
 ## reclaims the .421 number from the reverted physics port below (originally tagged .422, then
@@ -8,6 +83,15 @@
 ## Miyoo push: BOTH .110 and .126 unreachable this session (offline on LAN) — push pending once
 ## either device is back online. .126 still runs an ad-hoc pre-version-bump test build of the
 ## wind-hook change (reports itself as 0.5.4.420) from earlier in this session.
+
+## Deployed 2026-07-07 (admin dashboard — delete account)
+Added a "Delete Account" action to the player detail panel in the admin dashboard
+(`deploy/dashboard/index.html`), backed by a new `POST /admin/delete_account` endpoint
+in `deploy/arty_api.py` (admin-key gated, deletes the user row plus rosters/cosmetics/
+warbond-transactions/challenges/queue rows keyed to that user_id; match history rows are
+left as-is). Confirmation requires typing the exact username, not just OK/Cancel. Deploy-only
+change (dashboard HTML + Python API on the Pi) — no client/server binary or protocol change,
+so no VERSION bump.
 
 ## Deployed 2026-07-07 (v0.5.4.421 — bazooka wind-hook, crate-camera fix, damage-tally fix)
 Bazooka gets its own wind constant (`BAZOOKA_WIND_SCALE = 0.32` vs. the shared `WIND_SCALE = 0.08`,

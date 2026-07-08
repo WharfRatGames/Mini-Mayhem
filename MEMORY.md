@@ -68,6 +68,10 @@
   `const DAMAGE` inside that weapon's fire_*_shot function. Changing
   max_damage() alone does nothing for those weapons (bit us in v0.5.4.400: the
   "MAC-10 nerf" only touched the unused display stat, not real damage).
+- (2026-07-08) apply_explosion_scaled's old +20-within-10px "direct-hit bonus"
+  was REMOVED for all weapons — max_damage() is now the literal ceiling, no
+  exceptions. If you see damage readings above a weapon's max_damage(), that's
+  a regression, not the old intentional bonus coming back.
 - Terrain generation/spawn-placement code must use is_solid (terrain only),
   never is_blocked (terrain OR objects) — the per-tick `objects` bitmask is
   populated by stamp_objects() during the running game loop and is always

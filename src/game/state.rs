@@ -4,10 +4,6 @@ use super::soldier::DeathCause;
 use super::team::Team;
 use super::turn::TurnManager;
 
-/// How long (in sim ticks) the camera holds on a soldier that just took
-/// explosion damage, so the player can read the resulting HP loss.
-pub const DAMAGE_FOCUS_TICKS: u32 = 50;
-
 /// Representative dirt tone used to colour explosion debris chunks so the
 /// fallout matches the map look: cavern maps get dark earth; surface maps
 /// vary by the collage's dominant WA mask (template_id → Theme).
@@ -304,6 +300,34 @@ pub struct GarciaState {
     pub bounce_count: u32,
 }
 
+/// Autonomous walking Robot (WA Sheep-style) session; None = inactive.
+/// Placed like TNT (no aim/charge), then walks/climbs/falls on its own until
+/// its fuse expires, it touches water, or it's caught in another explosion.
+#[derive(Debug, Clone)]
+pub struct RobotState {
+    pub x:          f32,
+    pub y:          f32,
+    pub vel_y:      f32,
+    /// Horizontal velocity while airborne from an obstacle-clearing jump
+    /// (unused while grounded — grounded walking uses a fixed step speed).
+    pub vel_x:      f32,
+    /// 1 = walking right, -1 = walking left.
+    pub facing:     i32,
+    /// Counts down every tick regardless of turn/phase; explodes at 0.
+    pub fuse_ticks: u32,
+    pub grounded:   bool,
+    /// Cosmetic walk-cycle/footstep timing.
+    pub walk_ticks: u32,
+    /// Team index that placed this Robot — only this team can detonate it
+    /// early (A press) during their own turn.
+    pub owner_team: usize,
+    /// True from the moment it jumps to clear a blocked obstacle until it
+    /// next successfully moves — if it lands still blocked, it reverses
+    /// instead of jumping again (matches WA's Sheep: one jump attempt per
+    /// obstacle, then turn around).
+    pub just_jumped: bool,
+}
+
 /// The complete mutable game state.
 pub struct GameState {
     pub terrain:     Terrain,
@@ -351,7 +375,7 @@ pub struct GameState {
     pub retreat_locked: bool,
     /// Position + remaining tick count for "hold camera on damaged soldier so the
     /// HP loss can be read" — set by explosion damage, ticked down during retreat.
-    pub damage_focus: Option<(WorldPos, u32)>,
+    pub damage_focus: Option<WorldPos>,
     /// Weapon menu open in server_tick() contexts (TAT / live server).
     pub weapon_menu_open:   bool,
     pub weapon_menu_cursor: usize,
@@ -406,6 +430,8 @@ pub struct GameState {
     pub plasma_torch: Option<PlasmaTorchState>,
     /// Garcia targeting / falling session; None = inactive.
     pub garcia: Option<GarciaState>,
+    /// Autonomous walking Robot session; None = inactive.
+    pub robot: Option<RobotState>,
     /// Airstrike targeting / active session; None = inactive.
     pub airstrike: Option<AirstrikeState>,
     /// Homing missile target-picking session; None = inactive.
@@ -416,6 +442,14 @@ pub struct GameState {
 }
 
 impl GameState {
+    /// True while any soldier still has a damage popup pending, settling, or
+    /// counting down its HP bar — used to hold the turn-end and to hold the
+    /// retreat-phase camera on a soldier who just took damage.
+    pub fn any_soldier_tallying(&self) -> bool {
+        self.teams.iter().flat_map(|t| t.soldiers.iter())
+            .any(|s| s.pending_damage > 0 || s.damage_settle > 0 || s.hp_countdown_delay > 0)
+    }
+
     /// Initialise a complete game.
     pub fn new(
         map_seed:   u64,
@@ -475,6 +509,7 @@ impl GameState {
             pending_deaths: Vec::new(),
             plasma_torch: None,
             garcia: None,
+            robot: None,
             airstrike: None,
             homing_missile: None,
             meteor_chain: false,
@@ -519,8 +554,9 @@ impl GameState {
     }
 
     /// Apply an explosion at a world position.
-    /// Carves terrain, deals distance-falloff damage with a direct-hit bonus,
-    /// applies Worms-style knockback with an upward bias, and spawns an animation.
+    /// Carves terrain, deals distance-falloff damage (max_damage() is the true
+    /// ceiling, no direct-hit bonus), applies Worms-style knockback with an
+    /// upward bias, and spawns an animation.
     pub fn apply_explosion(&mut self, pos: WorldPos, kind: WeaponKind) {
         let force = kind.blast_force();
         self.apply_explosion_force(pos, kind, force);
@@ -627,9 +663,9 @@ impl GameState {
                 // grounded soldiers, which would suppress knockback otherwise).
                 let pre_state = soldier.state.clone();
 
-                // Damage: linear falloff + direct-hit bonus when nearly touching center
-                let mut dmg = (max_dmg as f32 * falloff) as u32;
-                if dist < 10.0 && kind != WeaponKind::Blasthive && kind != WeaponKind::Bazooka && kind != WeaponKind::HomingMissile { dmg = (dmg + 20).min(99); }
+                // Damage: linear falloff only — no direct-hit bonus for any weapon,
+                // so max_damage() is the true ceiling regardless of distance.
+                let dmg = (max_dmg as f32 * falloff) as u32;
                 if dmg > 0 {
                     soldier.death_cause = super::soldier::DeathCause::Explosion;
                     soldier.kill_weapon = Some(kind);
@@ -689,9 +725,10 @@ impl GameState {
         }
 
         // Remember where the most recently damaged soldier ended up so the camera
-        // can briefly hold there during retreat, letting the HP loss be read.
+        // can hold there during retreat until the damage tally (popup + HP
+        // countdown) finishes — see `any_soldier_tallying`.
         if let Some(pos) = last_damaged {
-            self.damage_focus = Some((pos, DAMAGE_FOCUS_TICKS));
+            self.damage_focus = Some(pos);
         }
 
         // Damage any landed crates caught in the blast (20+ total this turn destroys them)
@@ -737,6 +774,17 @@ impl GameState {
             if (dx * dx + dy * dy).sqrt() < radius {
                 mine.state = MineState::Triggered;
                 mine.trigger_ticks = 8; // short chain delay
+            }
+        }
+
+        // Chain-detonate the Robot if it's caught in this blast — set its fuse to
+        // expire next tick rather than recursing into apply_explosion_scaled here
+        // (step_robot's normal fuse-expiry path fires the actual explosion).
+        if let Some(robot) = &mut self.robot {
+            let dx = robot.x - pos.x;
+            let dy = robot.y - pos.y;
+            if (dx * dx + dy * dy).sqrt() < radius {
+                robot.fuse_ticks = robot.fuse_ticks.min(1);
             }
         }
 
@@ -1187,9 +1235,10 @@ impl GameState {
                 [WeaponKind::Blasthive, WeaponKind::BananaBomb,
                  WeaponKind::AirStrike, WeaponKind::HomingMissile][slot.min(3)]
             } else if w < 0.98 {
-                let slot = ((w - 0.84) / 0.14 * 4.0) as usize;
+                let slot = ((w - 0.84) / 0.14 * 5.0) as usize;
                 [WeaponKind::BlackHoleBomb, WeaponKind::Revolver,
-                 WeaponKind::Minigun, WeaponKind::HolyHandGrenade][slot.min(3)]
+                 WeaponKind::Minigun, WeaponKind::HolyHandGrenade,
+                 WeaponKind::Robot][slot.min(4)]
             } else {
                 WeaponKind::Garcia
             };

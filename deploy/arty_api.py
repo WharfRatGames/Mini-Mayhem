@@ -847,6 +847,21 @@ def _handle(db, sock, peer_ip="?"):
         db.commit()
         send_json(sock, 200, {"ok": True})
 
+    elif method == "POST" and path == "/admin/delete_account":
+        if data.get("admin_key") != ADMIN_KEY:
+            send_json(sock, 403, {"error":"forbidden"}); return
+        username = data.get("username","").strip()
+        if not username: send_json(sock, 400, {"error":"missing username"}); return
+        row = db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (username,)).fetchone()
+        if not row: send_json(sock, 404, {"error":"user not found"}); return
+        uid3 = row[0]
+        for table in ("rosters", "player_cosmetics", "warbond_transactions", "player_challenges",
+                      "ranked_pool", "live_queue", "casual_pool"):
+            db.execute(f"DELETE FROM {table} WHERE user_id=?", (uid3,))
+        db.execute("DELETE FROM users WHERE id=?", (uid3,))
+        db.commit()
+        send_json(sock, 200, {"ok": True})
+
     elif method == "POST" and path == "/player/daily_login":
         uid2 = uid(token)
         if not uid2: send_json(sock, 401, {"error":"invalid token"}); return

@@ -10,7 +10,7 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{
     WorldBuffer, Bgra,
-    draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_headstone, draw_explosion, draw_garcia_sprite},
+    draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_headstone, draw_explosion, draw_garcia_sprite, draw_robot_sprite},
     skeleton::{draw_soldier_skeletal, SoldierAnim},
     draw_terrain,
     hud::{draw_game_over, draw_pause_menu},
@@ -201,6 +201,13 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     // Object mask: re-stamp barrels + armed mines so collision sees them as solid.
     stamp_objects(game);
 
+    // Robot: fixed real-time fuse keeps running regardless of whose turn/phase
+    // it is (unlike Garcia/Airstrike, which only tick during their owner's own
+    // Watching phase) — so it's ticked here, unconditionally, every tick.
+    if game.robot.is_some() {
+        step_robot(game, input);
+    }
+
     tick_fire_grace(game); // weapon-confirm suppression — one source
     // Timer pauses while the player is charging a power shot (A held). It still
     // ticks while the weapon menu is open so pressure stays on.
@@ -299,7 +306,14 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             // Transition only when: projectiles gone + explosion done + all landed.
             let all_grounded = game.teams.iter().flat_map(|t| t.soldiers.iter())
                 .all(|s| !matches!(s.state, SoldierState::Airborne { .. }));
-            if game.projectiles.is_empty() && game.explosions.is_empty() && game.pending_deaths.is_empty() && game.black_holes.is_empty() && game.garcia.is_none() && game.airstrike.is_none() && all_grounded {
+            // Don't let the placing team's own turn advance into Retreating while
+            // their own Robot is still walking/counting down — hold Watching until
+            // it detonates, then the normal retreat window opens right after.
+            // Scoped to `owner_team == active_team` so it never blocks a later,
+            // unrelated team's turn just because someone else's Robot is still
+            // alive elsewhere on the map.
+            let robot_blocking = game.robot.as_ref().map_or(false, |r| r.owner_team == game.active_team());
+            if game.projectiles.is_empty() && game.explosions.is_empty() && game.pending_deaths.is_empty() && game.black_holes.is_empty() && game.garcia.is_none() && game.airstrike.is_none() && !robot_blocking && all_grounded {
                 let hit = game.active_worm_hit;
                 game.active_worm_hit = false;
                 game.retreat_locked  = hit;
@@ -309,14 +323,13 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
         TurnPhase::Retreating { .. } => {
             if !game.retreat_locked { process_movement(game, input); }
             apply_all_gravity(game, input);
-            // Tick down (and clear once expired) the damage-focus camera hold;
-            // the player taking the stick cancels it immediately (see update_camera).
-            if let Some((pos, ticks)) = game.damage_focus {
+            // Clear the damage-focus camera hold once the damage tally (popup +
+            // HP countdown) finishes, or immediately if the player takes the
+            // stick — whichever comes first (see update_camera).
+            if game.damage_focus.is_some() {
                 let moving = input.held(Button::Left) || input.held(Button::Right);
-                if moving || ticks <= 1 {
+                if moving || !game.any_soldier_tallying() {
                     game.damage_focus = None;
-                } else {
-                    game.damage_focus = Some((pos, ticks - 1));
                 }
             }
         }
@@ -324,8 +337,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             use crate::game::soldier::SoldierState as SS;
             let ti0 = game.active_team();
             let si0 = game.teams[ti0].active;
-            let damage_tallying = game.teams.iter().flat_map(|t| t.soldiers.iter())
-                .any(|s| s.pending_damage > 0 || s.damage_settle > 0 || s.hp_countdown_delay > 0);
+            let damage_tallying = game.any_soldier_tallying();
             if (game.teams[ti0].soldiers[si0].is_alive()
                 && matches!(game.teams[ti0].soldiers[si0].state, SS::Airborne { .. }))
                 || damage_tallying
@@ -544,10 +556,11 @@ fn update_camera(game: &GameState, cam: &mut Camera, input: &InputState, step: S
                     let moving = input.held(Button::Left) || input.held(Button::Right);
                     if !cam.panning && moving {
                         cam.follow(game.teams[ti].soldiers[si].pos);
-                    } else if let Some((pos, ticks)) = game.damage_focus {
+                    } else if let Some(pos) = game.damage_focus {
                         // Hold on the damaged soldier until the player pans/moves
-                        // or the hold timer runs out — whichever comes first.
-                        if !cam.panning && !moving && ticks > 0 {
+                        // or the damage tally finishes — whichever comes first
+                        // (damage_focus is cleared by either in the tick above).
+                        if !cam.panning && !moving {
                             cam.follow(pos);
                         }
                     }
@@ -902,14 +915,14 @@ pub fn snap_to_surface(game: &mut GameState, ti: usize, si: usize) {
     use crate::renderer::draw_sprites::SOLDIER_HALF_W;
     let x = game.teams[ti].soldiers[si].pos.x as i32;
     let y = game.teams[ti].soldiers[si].pos.y as i32;
-    // Check all 3 body columns (left edge, center, right edge) — matching
-    // try_move_horizontal's footprint — so a move that lands clear there
-    // can't be snapped sideways into terrain at an edge column.
+    // Scan every column across the full body width — not just 3 fixed edge/
+    // center probes — so a curved surface (e.g. a crater lip) whose true peak
+    // falls between those 3 points is still detected, instead of snapping to
+    // a height that misses the real local high point and reads as a "jerky"
+    // extra step on the next tick's is_on_ground/try_move_horizontal check.
     let x_l = x - SOLDIER_HALF_W as i32;
     let x_r = x + SOLDIER_HALF_W as i32;
-    let any_solid = |yy: i32| {
-        game.terrain.is_blocked(x_l, yy) || game.terrain.is_blocked(x, yy) || game.terrain.is_blocked(x_r, yy)
-    };
+    let any_solid = |yy: i32| (x_l..=x_r).any(|xc| game.terrain.is_blocked(xc, yy));
     // If foot is inside terrain, escape upward by at most 2px (float rounding artifact).
     // More than 2px of escape means we'd push through a wall — don't do it.
     let start = if any_solid(y) {
@@ -933,15 +946,17 @@ pub fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
     let s = &game.teams[ti].soldiers[si];
     let x = s.pos.x as i32;
     let y = s.pos.y as i32;
-    // Probe the full 3-column body footprint (left edge, center, right edge —
-    // matching try_move_horizontal/snap_to_surface) so a soldier standing with
-    // a clear center column but a blocked edge column isn't reported as "on
-    // ground and free to move" when the move check would actually reject it.
+    // Probe every column across the full body footprint — not just 3 fixed
+    // edge/center points — so a curved surface (crater lip) whose true peak
+    // falls between those points is still detected as "on ground" instead of
+    // disagreeing with what try_move_horizontal/snap_to_surface would find,
+    // which otherwise reads as a jerky extra step. Body is only ~14-20px wide
+    // so a full-width scan is cheap.
     // Exclude columns where the foot-level pixel is already solid — those are
     // vertical walls beside the soldier, not ground beneath it. Without this
     // guard, pressing against a wall makes is_on_ground return true and
     // spamming jump ratchets the soldier upward.
-    [x - SOLDIER_HALF_W as i32, x, x + SOLDIER_HALF_W as i32].iter().any(|&xc| {
+    (x - SOLDIER_HALF_W as i32..=x + SOLDIER_HALF_W as i32).any(|xc| {
         if game.terrain.is_solid(xc, y) { return false; }
         game.terrain.is_blocked(xc, y + 1)
             || game.terrain.is_blocked(xc, y + 2)
@@ -1103,13 +1118,24 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
                     row.min(col_len(0).saturating_sub(1))
                 };
             }
+            // Column 0 always fills every row (weapons lay out column-major top-to-
+            // bottom then left-to-right, so earlier columns are never shorter than
+            // later ones) — so it's always a safe fallback landing spot for any
+            // `target_row` in 0..rows, even when the CURRENT column is shorter and
+            // doesn't have an item there. Without this fallback, Up/Down used to
+            // wrap as soon as they hit the current column's own (possibly short)
+            // length, so the on-screen scroll — which follows the cursor's row —
+            // could never advance past whatever that short column allowed, even
+            // though longer columns still had unseen rows below/above.
             if input.just_pressed(Button::Up) {
-                let new_row = if row == 0 { col_len(col).saturating_sub(1) } else { row - 1 };
-                game.weapon_menu_cursor = col * rows + new_row;
+                let target_row = if row == 0 { rows.saturating_sub(1) } else { row - 1 };
+                let new_col = if target_row < col_len(col) { col } else { 0 };
+                game.weapon_menu_cursor = new_col * rows + target_row;
             }
             if input.just_pressed(Button::Down) {
-                let new_row = if row + 1 < col_len(col) { row + 1 } else { 0 };
-                game.weapon_menu_cursor = col * rows + new_row;
+                let target_row = if row + 1 < rows { row + 1 } else { 0 };
+                let new_col = if target_row < col_len(col) { col } else { 0 };
+                game.weapon_menu_cursor = new_col * rows + target_row;
             }
             // L1/R1 adjusts grenade fuse even while menu is open
             {
@@ -1302,6 +1328,38 @@ fn rope_unstick(game: &mut GameState, ti: usize, si: usize) {
     }
 }
 
+/// Free a soldier embedded in solid terrain by nudging up or down (whichever
+/// clears first) up to `SOLDIER_H + 24` px. Returns true if a clear position
+/// was found and applied (or the soldier wasn't embedded to begin with);
+/// false if nowhere clear was found nearby. Called as a watchdog at the top
+/// of the Airborne physics step — see call site for why this matters.
+fn unstick_embedded_soldier(game: &mut GameState, ti: usize, si: usize) -> bool {
+    use crate::renderer::draw_sprites::{SOLDIER_HALF_W, SOLDIER_H};
+    let x  = game.teams[ti].soldiers[si].pos.x as i32;
+    let y0 = game.teams[ti].soldiers[si].pos.y as i32;
+    let x_l = x - SOLDIER_HALF_W as i32;
+    let x_r = x + SOLDIER_HALF_W as i32;
+    let clear = |game: &GameState, yy: i32| {
+        !(0..=SOLDIER_H).any(|h|
+            game.terrain.is_blocked(x_l, yy - h)
+                || game.terrain.is_blocked(x, yy - h)
+                || game.terrain.is_blocked(x_r, yy - h))
+    };
+    if clear(game, y0) { return true; } // not actually embedded
+    let max_search = SOLDIER_H as i32 + 24;
+    for d in 1..=max_search {
+        if clear(game, y0 - d) {
+            game.teams[ti].soldiers[si].pos.y = (y0 - d) as f32;
+            return true;
+        }
+        if clear(game, y0 + d) {
+            game.teams[ti].soldiers[si].pos.y = (y0 + d) as f32;
+            return true;
+        }
+    }
+    false
+}
+
 fn fire_rope_hook(game: &mut GameState, ti: usize, si: usize) {
     use crate::world::{WorldPos, Vec2};
     let fm    = game.teams[ti].soldiers[si].facing as f32;
@@ -1455,6 +1513,16 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             let ti = game.active_team();
             let si = game.teams[ti].active;
             fire_tnt(game, ti, si);
+        }
+        return;
+    }
+
+    // Robot: instant placement on A press — no charge needed, walks off on its own.
+    if weapon == WeaponKind::Robot {
+        if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            fire_robot(game, ti, si);
         }
         return;
     }
@@ -1840,6 +1908,252 @@ fn step_plasma_torch(game: &mut GameState) {
     } else {
         game.plasma_torch.as_mut().unwrap().fuel_ticks -= 1;
     }
+}
+
+const ROBOT_W: i32 = 10;
+const ROBOT_H: i32 = 14;
+const ROBOT_HALF_W: i32 = 5;
+const ROBOT_FUSE_TICKS: u32 = 300; // 10s @ 30Hz total lifespan
+/// Countdown number only appears above its head for the final 5 seconds.
+const ROBOT_COUNTDOWN_TICKS: u32 = 150;
+const ROBOT_WALK_SPEED: f32 = 1.2;
+/// Upward speed for the obstacle-clearing jump (not a player action — purely
+/// automatic terrain-detection, matching WA's Sheep).
+const ROBOT_JUMP_SPEED: f32 = 6.5;
+/// Horizontal speed while airborne from a jump — faster than the walk speed
+/// so it visibly arcs over the obstacle instead of barely creeping forward.
+/// Tuned so a ~0.4s hop (see ROBOT_JUMP_SPEED/gravity above) covers ~40-60px,
+/// matching WA's Sheep jump distance.
+const ROBOT_JUMP_VX: f32 = 3.8;
+
+/// Place a Robot at the active soldier's feet — instant placement like TNT,
+/// no aim/charge. It then walks/climbs/falls autonomously (see `step_robot`)
+/// until its fuse expires, it touches water, or it's caught in another blast.
+pub fn fire_robot(game: &mut GameState, ti: usize, si: usize) {
+    use crate::game::state::RobotState;
+    if !game.teams[ti].consume_weapon() { return; }
+    game.teams[ti].prune_empty_weapons();
+    let facing = game.teams[ti].soldiers[si].facing as i32;
+    let sx = game.teams[ti].soldiers[si].pos.x + facing as f32 * 6.0;
+    let sy = game.teams[ti].soldiers[si].pos.y - 4.0;
+    game.robot = Some(RobotState {
+        x: sx, y: sy, vel_y: 0.0, vel_x: 0.0, facing,
+        fuse_ticks: ROBOT_FUSE_TICKS, grounded: false, walk_ticks: 0,
+        owner_team: ti, just_jumped: false,
+    });
+    game.teams[ti].soldiers[si].has_fired = true;
+    game.turn.on_fired();
+}
+
+/// Is the Robot's footprint resting on solid terrain? Mirrors `is_on_ground`
+/// but for the Robot's smaller, standalone footprint (not a soldier slot).
+fn robot_is_on_ground(game: &GameState) -> bool {
+    let r = match game.robot.as_ref() { Some(r) => r, None => return false };
+    let x = r.x as i32;
+    let y = r.y as i32;
+    [x - ROBOT_HALF_W, x, x + ROBOT_HALF_W].iter().any(|&xc| {
+        if game.terrain.is_solid(xc, y) { return false; }
+        game.terrain.is_blocked(xc, y + 1)
+            || game.terrain.is_blocked(xc, y + 2)
+            || game.terrain.is_blocked(xc, y + 3)
+    })
+}
+
+/// Snap the Robot onto the terrain surface after a gravity fall, matching
+/// `snap_to_surface`'s soldier logic but on the Robot's own footprint.
+fn robot_snap_to_surface(game: &mut GameState) {
+    let (x, y) = match game.robot.as_ref() { Some(r) => (r.x as i32, r.y as i32), None => return };
+    let x_l = x - ROBOT_HALF_W;
+    let x_r = x + ROBOT_HALF_W;
+    let any_solid = |game: &GameState, yy: i32| {
+        game.terrain.is_blocked(x_l, yy) || game.terrain.is_blocked(x, yy) || game.terrain.is_blocked(x_r, yy)
+    };
+    let start = if any_solid(game, y) {
+        if !any_solid(game, y - 1)      { y - 1 }
+        else if !any_solid(game, y - 2) { y - 2 }
+        else { return; } // deeply embedded — leave for gravity to keep resolving
+    } else { y };
+    for gap in 0i32..=10 {
+        let fy = start + gap;
+        if fy >= crate::world::WORLD_H as i32 { break; }
+        if any_solid(game, fy) {
+            if let Some(r) = game.robot.as_mut() {
+                r.y = (fy - 1).max(0) as f32;
+                r.grounded = true;
+                r.vel_y = 0.0;
+            }
+            return;
+        }
+    }
+}
+
+/// Walk one step in the Robot's current facing direction: climb small steps
+/// (0-8px, matching `try_move_horizontal`). Returns true if it moved (small
+/// step included), false if nothing clears — caller decides whether to jump
+/// or reverse.
+fn robot_try_move_horizontal(game: &mut GameState) -> bool {
+    let (cur_x, cur_y, facing) = match game.robot.as_ref() {
+        Some(r) => (r.x, r.y, r.facing),
+        None => return true,
+    };
+    let new_x = cur_x + ROBOT_WALK_SPEED * facing as f32;
+    let ix = new_x as i32;
+    let ix_l = ix - ROBOT_HALF_W;
+    let ix_r = ix + ROBOT_HALF_W;
+
+    for step_up in 0i32..=8 {
+        let try_y = cur_y - step_up as f32;
+        if try_y < 0.0 { break; }
+        let fy = try_y as i32;
+        let terrain_clear = (ix_l..=ix_r)
+            .all(|xc| (0..=ROBOT_H).all(|h| !game.terrain.is_blocked(xc, fy - h)));
+        if terrain_clear {
+            if let Some(r) = game.robot.as_mut() {
+                r.x = new_x;
+                r.y = try_y;
+            }
+            robot_snap_to_surface(game);
+            return true;
+        }
+    }
+    false
+}
+
+/// Advance the Robot one tick while airborne from an obstacle-clearing jump:
+/// ballistic motion, preserving `vel_x` (unlike a natural ledge-drop, which
+/// falls straight down). Horizontal collision just stops `vel_x` on contact —
+/// no mid-air climbing, matching WA's Sheep ("nothing special happens while
+/// airborne").
+fn robot_jump_step(game: &mut GameState) {
+    let (x, y, vel_x, vel_y) = match game.robot.as_ref() {
+        Some(r) => (r.x, r.y, r.vel_x, r.vel_y),
+        None => return,
+    };
+    let new_vel_y = (vel_y + 1.2).min(20.0);
+    let new_y = y + new_vel_y;
+    let new_x = x + vel_x;
+    let ix = new_x as i32;
+    let ix_l = ix - ROBOT_HALF_W;
+    let ix_r = ix + ROBOT_HALF_W;
+    // Test clearance at the RISEN y (new_y), not the old ground-level y — the
+    // whole point of jumping is to clear an obstacle that blocks at ground
+    // level, so checking at the old y would always see it as still blocked.
+    let fy = new_y as i32;
+    let x_clear = (ix_l..=ix_r).all(|xc| (0..=ROBOT_H).all(|h| !game.terrain.is_blocked(xc, fy - h)));
+    if let Some(r) = game.robot.as_mut() {
+        r.vel_y = new_vel_y;
+        r.y = new_y;
+        // Only apply the horizontal move if clear — but keep `vel_x` intact
+        // either way (don't zero it), so a tick that's still blocked early in
+        // the arc (before rising above the obstacle) just pauses horizontal
+        // motion for that tick instead of permanently killing it; once risen
+        // high enough to clear, it resumes moving sideways on a later tick.
+        if x_clear {
+            r.x = new_x;
+        }
+    }
+    // Only look for a landing surface once descending (vel_y > 0) — checking
+    // during ascent would immediately catch the ground it just launched from
+    // (still within snap_to_surface's 10px landing-scan window) and cancel
+    // the jump the same tick it started.
+    if new_vel_y > 0.0 {
+        robot_snap_to_surface(game);
+    }
+}
+
+/// Advance the autonomous Robot walker one tick. Ticked unconditionally every
+/// tick regardless of turn/phase (see call site in `simulate_with_muzzle`) since
+/// its fuse is a fixed real-time countdown, matching WA's Sheep.
+///
+/// `input` is only consulted for the manual-detonate check below — the placing
+/// team can press A to blow it early, but only while it's their own turn
+/// (`game.active_team() == owner_team`). The server only ever forwards the
+/// currently-active team's input into simulation (see `server_tick`'s
+/// `active`/`inp` selection in src/server/main.rs), so an off-turn press from
+/// the other team never reaches here — this check is a same-turn convenience,
+/// not a true "any time" remote detonator.
+fn step_robot(game: &mut GameState, input: &InputState) {
+    use crate::physics::WeaponKind;
+    use crate::world::WorldPos;
+
+    let manual_detonate = game.robot.as_ref().map_or(false, |r| {
+        r.owner_team == game.active_team() && input.just_pressed(Button::A)
+    });
+    if manual_detonate {
+        let (x, y) = { let r = game.robot.as_ref().unwrap(); (r.x, r.y) };
+        game.robot = None;
+        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Robot, 1.0);
+        game.emit_sound(crate::audio::Sfx::Robot);
+        return;
+    }
+
+    let expired = {
+        let r = match game.robot.as_mut() { Some(r) => r, None => return };
+        r.fuse_ticks = r.fuse_ticks.saturating_sub(1);
+        r.fuse_ticks == 0
+    };
+    if expired {
+        let (x, y) = { let r = game.robot.as_ref().unwrap(); (r.x, r.y) };
+        game.robot = None;
+        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Robot, 1.0);
+        game.emit_sound(crate::audio::Sfx::Robot);
+        return;
+    }
+
+    let in_water = game.robot.as_ref().map_or(false, |r| r.y >= crate::world::WATER_Y as f32);
+    if in_water {
+        let (x, y) = { let r = game.robot.as_ref().unwrap(); (r.x, r.y) };
+        game.robot = None;
+        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Robot, 1.0);
+        game.emit_sound(crate::audio::Sfx::Robot);
+        return;
+    }
+
+    if robot_is_on_ground(game) {
+        if let Some(r) = game.robot.as_mut() { r.grounded = true; r.vel_y = 0.0; r.vel_x = 0.0; }
+        let moved = robot_try_move_horizontal(game);
+        if moved {
+            if let Some(r) = game.robot.as_mut() { r.just_jumped = false; }
+        } else {
+            let just_jumped = game.robot.as_ref().map_or(false, |r| r.just_jumped);
+            if just_jumped {
+                // Already jumped for this obstacle and landed still blocked — turn around,
+                // matching WA's Sheep (one jump attempt per obstacle, then reverse).
+                if let Some(r) = game.robot.as_mut() { r.facing = -r.facing; r.just_jumped = false; }
+            } else {
+                // Too tall to step over — launch an automatic obstacle-clearing jump.
+                // Not player-controlled: purely terrain-detection driven, like WA's Sheep.
+                if let Some(r) = game.robot.as_mut() {
+                    r.grounded = false;
+                    r.vel_y = -ROBOT_JUMP_SPEED;
+                    r.vel_x = ROBOT_JUMP_VX * r.facing as f32;
+                    r.just_jumped = true;
+                }
+                // Apply one ballistic step immediately — otherwise the position
+                // hasn't actually left the ground this tick, so next tick's
+                // `robot_is_on_ground` check would still see it as grounded,
+                // re-enter this branch, and zero vel_x/vel_y right back out
+                // before the jump ever moved anywhere.
+                robot_jump_step(game);
+            }
+        }
+    } else {
+        let jumping = game.robot.as_ref().map_or(false, |r| r.vel_x != 0.0);
+        if jumping {
+            robot_jump_step(game);
+        } else {
+            // Natural ledge-drop (walked off an edge, not an obstacle jump): straight
+            // vertical fall, no horizontal drift.
+            if let Some(r) = game.robot.as_mut() {
+                r.grounded = false;
+                r.vel_y = (r.vel_y + 1.2).min(20.0);
+                r.y += r.vel_y;
+            }
+            robot_snap_to_surface(game);
+        }
+    }
+
+    if let Some(r) = game.robot.as_mut() { r.walk_ticks = r.walk_ticks.wrapping_add(1); }
 }
 
 fn step_garcia(game: &mut GameState, input: &InputState) {
@@ -3301,6 +3615,22 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 4, icon_cy - 3,  5, 5, wht);
                 buf.fill_rect(icon_cx - 1, icon_cy + 2,  5, 6, wht);
             }
+            WeaponKind::Robot => {
+                // Clockwork robot head: metal block head, glowing eyes, mouth, antenna.
+                let steel    = if selected { Bgra::new(170, 180, 195) } else { Bgra::new(100, 108, 120) };
+                let steel_dk = Bgra::new(50, 56, 65);
+                let eye      = if selected { Bgra::new(80, 220, 255) } else { Bgra::new(40, 130, 160) };
+                let mouth_c  = Bgra::new(20, 22, 26);
+                buf.fill_rect(icon_cx - 9, icon_cy - 8, 18, 16, steel_dk);
+                buf.fill_rect(icon_cx - 8, icon_cy - 7, 16, 14, steel);
+                buf.fill_rect(icon_cx - 5, icon_cy - 2, 4, 4, eye);
+                buf.fill_rect(icon_cx + 1, icon_cy - 2, 4, 4, eye);
+                buf.fill_rect(icon_cx - 4, icon_cy + 4, 8, 2, mouth_c);
+                buf.fill_rect(icon_cx - 4, icon_cy + 4, 1, 2, steel_dk);
+                buf.fill_rect(icon_cx + 3, icon_cy + 4, 1, 2, steel_dk);
+                buf.fill_rect(icon_cx - 1, icon_cy - 14, 2, 6, steel_dk);
+                buf.fill_circle(icon_cx, icon_cy - 15, 2, eye);
+            }
             WeaponKind::AirStrike => {
                 // Side-view plane: fuselage, cockpit, wings, tail
                 let steel = if selected { Bgra::new(180, 195, 215) } else { Bgra::new(110, 120, 135) };
@@ -3605,6 +3935,7 @@ pub fn draw_weapon_menu(
             WeaponKind::MolotovCocktail => "MOLOTOV",
             WeaponKind::HomingMissile   => "HOMING MSL.",
             WeaponKind::Pistol          => "PISTOL",
+            WeaponKind::Robot           => "ROBOT",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };
@@ -4071,6 +4402,23 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     }
 
     mark!("garcia");
+
+    // 5d-2. Robot: walking clockwork sprite + final-5s countdown over its head
+    if let Some(ref robot) = game.robot {
+        draw_robot_sprite(buf, robot.x as i32, robot.y as i32, robot.facing, 16, 16, robot.walk_ticks, robot.grounded);
+        if robot.fuse_ticks <= ROBOT_COUNTDOWN_TICKS {
+            use crate::renderer::font::{draw_str, str_width};
+            let secs = (robot.fuse_ticks / 30) + 1; // ceil, so it reads 5..1 not 4..0
+            let msg  = secs.to_string();
+            let mw   = str_width(&msg);
+            let mx   = robot.x as i32 - mw / 2;
+            let my   = robot.y as i32 - 16 - 12;
+            draw_str(buf, &msg, mx + 1, my + 1, Bgra::new(0, 0, 0));
+            draw_str(buf, &msg, mx, my, Bgra::new(255, 80, 60));
+        }
+    }
+
+    mark!("robot");
 
     // 5e-2. Airstrike: crosshair during targeting; plane silhouette during active
     if let Some(ref air) = game.airstrike {
@@ -4888,6 +5236,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
             WeaponKind::MolotovCocktail => "MOLOTOV",
             WeaponKind::HomingMissile   => "HOMING MSL.",
+            WeaponKind::Robot           => "ROBOT",
             _ => "WEAPON",
         };
         // Small box bottom-left, sized to fit the weapon name + hint
@@ -5202,6 +5551,21 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
             let state = game.teams[ti].soldiers[si].state.clone();
             match state {
                 SoldierState::Airborne { mut vel, mut spinning } => {
+                    // Watchdog: if knockback (e.g. an explosion) left the soldier
+                    // embedded in solid terrain — a cramped cavern ceiling is the
+                    // common case — the swept-movement loop below reverts to this
+                    // exact spot every tick since its very first sub-step is already
+                    // blocked. The soldier never lands, `state` stays Airborne
+                    // forever, and the turn can never advance (see the
+                    // `all_grounded` gate in simulate_with_muzzle). Force an escape
+                    // before running normal physics.
+                    if !unstick_embedded_soldier(game, ti, si) {
+                        // No clear spot found nearby — give up gracefully rather
+                        // than hang the turn forever.
+                        game.teams[ti].soldiers[si].state = SoldierState::Idle;
+                        game.teams[ti].soldiers[si].airtime = 0;
+                        continue;
+                    }
                     // ── Rope constraint physics (active soldier only) ─────────
                     let is_active = ti == ati && si == asi;
                     if is_active {

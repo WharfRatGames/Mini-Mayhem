@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.421";
+const VERSION: &str = "0.5.4.422";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -617,6 +617,7 @@ fn main() {
             (WeaponKind::BlackHoleBomb, None),
             (WeaponKind::PlasmaTorch,   None),
             (WeaponKind::Garcia,          None),
+            (WeaponKind::Robot,           None),
             (WeaponKind::AirStrike,       None),
             (WeaponKind::HolyHandGrenade, None),
             (WeaponKind::Minigun,         None),
@@ -1103,13 +1104,14 @@ fn main() {
                     cam.follow_always(e.pos);
                 }
             } else if matches!(game.turn.phase, game::turn::TurnPhase::Retreating { .. })
-                && game.damage_focus.map_or(false, |(_, ticks)| ticks > 0)
+                && game.damage_focus.is_some()
             {
                 // Hold on the damaged soldier during retreat (mirrors the
                 // update_camera Retreating branch) so the damage popup and HP
                 // countdown play out on screen. The server clears damage_focus
-                // when the acting player moves, so the hold cancels here too.
-                if let Some((pos, _)) = game.damage_focus { cam.follow(pos); }
+                // once the tally finishes or the acting player moves, so the
+                // hold cancels here too (via the next synced state).
+                if let Some(pos) = game.damage_focus { cam.follow(pos); }
             } else {
                 // Airborne soldiers from knockback — use nearest-to-center heuristic
                 // (same as update_camera Watching branch) to avoid flip-flopping.
@@ -1666,6 +1668,7 @@ fn place_map_barrels(game: &mut game::state::GameState) {
         };
         if pos.y < crate::world::WATER_Y as f32 - 10.0
             && !too_close_to_soldiers(game, pos)
+            && !too_close_to_scenery(game, x as i32)
         {
             game.barrels.push(Barrel {
                 pos,
@@ -1675,6 +1678,20 @@ fn place_map_barrels(game: &mut game::state::GameState) {
             });
         }
     }
+}
+
+/// Returns true if column `x` overlaps (or sits too close to) any scenery
+/// object's footprint. Barrels only checked their landing Y against scenery
+/// (via `surface_y_at_with_scenery`, so they rest on top instead of embedding)
+/// but never checked X clearance, so one could land stacked directly against/
+/// on top of a decoration with no visual gap. Mirrors `find_team_spawns`'
+/// `clear_of_scenery` margin (footprint + 24px breathing room).
+fn too_close_to_scenery(game: &game::state::GameState, x: i32) -> bool {
+    let theme = world::terrain::Theme::of(game.terrain.is_cavern, game.terrain.template_id);
+    game.terrain.scenery.iter().any(|o| {
+        let hw = o.footprint(theme).0 + 24;
+        (x - o.x as i32).abs() <= hw
+    })
 }
 
 /// Returns true if `pos` is within the mine's safe-spawn exclusion radius of any soldier.

@@ -25,7 +25,7 @@ pub const WA_MASK_H: u32 = 696;
 /// Open/island-style WA silhouettes (terrain surrounded by sky + water).
 /// Extracted from real WA MapGen output across several game types (island,
 /// bazooka-and-grenades, destructible-WfW, roper) via `tools/extract_wa_mask.py`.
-static WA_ISLAND_MASKS: [&[u8]; 10] = [
+static WA_ISLAND_MASKS: [&[u8]; 14] = [
     include_bytes!("wa_masks/island0.bin"),
     include_bytes!("wa_masks/island1.bin"),
     include_bytes!("wa_masks/island2.bin"),
@@ -36,14 +36,28 @@ static WA_ISLAND_MASKS: [&[u8]; 10] = [
     include_bytes!("wa_masks/island7.bin"),
     include_bytes!("wa_masks/island8.bin"),
     include_bytes!("wa_masks/island9.bin"),
+    // Extracted via MapGen.exe under Wine (headless CLI) + a connected-
+    // component cleanup pass to strip decorative sprites (trees/cacti/props)
+    // baked into MapGen's preview PNG, keeping only border-touching /
+    // large-enough terrain mass. Chosen for genuinely curvy/rounded
+    // silhouettes (rolling hills, wavy canyon lips) vs. the earlier set's
+    // more angular examples.
+    include_bytes!("wa_masks/island10.bin"),
+    include_bytes!("wa_masks/island11.bin"),
+    include_bytes!("wa_masks/island12.bin"),
+    include_bytes!("wa_masks/island13.bin"),
 ];
 
 /// Enclosed cavern-style WA silhouettes (solid border, play area carved
 /// inside) — extracted from real WA MapGen "Cavern" game-type output.
 /// `collage_params` picks this set automatically for cavern seeds.
-static WA_CAVERN_MASKS: [&[u8]; 2] = [
+static WA_CAVERN_MASKS: [&[u8]; 4] = [
     include_bytes!("wa_masks/cavern0.bin"),
     include_bytes!("wa_masks/cavern1.bin"),
+    // Extracted via MapGen.exe under Wine + connected-component cleanup
+    // (see island10-13 comment above) for rounder cave-chamber contours.
+    include_bytes!("wa_masks/cavern2.bin"),
+    include_bytes!("wa_masks/cavern3.bin"),
 ];
 
 fn mask_bit(mask: &[u8], x: u32, y: u32) -> bool {

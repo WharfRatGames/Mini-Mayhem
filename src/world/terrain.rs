@@ -192,7 +192,8 @@ impl SceneryObject {
             },
             Theme::Rugged => match self.sprite {
                 0 => (9, 38),  // pine tree canopy (was 11,40)
-                1 => (12, 16), // boulder (was 15,20)
+                1 => (12, 11), // boulder (was 15,20; 16 scaled to 48px was just over the
+                               // ~46px backflip apex — too tall to climb onto)
                 2 => (5, 9),   // wooden crate (half size)
                 3 => (12, 14), // dead stump
                 4 => (18, 22), // broken wall
@@ -1341,12 +1342,15 @@ impl Terrain {
     /// range; on very sparse terrain separation constraints relax rather than
     /// stamping artificial platforms.
     pub fn find_team_spawns(&mut self, x_lo: u32, x_hi: u32, count: usize) -> Vec<WorldPos> {
-        // 140px keeps same-team soldiers far enough apart that one explosion can't
-        // gut two of them: TNT (the biggest blast, r=75) centred between two does only
-        // ~7 dmg each, and every other weapon does 0 to a neighbour.
-        const MIN_SEP:   i32 = 140; // horizontal spacing between a team's soldiers
-        const MIN_SEP_V: i32 = 120; // vertical spacing that also counts as "separated"
-                                    // (a ledge 120px below a spawn is safe from TNT r=75)
+        // Loosened from an earlier 140/120: dynamic analysis of real WA (Deathmatch
+        // under Wine) showed it does NOT enforce meaningful separation between a
+        // team's worms — e.g. "Prince Charles"/"Prince Andrew" spawned ~20-30px
+        // apart on the same ledge. We still keep a modest floor (unlike WA's fully
+        // loose placement) so a single centred blast can't reliably gut two
+        // teammates at once, but allow the tighter, more WA-like clustering that
+        // 140/120 always ruled out.
+        const MIN_SEP:   i32 = 70;  // horizontal spacing between a team's soldiers
+        const MIN_SEP_V: i32 = 60;  // vertical spacing that also counts as "separated"
         let lo = x_lo.max(SPAWN_EDGE_MARGIN) as i32;
         let hi = (x_hi.min(WORLD_W - SPAWN_EDGE_MARGIN) as i32).max(lo + 1);
 
@@ -1357,11 +1361,20 @@ impl Terrain {
             used.iter().all(|&(ux, uy)| (ux - cx).abs() >= sh || (uy - cy).abs() >= sv);
 
         // Scenery objects are solid (stamped into the object mask each tick) —
-        // never seat a soldier overlapping one. Soldier is ~14px wide; keep the
-        // spawn column clear of every footprint plus that margin.
+        // never seat a soldier overlapping one, AND never seat one in a gap too
+        // narrow to actually stand/move in between two nearby objects. Soldier
+        // is ~14px wide; a margin of just footprint+10 only prevented direct
+        // overlap, so two objects placed ~20-30px apart could still leave a
+        // technically-"clear" sliver between them that satisfied each object's
+        // individual check while being far too cramped to play in. Widening the
+        // per-object margin to footprint+24 (~SOLDIER_W + 10px of breathing
+        // room) makes each object's exclusion zone wide enough that two objects
+        // closer than ~48px together have their zones merge and swallow the
+        // whole gap — so no candidate column exists there at all, same
+        // mechanism, just enough margin to also rule out cramped in-between spots.
         let theme = Theme::of(self.is_cavern, self.template_id);
         let scenery_boxes: Vec<(i32, i32)> = self.scenery.iter()
-            .map(|o| (o.x as i32, o.footprint(theme).0 + 10))
+            .map(|o| (o.x as i32, o.footprint(theme).0 + 24))
             .collect();
         let clear_of_scenery = |x: i32| scenery_boxes.iter().all(|&(ox, hw)| (x - ox).abs() > hw);
 
@@ -1375,16 +1388,31 @@ impl Terrain {
                 }
                 x += 1;
             }
-            for _i in 0..count {
-                let pools: [&[(i32, i32)]; 1] = [&cave_cands];
-                'slot: for pool in pools {
-                    for &(cx, cy) in pool {
-                        if sep_ok(&used, cx, cy, MIN_SEP, MIN_SEP_V) {
-                            spawns.push(WorldPos::new(cx as f32, cy as f32));
-                            used.push((cx, cy));
-                            break 'slot;
-                        }
-                    }
+            // Greedily disperse: each pick maximizes the worst-case separation (as
+            // a fraction of MIN_SEP/MIN_SEP_V, matching sep_ok's OR rule) to
+            // whoever's already placed — same idea as the "last resort" dispersion
+            // pass further down. A strict single-pass sep_ok scan used to silently
+            // skip a soldier outright the moment the chamber was too small to fit
+            // everyone with full separation — and the surface-oriented fallbacks
+            // below can't rescue cavern maps (no surface/sky-clearance exists there),
+            // so the skipped soldiers ended up landing on top of each other via the
+            // last-resort's fixed-midpoint default. Maximizing spread within the
+            // real cave candidate pool instead means a cramped chamber still spreads
+            // its team as far apart as the chamber allows, never duplicates a spot.
+            while spawns.len() < count && !cave_cands.is_empty() {
+                let pick = cave_cands.iter()
+                    .filter(|&&(cx, cy)| used.iter().all(|&(ux, uy)| ux != cx || uy != cy))
+                    .max_by_key(|&&(cx, cy)| {
+                        used.iter().map(|&(ux, uy)| {
+                            let dx = (ux - cx).abs() * 1000 / MIN_SEP;
+                            let dy = (uy - cy).abs() * 1000 / MIN_SEP_V;
+                            dx.max(dy)
+                        }).min().unwrap_or(i32::MAX)
+                    })
+                    .copied();
+                match pick {
+                    Some((cx, cy)) => { spawns.push(WorldPos::new(cx as f32, cy as f32)); used.push((cx, cy)); }
+                    None => break,
                 }
             }
             if spawns.len() >= count { return spawns; }
