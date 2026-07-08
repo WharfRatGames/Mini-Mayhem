@@ -40,14 +40,14 @@ Bazooka, Grenade (variable fuse), Shotgun, Pistol (5-shot burst), MAC-10 (∞), 
 ### Desktop (development)
 ```bash
 cargo build
-cargo run --bin arty
+cargo run --bin mini-mayhem
 ```
 
 ### Miyoo Mini Plus (ARMv7, target device)
 ```bash
-PATH="$ZIG:$PATH" cargo zigbuild --target armv7-unknown-linux-gnueabihf --profile miyoo
+cargo miyoo
 ```
-Output: `target/armv7-unknown-linux-gnueabihf/miyoo/arty`
+Output: `target/armv7-unknown-linux-gnueabihf/miyoo/mini-mayhem`
 
 ## Status
 

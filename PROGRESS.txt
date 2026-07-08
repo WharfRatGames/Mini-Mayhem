@@ -1,11 +1,42 @@
 Mini Mayhem — Development Progress
 ====================================
-Working tree, NOT version-bumped or deployed to Pi/GitHub (2026-07-08, post-.421):
-Ad-hoc test builds of everything below were pushed straight to Miyoo .126 several
-times this session (no VERSION/REQUIRED_VERSION bump each time, per explicit
-instruction) — device still reports 0.5.4.421 despite running newer code. A real
-version bump is required before any live/TAT deploy (terrain-gen mask growth and
-new net-sync fields both need client/server to match).
+Current version: 0.5.4.424 DEPLOYED to Pi/server/GitHub/Discord (2026-07-08,
+  commit fe17553). Miyoo push: .126 OK (hash verified), .110 unreachable
+  (offline on LAN, push pending once back online).
+
+  --- 0.5.4.424 — plasma torch turn-timer fix, spawn-overlap fix,
+      ceiling-stuck fix (DEPLOYED 2026-07-08, commit fe17553) ---
+  1. Plasma torch now calls turn.on_fired() at activation (A press) instead
+     of only once it finishes burning (~4s later) — every other weapon
+     already stopped the turn timer immediately on fire/deploy, torch was
+     the one exception letting the Acting-phase timer run the whole burn.
+     step_plasma_torch keeps running via its in_torch bypass regardless of
+     turn phase, so nothing else needed to change.
+  2. find_team_spawns's pathological last-resort fallback (used only when
+     no standable spot exists anywhere in the band) had no uniqueness check
+     against already-placed spawns — integer division in the `base` column
+     formula could collapse two different spawn indices onto the same
+     point on a badly fragmented map, landing two soldiers on the exact
+     same pixel. Now nudges vertically until clear of every placed spawn.
+  3. unstick_embedded_soldier (added in .422, further down this file) only
+     searched vertically within +/-48px and silently gave up — soldier left
+     visibly embedded in Idle state — if that failed, e.g. knockback
+     burying a soldier deep in a thick overhang/cavern ceiling. Now also
+     tries a horizontal search (a pocket thick top-to-bottom can still be
+     open to the side), then teleports to the nearest column with a known
+     standable spot as a last resort before giving up.
+
+  --- 0.5.4.423 — rate limiting on /login and /register (DEPLOYED
+      2026-07-08, commit 6424cc8) ---
+  Per-IP sliding window in deploy/arty_api.py: 5 attempts / 60s per
+  endpoint, in-memory with a background cleanup thread purging stale
+  entries every 5 minutes. Over the limit returns 429 {"error": "too many
+  attempts..."}. Client (src/game/account.rs) recognizes the 429 and shows
+  "TOO MANY ATTEMPTS, TRY AGAIN LATER" instead of the generic wrong-
+  password/registration-failed message.
+
+Prior version: 0.5.4.422 DEPLOYED to Pi/server/GitHub/Discord (2026-07-08,
+  commit bf70571):
 
   --- New weapon: Robot (WA Sheep-style autonomous walker) ---
   WeaponKind::Robot. Placed like TNT (instant, no aim/charge). Walks/climbs 0-8px
@@ -128,10 +159,24 @@ new net-sync fields both need client/server to match).
   name and footprint (w x h) dimensions — added so future "which object is X"
   questions have a quick visual answer instead of guessing from code/colors.
 
+  --- Robot jump distance tuned ---
+  ROBOT_JUMP_VX 2.2->3.8 so the obstacle-clearing hop covers ~40-60px
+  (WA Sheep-like) instead of ~26px, keeping the existing ~21px peak height
+  and ~0.4s air time (both already matched the target from the vel_y/gravity
+  pair, which was left untouched).
+
+  --- Retreat-phase camera damage-hold fixed ---
+  damage_focus used to expire on a fixed 50-tick timer that could cut the
+  camera away before the damage popup + HP countdown actually finished
+  (worst case ~80 ticks: 20-tick settle + 60-tick countdown). Simplified from
+  Option<(WorldPos, u32)> to Option<WorldPos>; now clears only when
+  GameState::any_soldier_tallying() goes false or the player takes the
+  stick, whichever comes first. Wired through StateMsg/net_sync.rs/main.rs.
+
   Gates: cargo check --tests clean, cargo test --test parity 23/23, cargo test
   --test wa_collage_check 6/6.
 
-Current version: 0.5.4.421 DEPLOYED to Pi/server/GitHub/Discord (2026-07-07,
+Prior version: 0.5.4.421 DEPLOYED to Pi/server/GitHub/Discord (2026-07-07,
   commit 04240d8). Miyoo push to .110/.126 FAILED this session — both devices
   are offline/unreachable on the LAN; push the ARM binary once they're back.
   This is a *new* .421, reusing the version number the reverted bazooka-physics

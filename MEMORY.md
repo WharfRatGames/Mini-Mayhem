@@ -9,11 +9,19 @@
 5. Miyoo SDCARD file writes work; SSH direct launch crashes
 6. EVERY BUILD: bump VERSION in src/main.rs AND REQUIRED_VERSION in src/server/main.rs
 7. Always rebuild AND deploy server binary every build (touch src/server/main.rs)
-8. Gameplay logic lives in ONE place: simulate(game, input) in loop_runner.rs.
-   tick() (local) and server_tick() (live+TAT) are thin wrappers that call it.
-   Put gameplay changes in simulate() ONLY — do NOT duplicate into the wrappers.
+8. Gameplay logic lives in ONE place: simulate_with_muzzle(game, input, muzzle,
+   aim_angle) in loop_runner.rs. tick() (local) and server_tick() (live+TAT) are
+   thin wrappers that call it. Put gameplay changes in simulate_with_muzzle()
+   ONLY — do NOT duplicate into the wrappers.
    (Was: "edit both tick() and server_tick()" — that twin-function model is gone
    as of v0.5.4.120; the hand-mirroring caused the live death-explosion bug.)
+9. Any weapon that deploys/activates (not just fires-and-forgets a projectile)
+   must call turn.on_fired() at the moment of activation, not once its effect
+   finishes. Plasma Torch got this wrong for several versions — on_fired() was
+   only called when its ~4s burn completed, so the Acting-phase timer kept
+   counting down the whole time it was active (fixed v0.5.4.424). Garcia/
+   airstrike/TNT/mine/guns all call on_fired() at activation already — use
+   those as the reference pattern for any new deploy-style weapon.
 
 ## Simulation architecture (loop_runner.rs — search the fn names)
 - simulate_with_muzzle(game, input, muzzle, aim_angle) — shared core: phase dispatch
@@ -54,7 +62,8 @@
   horizon color is biome-independent (draw_water_surface trough restore relies on it).
 
 ## Gotchas
-- cargo miyoo → target/armv7-unknown-linux-gnueabihf/miyoo/arty (NOT release/)
+- cargo miyoo → target/armv7-unknown-linux-gnueabihf/miyoo/mini-mayhem (NOT release/;
+  the binary is named `mini-mayhem` per Cargo.toml, not `arty`)
 - Server binary stripped by LTO — version not visible via strings, check source
 - touch src/server/main.rs to force server rebuild
 - nginx: arty-api block port 80 must have both /arty/ and /api/ locations
@@ -99,6 +108,17 @@
   question is answered by Terrain::run_top() from the solid_runs column
   cache (kept fresh by recompute_column_cache) — never rescan upward
   per pixel.
+
+- Any "last resort" / pathological fallback path (e.g. terrain.rs's
+  find_team_spawns final branch, unstick_embedded_soldier's search) must be
+  checked for uniqueness/bounds explicitly — these branches are reached rarely
+  enough that a missing dedup/search-radius check can ship unnoticed for a
+  long time (two soldiers spawning on the same pixel, a knocked-back soldier
+  permanently embedded in a thick ceiling — both fixed v0.5.4.424, both were
+  in fallback branches the normal-case tests don't exercise).
+- Rate limiting (per-IP, /register and /login) lives in deploy/arty_api.py
+  as an in-memory sliding window (_rate_limited/_rate_hits) — resets on API
+  restart, no DB persistence. Deployed v0.5.4.423.
 
 ## Services (Pi)
 - arty-api.service: systemd auto-start

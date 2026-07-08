@@ -1,11 +1,36 @@
 # Mini Mayhem — Project Status
 
-## Working tree, NOT version-bumped or deployed to Pi/GitHub (2026-07-08, post-.421)
-Ad-hoc test builds of everything below were pushed straight to Miyoo `.126` several times
-this session (no VERSION/REQUIRED_VERSION bump each time, per explicit instruction) — the
-device still reports itself as `0.5.4.421` despite running newer code. A real version bump
-is still needed before any live/TAT deploy (terrain-gen and net-sync changes below both
-require client/server to match).
+## Version: 0.5.4.424 DEPLOYED to Pi/server/GitHub/Discord (2026-07-08, commit fe17553)
+
+- **Plasma torch now stops the turn timer on deploy**: `turn.on_fired()` was only called once
+  the torch finished burning (~4s later), so the Acting-phase timer kept counting down the whole
+  time it was active — every other weapon (TNT, mine, Garcia, airstrike, guns) already stopped
+  it immediately on fire/deploy. Now calls `on_fired()` at activation (A press), matching that
+  pattern; `step_plasma_torch` keeps running via its `in_torch` bypass regardless of turn phase,
+  so nothing else needed to change.
+- **Spawn-overlap fix**: `find_team_spawns`'s pathological last-resort fallback (used only when
+  no standable spot exists anywhere in the band) had no uniqueness check — integer division in
+  the `base` column formula could collapse two different spawn indices onto the same point on a
+  badly fragmented map, landing two soldiers on the exact same pixel. Now nudges vertically until
+  clear of every already-placed spawn.
+- **Ceiling-stuck soldiers fixed further**: the `.422` `unstick_embedded_soldier` watchdog (see
+  below) only searched vertically within ±48px and silently gave up (soldier left visibly
+  embedded in `Idle` state) if that failed — e.g. knockback burying a soldier deep in a thick
+  overhang/cavern ceiling. Now also tries a horizontal search (a pocket thick top-to-bottom can
+  still be open to the side), then as a last resort teleports to the nearest column with a known
+  standable spot rather than leaving the soldier stuck forever.
+- Gates: `cargo check --tests` clean, `cargo test --test parity` 23/23, `cargo test --test
+  wa_collage_check` 6/6.
+
+## Version: 0.5.4.423 DEPLOYED to Pi/server/GitHub/Discord (2026-07-08, commit 6424cc8)
+
+- **Rate limiting on `/login` and `/register`** (`deploy/arty_api.py`): per-IP sliding window,
+  5 attempts / 60s per endpoint, in-memory with a background cleanup thread purging stale
+  entries every 5 minutes. Over the limit returns `429 {"error": "too many attempts..."}`.
+  Client (`src/game/account.rs`) recognizes the 429 and shows "TOO MANY ATTEMPTS, TRY AGAIN
+  LATER" instead of falling through to the generic wrong-password/registration-failed message.
+
+## Version: 0.5.4.422 DEPLOYED to Pi/server/GitHub/Discord (2026-07-08, commit bf70571)
 
 - **New weapon: Robot** (`WeaponKind::Robot`, WA Sheep-style autonomous walker). Placed like
   TNT (instant, no aim/charge). Walks/climbs 0-8px steps; when blocked by something taller it
@@ -72,6 +97,15 @@ require client/server to match).
 - **New dev tool**: `cargo run --bin scenery-gallery` renders every scenery sprite per theme
   (Pastoral/Rugged/Underground) into a labeled `assets/scenery_gallery.png` with footprint
   dimensions — added after having to guess which sprite a "gray dome" bug report meant.
+- **Robot jump distance tuned**: `ROBOT_JUMP_VX` 2.2→3.8 so the obstacle-clearing hop covers
+  ~40-60px (WA Sheep-like) instead of ~26px, while keeping the existing ~21px peak height and
+  ~0.4s air time (both already matched the target from the vel_y/gravity pair, untouched).
+- **Retreat-phase camera damage-hold fixed**: `damage_focus` used to expire on a fixed 50-tick
+  timer that could cut the camera away before the damage popup + HP countdown actually finished
+  (worst case ~80 ticks: 20-tick settle + 60-tick countdown). Simplified from
+  `Option<(WorldPos, u32)>` to `Option<WorldPos>` and it now clears only when
+  `GameState::any_soldier_tallying()` goes false or the player takes the stick — whichever comes
+  first — wired through `StateMsg`/`net_sync.rs`/`main.rs` for the live client.
 - Gates: `cargo check --tests` clean, `cargo test --test parity` 23/23, `cargo test --test
   wa_collage_check` 6/6.
 
