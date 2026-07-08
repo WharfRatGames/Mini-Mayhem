@@ -1057,6 +1057,9 @@ fn try_login(username: &str, password: &str) -> Result<(String, String, Vec<Rost
         save_cached_rosters(&rosters);
         return Ok((token, stored_name, rosters, pw_reset));
     }
+    if resp.contains("too many attempts") {
+        return Err("TOO MANY ATTEMPTS, TRY AGAIN LATER".to_string());
+    }
     Err("WRONG USERNAME OR PASSWORD".to_string())
 }
 
@@ -1071,6 +1074,8 @@ fn try_register(username: &str, password: &str) -> Result<(String, String, Vec<R
     }
     if resp.contains("username taken") {
         Err("USERNAME ALREADY TAKEN".to_string())
+    } else if resp.contains("too many attempts") {
+        Err("TOO MANY ATTEMPTS, TRY AGAIN LATER".to_string())
     } else {
         Err("REGISTRATION FAILED".to_string())
     }

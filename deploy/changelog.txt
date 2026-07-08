@@ -1,3 +1,4 @@
+0.5.4.423  Login and account registration are now rate-limited to block brute-force password guessing.
 0.5.4.422  Deployed robot walker jumps further to clear obstacles. Fixed the camera cutting away from a damaged soldier during retreat before the damage numbers and HP loss finished counting down.
 0.5.4.421  Strong wind can now visibly hook a bazooka around terrain, and in extreme cases even blow it back toward the shooter. Fixed the camera cutting away from a falling supply crate before it landed, and turns no longer end while damage numbers are still tallying and counting down.
 0.5.4.419  Maps are much taller and more vertical again — cliffs, peaks and deep valleys are back, closer to the classic look. Fixed the grappling hook sticking you in the ground: the soldier now rests cleanly on the surface and swings off instead of sinking in and freezing.

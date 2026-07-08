@@ -154,6 +154,38 @@ threading.Thread(target=_lobbies_refresh_loop, daemon=True).start()
 _req_sem = threading.Semaphore(20)
 DB = os.path.expanduser("~/mayhem-server/arty.db")
 
+# ── Per-IP rate limiting for /register and /login ───────────────────────────
+# Sliding window: at most RATE_LIMIT_MAX hits per RATE_LIMIT_WINDOW seconds per
+# IP per endpoint. In-memory only (per-process) — fine for a single API process;
+# resets on restart, which is acceptable for brute-force throttling.
+RATE_LIMIT_WINDOW = 60.0
+RATE_LIMIT_MAX = 5
+_rate_lock = threading.Lock()
+_rate_hits = {}  # (ip, bucket) -> list[float] timestamps
+
+def _rate_limited(ip, bucket):
+    now = time.time()
+    key = (ip, bucket)
+    with _rate_lock:
+        hits = [t for t in _rate_hits.get(key, ()) if now - t < RATE_LIMIT_WINDOW]
+        if len(hits) >= RATE_LIMIT_MAX:
+            _rate_hits[key] = hits
+            return True
+        hits.append(now)
+        _rate_hits[key] = hits
+        return False
+
+def _rate_limit_cleanup_loop():
+    while True:
+        time.sleep(300)
+        now = time.time()
+        with _rate_lock:
+            stale = [k for k, hits in _rate_hits.items()
+                     if not any(now - t < RATE_LIMIT_WINDOW for t in hits)]
+            for k in stale: del _rate_hits[k]
+
+threading.Thread(target=_rate_limit_cleanup_loop, daemon=True).start()
+
 def open_db(timeout=10):
     c = sqlite3.connect(DB, timeout=timeout)
     c.execute("PRAGMA journal_mode=WAL")
@@ -672,6 +704,8 @@ def _handle(db, sock, peer_ip="?"):
     # ── Auth ──────────────────────────────────────────────────────────────────
 
     if method == "POST" and path == "/register":
+        if _rate_limited(peer_ip, "register"):
+            send_json(sock, 429, {"error":"too many attempts, try again later"}); return
         u = data.get("username","").strip().lower()
         p = data.get("password","")
         if not u or not p: send_json(sock, 400, {"error":"missing fields"}); return
@@ -687,6 +721,8 @@ def _handle(db, sock, peer_ip="?"):
         except Exception: send_json(sock, 409, {"error":"username taken"})
 
     elif method == "POST" and path == "/login":
+        if _rate_limited(peer_ip, "login"):
+            send_json(sock, 429, {"error":"too many attempts, try again later"}); return
         u = data.get("username","").strip(); p = data.get("password","")
         t = gen_token(u)
         row2 = db.execute("SELECT id,username,pw_hash,password_reset FROM users WHERE lower(username)=lower(?)", (u,)).fetchone()
