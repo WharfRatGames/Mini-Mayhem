@@ -1,12 +1,30 @@
 # Mini Mayhem — Project Status
 
-## Version: 0.5.4.420 DEPLOYED (2026-07-07, commit e87c72e = revert of 958313b) · 0.5.4.421 was
-## shipped 2026-07-06 then fully reverted 2026-07-07 — see "Reverted" section below.
+## Version: 0.5.4.421 DEPLOYED to Pi/server/GitHub/Discord (2026-07-07, commit 04240d8) —
+## bazooka wind-hook + crate-camera fix + damage-tally turn-end fix. This is a *new* build that
+## reclaims the .421 number from the reverted physics port below (originally tagged .422, then
+## the GitHub release/Discord post were deleted and redeployed as .421 to reuse the number).
 ## Modes: SINGLEPLAYER (VS CPU / Hotseat) | LIVE GAME | TAKE A TURN (async TAT)
-## Miyoo push: .126 OK (hash-verified, re-pushed 0.5.4.420 after the revert) · .110 not touched this
-## session (last known: unreachable, "no route to host")
+## Miyoo push: BOTH .110 and .126 unreachable this session (offline on LAN) — push pending once
+## either device is back online. .126 still runs an ad-hoc pre-version-bump test build of the
+## wind-hook change (reports itself as 0.5.4.420) from earlier in this session.
 
-## Reverted 2026-07-07 (v0.5.4.421 — bazooka physics port)
+## Deployed 2026-07-07 (v0.5.4.421 — bazooka wind-hook, crate-camera fix, damage-tally fix)
+Bazooka gets its own wind constant (`BAZOOKA_WIND_SCALE = 0.32` vs. the shared `WIND_SCALE = 0.08`,
+`src/physics/tick.rs`) so strong wind can visibly hook a rocket around terrain or even reverse its
+horizontal direction mid-flight — the classic WA trick. Deliberately scoped narrower than the
+reverted .421 physics port below: gravity/launch/charge untouched, only the wind term, and the
+existing linear/velocity-independent wind model is kept as-is (matches real WA behavior) rather
+than replaced. Crate-watch phase now holds on any unlanded crate instead of a fixed 90-tick timer,
+so the camera no longer cuts to the active soldier while a supply crate is still falling.
+`TurnPhase::Ending` now also blocks turn advance while any soldier still has
+`pending_damage/damage_settle/hp_countdown_delay > 0`, not just while the active soldier is
+airborne — turns can no longer end mid damage-tally/HP-drain. All three changes live inside
+`simulate_with_muzzle`/`tick()` (auto-parity across all 5 paths per CLAUDE.md); confirmed via
+`cargo test --test parity` (22/22 passing). GitHub release + Discord patch-notes post were first
+published as v0.5.4.422, then deleted and republished as v0.5.4.421 (see Version note above).
+
+## Reverted 2026-07-07 (v0.5.4.421 first attempt — bazooka physics port)
 Ported bazooka-only gravity/wind/launch/charge constants from live dynamic analysis of the
 reference WA.exe (Wine + gdb). Fixed a real bug post-ship (auto-fire compared against the shared
 `MAX_CHARGE=1.3` overcharge band instead of true full charge `1.0`, so every shot over-charged and

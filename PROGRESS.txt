@@ -1,13 +1,48 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.420 DEPLOYED to Miyoo .126 (2026-07-07). 0.5.4.421 (bazooka
-  physics port) was built, shipped, then fully reverted the same day after
-  playtesting showed it didn't match Worms Armageddon's actual feel (see
-  "0.5.4.421 — REVERTED" below). Prior: 0.5.4.419 — grapple ground-stick fix +
-  map verticality restored. Before that: 0.5.4.418 DEPLOYED (2026-07-06, commit
-  3719e5f) — grapple physics overhaul + multi-corner rope wrap.
+Current version: 0.5.4.421 DEPLOYED to Pi/server/GitHub/Discord (2026-07-07,
+  commit 04240d8). Miyoo push to .110/.126 FAILED this session — both devices
+  are offline/unreachable on the LAN; push the ARM binary once they're back.
+  This is a *new* .421, reusing the version number the reverted bazooka-physics
+  port (see below) never actually shipped under long enough to matter — the
+  original v0.5.4.422 GitHub release/Discord post were deleted and replaced
+  with v0.5.4.421 to reclaim the number rather than advance to .422. Prior:
+  0.5.4.420 DEPLOYED to Miyoo .126 (2026-07-07).
 
-  --- 0.5.4.421 — SHIPPED THEN REVERTED (2026-07-06/07) ---
+  --- 0.5.4.421 — bazooka wind-hook, crate-camera fix, damage-tally turn-end
+      fix (DEPLOYED 2026-07-07, commit 04240d8; renumbered from a same-day
+      build originally tagged .422) ---
+  BAZOOKA WIND-HOOK. Added `BAZOOKA_WIND_SCALE = 0.32` (src/physics/tick.rs) —
+  4x the shared `WIND_SCALE = 0.08` — applied only to `WeaponKind::Bazooka`;
+  every other wind-affected weapon (SuperSheep) keeps the original constant.
+  This is deliberately NOT a revival of the reverted .421 physics port below:
+  gravity, launch speed, and charge rate are untouched, only the wind
+  acceleration term changed, and the linear/velocity-independent model itself
+  is kept exactly as-is (matches real WA wind behavior — constant per-tick
+  acceleration, not drag, ignores projectile speed). At strong wind this lets
+  a bazooka visibly curve/hook around terrain corners, and in extreme cases
+  (slow or near-vertical shots) reverse horizontal direction mid-flight and
+  drift back toward the shooter — all emergent from the same simple model
+  WA itself uses, just tuned strong enough to be felt. Value is a playtest
+  starting point, not derived from a measurement — tune up/down as needed.
+  CRATE-CAMERA FIX. The crate-watch phase (camera follows a falling supply
+  crate) exited on a fixed 90-tick timer regardless of whether the crate had
+  actually landed, so the camera could cut to the active soldier while a
+  crate was still mid-air (e.g. a re-triggered fall when terrain under a
+  landed crate gets carved out). Now also holds while
+  `game.crates.iter().any(|c| !c.landed)` (loop_runner.rs).
+  DAMAGE-TALLY TURN-END FIX. `TurnPhase::Ending` only blocked turn advance on
+  the active soldier being airborne; it didn't check whether damage numbers
+  were still tallying/counting down for *any* soldier. Now also holds while
+  `pending_damage > 0 || damage_settle > 0 || hp_countdown_delay > 0` on any
+  soldier (loop_runner.rs), so turns can no longer end mid-popup or mid-HP-
+  drain.
+  All three changes live entirely inside `simulate_with_muzzle`/`tick()`,
+  which per the "Automatic parity for simulation features" rule in CLAUDE.md
+  already runs identically across all 5 game paths — confirmed by
+  `cargo test --test parity` (22/22 passing), no new StateMsg fields needed.
+
+  --- 0.5.4.421 (first attempt) — SHIPPED THEN REVERTED (2026-07-06/07) ---
   Ported per-weapon bazooka gravity/wind/launch/charge constants extracted by
   live dynamic analysis (Wine + gdb) of the reference WA.exe binary
   (BAZOOKA_GRAVITY 0.667, WIND_SCALE 0.794, LAUNCH 14.38, CHARGE_RATE 0.0625).
