@@ -1,5 +1,27 @@
 # Mini Mayhem — Project Status
 
+## Working tree (2026-07-09) — Fire overhaul — pushed to .126 for testing, NOT deployed, no VERSION bump
+
+Reworked fire so soldiers caught in a Molotov can survive and get out instead of being
+trapped and instakilled. All in `step_fire_patches` (`src/game/state.rs`) plus the fire
+render section (`src/renderer/loop_runner.rs`) and new `src/renderer/wa_sprites.rs`.
+Tests: `tests/fire_reaction.rs` (3) + `tests/flame_render.rs`; parity 23/23.
+
+- **Animated flame sprites**: procedural teardrop flame replaced by a 32-frame flame sprite
+  (flicker loop → shrink-to-spark burn-out), two variants so neighbours aren't in lockstep.
+  Baked `src/renderer/wa_sprites/flame1.bin` / `flame2.bin`, loader `wa_sprites.rs`.
+  Render-only (reads synced `FirePatch` fields) — no `StateMsg`/net changes.
+- **Molotov leaves no crater**: `apply_explosion_scaled` skips terrain carving, the
+  `crater_log` push, and the dirt-fallout FX for `WeaponKind::MolotovCocktail` — a dug pit
+  plus a fire pool was an inescapable death trap. Blast keeps its light damage/knockback.
+- **Bounded burn damage**: capped per soldier at 1 HP / 8 ticks (~3.75 HP/s) instead of per
+  fire patch — a Molotov spawns ~48 overlapping patches, which used to stack into an instakill.
+- **Escape movement**: burning soldiers hop (every 14 ticks; `HOP_VX 4.0`, `HOP_VY 4.0`) and
+  slide in one direction committed at ignition (away from the blast, latched into the existing
+  `Soldier.facing` — no new synced field). A barrier ahead flips the hop the other way; burning
+  soldiers pass through each other mid-hop so a clump on a peak can separate. The earlier
+  downhill-slide was removed (it dragged worms back into the pooled fire and they oscillated).
+
 ## Version: 0.5.4.424 DEPLOYED to Pi/server/GitHub/Discord (2026-07-08, commit fe17553)
 
 - **Plasma torch now stops the turn timer on deploy**: `turn.on_fired()` was only called once
@@ -698,6 +720,22 @@ TAT game list, test-match start, and all DB reads were slow. Root causes fixed:
   dusty/10.0.0.45 so outbound SSH return traffic is accepted.
 - **Windows backup (2026-06-28)** — `deploy/backup_arty.ps1` runs on Windows via Task
   Scheduler (hourly), pulls from dusty via scp; SHA256 dedup, keeps 5 most recent.
+- **Windows backup key auth fixed (2026-07-09)** — `ArtyBackup`'s scheduled (non-interactive)
+  runs had no way to authenticate: the `arty-backup@build` key (`~/.ssh/id_ed25519_backup.pub`
+  on dusty, used by the Windows Task Scheduler job) was missing from dusty's
+  `~/.ssh/authorized_keys`, so key auth failed and sshd silently fell back to a password
+  prompt with nobody there to answer it. Added the key to `authorized_keys`; confirmed via
+  `/var/log/auth.log` that connections now succeed via publickey.
+- **Pi4doom backup pull to Windows added (2026-07-09)** — new `deploy/backup_pi4doom.ps1` +
+  `deploy/run_backup_pi4doom.vbs` mirror the `backup_arty.ps1`/`run_backup.vbs` pattern to
+  pull the Pi SD-card image backup from the build machine to Windows. Pulls the newest
+  `pi4doom-*.img.gz` from `dusty:/mnt/sdd1/backup/pi4doom/` (the pi4doom-backup systemd
+  timer's own output — NOT from the Pi directly, avoiding a redundant second dd/gzip pass)
+  to `D:\misc\backups\pi4doom`, skips if already pulled (tracked via `last.txt`), keeps 3
+  most recent (~12GB each). Task Scheduler task `Pi4doomBackup`: `wscript.exe
+  run_backup_pi4doom.vbs` → `powershell.exe -NonInteractive -WindowStyle Hidden`, every 3
+  days at 22:15, matching the existing silent-launch pattern used by `ArtyBackup`. Verified
+  via manual `schtasks /Run` — silent, `Last Result: 0`, file confirmed on disk.
 
 ## IRC / Bot changes (2026-07-02)
 - **ZPG plugin overhaul** — the IRC zero-player game (`assets/zpg_plugin_code.txt`)

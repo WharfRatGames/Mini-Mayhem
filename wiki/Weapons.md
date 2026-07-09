@@ -36,7 +36,7 @@ Melee swing launches the target soldier with massive knockback. No blast damage 
 Burns a tunnel through terrain in the aimed direction. Does not damage soldiers directly. Useful for repositioning or creating kill pits.
 
 ### Molotov Cocktail ∞
-Throws a bottle that shatters on impact, spraying 7–10 fire patches in a wide arc. Fire slides downhill and pools in pits. Soldiers caught in flames take damage and are pushed sideways. Wind-affected in flight.
+Throws a bottle that shatters on impact, spraying a wide pool of flames — but leaves **no crater** (the fire does the work, not the blast). Flames flicker and burn out over a long time, sliding downhill and pooling in pits, wind-affected in flight. A soldier caught in the fire takes steady damage over time and reacts by hopping and moving to escape — heading one way out of the flames, jumping the other way if it hits a wall. It's deadly if the soldier is cornered against a barrier with nowhere to go, but out in the open it can usually get clear.
 
 ---
 

@@ -1,3 +1,4 @@
+0.5.4.425  Molotov Cocktail overhaul: the flames now use an animated sprite instead of the old procedural teardrop, the bottle no longer leaves a crater (the fire pool does the work), burn damage is capped so overlapping flames can no longer stack into an instant kill, and a burning soldier now hops and slides to escape the fire instead of getting stuck and dying.
 0.5.4.424  Plasma torch now stops your turn clock the moment you deploy it instead of letting it run the whole burn. Fixed two soldiers occasionally spawning on the exact same spot on badly fragmented maps. Fixed a soldier launched hard into a ceiling or overhang sometimes getting stuck inside the terrain.
 0.5.4.423  Login and account registration are now rate-limited to block brute-force password guessing.
 0.5.4.422  Deployed robot walker jumps further to clear obstacles. Fixed the camera cutting away from a damaged soldier during retreat before the damage numbers and HP loss finished counting down.

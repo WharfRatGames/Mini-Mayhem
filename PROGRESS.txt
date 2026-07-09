@@ -4,6 +4,46 @@ Current version: 0.5.4.424 DEPLOYED to Pi/server/GitHub/Discord (2026-07-08,
   commit fe17553). Miyoo push: .126 OK (hash verified), .110 unreachable
   (offline on LAN, push pending once back online).
 
+Infra (2026-07-09, non-gameplay): fixed Windows ArtyBackup task silently failing
+  every run (missing arty-backup@build key in dusty's authorized_keys — no code
+  changes, key added directly). Added new Pi4doomBackup Windows task (every 3
+  days, silent) pulling the Pi SD-card backup image from the build machine's
+  /mnt/sdd1 instead of the Pi directly. New files: deploy/backup_pi4doom.ps1,
+  deploy/run_backup_pi4doom.vbs. See STATUS.md for full detail.
+
+Fire overhaul (2026-07-09, WORKING TREE — pushed to .126 for testing only, NOT
+  deployed to server, no VERSION bump). All in step_fire_patches
+  (src/game/state.rs) + the fire render section (src/renderer/loop_runner.rs) +
+  new src/renderer/wa_sprites.rs. Covered by tests/fire_reaction.rs (3 tests) and
+  tests/flame_render.rs; parity 23/23.
+  1. Flame visuals: the procedural teardrop flame is replaced by a 32-frame
+     animated flame sprite (flicker loop, then a shrink-to-spark burn-out as the
+     patch expires), with two variants so neighbouring flames aren't in lockstep.
+     Baked assets src/renderer/wa_sprites/flame1.bin, flame2.bin; loader
+     wa_sprites.rs. Render-only (reads the already-synced FirePatch fields), so
+     all five paths match with no StateMsg/net changes.
+  2. Molotov no longer craters. apply_explosion_scaled now skips terrain carving,
+     the crater_log push, and the dirt-fallout FX for WeaponKind::MolotovCocktail
+     — a dug-out pit plus the fire pool was an inescapable death trap. The fire
+     does the work; the blast keeps its light direct damage/knockback. (Skipping
+     crater_log keeps clients crater-free too, so no desync.)
+  3. Burn damage is capped PER SOLDIER (1 HP / 8 ticks ≈ 3.75 HP/s) instead of per
+     fire patch — a molotov spawns ~48 overlapping patches, so the old per-patch
+     damage stacked into an instant kill.
+  4. Burning soldiers now escape the fire instead of getting stuck and dying:
+     - they HOP periodically (every 14 ticks; HOP_VX 4.0, HOP_VY 4.0) and slide
+       between hops, all in ONE committed direction latched at ignition (away from
+       the blast centre, stored in the existing Soldier.facing field — no new
+       synced state).
+     - if a barrier (tall terrain / barrel / mine) blocks the committed way, the
+       hop flips to the opposite direction and commits to it, so a soldier wedged
+       against a wall keeps trying the other way out.
+     - burning soldiers pass THROUGH other soldiers mid-hop (they still land on
+       terrain), so a clump jammed together on a small peak can hop apart.
+     Note: an earlier attempt used a downhill-slide term, removed here — fire
+     pools in low spots, so "slide downhill" dragged soldiers back into the flames
+     and they oscillated in place.
+
   --- 0.5.4.424 — plasma torch turn-timer fix, spawn-overlap fix,
       ceiling-stuck fix (DEPLOYED 2026-07-08, commit fe17553) ---
   1. Plasma torch now calls turn.on_fired() at activation (A press) instead

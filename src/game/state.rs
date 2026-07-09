@@ -623,18 +623,26 @@ impl GameState {
         let radius  = kind.blast_radius() * radius_scale;
         let max_dmg = (kind.max_damage() as f32 * dmg_scale) as u32;
 
-        let crater = Crater::new(pos.x, pos.y, radius);
-        crater.carve(&mut self.terrain);
-        self.crater_log.push((pos.x, pos.y, radius));
+        // The Molotov leaves NO crater — a dug-out pit combined with the fire pool
+        // becomes an inescapable death trap. WA's petrol bomb barely scratches the
+        // terrain; here the fire does all the work, so skip carving entirely.
+        // (crater_log drives client-side carving too, so not pushing keeps every
+        // path crater-free without a desync.)
+        if kind != WeaponKind::MolotovCocktail {
+            let crater = Crater::new(pos.x, pos.y, radius);
+            crater.carve(&mut self.terrain);
+            self.crater_log.push((pos.x, pos.y, radius));
+        }
 
         // Spawn explosion animation (visual only — happens regardless of terrain)
         self.explosions.push(Explosion::new(pos, radius));
 
         // Spawn effect fallout: dirt chunks + sparks (or a water splash on water).
-        // Visual only — not networked.
+        // Visual only — not networked. The Molotov carves nothing, so skip the dirt
+        // fallout (flying dirt with no crater looks wrong); the fire is its visual.
         if pos.y >= WATER_Y as f32 {
             self.emit_fx(crate::renderer::fx::FxEvent::Splash { x: pos.x, y: pos.y });
-        } else {
+        } else if kind != WeaponKind::MolotovCocktail {
             let d = biome_dirt(self.terrain.is_cavern, self.terrain.template_id);
             self.emit_fx(crate::renderer::fx::FxEvent::Explosion {
                 x: pos.x, y: pos.y, radius, col: [d.r, d.g, d.b],
@@ -1837,12 +1845,34 @@ impl GameState {
         const GRAVITY:      f32 = 0.4;
         const WIND_AIR:     f32 = 0.18; // strong wind influence while airborne
         const WIND_GROUND:  f32 = 0.01; // almost none once settled
-        const BOUNCE_DAMP:  f32 = 0.25; // velocity multiplier on terrain impact
-        const DOT_INTERVAL: u32 = 10;   // 1 HP every 10 ticks = 3 HP/s
-        const DOT_RADIUS:   f32 = 10.0;
-        const PUSH_FORCE:   f32 = 0.4;  // lateral shove applied to soldiers in fire
+        const BOUNCE_DAMP:   f32 = 0.25; // velocity multiplier on terrain impact
+        const DOT_RADIUS:    f32 = 10.0;
+        // Burn damage is capped PER SOLDIER (not per patch): a molotov spawns ~48
+        // overlapping patches, so per-patch damage stacked into an instant kill.
+        // A burning soldier loses 1 HP every BURN_INTERVAL ticks regardless of how
+        // many flames touch it.
+        const BURN_INTERVAL: u32 = 8;    // 1 HP / 8 ticks ≈ 3.75 HP/s while burning
+        const SLIDE_STEP:    f32 = 1.2;  // px/tick a burning grounded soldier slides
+        // WA: a burning worm "jumps due to the burns" — a periodic hop that moves it
+        // downhill/out of the fire and, critically, UNSTICKS it from pits and ledges
+        // where a pure slide would trap it until it dies. The escape direction is
+        // LATCHED at ignition (away from the blast) and committed to, so the worm
+        // travels one way out of the pool instead of hopping back and forth in it.
+        const HOP_INTERVAL:  u32 = 14;   // hop every 14 ticks (~0.47 s) while burning
+        const HOP_VX:        f32 = 4.0;  // horizontal hop speed — big distance to clear peaks
+        const HOP_VY:        f32 = 4.0;  // upward hop speed (a touch lower than before)
 
         let wind = self.wind.value() * 0.05;
+
+        // Away-from-flame direction accumulator (sum of soldier-minus-patch dx),
+        // used to LATCH an escape direction the tick a soldier first catches fire.
+        let mut away_dx: Vec<Vec<f32>> =
+            self.teams.iter().map(|t| vec![0.0f32; t.soldiers.len()]).collect();
+        // Which soldiers were already burning before this tick — so we only latch
+        // the escape direction on the fresh-ignition tick, not every tick.
+        let was_burning: Vec<Vec<bool>> = self.teams.iter()
+            .map(|t| t.soldiers.iter().map(|s| s.on_fire_ticks > 0).collect())
+            .collect();
 
         // Snapshot active soldier HP before the loop so we can detect fire damage.
         let ati = self.active_team();
@@ -1923,51 +1953,29 @@ impl GameState {
                     }
                 }
 
-                // Squirm + push: soldiers inside fire react and get nudged
-                let fire_dir = patch.vel.x.signum();
-                for s in self.teams.iter_mut().flat_map(|t| t.soldiers.iter_mut()) {
-                    if !s.is_alive() { continue; }
-                    let dx = s.pos.x - patch.pos.x;
-                    let dy = s.pos.y - patch.pos.y;
-                    if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
-                        s.on_fire_ticks = 10;
-                        // Tiny lateral push — launch grounded soldiers into the air
-                        use super::soldier::SoldierState;
-                        match &mut s.state {
-                            SoldierState::Airborne { vel, .. } => {
-                                vel.x += fire_dir * PUSH_FORCE;
-                            }
-                            SoldierState::Idle | SoldierState::Walking { .. } => {
-                                s.state = SoldierState::Airborne {
-                                    vel: crate::world::Vec2::new(fire_dir * PUSH_FORCE, -0.5),
-                                    spinning: false,
-                                };
-                            }
-                            _ => {}
+                // Mark soldiers standing in this flame as burning and accumulate a
+                // net away-from-flame direction (used as a flat-ground slide
+                // tiebreaker). Actual damage + slide are applied per-soldier once,
+                // after the patch loop, so N overlapping flames don't multiply them.
+                for (ti, team) in self.teams.iter_mut().enumerate() {
+                    for (si, s) in team.soldiers.iter_mut().enumerate() {
+                        if !s.is_alive() { continue; }
+                        let dx = s.pos.x - patch.pos.x;
+                        let dy = s.pos.y - patch.pos.y;
+                        if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
+                            s.on_fire_ticks = 10;
+                            away_dx[ti][si] += dx;
                         }
                     }
                 }
 
-                // DoT tick
-                if patch.lifetime % DOT_INTERVAL == 0 {
-                    for team in &mut self.teams {
-                        for s in &mut team.soldiers {
-                            if !s.is_alive() { continue; }
-                            let dx = s.pos.x - patch.pos.x;
-                            let dy = s.pos.y - patch.pos.y;
-                            if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
-                                s.death_cause = super::soldier::DeathCause::Explosion;
-                                s.take_damage(1);
-                            }
-                        }
-                    }
-                    for barrel in &mut self.barrels {
-                        if let BarrelState::Normal = barrel.state {
-                            let dx = barrel.pos.x - patch.pos.x;
-                            let dy = barrel.pos.y - patch.pos.y;
-                            if (dx*dx + dy*dy).sqrt() < 6.0 {
-                                barrel.state = BarrelState::Triggered { ticks: 5 };
-                            }
+                // Flames ignite nearby barrels.
+                for barrel in &mut self.barrels {
+                    if let BarrelState::Normal = barrel.state {
+                        let dx = barrel.pos.x - patch.pos.x;
+                        let dy = barrel.pos.y - patch.pos.y;
+                        if (dx*dx + dy*dy).sqrt() < 6.0 {
+                            barrel.state = BarrelState::Triggered { ticks: 5 };
                         }
                     }
                 }
@@ -1976,6 +1984,84 @@ impl GameState {
 
         for i in to_remove.into_iter().rev() {
             self.fire_patches.remove(i);
+        }
+
+        // Per-soldier burn effects (bounded, independent of flame count):
+        //  - damage: 1 HP every BURN_INTERVAL ticks while on fire.
+        //  - slide: grounded burning soldiers slide DOWNHILL along the terrain (WA:
+        //    burning worms slip down slopes into pits/water). try_move_horizontal +
+        //    snap_to_surface follow the surface down; sliding off an edge becomes a
+        //    fall via normal physics next tick. On flat ground, drift away from the
+        //    flame so a trapped worm still edges out.
+        use super::soldier::SoldierState;
+        let deal_damage = self.tick % BURN_INTERVAL == 0;
+        for ti in 0..self.teams.len() {
+            for si in 0..self.teams[ti].soldiers.len() {
+                if self.teams[ti].soldiers[si].on_fire_ticks == 0 { continue; }
+                if !self.teams[ti].soldiers[si].is_alive() { continue; }
+
+                if deal_damage {
+                    self.teams[ti].soldiers[si].death_cause =
+                        super::soldier::DeathCause::Explosion;
+                    self.teams[ti].soldiers[si].take_damage(1);
+                    if !self.teams[ti].soldiers[si].is_alive() { continue; }
+                }
+
+                // Only grounded soldiers move here; mid-hop (Airborne) ones are
+                // carried by normal physics and still burn (damage above applies).
+                if !matches!(self.teams[ti].soldiers[si].state,
+                    SoldierState::Idle | SoldierState::Walking { .. }) { continue; }
+
+                // On the fresh-ignition tick, latch an escape direction (away from
+                // the blast centre) into `facing` and commit to it. This is what
+                // stops the back-and-forth: the worm travels one consistent way out
+                // of the pool instead of re-deciding each hop.
+                if !was_burning[ti][si] {
+                    let a = away_dx[ti][si];
+                    if a != 0.0 {
+                        self.teams[ti].soldiers[si].facing = if a > 0.0 { 1 } else { -1 };
+                    }
+                }
+
+                // Move ONLY in the committed escape direction (facing). We do NOT
+                // consult downhill any more: the fire pools in the terrain's low
+                // spots, so "slide downhill" dragged the worm back into the flames
+                // and it rocked around the valley bottom. Heading one fixed way out
+                // means it either clears the pool or stops against a wall and burns
+                // (exactly WA's "can't escape against a wall" behaviour).
+                let dir = {
+                    let f = self.teams[ti].soldiers[si].facing as f32;
+                    if f == 0.0 { 1.0 } else { f }
+                };
+
+                if (self.tick + si as u32 * 5) % HOP_INTERVAL == 0 {
+                    // Burn-hop: jump toward `dir`. If a barrier (tall terrain, a
+                    // barrel/mine) blocks that way, hop the OTHER way instead and
+                    // commit to it — so a worm wedged against a wall keeps trying the
+                    // opposite direction until it finds a way out of the fire.
+                    let sx = self.teams[ti].soldiers[si].pos.x as i32;
+                    let sy = self.teams[ti].soldiers[si].pos.y as i32;
+                    let blocked = |d: f32| {
+                        let ax = sx + (d as i32) * 8;
+                        self.terrain.is_blocked(ax, sy - 2)
+                            && self.terrain.is_blocked(ax, sy - 16)
+                    };
+                    let mut hd = dir;
+                    if blocked(hd) {
+                        hd = -hd;
+                        self.teams[ti].soldiers[si].facing = if hd > 0.0 { 1 } else { -1 };
+                    }
+                    self.teams[ti].soldiers[si].state = SoldierState::Airborne {
+                        vel: crate::world::Vec2::new(hd * HOP_VX, -HOP_VY),
+                        spinning: false,
+                    };
+                } else {
+                    // Between hops: slide along the surface in the same committed
+                    // direction, so hop and slide never fight each other.
+                    let new_x = self.teams[ti].soldiers[si].pos.x + dir * SLIDE_STEP;
+                    crate::game::loop_runner::try_move_horizontal(self, ti, si, new_x);
+                }
+            }
         }
 
         for team in &mut self.teams {

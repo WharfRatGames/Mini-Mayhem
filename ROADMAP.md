@@ -61,7 +61,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Turn-based system with timer and retreat phase
 - [x] Bazooka, Grenade, Shotgun, MAC-10, Pistol, TNT, Landmine, Ninja Rope, Baseball Bat, Plasma Torch, Clump Bomb, Homing Missile, Molotov (loadout)
 - [x] Blasthive, Meteor Bomb, Revolver, Black Hole Bomb, Air Strike, Garcia, Hand of Jerry, Sacred Ordnance (crate-only)
-- [x] Molotov Cocktail — 48 fire patches, ~2.5 min burn, WA-style pooling fire physics (pending)
+- [x] Molotov Cocktail — 48 fire patches, ~2.5 min burn, pooling fire physics; fire overhaul (working tree 2026-07-09): animated flame sprites, no crater, per-soldier bounded burn damage, and burning soldiers hop/slide out of the flames (barrier-aware, pass through each other) instead of getting stuck and instakilled
 - [x] Weapon unlock timers (Air Strike / Homing Missile) — Bat's timer was already dead/unenforced and TNT's was removed outright in v0.5.4.415, both now available from turn 1
 - [x] Adjustable grenade/clump bomb fuse (L1/R1)
 - [x] Crate drops (weapon, health, scrap)

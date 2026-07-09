@@ -4318,68 +4318,34 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     mark!("soldiers");
 
     // 5b. Fire patches — drawn after soldiers so fire renders in front.
-    // Procedural teardrop flame: tapers to a point, concentric colour bands,
-    // per-flame flicker + sideways sway that grows toward the tip.
+    // Genuine WA flame sprites (32 frames: ~0-21 curling flicker loop,
+    // 22-31 shrink-to-spark die-out), two variants so neighbours differ.
+    const FLAME_LOOP_FRAMES: u32 = 22;
+    const FLAME_DIE_TICKS:   u32 = 45; // last 1.5 s play the die-out frames
     for patch in &game.fire_patches {
         let wx = patch.pos.x as i32;
         let wy = patch.pos.y as i32;
         if patch.pos.x < vx0 - 10.0 || patch.pos.x >= vx1 + 10.0 { continue; }
         if wy < cam_y as i32 - 20 || wy >= cam_y as i32 + sh { continue; }
 
-        let mid   = Bgra::new(255, 130, 15);
-        let inner = Bgra::new(255, 205, 60);
-        let core  = Bgra::new(255, 250, 205);
-
-        // Tall dancing flame when burning on the ground; small spark in flight.
-        // (~30% larger than before: 13→17, 6→8; max_half scales with h so the
-        // whole flame grows proportionally in both height and width.)
-        let h = if patch.landed { 17 } else { 8 };
-        let max_half = h as f32 * 0.42;
-        // Independent phase per flame — drives both sway/width flicker and outer
-        // colour toggle so flames don't all change colour in lockstep.
-        // Use lifetime for time and spawn-velocity as a stable per-patch offset
-        // (vel is constant after spawn, so phase doesn't jump as the patch moves).
-        let phase = patch.lifetime as f32 * 0.30 + patch.vel.x * 1.1 + patch.vel.y * 0.9;
-        let outer = if phase.sin() > 0.0 { Bgra::new(210, 40, 0) } else { Bgra::new(235, 60, 0) };
-        let base_y = wy + 1;
-
-        for ry in 0..h {
-            let f = ry as f32 / (h as f32 - 1.0); // 0 at base → 1 at tip
-            // Teardrop: slightly pinched base, bulge low, taper to a point.
-            let w_profile = (1.0 - f).powf(0.65);
-            let base_pinch = (f * 5.0).min(1.0);
-            let mut half = (max_half * w_profile * (0.55 + 0.45 * base_pinch)).round() as i32;
-            // Subtle width flicker
-            if (phase + ry as f32).sin() > 0.6 { half += 1; }
-            let sway = ((phase + ry as f32 * 0.6).sin() * f * f * 2.6).round() as i32;
-            let y = base_y - ry;
-            if y < 0 || y >= sh { continue; }
-            let fcx = wx + sway;
-            if half <= 0 {
-                buf.set_pixel(fcx, y, inner);
-                continue;
-            }
-            // Row is in-bounds vertically (checked above) and, in the common case,
-            // horizontally too — skip the per-pixel bounds check then.
-            let row_in_bounds = fcx - half >= 0 && fcx + half < crate::world::WORLD_W as i32;
-            for dx in -half..=half {
-                let edge = dx.abs() as f32 / (half as f32 + 0.5); // 0 centre → ~1 edge
-                let col = if edge > 0.70 { outer } else if edge > 0.34 { mid } else { inner };
-                if row_in_bounds {
-                    buf.set_pixel_unchecked((fcx + dx) as u32, y as u32, col);
-                } else {
-                    buf.set_pixel(fcx + dx, y, col);
-                }
-            }
-        }
-        // White-hot core near the base — must track the same sway as the body
-        // above it, or it visually detaches into a floating white square when
-        // the flame sways away from center.
-        if patch.landed {
-            let ry0 = h / 3;
-            let sway0 = ((phase + ry0 as f32 * 0.6).sin() * (ry0 as f32 / (h as f32 - 1.0)).powi(2) * 2.6).round() as i32;
-            buf.fill_rect(wx + sway0 - 1, base_y - ry0, 3, (h / 3).max(1) as u32, core);
-        }
+        // Stable per-patch variation from spawn velocity (constant after spawn):
+        // picks flame1 vs flame2 and offsets the animation phase so flames
+        // don't flicker in lockstep.
+        let seed = (patch.vel.x * 37.0 + patch.vel.y * 53.0).abs() as u32;
+        let sprite = crate::renderer::wa_sprites::flame(seed);
+        let frame = if patch.lifetime <= FLAME_DIE_TICKS {
+            // Dying: map remaining lifetime onto the shrink frames 22..31.
+            let die_span = sprite.frame_count - FLAME_LOOP_FRAMES;
+            let gone = FLAME_DIE_TICKS - patch.lifetime;
+            FLAME_LOOP_FRAMES + (gone * die_span / FLAME_DIE_TICKS).min(die_span - 1)
+        } else if !patch.landed {
+            // In flight: small spark — cycle the mid die-out frames (24-27).
+            24 + (patch.lifetime / 2 + seed) % 4
+        } else {
+            // Burning on the ground: flicker loop at ~2 ticks per frame.
+            (patch.lifetime / 2 + seed) % FLAME_LOOP_FRAMES
+        };
+        sprite.draw_frame(buf, frame, wx, wy + 1);
     }
 
     mark!("fire_patches");
@@ -5847,6 +5813,11 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     let mut cx = game.teams[ti].soldiers[si].pos.x;
                     let mut cy = game.teams[ti].soldiers[si].pos.y;
                     game.teams[ti].soldiers[si].fall.update(cy);
+                    // Burning worms pass THROUGH other worms mid-hop: a clump of
+                    // soldiers stuck together on a small peak could otherwise never
+                    // hop past each other (each lands on a neighbour and stalls).
+                    // They still land on terrain, so they separate onto the ground.
+                    let self_burning = game.teams[ti].soldiers[si].on_fire_ticks > 0;
                     let mut landed = false;
                     for _ in 0..steps {
                         cx += sx_;
@@ -5859,7 +5830,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             .any(|h| game.terrain.is_blocked(ix_l, iy - h)
                                 || game.terrain.is_blocked(ix,   iy - h)
                                 || game.terrain.is_blocked(ix_r, iy - h));
-                        let soldier_hit = !terrain_hit && game.teams.iter().enumerate().any(|(oti, oteam)| {
+                        let soldier_hit = !terrain_hit && !self_burning && game.teams.iter().enumerate().any(|(oti, oteam)| {
                             oteam.soldiers.iter().enumerate().any(|(osi, os)| {
                                 if (oti == ti && osi == si) || !os.is_alive() { return false; }
                                 let ox = os.pos.x as i32;
