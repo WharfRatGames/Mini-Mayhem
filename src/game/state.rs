@@ -1883,7 +1883,11 @@ impl GameState {
         // first few seconds of landing so a 2.5-minute molotov burn doesn't
         // keep eroding for its entire lifetime. Staggered cadence across
         // patches keeps 48 molotov patches from all carving on the same tick.
-        const BURN_CARVE_RADIUS:   f32 = 1.5;
+        // Carve as wide as the visible flame sprite (~18 px across → radius 9),
+        // so the eaten channel matches the flame the player sees rather than a
+        // thin sliver under it. Depth over time is still bounded by INTERVAL +
+        // DURATION below.
+        const BURN_CARVE_RADIUS:   f32 = 9.0;
         const BURN_CARVE_INTERVAL: u32 = 8;
         const BURN_CARVE_DURATION_TICKS: u32 = 150; // 5s @ 30fps — carving stops after this
 

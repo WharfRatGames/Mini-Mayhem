@@ -5,8 +5,18 @@ Current version: 0.5.4.425 (unchanged — NO version bump). Miyoo .126 has an
   changes below; .110 not touched this session. Pi/server/GitHub/Discord still
   on the 0.5.4.425 / commit f2f606b release.
 
-TASK RESOLVED (2026-07-10) — fire terrain-eating: ONLY BARRELS CARVE, NOT
-  MOLOTOV. Working tree, NOT yet built/deployed (needs VERSION bump — wire change).
+DEPLOYED 2026-07-10 (v0.5.4.426 + .427) — fire terrain-eating: ONLY BARRELS
+  CARVE, and the carve is now as wide as the flame.
+  ---------------------------------------------------------------------------
+  .426: only barrel fire eats terrain (molotov/crate do not) — FirePatch.carves
+    gate (see below). Deployed to Pi/server/GitHub/Discord/Miyoo .126 (commit
+    6e7752d). Miyoo .110 offline — needs push when back.
+  .427: BURN_CARVE_RADIUS 1.5 -> 9.0 so the carved channel matches the ~18px
+    visible flame width instead of a 3px sliver (user request). Deployed to
+    Pi/server/GitHub/Discord/Miyoo .126; .110 still offline. (Deploy note: a
+    "no build" mid-flight only landed after the pipeline had already pushed +
+    restarted the .427 server, so .427 was finished/kept per user rather than
+    rolled back.)
   ---------------------------------------------------------------------------
   User clarified from real WA footage (assets/barrel.mp4): the petrol bomb /
   molotov does NOT eat terrain — only BARREL fire does. (Barrel flames carve a
