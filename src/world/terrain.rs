@@ -105,6 +105,11 @@ impl SceneryObject {
     /// the renderer (scenery.rs) and `footprint` — MUST stay deterministic and
     /// identical on client and server.
     pub fn scale(&self, theme: Theme) -> i32 {
+        // Bone pile (1) and ribcage (6): bones drawn near life-size read
+        // wrong at 3× (a ribcage taller than a soldier) — cap them at 2×.
+        if matches!(theme, Theme::Underground) && (self.sprite == 1 || self.sprite == 6) {
+            return 2;
+        }
         let (_, h) = self.base_footprint(theme);
         if h <= 18 { 3 } else { 2 }
     }
@@ -188,7 +193,12 @@ impl SceneryObject {
                 4 => (10, 14), // bush (was 13,18)
                 5 => (6, 32),  // sunflower
                 6 => (18, 10), // log
-                _ => (9, 7),   // pebble cluster (was 12,9)
+                7 => (9, 7),   // pebble cluster (was 12,9)
+                8 => (8, 12),  // hay bale
+                9 => (7, 24),  // scarecrow
+                10 => (10, 20), // stone well
+                11 => (10, 9),  // wheelbarrow
+                _ => (6, 16),  // beehive on post
             },
             Theme::Rugged => match self.sprite {
                 0 => (9, 38),  // pine tree canopy (was 11,40)
@@ -198,7 +208,12 @@ impl SceneryObject {
                 3 => (12, 14), // dead stump
                 4 => (18, 22), // broken wall
                 5 => (11, 12), // lichen rock (was 14,15)
-                _ => (8, 18),  // cairn (was 10,21)
+                6 => (8, 18),  // cairn (was 10,21)
+                7 => (7, 26),  // menhir (standing stone)
+                8 => (10, 20), // weathered signpost
+                9 => (9, 8),   // campfire ring
+                10 => (8, 16), // leaning cartwheel
+                _ => (8, 7),   // ram skull
             },
             Theme::Underground => match self.sprite {
                 0 => (11, 30), // crystal cluster (was 14,32)
@@ -207,7 +222,12 @@ impl SceneryObject {
                 3 => (7, 12),  // skull (was 9,14)
                 4 => (20, 9),  // fallen stalactite shard
                 5 => (10, 16), // rusted chain pile
-                _ => (9, 15),  // ribcage (was 12,18)
+                6 => (9, 15),  // ribcage (was 12,18)
+                7 => (10, 10), // glowing mushroom cluster
+                8 => (8, 22),  // stalagmite
+                9 => (11, 12), // minecart
+                10 => (9, 11), // cracked geode
+                _ => (5, 21),  // lantern post
             },
         }
     }
@@ -568,13 +588,20 @@ impl Terrain {
         // Cave-punch tunnels / cantilevered overhang shelves: seed-random on any
         // non-cavern map instead of being gated by a landform style.
         let cave = !is_cavern && lcg(&mut rng) % 100 < 45;
-        let overhang = !is_cavern && lcg(&mut rng) % 100 < 25;
+        // 25 → 40% (MapGEN-corpus calibration: reference overhang fraction ~0.13
+        // of below-surface air vs our 0.07).
+        let overhang = !is_cavern && lcg(&mut rng) % 100 < 40;
         // Sky-clearance (erode the top ~14% of the terrain band) and its paired
         // chasm-top offset must move together — seed-random on non-cavern maps.
         let sky_clear = !is_cavern && lcg(&mut rng) % 100 < 50;
 
         // Water margins always applied — wide enough to be visible on both sides
-        let water_end_px: f64 = 180.0 + (lcg(&mut rng) & 0xFF) as f64 / 255.0 * 170.0; // 180–350px
+        // Narrowed 180–350 → 70–160 to match the MapGEN reference corpus:
+        // real WA islands keep ~96% ground coverage with thin water gaps at the
+        // ends (the stronger edge erosion below now guarantees the gap exists —
+        // the erosion ramp spans water_end_px, so ground fades out well inside
+        // this distance, not at it).
+        let water_end_px: f64 = 70.0 + (lcg(&mut rng) & 0xFF) as f64 / 255.0 * 90.0; // 70–160px
 
         // Macro shaping (rolling hills + top headroom). Applied to every non-cavern
         // map (caverns keep their original surface shape; only their spawns change).
@@ -911,8 +938,15 @@ impl Terrain {
                 // novel WA-styled composition. The residual noise/lean gradient is
                 // folded in at reduced weight — it contributes fine edge texture
                 // but no longer defines the silhouette.
+                // Residual noise weight 0.15 → 0.25 (MapGEN-corpus calibration:
+                // reference surfaces jitter ~6px per 12px window at the median,
+                // ours measured ~2px — too glassy).
                 let mut density = super::wa_templates::collage_density(&cparams, nx, ty)
-                    + (noise - 0.5) * 0.15
+                    + (noise - 0.5) * 0.25
+                    // Fine surface bumps: high-frequency, low-amplitude term that
+                    // wiggles contours (~6px per 12px window, matching the
+                    // hand-drawn WA edge texture) without moving the macro shape.
+                    + base.get([nx * 36.0, ny * 36.0]) * 0.10
                     + (nx - 0.5) * cliff_bias * 0.3;
                 if rolling {
                     density += hill_col[x] * 0.3;
@@ -927,8 +961,12 @@ impl Terrain {
                 // GROUND_T raised and DEPTH_RAMP relaxed to widen the surface band
                 // (~84px → ~190px) for taller, more vertical maps — the grapple now
                 // reaches isolated tops, so a gentler ramp is acceptable.
-                const GROUND_T: f64 = 0.66;
-                const DEPTH_RAMP: f64 = 4.0;
+                // MapGEN-corpus calibration 2026-07-10: reference islands run
+                // solid_frac ~0.41-0.51 and surface span ~240-390px vs our 0.31 /
+                // 176px. Lower GROUND_T fills more ground mass; the gentler ramp
+                // widens the surface band.
+                const GROUND_T: f64 = 0.58;
+                const DEPTH_RAMP: f64 = 3.0;
                 density += (ty - GROUND_T) * DEPTH_RAMP;
 
                 // 4b. Top sky-margin: erode density near the top so terrain tapers
@@ -941,13 +979,20 @@ impl Terrain {
                     density -= (1.0 - smooth_t) * 0.85;
                 }
 
-                // 5. Edge erosion for water on ends
+                // 5. Edge erosion for water on ends. The subtracted amplitude
+                // must dominate everything the field can add near the waterline
+                // (collage ≤ ~1.2, depth ramp ≤ +1.36, noise/lean ≤ ~0.2), so at
+                // the very edge the density is guaranteed negative — every
+                // non-cavern map ends in open water on BOTH sides, like the real
+                // WA generator's island output (0/150 reference maps touch an
+                // edge). Guarded by island_edges_are_open_water in
+                // tests/wa_collage_check.rs.
                 if water_end_px > 0.0 {
                     let edge_dist = (x as f64).min(WORLD_W as f64 - 1.0 - x as f64);
                     if edge_dist < water_end_px {
                         let t = edge_dist / water_end_px;
                         let smooth_t = t * t * (3.0 - 2.0 * t);
-                        density -= (1.0 - smooth_t) * 0.55;
+                        density -= (1.0 - smooth_t) * 3.2;
                     }
                 }
 
@@ -965,8 +1010,9 @@ impl Terrain {
         // keeps thin bridges / small stepping-stone islands that sit above threshold
         // solid — only their edges round — instead of eroding them away.
         // A gentle radius keeps small WA-silhouette stepping-stones rounded without
-        // eroding them away.
-        let r: i32 = 4;
+        // eroding them away. 4 → 3 (MapGEN-corpus calibration: reference surfaces
+        // keep ~6px of fine per-12px-window jitter; r=4 planed ours down to ~1px).
+        let r: i32 = 3;
         let mut tmp = vec![0.0f64; region_w * region_h];
         // Both passes parallelized over disjoint row chunks — pure reads of the
         // other buffer, so output is bit-identical to the serial loops.
@@ -1059,7 +1105,10 @@ impl Terrain {
                 let gap   = rnd(&mut rng, 30.0, 30.0) as i32;  // 30–60px air gap — taller overhang shelves (grapple reaches the higher ones)
                 let shelf_y = (ground - gap).max(TERRAIN_MIN_Y as i32 + 6);
                 let half_w = rnd(&mut rng, 45.0, 55.0) as i32; // 45–100px reach
-                let th     = (rnd(&mut rng, 9.0, 10.0) as i32).max(6); // 9–19px thick
+                // 9-19 → 14-24px thick (MapGEN-corpus calibration: thin tapered
+                // shelves read as artificial "flag poles" next to the reference
+                // maps' chunky organic arches).
+                let th     = (rnd(&mut rng, 14.0, 10.0) as i32).max(10); // 14–24px thick
                 let dir: i32 = if lcg(&mut rng) & 1 == 0 { 1 } else { -1 };
 
                 for dx in -half_w..=half_w {
@@ -1074,7 +1123,7 @@ impl Terrain {
                 // Support column at the anchor end → connects slab to main terrain.
                 let anchor_x = cx - dir * half_w;
                 let col_bot = ground.max(shelf_y);
-                for ax in (anchor_x - 5)..=(anchor_x + 5) {
+                for ax in (anchor_x - 8)..=(anchor_x + 8) {
                     if ax < 4 || ax >= WORLD_W as i32 - 4 { continue; }
                     for y in shelf_y..=col_bot { terrain.set_solid(ax, y, true); }
                 }
@@ -1199,12 +1248,14 @@ impl Terrain {
 
         // ── Phase 6b: Flood-fill fragment cleanup ─────────────────────────────────
         // Remove solid components smaller than min_frag (noise junk / tiny floaters).
-        // A low bar keeps the WA silhouettes' small floating stepping-stone chunks
-        // alive; the isolated-pixel pass above already removes single-pixel noise.
         // Caverns are solid rock carved into large connected chambers, so they can
         // afford a higher bar to clean up carve-noise debris.
+        // Island bar raised 50 → 4000 (MapGEN-corpus calibration 2026-07-10):
+        // reference maps hold 1-3 solid chunks; ours measured a median of 10,
+        // mostly confetti floaters. 4000px ≈ a 40x40 blob — anything smaller
+        // isn't a usable stepping stone (a soldier is 14x20), it's debris.
         {
-            let min_frag: usize = if is_cavern { 200 } else { 50 };
+            let min_frag: usize = if is_cavern { 200 } else { 4000 };
             let mut visited = vec![false; WORLD_PIXELS];
             let mut stack: Vec<(i32, i32)> = Vec::new();
             let mut comp: Vec<(i32, i32)> = Vec::new();
@@ -1269,11 +1320,11 @@ impl Terrain {
         {
             // Sprite-variant count must match the theme scenery.rs::draw_scenery
             // will pick for this map (same Theme::of dispatch): draw_underground /
-            // draw_pastoral / draw_rugged — 7 / 8 / 7 sprites respectively.
+            // draw_pastoral / draw_rugged — 12 / 13 / 12 sprites respectively.
             let count: u8 = match Theme::of(terrain.is_cavern, terrain.template_id) {
-                Theme::Underground => 7,
-                Theme::Pastoral => 8,
-                Theme::Rugged => 7,
+                Theme::Underground => 12,
+                Theme::Pastoral => 13,
+                Theme::Rugged => 12,
             };
             let mut srng = seed ^ 0xDECA_FBAB_E000_1234u64;
             let margin = (WORLD_W as f64 * 0.05) as u32;

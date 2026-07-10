@@ -1889,7 +1889,10 @@ impl GameState {
         // DURATION below.
         const BURN_CARVE_RADIUS:   f32 = 9.0;
         const BURN_CARVE_INTERVAL: u32 = 8;
-        const BURN_CARVE_DURATION_TICKS: u32 = 150; // 5s @ 30fps — carving stops after this
+        // 150 → 50 (1/3): the 5s carve window dug pits ~3x too deep on device;
+        // depth scales with carve count (INTERVAL cadence is unchanged), so a
+        // 1/3 window gives 1/3 the depth. Width (RADIUS) is untouched.
+        const BURN_CARVE_DURATION_TICKS: u32 = 50; // ~1.7s @ 30fps — carving stops after this
 
         let wind = self.wind.value() * 0.05;
 

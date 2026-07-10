@@ -14,14 +14,14 @@ impl Canvas {
         let mut data = vec![0u8; (w * h * 4) as usize];
         for i in 0..w * h {
             let o = (i * 4) as usize;
-            data[o] = bg.2; data[o + 1] = bg.1; data[o + 2] = bg.0; data[o + 3] = 255;
+            data[o] = bg.0; data[o + 1] = bg.1; data[o + 2] = bg.2; data[o + 3] = 255;
         }
         Self { data, w, h }
     }
     fn set(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8) {
         if x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 { return; }
         let i = ((y as u32 * self.w + x as u32) * 4) as usize;
-        self.data[i] = b; self.data[i + 1] = g; self.data[i + 2] = r; self.data[i + 3] = 255;
+        self.data[i] = r; self.data[i + 1] = g; self.data[i + 2] = b; self.data[i + 3] = 255;
     }
     fn blit(&mut self, wbuf: &WorldBuffer, sx: i32, sy: i32, sw: u32, sh: u32, dx: i32, dy: i32) {
         for row in 0..sh as i32 {
@@ -96,7 +96,7 @@ const CELL_W: u32 = 110;
 const CELL_H: u32 = 150;
 const HEADER: u32 = 26;
 const ROW_LABEL: u32 = 16;
-const COLS: usize = 8;
+const COLS: usize = 13;
 
 struct ThemeRow {
     name: &'static str,
@@ -109,15 +109,15 @@ fn main() {
     let rows: [ThemeRow; 3] = [
         ThemeRow {
             name: "PASTORAL", is_cavern: false, template_id: 0,
-            sprite_names: ["FLOWER","MUSHROOM","MOSSY ROCK","FENCE POST","BUSH","SUNFLOWER","LOG","PEBBLES"],
+            sprite_names: ["FLOWER","MUSHROOM","MOSSY ROCK","FENCE POST","BUSH","SUNFLOWER","LOG","PEBBLES","HAY BALE","SCARECROW","WELL","WHEELBARROW","BEEHIVE"],
         },
         ThemeRow {
             name: "RUGGED", is_cavern: false, template_id: 1,
-            sprite_names: ["PINE TREE","BOULDER","CRATE","DEAD STUMP","BROKEN WALL","LICHEN ROCK","CAIRN","CAIRN"],
+            sprite_names: ["PINE TREE","BOULDER","CRATE","DEAD STUMP","BROKEN WALL","LICHEN ROCK","CAIRN","MENHIR","SIGNPOST","CAMPFIRE","CARTWHEEL","RAM SKULL","RAM SKULL"],
         },
         ThemeRow {
             name: "UNDERGROUND", is_cavern: true, template_id: 0,
-            sprite_names: ["CRYSTAL","BONE PILE","TORCH","SKULL","STALACTITE","CHAIN PILE","RIBCAGE","RIBCAGE"],
+            sprite_names: ["CRYSTAL","BONE PILE","TORCH","SKULL","STALACTITE","CHAIN PILE","RIBCAGE","GLOW SHROOM","STALAGMITE","MINECART","GEODE","LANTERN","LANTERN"],
         },
     ];
 

@@ -27,6 +27,10 @@ path = "src/bin/sprite_sheet.rs"
 name = "scenery-gallery"
 path = "src/bin/scenery_gallery.rs"
 
+[[bin]]
+name = "dump-terrain"
+path = "src/bin/dump_terrain.rs"
+
 [dependencies]
 noise          = "0.9"
 libc           = "0.2"

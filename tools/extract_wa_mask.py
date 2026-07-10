@@ -137,13 +137,19 @@ def load_land_dat(path: str):
     return w, h, rows, bool(top_border)
 
 
-def load_png(path: str, threshold: float):
+def load_png(path: str, threshold: float, nonblack: bool = False):
     try:
         from PIL import Image
     except ImportError:
         sys.exit("PNG input requires Pillow: pip install Pillow")
     img = Image.open(path)
-    if img.mode == "RGBA":
+    if nonblack:
+        # MapGEN output: opaque render on pure-black sky; solid = any
+        # not-quite-black pixel (dark terrain art defeats a luminance cut).
+        rgb = img.convert("RGB")
+        rows = [[sum(rgb.getpixel((x, y))) > 8 for x in range(img.width)]
+                for y in range(img.height)]
+    elif img.mode == "RGBA":
         alpha = img.getchannel("A")
         rows = [[alpha.getpixel((x, y)) > 0 for x in range(img.width)]
                 for y in range(img.height)]
@@ -155,12 +161,84 @@ def load_png(path: str, threshold: float):
     return img.width, img.height, rows, False
 
 
+def clean_sprites(rows, w, h, cavern: bool):
+    """Strip MapGEN's baked decorative sprites + watermark from a silhouette.
+
+    Morphological opening (radius ~3px) severs thin stalks (lollipops, signs,
+    the corner watermark text), then a connected-component pass keeps only
+    components that are large or anchored to the map's solid base (bottom edge;
+    any edge for caverns). Recovers the real terrain silhouette."""
+    from PIL import Image, ImageFilter
+    import numpy as np
+    a = np.array(rows, dtype=np.uint8)
+    im = Image.fromarray(a * 255, mode="L")
+    im = im.filter(ImageFilter.MinFilter(13)).filter(ImageFilter.MaxFilter(13))
+    solid = np.array(im) > 127
+
+    # MapGEN stamps a version watermark in the bottom-left corner; binarization
+    # turns it into a fake solid/air dash. Overwrite the corner with whatever
+    # dominates its boundary ring (rock in caverns, air over open water, ...).
+    wm_w, wm_h = min(180, w), min(28, h)
+    ring = np.concatenate([solid[h - wm_h - 1, :wm_w + 1],
+                           solid[h - wm_h:, wm_w]])
+    solid[h - wm_h:, :wm_w] = ring.mean() > 0.5
+
+    # Connected components via iterative flood fill (4-neighbour).
+    labels = np.zeros(solid.shape, dtype=np.int32)
+    nlab = 0
+    keep = np.zeros(solid.shape, dtype=bool)
+    min_area = (w * h) // 400  # ~0.25% of the map
+    for sy in range(h):
+        for sx in range(w):
+            if not solid[sy, sx] or labels[sy, sx]:
+                continue
+            nlab += 1
+            stack = [(sy, sx)]
+            labels[sy, sx] = nlab
+            comp = []
+            border = False
+            while stack:
+                y, x = stack.pop()
+                comp.append((y, x))
+                if y == h - 1 or (cavern and (y == 0 or x == 0 or x == w - 1)):
+                    border = True
+                for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                    if 0 <= ny < h and 0 <= nx < w and solid[ny, nx] \
+                            and not labels[ny, nx]:
+                        labels[ny, nx] = nlab
+                        stack.append((ny, nx))
+            if (border and len(comp) >= min_area // 4) or len(comp) >= min_area:
+                for y, x in comp:
+                    keep[y, x] = True
+    return [[bool(keep[y][x]) for x in range(w)] for y in range(h)]
+
+
 def rescale_nearest(rows, w, h):
     if (w, h) == (MASK_W, MASK_H):
         return rows
     print(f"rescaling {w}x{h} -> {MASK_W}x{MASK_H} (nearest)")
     return [[rows[y * h // MASK_H][x * w // MASK_W] for x in range(MASK_W)]
             for y in range(MASK_H)]
+
+
+def fill_outside_sky(rows, w, h):
+    """Cavern sources: air connected to the TOP edge is 'outside' the enclosed
+    hull (MapGEN renders black sky above the ceiling rock), not a chamber.
+    Convert it to solid so it doesn't bake a full-width carved stripe."""
+    import numpy as np
+    a = np.array(rows, dtype=bool)
+    seen = np.zeros_like(a)
+    stack = [(0, x) for x in range(w) if not a[0, x]]
+    for y, x in stack:
+        seen[y, x] = True
+    while stack:
+        y, x = stack.pop()
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if 0 <= ny < h and 0 <= nx < w and not a[ny, nx] and not seen[ny, nx]:
+                seen[ny, nx] = True
+                stack.append((ny, nx))
+    a |= seen
+    return [[bool(a[y][x]) for x in range(w)] for y in range(h)]
 
 
 def seal_border(rows):
@@ -201,6 +279,11 @@ def main():
     ap.add_argument("--preview", help="write a PGM preview image here")
     ap.add_argument("--threshold", type=float, default=0.5,
                     help="PNG luminance threshold (default 0.5)")
+    ap.add_argument("--nonblack", action="store_true",
+                    help="PNG: solid = any non-black pixel (MapGEN output)")
+    ap.add_argument("--clean-sprites", action="store_true",
+                    help="strip MapGEN decorative sprites/watermark "
+                         "(morphological opening + component filter)")
     args = ap.parse_args()
 
     if open(args.input, "rb").read(4) in (b"LND\x1a", b"LND\x1b"):
@@ -209,10 +292,13 @@ def main():
             print("note: land.dat has top_border set (cavern map) — "
                   "consider --cavern and saving as a cavernN.bin")
     else:
-        w, h, rows, _ = load_png(args.input, args.threshold)
+        w, h, rows, _ = load_png(args.input, args.threshold, args.nonblack)
 
+    if args.clean_sprites:
+        rows = clean_sprites(rows, w, h, args.cavern)
     rows = rescale_nearest(rows, w, h)
     if args.cavern:
+        rows = fill_outside_sky(rows, MASK_W, MASK_H)
         seal_border(rows)
 
     solid = sum(sum(r) for r in rows) / (MASK_W * MASK_H)

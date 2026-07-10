@@ -154,6 +154,31 @@ fn island_relief_is_traversable() {
     assert!(checked > 0, "no island maps sampled");
 }
 
+/// Every non-cavern map must end in open water on BOTH sides, like the real
+/// WA generator's output (0/150 MapGEN reference maps touch a side edge).
+/// The density-field edge erosion in generate_tactical guarantees this; no
+/// post-pass may re-stamp solid into the outermost columns.
+#[test]
+fn island_edges_are_open_water() {
+    let mut checked = 0;
+    for seed in 0..40u64 {
+        let t = Terrain::generate_tactical(seed);
+        if t.is_cavern {
+            continue;
+        }
+        checked += 1;
+        for x in (0..8).chain(WORLD_W as i32 - 8..WORLD_W as i32) {
+            for y in 0..WATER_Y as i32 {
+                assert!(
+                    !t.is_solid(x, y),
+                    "island seed {seed}: solid terrain at map edge ({x}, {y})"
+                );
+            }
+        }
+    }
+    assert!(checked > 0, "no island maps sampled");
+}
+
 #[test]
 fn both_source_masks_appear_as_dominant() {
     let mut seen = std::collections::HashSet::new();

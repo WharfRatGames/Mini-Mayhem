@@ -5,6 +5,53 @@ Current version: 0.5.4.425 (unchanged — NO version bump). Miyoo .126 has an
   changes below; .110 not touched this session. Pi/server/GitHub/Discord still
   on the 0.5.4.425 / commit f2f606b release.
 
+IN WORKING TREE 2026-07-10 (NO version bump — VERSION stays 0.5.4.427; bump to
+  .428 at release since terrain determinism changes) — TERRAIN
+  CALIBRATED AGAINST A REAL MapGEN REFERENCE CORPUS + mask library rebuilt.
+  ---------------------------------------------------------------------------
+  Reference corpus: installed the new assets/InstallMapGen.exe (Inno) under
+  Wine; MapGen.exe (assets/Worms Armageddon/User/MapGen/) driven headless via
+  a CUSTOM SETTINGS FILE (-s), not just -t: keys type/width/height/objects/
+  complexity/floaters/water. `objects 0` + `floaters 0` yields nearly
+  sprite-free 1920x696 silhouettes at the source. Generated 50 island + 50
+  bng + 50 cavern maps sweeping complexity 10..90 (tools/gen_mapgen_corpus.py;
+  corpus in ~/arty-mapgen-corpus, NOT in the repo).
+  Stats harness: tools/terrain_stats.py + src/bin/dump_terrain.rs (dump-terrain
+  bin) compare per-class silhouette metrics (solid fraction, surface roughness
+  p50/p95, >60px cliff fraction, overhang fraction, chunk/chamber counts,
+  surface span, spectral low-freq share, edge-water) over 150 corpus maps vs
+  200 of our seeds. Crash-resumable via --cache (JSON lines).
+  Generator changes (all island-branch unless noted, MapGEN-measured targets):
+   - WATER AT BOTH ENDS GUARANTEED on every non-cavern map (user requirement,
+     matches corpus: 0/150 reference maps touch a side edge): edge erosion
+     amplitude 0.55 -> 3.2 (now dominates the depth ramp), water_end_px
+     180-350 -> 70-160 (corpus keeps ~96% ground coverage — thin gaps).
+     New guard: island_edges_are_open_water in tests/wa_collage_check.rs.
+   - GROUND_T 0.66 -> 0.58, DEPTH_RAMP 4.0 -> 3.0 (solid_frac 0.31 -> 0.35 vs
+     corpus 0.41; surf_span 176 -> 241px vs corpus 238 (bng) / 393 (island)).
+   - RELIEF_COMPRESSION 1.25 -> 1.15 (wa_templates.rs).
+   - Residual noise weight 0.15 -> 0.25 + new fine-bump term (freq 36, amp
+     0.10); blur r 4 -> 3 (rough_p50 1 -> 3px vs corpus 6 — the box blur caps
+     this; going further pockmarks contours).
+   - min_frag island 50 -> 4000 (n_chunks median 10 -> 5 vs corpus 2 —
+     confetti floaters gone, real stepping stones stay).
+   - Overhang shelves: probability 25 -> 40% (overhang_frac 0.07 -> 0.08,
+     corpus 0.13), thickness 9-19 -> 14-24px + wider anchor column (thin
+     tapered shelves read as artificial "flag poles").
+  MASK LIBRARY REBUILT (20 island + 8 cavern, all MapGEN-sourced): island0-13
+  REPLACED (old 0-9 came from land.dat with heavy baked-in sprite debris —
+  fruit rows, standing worms, props — which leaked into maps as floating
+  junk; old 10-13 had scaffold/pole artifacts), island14-19 + cavern4-7 NEW,
+  cavern0-1 replaced, cavern2-3 kept (watermark rect scrubbed in-place).
+  extract_wa_mask.py grew: --nonblack (MapGEN PNG binarization),
+  --clean-sprites (morphological opening r=6 + border/large component filter +
+  corner-watermark majority scrub), and cavern top-edge air fill
+  (fill_outside_sky). Gates: wa_collage_check 7/7 (incl. new edge test),
+  parity 23/23. Pushed as an UNVERSIONED WORKING-COPY BUILD to Miyoo .126
+  2026-07-10 (md5-verified; .110 untouched); Pi/server/GitHub not touched.
+  Remember: bump VERSION + REQUIRED_VERSION together at release (terrain
+  determinism contract).
+
 DEPLOYED 2026-07-10 (v0.5.4.426 + .427) — fire terrain-eating: ONLY BARRELS
   CARVE, and the carve is now as wide as the flame.
   ---------------------------------------------------------------------------
