@@ -1,28 +1,28 @@
 # Mini Mayhem — Project Status
 
-## IN PROGRESS 2026-07-10 — Fire terrain-eating: implemented, rate/duration NOT WA-calibrated
+## DEPLOYED 2026-07-10 — Fire terrain-eating: only barrels carve, carve as wide as the flame (v0.5.4.426 + .427)
 
-Molotov/barrel/crate fire now gradually eats terrain while burning (WA-style), reversing part
-of the 0.5.4.425 "no crater" behavior below — implemented in `step_fire_patches`
-(`src/game/state.rs`) via a small periodic `Crater::carve` while a `FirePatch` is landed.
-Added `FirePatch.landed_ticks` (new field, propagated through `NetFirePatch` in
-`src/net/msg.rs`, `build_state`/`apply_server_state` in `net_sync.rs`, and the parity
-checklist + test snapshots in `tests/parity.rs` per CLAUDE.md's sync rules). Pushed to Miyoo
-`.126` as an **unversioned working-copy build** (no `VERSION` bump) for testing — `.110` not
-touched, Pi/server/GitHub/Discord release unchanged at 0.5.4.425/f2f606b.
+Resolved by a real-WA reference clip (`assets/barrel.mp4`): the **petrol bomb / molotov does
+NOT eat terrain — only exploding BARREL fire does** (barrel flames carve a modest hollow while
+burning, on top of the barrel explosion's own crater). This corrected the earlier premise (that
+all fire carves and only the *rate* needed calibrating) which had sunk a long, fruitless
+reverse-engineering effort — see PROGRESS.txt for that history; it's now moot.
 
-**Current constants** (`step_fire_patches`): `BURN_CARVE_RADIUS=1.5`, `BURN_CARVE_INTERVAL=8`
-ticks, `BURN_CARVE_DURATION_TICKS=150` (5s @ 30fps, counted per-patch from when that patch
-lands — carving stops after, damage/burn continues). **These are a hand-tuned guess, not a
-measured match to real WA** — user asked to match WA's actual rate/duration, but every
-attempt to measure it (both static RE and live Wine-rig dynamic capture) failed to produce a
-trustworthy number this session. Full history, what was tried, and why it failed is in
-`PROGRESS.txt` under "TASK IN PROGRESS (2026-07-10)" — read that before resuming, don't
-re-derive from scratch. Short version: static RE dead-ended (only found sprite filenames, no
-constants); the Wine rig repeatedly defeated automated timing/camera tracking (per-turn
-camera hard-cuts, short post-fire retreat window, pre-turn input lockout, unreliable
-real-time↔game-time ratio). User is going to try a different model/session for the
-calibration step next.
+- **v0.5.4.426** (commit 6e7752d): added `FirePatch.carves: bool` (`src/game/state.rs`), set
+  `true` **only** at the barrel spawn (`explode_barrel`) and `false` for molotov
+  (`spawn_molotov_fire`) and crate-spray fire; the `step_fire_patches` carve is gated on it.
+  `carves` synced through `NetFirePatch`/`build_state`/`apply_server_state`/parity checklist +
+  snapshot. New regression test `only_carving_fire_eats_terrain` (`tests/fire_reaction.rs`);
+  also repaired stale `FirePatch` constructions in `flame_render.rs`/`fire_reaction.rs`
+  (missing `landed_ticks` from the prior uncommitted carve work).
+- **v0.5.4.427** (commit ab3af5a): `BURN_CARVE_RADIUS` `1.5 → 9.0` so the eaten channel matches
+  the ~18px visible flame-sprite width instead of a 3px sliver. `BURN_CARVE_INTERVAL=8` and
+  `BURN_CARVE_DURATION_TICKS=150` (≈5s) unchanged — the video confirmed barrel-fire
+  depth/duration at those values are already about right.
+
+Gates: `cargo check --tests` clean, parity 23/23, fire_reaction 4/4, flame_render 1/1.
+Deployed to Pi/game-server/GitHub/Discord/Miyoo `.126` (hash-verified). Miyoo **`.110` was
+offline** — still on .426, needs a push when it's back on the LAN.
 
 ## Infra fix 2026-07-10 (non-gameplay, no code changes) — Windows backups silently broken since 2026-06-30
 
