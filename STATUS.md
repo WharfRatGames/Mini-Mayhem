@@ -1,5 +1,51 @@
 # Mini Mayhem — Project Status
 
+## DEPLOYED 2026-07-10 — Map-gen calibrated against a real MapGEN reference corpus; mask library rebuilt; 15 new scenery objects (v0.5.4.428)
+
+Commit 4a1bbcd, deployed via `deploy/update_server.sh` (Pi server + changelog + GitHub release +
+Windows bundle + Discord; Miyoo `.126` hash-verified OK, **`.110` offline — still on .427, push
+when it's back**).
+
+**Reference corpus + stats harness (new tooling):** installed `assets/InstallMapGen.exe` under
+Wine; `MapGen.exe` (in `assets/Worms Armageddon/User/MapGen/`) driven headless with a **custom
+settings file** (`-s FILE -o OUT.png -w`; keys `type/width/height/objects/complexity/floaters/
+water` — `objects 0` kills nearly all baked decorative sprites at the source). Generated 150
+reference maps (50 island / 50 bng / 50 cavern, complexity swept 10–90) via
+`tools/gen_mapgen_corpus.py` into `~/arty-mapgen-corpus` (kept out of the repo). New
+`tools/terrain_stats.py` + `dump-terrain` bin (`src/bin/dump_terrain.rs`) compare per-class
+silhouette metrics (solid fraction, roughness p50/p95, cliff/overhang fractions, chunk/chamber
+counts, surface span, spectral share, edge-water) between the corpus and our seeds; crash-
+resumable via `--cache`.
+
+**Generator changes (island branch, corpus-measured):** water at both map ends GUARANTEED on
+every non-cavern map (edge erosion 0.55 → 3.2 now dominates the depth ramp; margins narrowed
+180–350 → 70–160px to match the corpus' thin gaps; new `island_edges_are_open_water` test);
+`GROUND_T` 0.66→0.58, `DEPTH_RAMP` 4.0→3.0, `RELIEF_COMPRESSION` 1.25→1.15 (surface span
+176→241px vs corpus 238–393); residual noise 0.15→0.25 + new fine-bump term (freq 36, amp
+0.10), blur r 4→3 (rough_p50 1→3px vs corpus 6 — box blur caps it, accepted gap); island
+`min_frag` 50→4000 (floating confetti gone, median chunks 10→5 vs corpus 2); overhang shelves
+25→40% odds, 14–24px thick with wider anchor columns (thin "flag-pole" shelves eliminated).
+
+**Mask library rebuilt (20 island + 8 cavern, all MapGEN-sourced):** old island0–9 (land.dat
+era) carried heavy baked-in sprite debris (fruit rows, standing worms, props) that leaked into
+generated maps as floating junk; island10–13 had scaffold/pole artifacts. ALL replaced; 6 island
++ 4 cavern masks added. `tools/extract_wa_mask.py` grew `--nonblack` (MapGEN PNG binarization),
+`--clean-sprites` (morphological opening + border/large component filter + corner-watermark
+majority scrub) and cavern top-edge air fill (`fill_outside_sky`). bng output is NOT usable as
+mask source (its surface props can't be disabled) — stats only.
+
+**Also in .428:** barrel fire carve window 150→50 ticks (≈1/3 depth — device feedback);
+boulder art resized to its (12,11) footprint so soldiers stand on top and barrels/mines rest on
+top instead of embedding mid-sprite; bone pile/ribcage capped at 2× scale; pine tree canopy +
+cairn stone gaps filled; mushroom cap/sunflower had channel-reversed colours (rendered blue/cyan
+in game) — fixed, and the scenery-gallery PNG writer now emits true RGB (it was silently
+swapping R/B, which had been masking those); **15 new scenery objects** (hay bale, scarecrow,
+well, wheelbarrow, beehive / campfire, cartwheel, ram skull, menhir, signpost / minecart, geode,
+lantern post, glow mushrooms, stalagmite) — theme counts now 13/12/12.
+
+Gates: parity 23/23, wa_collage_check 7/7. Terrain determinism: mask + constant + scenery-count
+changes alter every existing seed's map → VERSION + REQUIRED_VERSION bumped together to .428.
+
 ## DEPLOYED 2026-07-10 — Fire terrain-eating: only barrels carve, carve as wide as the flame (v0.5.4.426 + .427)
 
 Resolved by a real-WA reference clip (`assets/barrel.mp4`): the **petrol bomb / molotov does

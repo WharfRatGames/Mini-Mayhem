@@ -1,12 +1,10 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.425 (unchanged — NO version bump). Miyoo .126 has an
-  UNVERSIONED WORKING-COPY BUILD pushed 2026-07-10 with fire terrain-eating
-  changes below; .110 not touched this session. Pi/server/GitHub/Discord still
-  on the 0.5.4.425 / commit f2f606b release.
+Current version: 0.5.4.428 (commit 4a1bbcd, DEPLOYED 2026-07-10 to Pi/server/
+  GitHub/Discord/Windows bundle/Miyoo .126). Miyoo .110 was OFFLINE at deploy
+  time — still on .427, push when it's back on the LAN.
 
-IN WORKING TREE 2026-07-10 (NO version bump — VERSION stays 0.5.4.427; bump to
-  .428 at release since terrain determinism changes) — TERRAIN
+DEPLOYED 2026-07-10 (v0.5.4.428, commit 4a1bbcd) — TERRAIN
   CALIBRATED AGAINST A REAL MapGEN REFERENCE CORPUS + mask library rebuilt.
   ---------------------------------------------------------------------------
   Reference corpus: installed the new assets/InstallMapGen.exe (Inno) under
@@ -47,10 +45,13 @@ IN WORKING TREE 2026-07-10 (NO version bump — VERSION stays 0.5.4.427; bump to
   --clean-sprites (morphological opening r=6 + border/large component filter +
   corner-watermark majority scrub), and cavern top-edge air fill
   (fill_outside_sky). Gates: wa_collage_check 7/7 (incl. new edge test),
-  parity 23/23. Pushed as an UNVERSIONED WORKING-COPY BUILD to Miyoo .126
-  2026-07-10 (md5-verified; .110 untouched); Pi/server/GitHub not touched.
-  Remember: bump VERSION + REQUIRED_VERSION together at release (terrain
-  determinism contract).
+  parity 23/23. VERSION + REQUIRED_VERSION bumped together to .428 (terrain
+  determinism contract). Same release also includes: barrel-fire carve window
+  150->50 ticks (~1/3 depth, on-device feedback); boulder art resized to its
+  hitbox (stand on top, barrels/mines rest on top); bone pile + ribcage capped
+  at 2x scale; pine tree + cairn silhouette gaps filled; mushroom/sunflower
+  channel-reversed colours fixed (gallery writer now emits true RGB); 15 new
+  scenery objects (theme counts 13/12/12).
 
 DEPLOYED 2026-07-10 (v0.5.4.426 + .427) — fire terrain-eating: ONLY BARRELS
   CARVE, and the carve is now as wide as the flame.

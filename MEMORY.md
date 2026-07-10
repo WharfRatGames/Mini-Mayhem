@@ -120,6 +120,26 @@
   as an in-memory sliding window (_rate_limited/_rate_hits) — resets on API
   restart, no DB persistence. Deployed v0.5.4.423.
 
+- Scenery sprite colours are TRUE RGB via Bgra::new(r,g,b) — the desktop and
+  Miyoo pipelines render the struct's fields faithfully. The scenery-gallery
+  writer silently swapped R/B until v0.5.4.428, which had masked two sprites
+  authored with reversed channels (mushroom cap, sunflower — they really
+  rendered blue/cyan in game). When adding sprite art, trust the fixed
+  gallery: what the sheet shows is what the game shows.
+- Scenery footprint/scale/variant-count changes are TERRAIN-DETERMINISM
+  changes: placement clearance at generation time uses footprint(), so any
+  tweak shifts scenery (and spawn interplay) for existing seeds -> bump
+  VERSION + REQUIRED_VERSION like any map-gen change.
+- MapGEN reference corpus workflow (v0.5.4.428): MapGen.exe (in assets/Worms
+  Armageddon/User/MapGen/) runs headless under Wine/Xvfb with a settings file
+  — wine MapGen.exe -s FILE -o OUT.png -w; keys type/width/height/objects/
+  complexity/floaters/water; `objects 0` + `floaters 0` = near-sprite-free
+  1920x696 silhouettes. tools/gen_mapgen_corpus.py regenerates the corpus
+  (~/arty-mapgen-corpus, never committed); tools/terrain_stats.py + the
+  dump-terrain bin compare our seeds' silhouette metrics against it. bng-type
+  output keeps its surface props regardless of settings — stats only, never a
+  mask source.
+
 ## Services (Pi)
 - arty-api.service: systemd auto-start
 - Game server: manual — fuser -k 7777/tcp 2>/dev/null; sleep 1; RUST_LOG=info ~/mayhem-server/server

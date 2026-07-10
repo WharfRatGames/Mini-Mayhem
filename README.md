@@ -6,9 +6,10 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 
 ### Gameplay
 - Every map is a unique collage of real Worms Armageddon terrain art — each seed splices, warps, and crossfades segments of extracted WA silhouettes into a novel map; cavern maps (~20%) carve chambers from the same art, inverted; chasms, overhangs, and caves stay seed-random on any map (v0.5.4.392–.397)
+- Map generation calibrated against a measured corpus of real WA MapGen output (v0.5.4.428) — a 28-mask silhouette library rebuilt from clean sources, tuned relief/roughness/solidity, guaranteed open water at both map edges, and far fewer floating fragments
 - Maps are twice the screen height — terrain spans 700px vertically with peaks near the top and deep caves/canyons; camera scrolls vertically to follow the action (L1+Up/Down to pan; R1+Up/Down to pan with snap-back)
 - Soldiers spawn at varied heights — cave ledges, tunnels, and mid-terrain, not just the topmost surface
-- Large themed pixel-art scenery objects (2–3× scale) — styled per WA template / cavern mode (pastoral, rugged, underground); solid obstacles you can stand on and shoot, always seated on the ground (cave floors on cavern maps), never floating or embedded
+- Large themed pixel-art scenery objects (2–3× scale, 37 unique decorations across pastoral/rugged/underground themes — wells, scarecrows, campfires, minecarts, menhirs, beehives and more as of v0.5.4.428); solid obstacles you can stand on and shoot, always seated on the ground (cave floors on cavern maps), never floating or embedded
 - Soldiers can stand on top of other soldiers — square landings stand on the other's head instead of always sliding off
 - Fully destructible terrain — craters, tunnels, and collapses persist
 - Turn-based flow: Acting → Watching → Retreat → Ending

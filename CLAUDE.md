@@ -123,10 +123,17 @@ silhouette as a collage of real WA terrain art (`src/world/wa_templates.rs`:
 `collage_params`/`collage_density` — per-seed segments spliced, domain-warped and
 crossfaded from baked 1-bpp masks in `src/world/wa_masks/`); cavern maps (~20% of seeds)
 carve chambers from the same collage, inverted. Both branches box-blur the continuous
-density field before thresholding. Grow the mask library with `tools/extract_wa_mask.py`
-(parses WA's `land.dat` collision mask, or a PNG); sanity tests live in
-`tests/wa_collage_check.rs`. `from_heightmap` is a `#[cfg(test)]`-only fixture, not
-a live generator; the old `generate_worms` has been removed.
+density field before thresholding. The mask library (20 island + 8 cavern as of
+v0.5.4.428) is sourced from WA MapGen.exe run headless under Wine with a settings file
+(`objects 0` — near-sprite-free silhouettes; see `tools/gen_mapgen_corpus.py`); bake masks
+with `tools/extract_wa_mask.py` (land.dat, or a PNG with `--nonblack --clean-sprites`).
+Generator constants are calibrated against a measured MapGEN reference corpus —
+rerun `tools/terrain_stats.py` (with the `dump-terrain` bin) before retuning them.
+Non-cavern maps must keep open water at BOTH side edges. Scenery footprints/variant
+counts also feed seed-derived placement — changing them is a determinism change too.
+Sanity tests live in `tests/wa_collage_check.rs`. `from_heightmap` is a
+`#[cfg(test)]`-only fixture, not a live generator; the old `generate_worms` has been
+removed.
 
 ## Build / test
 
