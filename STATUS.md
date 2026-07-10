@@ -1,6 +1,52 @@
 # Mini Mayhem — Project Status
 
-## Working tree (2026-07-09) — Fire overhaul — pushed to .126 for testing, NOT deployed, no VERSION bump
+## IN PROGRESS 2026-07-10 — Fire terrain-eating: implemented, rate/duration NOT WA-calibrated
+
+Molotov/barrel/crate fire now gradually eats terrain while burning (WA-style), reversing part
+of the 0.5.4.425 "no crater" behavior below — implemented in `step_fire_patches`
+(`src/game/state.rs`) via a small periodic `Crater::carve` while a `FirePatch` is landed.
+Added `FirePatch.landed_ticks` (new field, propagated through `NetFirePatch` in
+`src/net/msg.rs`, `build_state`/`apply_server_state` in `net_sync.rs`, and the parity
+checklist + test snapshots in `tests/parity.rs` per CLAUDE.md's sync rules). Pushed to Miyoo
+`.126` as an **unversioned working-copy build** (no `VERSION` bump) for testing — `.110` not
+touched, Pi/server/GitHub/Discord release unchanged at 0.5.4.425/f2f606b.
+
+**Current constants** (`step_fire_patches`): `BURN_CARVE_RADIUS=1.5`, `BURN_CARVE_INTERVAL=8`
+ticks, `BURN_CARVE_DURATION_TICKS=150` (5s @ 30fps, counted per-patch from when that patch
+lands — carving stops after, damage/burn continues). **These are a hand-tuned guess, not a
+measured match to real WA** — user asked to match WA's actual rate/duration, but every
+attempt to measure it (both static RE and live Wine-rig dynamic capture) failed to produce a
+trustworthy number this session. Full history, what was tried, and why it failed is in
+`PROGRESS.txt` under "TASK IN PROGRESS (2026-07-10)" — read that before resuming, don't
+re-derive from scratch. Short version: static RE dead-ended (only found sprite filenames, no
+constants); the Wine rig repeatedly defeated automated timing/camera tracking (per-turn
+camera hard-cuts, short post-fire retreat window, pre-turn input lockout, unreliable
+real-time↔game-time ratio). User is going to try a different model/session for the
+calibration step next.
+
+## Infra fix 2026-07-10 (non-gameplay, no code changes) — Windows backups silently broken since 2026-06-30
+
+Both Windows-side backup Scheduled Tasks (`ArtyBackup`, `Pi4doomBackup`) had been silently
+no-oping every run since 2026-06-30. Root cause: PowerShell's execution policy on the Windows
+machine blocked all `.ps1` scripts outright ("running scripts is disabled on this system") —
+invisible because the tasks launch via a hidden `wscript.exe`/`-WindowStyle 0` wrapper that
+swallows console errors. Fixed with `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` on
+the Windows box. While diagnosing (needed inbound SSH to the Windows machine to run
+diagnostics), also found and fixed an unrelated Windows Firewall misconfiguration: a
+`Block SSH WAN` rule was scoped to `RemoteAddress=Any` instead of the built-in `Internet`
+keyword, so it was blocking LAN SSH too, not just WAN as intended — narrowed its scope so SSH
+from the internet is still blocked but LAN access works.
+
+Verified both tasks end-to-end post-fix: `ArtyBackup` produced a fresh `arty-*.tar.gz` and then
+auto-fired successfully on its own next hourly Task Scheduler trigger (`Last Result: 0`).
+`Pi4doomBackup` pulled a fresh `pi4doom-*.img.gz` whose size (12,003,436,314 bytes) matches the
+source file on the build machine exactly. Both tasks confirmed `Scheduled Task State: Enabled`
+with correct triggers (hourly / every-3-days). Caveat: both are `Logon Mode: Interactive only`
+— they silently skip their run if nobody is logged into the Windows desktop session at trigger
+time; switching to "run whether logged on or not" would need the account password stored in
+the task and wasn't done.
+
+## Version: 0.5.4.425 DEPLOYED to Pi/server/GitHub/Discord (2026-07-09, commit f2f606b) — Molotov fire overhaul
 
 Reworked fire so soldiers caught in a Molotov can survive and get out instead of being
 trapped and instakilled. All in `step_fire_patches` (`src/game/state.rs`) plus the fire

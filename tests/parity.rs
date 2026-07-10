@@ -79,7 +79,7 @@ struct BarrelSnap { pos: (f32, f32), hp: i32 }
 struct BlackHoleSnap { pos: (f32, f32), lifetime: u32 }
 
 #[derive(Debug, PartialEq)]
-struct FirePatchSnap { pos: (f32, f32), vel: (f32, f32), landed: bool, lifetime: u32 }
+struct FirePatchSnap { pos: (f32, f32), vel: (f32, f32), landed: bool, lifetime: u32, landed_ticks: u32, carves: bool }
 
 #[derive(Debug, PartialEq)]
 struct RopeSnap { anchor: (f32, f32), hook: (f32, f32), flying: bool, length: f32, wrap: Vec<(f32, f32)> }
@@ -344,9 +344,10 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
 
     // ── fire patches ──────────────────────────────────────────────────────────
     let fire_patches = fire_patches.iter().map(|f| {
-        let arty::game::state::FirePatch { pos, vel, landed, lifetime } = f;
+        let arty::game::state::FirePatch { pos, vel, landed, lifetime, landed_ticks, carves } = f;
         FirePatchSnap {
             pos: (pos.x, pos.y), vel: (vel.x, vel.y), landed: *landed, lifetime: *lifetime,
+            landed_ticks: *landed_ticks, carves: *carves,
         }
     }).collect();
 
@@ -555,6 +556,8 @@ fn round_trip_preserves_synced_state() {
         vel: Vec2::new(2.0, -1.5),
         landed: false,
         lifetime: 150,
+        landed_ticks: 0,
+        carves: true,
     });
 
     // Rope (flying hook)
@@ -737,8 +740,8 @@ fn mines_in_all_states_survive_round_trip() {
 fn fire_patches_survive_round_trip() {
     use arty::game::state::FirePatch;
     let mut server = build_game(55);
-    server.fire_patches.push(FirePatch { pos: WorldPos::new(300.0, 150.0), vel: Vec2::new(3.5, -2.0), landed: false, lifetime: 180 });
-    server.fire_patches.push(FirePatch { pos: WorldPos::new(500.0, 320.0), vel: Vec2::new(0.0,  0.0), landed: true,  lifetime: 90  });
+    server.fire_patches.push(FirePatch { pos: WorldPos::new(300.0, 150.0), vel: Vec2::new(3.5, -2.0), landed: false, lifetime: 180, landed_ticks: 0, carves: true });
+    server.fire_patches.push(FirePatch { pos: WorldPos::new(500.0, 320.0), vel: Vec2::new(0.0,  0.0), landed: true,  lifetime: 90,  landed_ticks: 0, carves: true });
     assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
 }
 

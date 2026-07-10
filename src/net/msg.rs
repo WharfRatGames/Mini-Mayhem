@@ -184,12 +184,14 @@ pub struct NetBlackHole {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetFirePatch {
-    pub x:          f32,
-    pub y:          f32,
-    pub lifetime:   u32,
-    pub landed:     bool,
-    pub vel_x:      f32,
-    pub vel_y:      f32,
+    pub x:            f32,
+    pub y:            f32,
+    pub lifetime:     u32,
+    pub landed:       bool,
+    pub vel_x:        f32,
+    pub vel_y:        f32,
+    pub landed_ticks: u32,
+    pub carves:       bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

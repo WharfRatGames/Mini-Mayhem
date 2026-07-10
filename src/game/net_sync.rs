@@ -132,6 +132,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
         fire_patches: game.fire_patches.iter().map(|f| NetFirePatch {
             x: f.pos.x, y: f.pos.y, lifetime: f.lifetime,
             landed: f.landed, vel_x: f.vel.x, vel_y: f.vel.y,
+            landed_ticks: f.landed_ticks, carves: f.carves,
         }).collect(),
         rope: game.rope.as_ref().map(|r| NetRope {
             anchor_x: r.anchor.x, anchor_y: r.anchor.y,
@@ -455,6 +456,8 @@ pub fn apply_server_state(
             vel: Vec2::new(nf.vel_x, nf.vel_y),
             landed: nf.landed,
             lifetime: nf.lifetime,
+            landed_ticks: nf.landed_ticks,
+            carves: nf.carves,
         }).collect();
     }
 
@@ -717,7 +720,7 @@ fn _blackhole_parity_checklist(h: &crate::game::state::BlackHole) {
 fn _firepatch_parity_checklist(f: &crate::game::state::FirePatch) {
     let crate::game::state::FirePatch {
         // ── Synced via NetFirePatch ──
-        pos: _, vel: _, landed: _, lifetime: _,
+        pos: _, vel: _, landed: _, lifetime: _, landed_ticks: _, carves: _,
     } = f;
 }
 

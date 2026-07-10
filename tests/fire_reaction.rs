@@ -23,6 +23,55 @@ fn build() -> GameState {
 }
 
 #[test]
+fn only_carving_fire_eats_terrain() {
+    // WA parity (assets/barrel.mp4): barrel fire (carves:true) gradually eats
+    // terrain while landed; molotov/petrol fire (carves:false) never does.
+    let input = InputState::new();
+
+    // Find a solid pixel to sit a flame on.
+    let mut g = build();
+    let fx = g.teams[0].soldiers[0].pos.x as i32;
+    let fy0 = g.teams[0].soldiers[0].pos.y as i32;
+    let (sx, sy) = (fx, (fy0..fy0 + 40).find(|&y| g.terrain.is_solid(fx, y))
+        .expect("no solid ground under soldier"));
+
+    // Non-carving flame: terrain stays intact, nothing logged to clients.
+    let before = g.crater_log.len();
+    g.fire_patches = vec![FirePatch {
+        pos: WorldPos { x: sx as f32, y: sy as f32 }, vel: Vec2 { x: 0.0, y: 0.0 },
+        landed: true, lifetime: 400, landed_ticks: 0, carves: false,
+    }];
+    g.tick = 0;
+    for _ in 0..30 {
+        if g.fire_patches.is_empty() {
+            g.fire_patches.push(FirePatch {
+                pos: WorldPos { x: sx as f32, y: sy as f32 }, vel: Vec2 { x: 0.0, y: 0.0 },
+                landed: true, lifetime: 400, landed_ticks: 0, carves: false });
+        }
+        server_tick(&mut g, &input, None, None);
+    }
+    assert_eq!(g.crater_log.len(), before, "non-carving fire logged a crater");
+
+    // Carving flame on the same spot: terrain erodes (crater(s) logged).
+    let mut g2 = build();
+    let before2 = g2.crater_log.len();
+    g2.fire_patches = vec![FirePatch {
+        pos: WorldPos { x: sx as f32, y: sy as f32 }, vel: Vec2 { x: 0.0, y: 0.0 },
+        landed: true, lifetime: 400, landed_ticks: 0, carves: true,
+    }];
+    g2.tick = 0;
+    for _ in 0..30 {
+        if g2.fire_patches.is_empty() {
+            g2.fire_patches.push(FirePatch {
+                pos: WorldPos { x: sx as f32, y: sy as f32 }, vel: Vec2 { x: 0.0, y: 0.0 },
+                landed: true, lifetime: 400, landed_ticks: 0, carves: true });
+        }
+        server_tick(&mut g2, &input, None, None);
+    }
+    assert!(g2.crater_log.len() > before2, "carving (barrel) fire did not eat terrain");
+}
+
+#[test]
 fn grounded_soldier_slides_and_burns_faster() {
     let mut game = build();
     // Put team-0 soldier 0 on a known solid surface, idle.
@@ -39,6 +88,8 @@ fn grounded_soldier_slides_and_burns_faster() {
         vel: Vec2 { x: 0.0, y: 0.0 },
         landed: true,
         lifetime: 400,
+        landed_ticks: 0,
+        carves: false,
     }];
 
     // Drive the full sim (soldier physics + fire) via server_tick so hops
@@ -52,6 +103,7 @@ fn grounded_soldier_slides_and_burns_faster() {
             game.fire_patches.push(FirePatch {
                 pos: WorldPos { x: sx - 1.0, y: sy },
                 vel: Vec2 { x: 0.0, y: 0.0 }, landed: true, lifetime: 400,
+                landed_ticks: 0, carves: false,
             });
         }
         server_tick(&mut game, &input, None, None);
@@ -92,6 +144,7 @@ fn burning_soldiers_separate_from_a_clump() {
         game.fire_patches.push(FirePatch {
             pos: WorldPos { x: base.x, y: base.y },
             vel: Vec2 { x: 0.0, y: 0.0 }, landed: true, lifetime: 1,
+            landed_ticks: 0, carves: false,
         });
         server_tick(&mut game, &input, None, None);
     }

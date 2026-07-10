@@ -202,10 +202,15 @@ pub struct BlackHole {
 /// A fragment of fire spawned by a barrel explosion — flies outward, lands, deals DoT.
 #[derive(Debug, Clone)]
 pub struct FirePatch {
-    pub pos:      WorldPos,
-    pub vel:      crate::world::Vec2,
-    pub landed:   bool,
-    pub lifetime: u32,  // ticks remaining (~150–240 = 5–8 s at 30 Hz)
+    pub pos:         WorldPos,
+    pub vel:         crate::world::Vec2,
+    pub landed:      bool,
+    pub lifetime:    u32,  // ticks remaining (~150–240 = 5–8 s at 30 Hz)
+    pub landed_ticks: u32, // ticks spent landed — gates terrain carving to the first few seconds
+    // WA parity: only BARREL fire eats into terrain. Petrol/molotov fire and
+    // crate-spray fire burn and damage but leave terrain intact (verified against
+    // real WA footage — assets/barrel.mp4). Set true only at the barrel spawn site.
+    pub carves:      bool,
 }
 
 /// Torch angle (relative to soldier facing direction).
@@ -580,7 +585,7 @@ impl GameState {
             let cpos = crate_.pos;
             let mut rng = (cpos.x as u64).wrapping_mul(0x6364136223846885)
                 .wrapping_add((cpos.y as u64).wrapping_mul(0x9e3779b97f4a7c15));
-            let count = 2 + (rng % 4) as usize;
+            let count = 8 + (rng % 8) as usize; // WA-style: a destroyed crate throws a real spray of fire
             for _ in 0..count {
                 rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
                 let angle = (rng >> 33) as f32 / (u32::MAX as f32) * std::f32::consts::TAU;
@@ -593,6 +598,8 @@ impl GameState {
                     vel: crate::world::Vec2::new(angle.cos() * speed, angle.sin() * speed - 2.0),
                     landed: false,
                     lifetime: life,
+                    landed_ticks: 0,
+                    carves: false, // crate-spray fire does not eat terrain (WA)
                 });
             }
         }
@@ -623,9 +630,11 @@ impl GameState {
         let radius  = kind.blast_radius() * radius_scale;
         let max_dmg = (kind.max_damage() as f32 * dmg_scale) as u32;
 
-        // The Molotov leaves NO crater — a dug-out pit combined with the fire pool
-        // becomes an inescapable death trap. WA's petrol bomb barely scratches the
-        // terrain; here the fire does all the work, so skip carving entirely.
+        // The Molotov leaves NO upfront blast crater — a dug-out pit combined with
+        // the fire pool becomes an inescapable death trap. WA's petrol bomb barely
+        // scratches the terrain on impact; here the fire does all the work instead,
+        // gradually eating a shallow trench over its lifetime (see the per-tick
+        // carve in step_fire_patches) rather than digging one deep pit up front.
         // (crater_log drives client-side carving too, so not pushing keeps every
         // path crater-free without a desync.)
         if kind != WeaponKind::MolotovCocktail {
@@ -756,7 +765,7 @@ impl GameState {
             let cpos = crate_.pos;
             let mut rng = (cpos.x as u64).wrapping_mul(0x6364136223846885)
                 .wrapping_add((cpos.y as u64).wrapping_mul(0x9e3779b97f4a7c15));
-            let count = 2 + (rng % 4) as usize; // 2–5 patches
+            let count = 8 + (rng % 8) as usize; // WA-style: a real spray of fire, not a wisp
             for _ in 0..count {
                 rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
                 let angle = (rng >> 33) as f32 / (u32::MAX as f32) * std::f32::consts::TAU;
@@ -769,6 +778,8 @@ impl GameState {
                     vel: crate::world::Vec2::new(angle.cos() * speed, angle.sin() * speed - 2.0),
                     landed: false,
                     lifetime: life,
+                    landed_ticks: 0,
+                    carves: false, // crate-spray fire does not eat terrain (WA)
                 });
             }
         }
@@ -1642,6 +1653,8 @@ impl GameState {
                 vel: Vec2::new(angle.cos() * speed, angle.sin() * speed - 1.5),
                 landed: false,
                 lifetime: life,
+                    landed_ticks: 0,
+                carves: false, // molotov/petrol fire does not eat terrain (WA)
             });
         }
         self.emit_sound(crate::audio::Sfx::Explosion);
@@ -1676,7 +1689,7 @@ impl GameState {
         // Spawn fire patches — deterministic scatter using position-seeded LCG
         let mut rng = (pos.x as u64).wrapping_mul(0x6364136223846885)
             .wrapping_add((pos.y as u64).wrapping_mul(0x9e3779b97f4a7c15));
-        let count = 6 + (rng % 5) as usize; // 6–10 patches (fewer but bigger)
+        let count = 18 + (rng % 11) as usize; // WA-style: a barrel throws a big splash of fire, 18–28 patches
         for _ in 0..count {
             rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
             let angle = (rng >> 33) as f32 / (u32::MAX as f32) * std::f32::consts::TAU;
@@ -1689,6 +1702,8 @@ impl GameState {
                 vel: Vec2::new(angle.cos() * speed, angle.sin() * speed - 3.0), // bias upward
                 landed: false,
                 lifetime: life,
+                    landed_ticks: 0,
+                carves: true, // barrel fire DOES eat terrain (WA — assets/barrel.mp4)
             });
         }
     }
@@ -1861,6 +1876,16 @@ impl GameState {
         const HOP_INTERVAL:  u32 = 14;   // hop every 14 ticks (~0.47 s) while burning
         const HOP_VX:        f32 = 4.0;  // horizontal hop speed — big distance to clear peaks
         const HOP_VY:        f32 = 4.0;  // upward hop speed (a touch lower than before)
+        // WA-style gradual burn: a landed ember eats terrain away instead of
+        // digging one deep pit up front (see the removed upfront crater in
+        // apply_explosion_scaled). Tuned down from an initial WA-footage-driven
+        // pass that ate far too much (whole terrain chunks) — capped to the
+        // first few seconds of landing so a 2.5-minute molotov burn doesn't
+        // keep eroding for its entire lifetime. Staggered cadence across
+        // patches keeps 48 molotov patches from all carving on the same tick.
+        const BURN_CARVE_RADIUS:   f32 = 1.5;
+        const BURN_CARVE_INTERVAL: u32 = 8;
+        const BURN_CARVE_DURATION_TICKS: u32 = 150; // 5s @ 30fps — carving stops after this
 
         let wind = self.wind.value() * 0.05;
 
@@ -1912,6 +1937,7 @@ impl GameState {
                 }
             } else {
                 // ── Grounded: WA-style terrain sliding ──────────────────────
+                patch.landed_ticks = patch.landed_ticks.saturating_add(1);
                 // Gravity + tiny wind keep pulling; fire walks downhill into pits.
                 patch.vel.x += wind * WIND_GROUND;
                 patch.vel.y = (patch.vel.y + GRAVITY).min(6.0);
@@ -1951,6 +1977,19 @@ impl GameState {
                         // Completely blocked — settled in a pit, zero velocity
                         patch.vel = crate::world::Vec2::new(0.0, 0.0);
                     }
+                }
+
+                // Gradually eat into the terrain at the ember's current spot,
+                // but only for the first BURN_CARVE_DURATION_TICKS after landing
+                // — after that the ember keeps burning/damaging but stops
+                // digging. Staggered per-patch (offset by index i) so a
+                // 48-patch molotov burst doesn't carve everywhere on the same tick.
+                if patch.carves
+                    && patch.landed_ticks <= BURN_CARVE_DURATION_TICKS
+                    && (self.tick + i as u32) % BURN_CARVE_INTERVAL == 0 {
+                    let crater = Crater::new(patch.pos.x, patch.pos.y, BURN_CARVE_RADIUS);
+                    crater.carve(&mut self.terrain);
+                    self.crater_log.push((patch.pos.x, patch.pos.y, BURN_CARVE_RADIUS));
                 }
 
                 // Mark soldiers standing in this flame as burning and accumulate a

@@ -1,8 +1,107 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.424 DEPLOYED to Pi/server/GitHub/Discord (2026-07-08,
-  commit fe17553). Miyoo push: .126 OK (hash verified), .110 unreachable
-  (offline on LAN, push pending once back online).
+Current version: 0.5.4.425 (unchanged — NO version bump). Miyoo .126 has an
+  UNVERSIONED WORKING-COPY BUILD pushed 2026-07-10 with fire terrain-eating
+  changes below; .110 not touched this session. Pi/server/GitHub/Discord still
+  on the 0.5.4.425 / commit f2f606b release.
+
+TASK RESOLVED (2026-07-10) — fire terrain-eating: ONLY BARRELS CARVE, NOT
+  MOLOTOV. Working tree, NOT yet built/deployed (needs VERSION bump — wire change).
+  ---------------------------------------------------------------------------
+  User clarified from real WA footage (assets/barrel.mp4): the petrol bomb /
+  molotov does NOT eat terrain — only BARREL fire does. (Barrel flames carve a
+  modest notch ~1 worm-height deep, gradually over ~5-8s, on top of the barrel
+  explosion's own crater — measured from the video by grey-terrain segmentation
+  over time.) FIX: added FirePatch.carves:bool (src/game/state.rs), true ONLY at
+  the barrel spawn (explode_barrel), false for molotov (spawn_molotov_fire) and
+  crate-spray fire; the step_fire_patches carve is now gated on patch.carves.
+  Existing carve constants (RADIUS=1.5, INTERVAL=8, DURATION_TICKS=150 ≈5s) left
+  AS-IS — video confirmed barrel-fire duration/depth already about right; the
+  only bug was the missing source gate. carves synced through
+  NetFirePatch/build_state/apply_server_state/parity checklist+snapshot. New
+  test only_carving_fire_eats_terrain (tests/fire_reaction.rs). Also repaired
+  stale FirePatch constructions in tests/flame_render.rs + fire_reaction.rs
+  (missing landed_ticks from the prior uncommitted carve work). Gates: cargo
+  check --tests clean, parity 23/23, fire_reaction 4/4, flame_render 1/1.
+  NOTE: the extensive WA memory-RE saga to "calibrate the carve rate" is now
+  MOOT — its premise (all fire carves, just need the rate) was wrong.
+
+  Prior context: gradual-carve was implemented in step_fire_patches
+  (src/game/state.rs) via a small periodic Crater::carve while a FirePatch is
+  landed, gated by FirePatch.landed_ticks (added to the StateMsg/net_sync.rs/
+  tests/parity.rs sync checklists — see CLAUDE.md's "compile-time forcing
+  function" section for why every FirePatch field addition touches those files).
+
+  Current tuned constants (in step_fire_patches, NOT WA-measured — see below):
+    BURN_CARVE_RADIUS = 1.5, BURN_CARVE_INTERVAL = 8 ticks,
+    BURN_CARVE_DURATION_TICKS = 150 (5s @ 30fps — carving stops after this,
+    per-patch, counted from when THAT patch lands, not from ignition).
+
+  History this session: first pass used radius=5.0/interval=3 based on one
+  Wine-rig WA observation that turned out to be an uncapped full-lifetime burn
+  (molotov fire lasts ~2.5min in Arty) — massively over-corrected (ate ~68% of
+  an 80px sample). User asked for "much less, stop after 5 seconds" — current
+  values are a hand-tuned guess to satisfy that ask (~21% of the same sample,
+  hard-verified via ad-hoc harness to stop exactly at the 5s-since-landing
+  cutoff), NOT a measured match to WA's actual rate/duration.
+
+  Static RE attempt (radare2, reusing wa_proj from prior sessions) to find
+  WA's actual fire-carve timer/radius constants: DEAD END, only found sprite
+  filenames (petrol1-6.spr etc.), no numeric constants — consistent with
+  prior RE sessions' finding that isolating fire-specific values needs
+  disproportionate effort (see reference-wa-ghidra-re / wa-wine-dynamic-analysis
+  memory files).
+
+  Dynamic (Wine rig) calibration attempts: repeatedly hit a reliability wall
+  and were ABANDONED without a trustworthy number. Problems encountered:
+    - WA's camera hard-cuts to the next active worm's screen position every
+      single turn (no smooth pan) — a fixed screenshot crop stops matching the
+      same world location after 1 turn, and once wrongly matched a different
+      pre-existing decorative crater on the repetitive paint-splat test map
+      (a false positive that was later caught and retracted).
+    - After firing a weapon, only a short "retreat time" window holds the
+      camera on the active worm before the turn passes — much shorter than
+      the full turn timer, so continuous dense-frame capture only gets a few
+      real seconds before the view changes.
+    - The pre-turn "X gets ready / N Sec" lockout blocks input; one whole
+      throw attempt fired nothing because keydown/keyup space landed during
+      that lockout window.
+    - Real-time-to-game-time ratio under this headless Xvfb/Wine setup proved
+      inconsistent across measurement attempts (readings implied anywhere
+      from ~1:1 to ~10-20x), so even the frames that were captured cleanly
+      couldn't be reliably converted to a game-seconds duration.
+  Memory-domain calibration attempt (2026-07-10, 2nd session) — MORE PROGRESS
+  than any prior session, but STILL no rate/duration. Instead of screenshots,
+  read WA's in-memory land collision bitmap via the winedbg --gdb rig:
+    - Solved the timing problem prior sessions couldn't: with NO per-frame
+      breakpoint, WA runs at TRUE 50fps real-time, so wall-clock == game-time
+      (the "unreliable time ratio" before was just the debugger throttling the
+      game). A per-frame breakpoint storms gdb (can't interrupt) AND throttles
+      the game — never use one; interrupt with a plain kill -INT instead.
+    - Reliable throw procedure nailed: weapon panel via xdotool mousedown 3/
+      mouseup 3 (not click 3); Petrol Bomb = F10 slot 1, Bazooka = F1 slot 1;
+      keydown space / sleep 0.7 / keyup space to charge+fire. Petrol landed &
+      ignited cleanly; bazooka reliably cratered terrain.
+    - DEAD END: land.dat's 1-bpp MSB-first collision mask can be found in
+      memory, BUT a bazooka control test proved that copy is a STATIC reference
+      WA never carves (it stayed byte-identical while a real crater formed on
+      screen, Ropes 100->53). The LIVE carved buffer is a different, non-1-bpp
+      format; a whole-memory before/after diff around a known crater (23 rw
+      regions, ~59MB) found changed regions but none decoded cleanly as a
+      crater-shaped solid->air bitmap at strides 240/1920/1936/2048 in the
+      effort budget. Decoding it is open-ended WA RE (same disproportionate-
+      effort wall as the bazooka-charge / fire-damage-rate hunts). The earlier
+      24s petrol-burn dump reading "zero carve" was watching the WRONG (static)
+      buffer -> INCONCLUSIVE about fire's carve rate, not proof fire doesn't
+      carve. Full detail in the project-arty-fire-terrain-eating /
+      reference-wa-wine-dynamic-analysis memory files.
+  NEXT STEP (if resumed): either have a human directly time/observe real WA
+  (or a clean gameplay recording) and report the burn duration + relative
+  hole size in plain terms for conversion into constants, or accept the
+  current hand-tuned values and stop chasing a WA-exact match. If resuming the
+  memory approach, must first fully decode the LIVE buffer format (diff-around-
+  a-crater method; the land.dat-pattern copy is a static red herring). Code
+  unchanged this session — the 3 constants are still the hand-tuned guess.
 
 Infra (2026-07-09, non-gameplay): fixed Windows ArtyBackup task silently failing
   every run (missing arty-backup@build key in dusty's authorized_keys — no code
@@ -11,11 +110,24 @@ Infra (2026-07-09, non-gameplay): fixed Windows ArtyBackup task silently failing
   /mnt/sdd1 instead of the Pi directly. New files: deploy/backup_pi4doom.ps1,
   deploy/run_backup_pi4doom.vbs. See STATUS.md for full detail.
 
-Fire overhaul (2026-07-09, WORKING TREE — pushed to .126 for testing only, NOT
-  deployed to server, no VERSION bump). All in step_fire_patches
-  (src/game/state.rs) + the fire render section (src/renderer/loop_runner.rs) +
-  new src/renderer/wa_sprites.rs. Covered by tests/fire_reaction.rs (3 tests) and
-  tests/flame_render.rs; parity 23/23.
+Infra (2026-07-10, non-gameplay): both Windows backup tasks (ArtyBackup,
+  Pi4doomBackup) had gone silent again since 2026-06-30 — real cause this time
+  was PowerShell's execution policy blocking .ps1 scripts entirely (the hidden
+  wscript.exe/-WindowStyle-0 launcher swallowed the "running scripts is
+  disabled" error, so it looked like nothing ran). Fixed with
+  `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` on the Windows box.
+  Also found and fixed an unrelated Windows Firewall issue blocking inbound
+  SSH (a stray "Block SSH WAN" rule was scoped to RemoteAddress=Any instead of
+  the Internet-only keyword, so it blocked LAN too) while diagnosing. Both
+  scheduled tasks re-verified end to end: ArtyBackup produced a fresh
+  arty-*.tar.gz and auto-fired successfully on its next hourly trigger;
+  Pi4doomBackup pulled a fresh pi4doom-*.img.gz whose size matched the source
+  file on the build machine byte-for-byte. No code changes.
+
+  --- 0.5.4.425 — Molotov fire overhaul (DEPLOYED 2026-07-09, commit f2f606b) ---
+  All in step_fire_patches (src/game/state.rs) + the fire render section
+  (src/renderer/loop_runner.rs) + new src/renderer/wa_sprites.rs. Covered by
+  tests/fire_reaction.rs (3 tests) and tests/flame_render.rs; parity 23/23.
   1. Flame visuals: the procedural teardrop flame is replaced by a 32-frame
      animated flame sprite (flicker loop, then a shrink-to-spark burn-out as the
      patch expires), with two variants so neighbouring flames aren't in lockstep.

@@ -57,9 +57,9 @@ fn fire_patches_render_wa_flames() {
     let spot = WorldPos { x: pos.x + 40.0, y: pos.y };
     // Landed long-lived flame, landed dying flame, airborne spark.
     game.fire_patches = vec![
-        FirePatch { pos: spot, vel: Vec2 { x: 1.3, y: -0.7 }, landed: true, lifetime: 500 },
-        FirePatch { pos: WorldPos { x: spot.x + 30.0, y: spot.y }, vel: Vec2 { x: -2.1, y: 0.4 }, landed: true, lifetime: 20 },
-        FirePatch { pos: WorldPos { x: spot.x - 30.0, y: spot.y - 40.0 }, vel: Vec2 { x: 0.5, y: 2.0 }, landed: false, lifetime: 300 },
+        FirePatch { pos: spot, vel: Vec2 { x: 1.3, y: -0.7 }, landed: true, lifetime: 500, landed_ticks: 0, carves: false },
+        FirePatch { pos: WorldPos { x: spot.x + 30.0, y: spot.y }, vel: Vec2 { x: -2.1, y: 0.4 }, landed: true, lifetime: 20, landed_ticks: 0, carves: false },
+        FirePatch { pos: WorldPos { x: spot.x - 30.0, y: spot.y - 40.0 }, vel: Vec2 { x: 0.5, y: 2.0 }, landed: false, lifetime: 300, landed_ticks: 0, carves: false },
     ];
 
     let mut cam = Camera::new(spot.x, spot.y);
