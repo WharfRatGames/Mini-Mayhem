@@ -1,8 +1,9 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.428 (commit 4a1bbcd, DEPLOYED 2026-07-10 to Pi/server/
-  GitHub/Discord/Windows bundle/Miyoo .126). Miyoo .110 was OFFLINE at deploy
-  time — still on .427, push when it's back on the LAN.
+Current version: 0.5.4.429 (commit e315c25, DEPLOYED 2026-07-10 to Pi server/
+  GitHub release/Discord/Windows bundle). BOTH Miyoos (.110 and .126) were
+  OFFLINE at deploy time — .126 still on .428, .110 still on .427; push when
+  they're back on the LAN.
 
 2026-07-10 (v0.5.4.429; VERSION + REQUIRED_VERSION bumped together —
   terrain determinism + scenery counts changed) —
