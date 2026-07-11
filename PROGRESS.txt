@@ -4,6 +4,46 @@ Current version: 0.5.4.428 (commit 4a1bbcd, DEPLOYED 2026-07-10 to Pi/server/
   GitHub/Discord/Windows bundle/Miyoo .126). Miyoo .110 was OFFLINE at deploy
   time — still on .427, push when it's back on the LAN.
 
+2026-07-10 (v0.5.4.429; VERSION + REQUIRED_VERSION bumped together —
+  terrain determinism + scenery counts changed) —
+  MAP-GEN RECALIBRATION ROUND 2 (expanded corpus) + 9 NEW SCENERY OBJECTS.
+  ---------------------------------------------------------------------------
+  Corpus expanded 50 -> 70 per class (island/bng/cavern, new indices 050-069,
+  high-complexity end) with tools/gen_mapgen_corpus.py; generator re-tuned over
+  7 measured rounds (200 seeds/round via dump-terrain + terrain_stats.py).
+  Final medians vs reference: solid_frac 0.426 (ref 0.411), ground_cols 0.938
+  (ref 0.935, sparse p10 tail fixed 0.782 -> 0.886), surf_span 275 (ref 344
+  island / 239 bng), n_chunks 3 (ref 2). Constant changes:
+   - GROUND_T 0.58 -> 0.46; cavern carve threshold 0.5 -> 0.32 (cavern solid
+     0.584 vs ref 0.629 — lever saturates against the traversability dilation).
+   - DEPTH_RAMP 3.0 -> 2.2: the ramp caps the surface band at
+     ~terrain_range/ramp = 253px, exactly where our surf_span median was
+     pinned. RELIEF_COMPRESSION 1.15 -> 1.05.
+   - Fragment filter rewritten MASS-AWARE: keep largest chunks covering >=85%
+     of solid mass, drop mid-size strays (< big_frag 16000 island / 4000
+     cavern; hard debris floor min_frag 4000/1500), and NEVER drop a chunk
+     that is the sole ground under >30 columns. (A flat 16000 cutoff gutted
+     sparse collage seeds to 7% solid; chasm-severed waterline bridges were
+     the sole-ground victims — seed 4 lost 276 columns to one drop.)
+   - Chasm drowning gated: only narrow jumpable chasms (half_w<=28) may carve
+     to WATER_Y; wide 80-160px grapple chasms always get a floored pit (two
+     wide drowning chasms once left a map 69% grounded).
+   - New bottom-band fill (ty>0.90, +0.8 smoothstep) closes collage gaps into
+     low land bridges; edge erosion 3.2 -> 4.0 so it still dominates the
+     enlarged field (island_edges_are_open_water still green).
+   - Overhang shelves: 40 -> 75% odds, reach 45-100 -> 60-120px, gap 30-60 ->
+     35-70px. overhang_frac 0.084 vs ref 0.137 — accepted gap (reference
+     overhangs come from silhouette folds), as is rough_p50 4 vs 5.5 (r=3
+     box-blur cap). Known polish: stamped shelves still read as straight
+     planks on some islands.
+  Gates: wa_collage_check 7/7, parity 23/23.
+  SCENERY: 9 new objects, theme variant counts 13/12/12 -> 16/15/15 —
+  pastoral birdhouse / watering can / pumpkin; rugged anvil / totem pole /
+  firewood stack; underground treasure chest / ore boulder w/ pickaxe / lit
+  candle cluster. Footprints exclude thin decorations (flames, pick head,
+  spout, totem wings); scenery-gallery regenerated (16 cols). Count change
+  feeds seed-derived placement -> same determinism bump as above.
+
 DEPLOYED 2026-07-10 (v0.5.4.428, commit 4a1bbcd) — TERRAIN
   CALIBRATED AGAINST A REAL MapGEN REFERENCE CORPUS + mask library rebuilt.
   ---------------------------------------------------------------------------

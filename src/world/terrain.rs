@@ -198,7 +198,10 @@ impl SceneryObject {
                 9 => (7, 24),  // scarecrow
                 10 => (10, 20), // stone well
                 11 => (10, 9),  // wheelbarrow
-                _ => (6, 16),  // beehive on post
+                12 => (6, 16),  // beehive on post
+                13 => (5, 26),  // birdhouse on pole (roof peak excluded)
+                14 => (7, 12),  // watering can (spout tip excluded)
+                _ => (8, 9),   // pumpkin
             },
             Theme::Rugged => match self.sprite {
                 0 => (9, 38),  // pine tree canopy (was 11,40)
@@ -213,7 +216,10 @@ impl SceneryObject {
                 8 => (10, 20), // weathered signpost
                 9 => (9, 8),   // campfire ring
                 10 => (8, 16), // leaning cartwheel
-                _ => (8, 7),   // ram skull
+                11 => (8, 7),  // ram skull
+                12 => (9, 12), // anvil on stump (horn tip excluded)
+                13 => (6, 28), // totem pole (wing boards excluded)
+                _ => (12, 11), // firewood stack
             },
             Theme::Underground => match self.sprite {
                 0 => (11, 30), // crystal cluster (was 14,32)
@@ -227,7 +233,10 @@ impl SceneryObject {
                 8 => (8, 22),  // stalagmite
                 9 => (11, 12), // minecart
                 10 => (9, 11), // cracked geode
-                _ => (5, 21),  // lantern post
+                11 => (5, 21), // lantern post
+                12 => (8, 11), // treasure chest
+                13 => (10, 12), // ore boulder (pick head above is decorative)
+                _ => (8, 10),  // candle cluster (flames not solid)
             },
         }
     }
@@ -590,7 +599,7 @@ impl Terrain {
         let cave = !is_cavern && lcg(&mut rng) % 100 < 45;
         // 25 → 40% (MapGEN-corpus calibration: reference overhang fraction ~0.13
         // of below-surface air vs our 0.07).
-        let overhang = !is_cavern && lcg(&mut rng) % 100 < 40;
+        let overhang = !is_cavern && lcg(&mut rng) % 100 < 75;
         // Sky-clearance (erode the top ~14% of the terrain band) and its paired
         // chasm-top offset must move together — seed-random on non-cavern maps.
         let sky_clear = !is_cavern && lcg(&mut rng) % 100 < 50;
@@ -751,11 +760,13 @@ impl Terrain {
                 }
             });
             // Threshold into the bitmap: carve air where the smoothed field is
-            // below 0.5 (the inverted collage marks chambers as low density).
+            // below the carve threshold (the inverted collage marks chambers as
+            // low density). 0.5 → 0.46 (expanded-corpus recalibration: our
+            // caverns ran solid_frac 0.562 vs reference 0.629 — carve less).
             for ry in 0..band_h {
                 let y = SKY_FLOOR + ry as i32;
                 for x in 0..band_w {
-                    if cdens[ry * band_w + x] < 0.5 {
+                    if cdens[ry * band_w + x] < 0.32 {
                         terrain.set_solid(x as i32, y, false);
                     }
                 }
@@ -965,8 +976,17 @@ impl Terrain {
                 // solid_frac ~0.41-0.51 and surface span ~240-390px vs our 0.31 /
                 // 176px. Lower GROUND_T fills more ground mass; the gentler ramp
                 // widens the surface band.
-                const GROUND_T: f64 = 0.58;
-                const DEPTH_RAMP: f64 = 3.0;
+                // Recalibrated 2026-07-10 vs the expanded 70-per-class corpus:
+                // 0.58 left solid_frac at 0.346 (reference 0.41-0.50); 0.54
+                // fills more mass without touching the surface-band width.
+                // Round 2: 0.54 got solid_frac to 0.369 — 0.50 pushes toward the
+                // 0.41 reference median and offsets the gentler ramp below.
+                const GROUND_T: f64 = 0.46;
+                // The surface band collapses to ~terrain_range / DEPTH_RAMP px;
+                // at 3.0 that caps surf_span at ~253px — exactly where our median
+                // (243) was pinned vs the reference island class's 344. 2.2 lifts
+                // the cap to ~345.
+                const DEPTH_RAMP: f64 = 2.2;
                 density += (ty - GROUND_T) * DEPTH_RAMP;
 
                 // 4b. Top sky-margin: erode density near the top so terrain tapers
@@ -979,9 +999,20 @@ impl Terrain {
                     density -= (1.0 - smooth_t) * 0.85;
                 }
 
+                // 4c. Bottom-band fill: gently boost density just above the
+                // waterline so collage gaps close into a low land bridge instead
+                // of bare water channels. Reference maps keep ~93.5% of columns
+                // grounded (p10 0.887); without this our sparse tail ran to 22%
+                // bare columns and tripped island_relief_is_traversable.
+                if ty > 0.90 {
+                    let t = (ty - 0.90) / 0.10;
+                    density += t * t * (3.0 - 2.0 * t) * 0.8;
+                }
+
                 // 5. Edge erosion for water on ends. The subtracted amplitude
                 // must dominate everything the field can add near the waterline
-                // (collage ≤ ~1.2, depth ramp ≤ +1.36, noise/lean ≤ ~0.2), so at
+                // (collage ≤ ~1.2, depth ramp ≤ +1.36, bottom fill ≤ +0.8,
+                // noise/lean ≤ ~0.2 — total ~3.56, so 4.0 keeps a margin), so at
                 // the very edge the density is guaranteed negative — every
                 // non-cavern map ends in open water on BOTH sides, like the real
                 // WA generator's island output (0/150 reference maps touch an
@@ -992,7 +1023,7 @@ impl Terrain {
                     if edge_dist < water_end_px {
                         let t = edge_dist / water_end_px;
                         let smooth_t = t * t * (3.0 - 2.0 * t);
-                        density -= (1.0 - smooth_t) * 3.2;
+                        density -= (1.0 - smooth_t) * 4.0;
                     }
                 }
 
@@ -1102,9 +1133,9 @@ impl Terrain {
                 let cx = (rnd(&mut rng, 0.18, 0.64) * WORLD_W as f64) as i32; // 0.18–0.82
                 let ground = terrain.surface_y_at(cx as u32)
                     .unwrap_or(TERRAIN_MAX_Y) as i32;
-                let gap   = rnd(&mut rng, 30.0, 30.0) as i32;  // 30–60px air gap — taller overhang shelves (grapple reaches the higher ones)
+                let gap   = rnd(&mut rng, 35.0, 35.0) as i32;  // 35–70px air gap — taller overhang shelves (grapple reaches the higher ones)
                 let shelf_y = (ground - gap).max(TERRAIN_MIN_Y as i32 + 6);
-                let half_w = rnd(&mut rng, 45.0, 55.0) as i32; // 45–100px reach
+                let half_w = rnd(&mut rng, 60.0, 60.0) as i32; // 60–120px reach
                 // 9-19 → 14-24px thick (MapGEN-corpus calibration: thin tapered
                 // shelves read as artificial "flag poles" next to the reference
                 // maps' chunky organic arches).
@@ -1220,7 +1251,11 @@ impl Terrain {
             let drift = rnd(&mut rng, -40.0, 80.0) as i32; // ±40px lean
             // Depth: ~45% straight to the water (drowning), else a floored pit whose
             // walls (60–95px) are too tall to jump out of → backflip-chain or grapple.
-            let bottom_y = if lcg(&mut rng) % 100 < 45 {
+            // Only NARROW (jumpable) chasms may drown: a 80-160px grapple chasm cut
+            // to the waterline reads as a bare ocean gap (reference maps keep ~93.5%
+            // of columns grounded; two wide drowning chasms once left a map 69%
+            // covered and tripped island_relief_is_traversable).
+            let bottom_y = if half_w <= 28 && lcg(&mut rng) % 100 < 45 {
                 WATER_Y as i32
             } else {
                 let surf = terrain.surface_y_at(cx as u32).unwrap_or(TERRAIN_MAX_Y) as i32;
@@ -1255,7 +1290,15 @@ impl Terrain {
         // mostly confetti floaters. 4000px ≈ a 40x40 blob — anything smaller
         // isn't a usable stepping stone (a soldier is 14x20), it's debris.
         {
-            let min_frag: usize = if is_cavern { 200 } else { 4000 };
+            // Expanded-corpus recalibration: reference maps hold 1-3 chunks vs
+            // our 5, but a flat high cutoff guts fragmented collages (seed 4
+            // dropped to 7% solid). Two tiers instead: `min_frag` is always
+            // debris; chunks between it and `big_frag` are dropped only after
+            // the kept (larger) chunks already cover ≥85% of the solid mass —
+            // n_chunks comes down without ever hollowing out a map.
+            let min_frag: usize = if is_cavern { 1500 } else { 4000 };
+            let big_frag: usize = if is_cavern { 4000 } else { 16000 };
+            let mut comps: Vec<Vec<(i32, i32)>> = Vec::new();
             let mut visited = vec![false; WORLD_PIXELS];
             let mut stack: Vec<(i32, i32)> = Vec::new();
             let mut comp: Vec<(i32, i32)> = Vec::new();
@@ -1283,7 +1326,40 @@ impl Terrain {
                     }
                     if comp.len() < min_frag {
                         for (cx, cy) in &comp { terrain.set_solid(*cx, *cy, false); }
+                    } else {
+                        comps.push(comp.clone());
                     }
+                }
+            }
+            // Deterministic: components are found in scan order; stable sort by
+            // size (descending) only.
+            comps.sort_by(|a, b| b.len().cmp(&a.len()));
+            let total: usize = comps.iter().map(|c| c.len()).sum();
+            // Per-column count of components providing ground there: a chunk
+            // that is the SOLE ground under many columns is load-bearing for
+            // map coverage (chasms can sever the low waterline bridge into a
+            // mid-size strip — dropping it once left 276 bare columns and
+            // tripped island_relief_is_traversable) and must survive the
+            // mid-tier cleanup regardless of the mass budget.
+            let mut col_cover = vec![0u16; WORLD_W as usize];
+            let comp_cols: Vec<Vec<u32>> = comps
+                .iter()
+                .map(|comp| {
+                    let mut seen = vec![false; WORLD_W as usize];
+                    for (cx, _) in comp { seen[*cx as usize] = true; }
+                    let cols: Vec<u32> = (0..WORLD_W).filter(|&c| seen[c as usize]).collect();
+                    for &c in &cols { col_cover[c as usize] += 1; }
+                    cols
+                })
+                .collect();
+            let mut kept: usize = 0;
+            for (comp, cols) in comps.iter().zip(&comp_cols) {
+                let sole_ground = cols.iter().filter(|&&c| col_cover[c as usize] == 1).count();
+                if kept * 100 >= total * 85 && comp.len() < big_frag && sole_ground <= 30 {
+                    for (cx, cy) in comp { terrain.set_solid(*cx, *cy, false); }
+                    for &c in cols { col_cover[c as usize] -= 1; }
+                } else {
+                    kept += comp.len();
                 }
             }
         }
@@ -1320,11 +1396,11 @@ impl Terrain {
         {
             // Sprite-variant count must match the theme scenery.rs::draw_scenery
             // will pick for this map (same Theme::of dispatch): draw_underground /
-            // draw_pastoral / draw_rugged — 12 / 13 / 12 sprites respectively.
+            // draw_pastoral / draw_rugged — 15 / 16 / 15 sprites respectively.
             let count: u8 = match Theme::of(terrain.is_cavern, terrain.template_id) {
-                Theme::Underground => 12,
-                Theme::Pastoral => 13,
-                Theme::Rugged => 12,
+                Theme::Underground => 15,
+                Theme::Pastoral => 16,
+                Theme::Rugged => 15,
             };
             let mut srng = seed ^ 0xDECA_FBAB_E000_1234u64;
             let margin = (WORLD_W as f64 * 0.05) as u32;

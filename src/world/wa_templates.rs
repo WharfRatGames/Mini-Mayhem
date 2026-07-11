@@ -112,7 +112,9 @@ const MAX_SEGMENTS: usize = 4;
 /// of the surface profile) was 176px vs the reference generator's 238 (bng) /
 /// 393 (island); relaxing compression closes part of that gap while the
 /// island_relief_is_traversable guard keeps the mobility budget honest.
-const RELIEF_COMPRESSION: f64 = 1.15;
+/// 1.05: expanded-corpus recalibration (70/class) — our span sat at 241px vs the
+/// island class's 344; each 0.1 of compression is worth ~65px of span.
+const RELIEF_COMPRESSION: f64 = 1.05;
 /// Mask row that lands at the terrain band's vertical middle when sampling.
 /// Slightly below mask center so the compressed silhouette keeps a sensible
 /// ground level rather than floating high in the band.

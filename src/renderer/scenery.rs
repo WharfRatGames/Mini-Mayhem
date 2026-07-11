@@ -101,7 +101,10 @@ fn draw_pastoral(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
         9 => draw_scarecrow(buf, cx, by),
         10 => draw_well(buf, cx, by),
         11 => draw_wheelbarrow(buf, cx, by),
-        _ => draw_beehive(buf, cx, by),
+        12 => draw_beehive(buf, cx, by),
+        13 => draw_birdhouse(buf, cx, by),
+        14 => draw_watering_can(buf, cx, by),
+        _ => draw_pumpkin(buf, cx, by),
     }
 }
 
@@ -242,7 +245,10 @@ fn draw_rugged(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
         8 => draw_signpost(buf, cx, by),
         9 => draw_campfire(buf, cx, by),
         10 => draw_cartwheel(buf, cx, by),
-        _ => draw_ram_skull(buf, cx, by),
+        11 => draw_ram_skull(buf, cx, by),
+        12 => draw_anvil(buf, cx, by),
+        13 => draw_totem_pole(buf, cx, by),
+        _ => draw_firewood_stack(buf, cx, by),
     }
 }
 
@@ -510,7 +516,10 @@ fn draw_underground(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
         8 => draw_stalagmite(buf, cx, by),
         9 => draw_minecart(buf, cx, by),
         10 => draw_geode(buf, cx, by),
-        _ => draw_lantern_post(buf, cx, by),
+        11 => draw_lantern_post(buf, cx, by),
+        12 => draw_treasure_chest(buf, cx, by),
+        13 => draw_ore_pick(buf, cx, by),
+        _ => draw_candle_cluster(buf, cx, by),
     }
 }
 
@@ -1580,4 +1589,228 @@ fn draw_horns(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 13, by - 23, 4, 6, hdark);
     buf.fill_rect(cx + 14, by - 22, 2, 5, horn);
     buf.fill_rect(cx + 14, by - 24, 2, 2, hhi);
+}
+
+fn draw_birdhouse(buf: &mut Scaled, cx: i32, by: i32) {
+    let pole  = Bgra::new(110, 80, 45);
+    let pdark = Bgra::new(70, 50, 25);
+    let wall  = Bgra::new(200, 165, 110);
+    let wdark = Bgra::new(130, 100, 60);
+    let roof  = Bgra::new(160, 60, 50);
+    let rdark = Bgra::new(100, 35, 28);
+    let hole  = Bgra::new(45, 30, 15);
+    // Pole
+    buf.fill_rect(cx - 1, by - 16, 4, 16, pdark);
+    buf.fill_rect(cx,     by - 16, 2, 15, pole);
+    // House body
+    buf.fill_rect(cx - 6, by - 26, 13, 10, wdark);
+    buf.fill_rect(cx - 5, by - 25, 11,  9, wall);
+    // Plank seams
+    buf.fill_rect(cx - 5, by - 22, 11, 1, wdark);
+    buf.fill_rect(cx - 5, by - 19, 11, 1, wdark);
+    // Roof (peaked)
+    buf.fill_rect(cx - 7, by - 28, 15, 3, rdark);
+    buf.fill_rect(cx - 6, by - 28, 13, 2, roof);
+    buf.fill_rect(cx - 4, by - 30, 9, 2, rdark);
+    buf.fill_rect(cx - 3, by - 30, 7, 1, roof);
+    buf.fill_rect(cx - 1, by - 31, 3, 1, rdark);
+    // Entry hole + perch
+    buf.fill_rect(cx - 2, by - 23, 5, 5, hole);
+    buf.fill_rect(cx - 1, by - 22, 3, 3, Bgra::new(20, 12, 6));
+    buf.fill_rect(cx - 1, by - 17, 3, 1, pdark);
+}
+
+fn draw_watering_can(buf: &mut Scaled, cx: i32, by: i32) {
+    let tin   = Bgra::new(120, 150, 160);
+    let tdark = Bgra::new(70, 95, 105);
+    let thi   = Bgra::new(175, 200, 208);
+    // Body
+    buf.fill_rect(cx - 6, by - 10, 13, 10, tdark);
+    buf.fill_rect(cx - 5, by - 9,  11,  9, tin);
+    buf.fill_rect(cx - 4, by - 9,   3,  7, thi);
+    // Top rim
+    buf.fill_rect(cx - 6, by - 11, 13, 2, tdark);
+    // Loop handle over the top
+    buf.fill_rect(cx - 3, by - 15, 8, 2, tdark);
+    buf.fill_rect(cx - 3, by - 14, 2, 4, tdark);
+    buf.fill_rect(cx + 3, by - 14, 2, 4, tdark);
+    // Spout (angled out to the left) + rose head
+    buf.fill_rect(cx - 9,  by - 8, 4, 2, tdark);
+    buf.fill_rect(cx - 12, by - 10, 4, 3, tdark);
+    buf.fill_rect(cx - 11, by - 9,  2, 1, thi);
+    buf.fill_rect(cx - 13, by - 11, 3, 5, tdark);
+    buf.fill_rect(cx - 12, by - 10, 1, 3, tin);
+}
+
+fn draw_pumpkin(buf: &mut Scaled, cx: i32, by: i32) {
+    let orange = Bgra::new(225, 130, 30);
+    let odark  = Bgra::new(150, 75, 15);
+    let ohi    = Bgra::new(250, 175, 70);
+    let stem   = Bgra::new(80, 110, 40);
+    // Body (squat sphere)
+    buf.fill_rect(cx - 8, by - 8,  17, 8, odark);
+    buf.fill_rect(cx - 9, by - 6,  19, 5, odark);
+    buf.fill_rect(cx - 7, by - 7,  15, 6, orange);
+    buf.fill_rect(cx - 8, by - 5,  17, 3, orange);
+    // Rib grooves
+    buf.fill_rect(cx - 3, by - 8, 1, 8, odark);
+    buf.fill_rect(cx + 2, by - 8, 1, 8, odark);
+    buf.fill_rect(cx + 6, by - 7, 1, 6, odark);
+    buf.fill_rect(cx - 7, by - 7, 1, 6, odark);
+    // Highlight
+    buf.fill_rect(cx - 6, by - 7, 2, 3, ohi);
+    // Curled stem
+    buf.fill_rect(cx - 1, by - 10, 3, 3, stem);
+    buf.fill_rect(cx + 1, by - 11, 3, 2, stem);
+}
+
+fn draw_anvil(buf: &mut Scaled, cx: i32, by: i32) {
+    let iron  = Bgra::new(95, 100, 110);
+    let idark = Bgra::new(50, 54, 62);
+    let ihi   = Bgra::new(150, 158, 170);
+    let wood  = Bgra::new(120, 85, 45);
+    let wdark = Bgra::new(75, 52, 25);
+    // Stump base
+    buf.fill_rect(cx - 6, by - 4, 13, 4, wdark);
+    buf.fill_rect(cx - 5, by - 4, 11, 3, wood);
+    // Anvil waist
+    buf.fill_rect(cx - 4, by - 7, 9, 3, idark);
+    buf.fill_rect(cx - 3, by - 7, 7, 2, iron);
+    // Body + horn (tapering left point)
+    buf.fill_rect(cx - 7,  by - 11, 15, 4, idark);
+    buf.fill_rect(cx - 6,  by - 10, 13, 3, iron);
+    buf.fill_rect(cx - 10, by - 10, 3, 2, idark);
+    buf.fill_rect(cx - 9,  by - 10, 2, 1, iron);
+    // Top face
+    buf.fill_rect(cx - 7, by - 12, 15, 2, ihi);
+    buf.fill_rect(cx + 6, by - 12, 2, 2, idark);
+}
+
+fn draw_totem_pole(buf: &mut Scaled, cx: i32, by: i32) {
+    let wood  = Bgra::new(140, 95, 50);
+    let wdark = Bgra::new(85, 55, 28);
+    let paint = Bgra::new(190, 60, 45);
+    let teal  = Bgra::new(45, 150, 140);
+    let eye   = Bgra::new(240, 230, 200);
+    // Pole trunk
+    buf.fill_rect(cx - 4, by - 28, 9, 28, wdark);
+    buf.fill_rect(cx - 3, by - 27, 7, 27, wood);
+    // Bottom face: teal band, eyes, grimace
+    buf.fill_rect(cx - 3, by - 9,  7, 2, teal);
+    buf.fill_rect(cx - 3, by - 7,  2, 2, eye);
+    buf.fill_rect(cx + 2, by - 7,  2, 2, eye);
+    buf.fill_rect(cx - 2, by - 4,  5, 1, wdark);
+    // Middle face: red band, eyes
+    buf.fill_rect(cx - 3, by - 18, 7, 2, paint);
+    buf.fill_rect(cx - 3, by - 15, 2, 2, eye);
+    buf.fill_rect(cx + 2, by - 15, 2, 2, eye);
+    buf.fill_rect(cx - 1, by - 12, 3, 1, wdark);
+    // Beak jutting out on middle face
+    buf.fill_rect(cx - 6, by - 14, 3, 2, paint);
+    // Top face + wings
+    buf.fill_rect(cx - 3, by - 26, 7, 2, teal);
+    buf.fill_rect(cx - 3, by - 24, 2, 2, eye);
+    buf.fill_rect(cx + 2, by - 24, 2, 2, eye);
+    // Wing boards
+    buf.fill_rect(cx - 8, by - 27, 4, 3, wdark);
+    buf.fill_rect(cx - 7, by - 26, 3, 2, paint);
+    buf.fill_rect(cx + 5, by - 27, 4, 3, wdark);
+    buf.fill_rect(cx + 5, by - 26, 3, 2, paint);
+}
+
+fn draw_firewood_stack(buf: &mut Scaled, cx: i32, by: i32) {
+    let wood  = Bgra::new(150, 105, 55);
+    let wdark = Bgra::new(90, 60, 30);
+    let ring  = Bgra::new(200, 160, 105);
+    let bark  = Bgra::new(110, 75, 40);
+    // Bottom row: three logs seen end-on
+    for dx in [-8i32, 0, 8] {
+        buf.fill_rect(cx + dx - 4, by - 7, 9, 7, wdark);
+        buf.fill_rect(cx + dx - 3, by - 6, 7, 5, bark);
+        buf.fill_rect(cx + dx - 2, by - 5, 5, 3, ring);
+        buf.fill_rect(cx + dx - 1, by - 4, 2, 1, wdark);
+    }
+    // Top row: two logs nested in the grooves
+    for dx in [-4i32, 4] {
+        buf.fill_rect(cx + dx - 4, by - 12, 9, 6, wdark);
+        buf.fill_rect(cx + dx - 3, by - 11, 7, 4, wood);
+        buf.fill_rect(cx + dx - 2, by - 10, 5, 2, ring);
+    }
+}
+
+fn draw_treasure_chest(buf: &mut Scaled, cx: i32, by: i32) {
+    let wood  = Bgra::new(140, 95, 45);
+    let wdark = Bgra::new(85, 55, 25);
+    let band  = Bgra::new(190, 165, 70);
+    let bdark = Bgra::new(120, 100, 35);
+    let gold  = Bgra::new(245, 210, 90);
+    // Chest body
+    buf.fill_rect(cx - 8, by - 8, 17, 8, wdark);
+    buf.fill_rect(cx - 7, by - 7, 15, 6, wood);
+    // Lid (slightly open, tilted up)
+    buf.fill_rect(cx - 8, by - 12, 17, 3, wdark);
+    buf.fill_rect(cx - 7, by - 11, 15, 2, wood);
+    // Gold spilling from the gap
+    buf.fill_rect(cx - 6, by - 9, 13, 2, gold);
+    buf.fill_rect(cx - 2, by - 10, 4, 1, gold);
+    // Metal bands + lock
+    buf.fill_rect(cx - 5, by - 12, 2, 12, bdark);
+    buf.fill_rect(cx + 4, by - 12, 2, 12, bdark);
+    buf.fill_rect(cx - 1, by - 8, 3, 4, bdark);
+    buf.fill_rect(cx,     by - 7, 1, 2, band);
+}
+
+fn draw_ore_pick(buf: &mut Scaled, cx: i32, by: i32) {
+    let rock  = Bgra::new(105, 100, 95);
+    let rdark = Bgra::new(60, 56, 52);
+    let ore   = Bgra::new(90, 190, 210);
+    let handle = Bgra::new(150, 105, 55);
+    let hdark  = Bgra::new(90, 60, 30);
+    let steel  = Bgra::new(160, 165, 175);
+    let sdark  = Bgra::new(90, 95, 105);
+    // Ore boulder
+    buf.fill_rect(cx - 9, by - 5, 19, 5, rdark);
+    buf.fill_rect(cx - 10, by - 8, 21, 5, rdark);
+    buf.fill_rect(cx - 9,  by - 7, 19, 5, rock);
+    buf.fill_rect(cx - 7,  by - 9, 15, 2, rock);
+    // Glinting ore seams
+    buf.fill_rect(cx - 5, by - 7, 3, 2, ore);
+    buf.fill_rect(cx + 2, by - 5, 3, 2, ore);
+    buf.fill_rect(cx - 1, by - 8, 2, 2, ore);
+    // Pickaxe embedded: handle angled up-right
+    buf.fill_rect(cx + 3, by - 14, 3, 6, hdark);
+    buf.fill_rect(cx + 4, by - 13, 2, 5, handle);
+    buf.fill_rect(cx + 5, by - 17, 3, 4, hdark);
+    buf.fill_rect(cx + 6, by - 16, 2, 3, handle);
+    // Pick head (curved bar across handle top)
+    buf.fill_rect(cx + 1,  by - 19, 11, 3, sdark);
+    buf.fill_rect(cx + 2,  by - 18, 9, 1, steel);
+    buf.fill_rect(cx - 1,  by - 18, 2, 2, sdark);
+    buf.fill_rect(cx + 11, by - 18, 2, 2, sdark);
+}
+
+fn draw_candle_cluster(buf: &mut Scaled, cx: i32, by: i32) {
+    let wax   = Bgra::new(230, 220, 195);
+    let wdark = Bgra::new(160, 150, 125);
+    let drip  = Bgra::new(245, 238, 218);
+    let flame = Bgra::new(255, 200, 60);
+    let fcore = Bgra::new(255, 240, 160);
+    let stone = Bgra::new(90, 85, 80);
+    // Stone slab they sit on
+    buf.fill_rect(cx - 8, by - 2, 17, 2, stone);
+    // Tall candle
+    buf.fill_rect(cx - 5, by - 11, 5, 9, wdark);
+    buf.fill_rect(cx - 4, by - 11, 3, 8, wax);
+    buf.fill_rect(cx - 5, by - 10, 1, 4, drip);
+    // Medium candle
+    buf.fill_rect(cx + 1, by - 8, 5, 6, wdark);
+    buf.fill_rect(cx + 2, by - 8, 3, 5, wax);
+    // Stubby candle
+    buf.fill_rect(cx - 1, by - 5, 4, 3, wdark);
+    buf.fill_rect(cx,     by - 5, 2, 2, wax);
+    // Flames (decorative — excluded from the collision box)
+    buf.fill_rect(cx - 4, by - 14, 3, 3, flame);
+    buf.fill_rect(cx - 3, by - 13, 1, 1, fcore);
+    buf.fill_rect(cx + 2, by - 11, 3, 3, flame);
+    buf.fill_rect(cx + 3, by - 10, 1, 1, fcore);
 }

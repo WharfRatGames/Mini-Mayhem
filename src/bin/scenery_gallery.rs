@@ -96,7 +96,7 @@ const CELL_W: u32 = 110;
 const CELL_H: u32 = 150;
 const HEADER: u32 = 26;
 const ROW_LABEL: u32 = 16;
-const COLS: usize = 13;
+const COLS: usize = 16;
 
 struct ThemeRow {
     name: &'static str,
@@ -109,15 +109,15 @@ fn main() {
     let rows: [ThemeRow; 3] = [
         ThemeRow {
             name: "PASTORAL", is_cavern: false, template_id: 0,
-            sprite_names: ["FLOWER","MUSHROOM","MOSSY ROCK","FENCE POST","BUSH","SUNFLOWER","LOG","PEBBLES","HAY BALE","SCARECROW","WELL","WHEELBARROW","BEEHIVE"],
+            sprite_names: ["FLOWER","MUSHROOM","MOSSY ROCK","FENCE POST","BUSH","SUNFLOWER","LOG","PEBBLES","HAY BALE","SCARECROW","WELL","WHEELBARROW","BEEHIVE","BIRDHOUSE","WATER CAN","PUMPKIN"],
         },
         ThemeRow {
             name: "RUGGED", is_cavern: false, template_id: 1,
-            sprite_names: ["PINE TREE","BOULDER","CRATE","DEAD STUMP","BROKEN WALL","LICHEN ROCK","CAIRN","MENHIR","SIGNPOST","CAMPFIRE","CARTWHEEL","RAM SKULL","RAM SKULL"],
+            sprite_names: ["PINE TREE","BOULDER","CRATE","DEAD STUMP","BROKEN WALL","LICHEN ROCK","CAIRN","MENHIR","SIGNPOST","CAMPFIRE","CARTWHEEL","RAM SKULL","ANVIL","TOTEM POLE","FIREWOOD","FIREWOOD"],
         },
         ThemeRow {
             name: "UNDERGROUND", is_cavern: true, template_id: 0,
-            sprite_names: ["CRYSTAL","BONE PILE","TORCH","SKULL","STALACTITE","CHAIN PILE","RIBCAGE","GLOW SHROOM","STALAGMITE","MINECART","GEODE","LANTERN","LANTERN"],
+            sprite_names: ["CRYSTAL","BONE PILE","TORCH","SKULL","STALACTITE","CHAIN PILE","RIBCAGE","GLOW SHROOM","STALAGMITE","MINECART","GEODE","LANTERN","CHEST","ORE PICK","CANDLES","CANDLES"],
         },
     ];
 
