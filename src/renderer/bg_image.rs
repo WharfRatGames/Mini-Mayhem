@@ -91,8 +91,6 @@ pub fn bg_index_for_seed(seed: u64) -> usize {
     (seed.wrapping_mul(2654435761_u64) >> 33) as usize % BG_COUNT
 }
 
-static DECODED: OnceLock<[Option<Decoded>; BG_COUNT]> = OnceLock::new();
-
 fn decode(bytes: &[u8]) -> Option<Decoded> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder.read_info().ok()?;
@@ -120,15 +118,22 @@ fn decode(bytes: &[u8]) -> Option<Decoded> {
 /// need no crop.
 const BORDER_CROP: u32 = 10;
 
-fn decoded() -> &'static [Option<Decoded>; BG_COUNT] {
-    DECODED.get_or_init(|| std::array::from_fn(|i| {
+/// Per-slot lazy OnceLock, mirroring `SCALED` below: only the PNG needed for
+/// the current map is decoded at load time instead of all 54 at once
+/// (~12.5MB of PNGs — decoding them all synchronously on first access was a
+/// multi-second stall on Miyoo ARM, the same problem `SCALED` was already
+/// split out to avoid for the (cheaper) bilinear-scale step).
+static DECODED: [OnceLock<Option<Decoded>>; BG_COUNT] = [const { OnceLock::new() }; BG_COUNT];
+
+fn decoded_slot(i: usize) -> &'static Option<Decoded> {
+    DECODED[i].get_or_init(|| {
         let img = decode(PNGS[i])?;
         if i >= 9 && i < 33 && img.w > BORDER_CROP * 2 && img.h > BORDER_CROP * 2 {
             Some(crop(&img, BORDER_CROP))
         } else {
             Some(img)
         }
-    }))
+    })
 }
 
 /// Crop `margin` pixels off each edge of `img`.
@@ -152,7 +157,7 @@ static SCALED: [OnceLock<Option<Decoded>>; BG_COUNT] = [const { OnceLock::new() 
 
 fn scaled_slot(i: usize) -> &'static Option<Decoded> {
     SCALED[i].get_or_init(|| {
-        let img = decoded()[i].as_ref()?;
+        let img = decoded_slot(i).as_ref()?;
         let scale = SCREEN_H as f32 / img.h as f32;
         let dst_w = ((img.w as f32) * scale).round().max(1.0) as u32;
         let dst_h = SCREEN_H;

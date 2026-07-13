@@ -28,17 +28,33 @@ fn one_v_one(terrain: Terrain) -> GameState {
     GameState::new(42, terrain, teams, 2)
 }
 
+/// Scenery is now baked directly into `terrain.solid` (WA-style — see
+/// `Terrain::generate_tactical`), so a test that wants realistic scenery
+/// collision must bake it the same way generation does, not just push a bare
+/// `SceneryObject` onto an already-solid block of ground.
+fn bake_scenery(t: &mut Terrain, obj: arty::world::terrain::SceneryObject) {
+    let theme = arty::world::terrain::Theme::of(t.is_cavern, t.template_id);
+    let scale = obj.scale(theme);
+    for (px, py) in arty::renderer::scenery::scenery_pixels(theme, obj.sprite, scale, obj.x as i32, obj.y as i32) {
+        t.set_solid(px, py, true);
+    }
+    t.scenery.push(obj);
+}
+
 #[test]
 fn big_crater_only_destroys_overlapping_portion() {
-    let mut t = flat_terrain();
-    t.scenery.push(arty::world::terrain::SceneryObject { x: 500, y: 400, sprite: 1, mask: None });
-    t.scenery.push(arty::world::terrain::SceneryObject { x: 900, y: 400, sprite: 1, mask: None });
+    // Air terrain (not flat ground) so the object's own baked silhouette is
+    // the only solid material near it — isolates "does the blast eat the
+    // sprite" from "is there unrelated solid ground under the box".
+    let mut t = Terrain::empty();
+    bake_scenery(&mut t, arty::world::terrain::SceneryObject { x: 500, y: 400, sprite: 1 });
+    bake_scenery(&mut t, arty::world::terrain::SceneryObject { x: 900, y: 400, sprite: 1 });
+    for x in 0..arty::world::WORLD_W as i32 { t.recompute_column_cache(x); }
+
     // Bazooka-sized crater overlapping only part of the first object's footprint
     // (its farthest corner is outside r=45) — the far side should survive.
     Crater::new(500.0, 395.0, 45.0).carve(&mut t);
     assert_eq!(t.scenery.len(), 2, "part of the object is untouched by the blast, so it stays");
-    assert!(t.scenery[0].mask.is_some(), "the overlapped object should have some pixels carved");
-    assert!(t.scenery[1].mask.is_none(), "the untouched object should be unaffected");
 
     // A crater big enough to fully engulf the footprint removes the object.
     Crater::new(500.0, 395.0, 80.0).carve(&mut t);
@@ -48,8 +64,9 @@ fn big_crater_only_destroys_overlapping_portion() {
 
 #[test]
 fn bullet_crater_leaves_scenery_standing() {
-    let mut t = flat_terrain();
-    t.scenery.push(arty::world::terrain::SceneryObject { x: 500, y: 400, sprite: 1, mask: None });
+    let mut t = Terrain::empty();
+    bake_scenery(&mut t, arty::world::terrain::SceneryObject { x: 500, y: 400, sprite: 1 });
+    for x in 0..arty::world::WORLD_W as i32 { t.recompute_column_cache(x); }
     Crater::new(500.0, 395.0, 3.0).carve(&mut t); // pistol-sized chip
     assert_eq!(t.scenery.len(), 1, "small-arms craters must not fell scenery");
 }

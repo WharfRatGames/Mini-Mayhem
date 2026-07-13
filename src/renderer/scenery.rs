@@ -5,7 +5,7 @@
 
 use super::buffer::WorldBuffer;
 use super::fb::Bgra;
-use crate::world::terrain::{SceneryObject, Terrain, Theme};
+use crate::world::terrain::{Terrain, Theme};
 use crate::world::constants::{SCREEN_W, SCREEN_H, WATER_Y};
 
 pub fn draw_scenery(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: i32, cam_y: i32) {
@@ -20,7 +20,14 @@ pub fn draw_scenery(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: i32, cam_y:
         // coordinates relative to the (wx, wy) bottom-center anchor, and the
         // wrapper magnifies every rect about that anchor. The scale MUST match
         // SceneryObject::scale — the collision footprint is derived from it.
-        let mut sbuf = Scaled { buf, ax: wx, ay: wy, s: obj.scale(theme), obj, theme };
+        //
+        // Scenery is baked into terrain.solid at generation time (see
+        // `scenery_pixels` / `Terrain::generate_tactical`), so it's real
+        // collision like any other dirt pixel — blown up by explosions/torch
+        // through the ordinary `Crater::carve` loop, no separate object mask.
+        // Rendering just mirrors that ground truth: a sprite pixel only draws
+        // if the terrain pixel it corresponds to is still solid.
+        let mut sbuf = Scaled { canvas: buf, ax: wx, ay: wy, s: obj.scale(theme), terrain: Some(terrain) };
         match theme {
             crate::world::terrain::Theme::Underground => draw_underground(&mut sbuf, wx, wy, obj.sprite),
             crate::world::terrain::Theme::Pastoral => draw_pastoral(&mut sbuf, wx, wy, obj.sprite),
@@ -29,26 +36,74 @@ pub fn draw_scenery(buf: &mut WorldBuffer, terrain: &Terrain, cam_x: i32, cam_y:
     }
 }
 
+/// Every pixel a scenery sprite would draw, in absolute world coordinates —
+/// used once at generation time to bake the sprite's silhouette into
+/// `terrain.solid` (see `Terrain::generate_tactical`). Runs the exact same
+/// hand-drawn `draw_*` functions used for rendering, just aimed at a
+/// pixel-collecting sink instead of the world buffer, so the baked collision
+/// shape always matches what's drawn — no separately-authored footprint mask
+/// to fall out of sync.
+pub fn scenery_pixels(theme: Theme, sprite: u8, scale: i32, wx: i32, wy: i32) -> Vec<(i32, i32)> {
+    let mut mask = MaskCanvas { pixels: Vec::new() };
+    let mut sbuf = Scaled { canvas: &mut mask, ax: wx, ay: wy, s: scale, terrain: None };
+    match theme {
+        Theme::Underground => draw_underground(&mut sbuf, wx, wy, sprite),
+        Theme::Pastoral => draw_pastoral(&mut sbuf, wx, wy, sprite),
+        Theme::Rugged => draw_rugged(&mut sbuf, wx, wy, sprite),
+    }
+    mask.pixels
+}
+
+/// A sink a sprite's `fill_rect`/`set_pixel` calls can land on: either the
+/// real world buffer (rendering) or a pixel-position collector (baking).
+trait Canvas {
+    fn plot(&mut self, x: i32, y: i32, w: u32, h: u32, c: Bgra);
+}
+
+impl Canvas for WorldBuffer {
+    fn plot(&mut self, x: i32, y: i32, w: u32, h: u32, c: Bgra) {
+        self.fill_rect(x, y, w, h, c);
+    }
+}
+
+struct MaskCanvas {
+    pixels: Vec<(i32, i32)>,
+}
+
+impl Canvas for MaskCanvas {
+    fn plot(&mut self, x: i32, y: i32, w: u32, h: u32, _c: Bgra) {
+        for uy in y..y + h as i32 {
+            for ux in x..x + w as i32 {
+                self.pixels.push((ux, uy));
+            }
+        }
+    }
+}
+
 /// Draw target that magnifies 1×-authored pixel art about an anchor point:
 /// every rect/pixel at offset (dx, dy) from the anchor lands at (dx*s, dy*s)
 /// with its size multiplied by `s`. Keeps the 40+ hand-drawn sprite functions
 /// untouched while letting scenery render at 2-3×.
-struct Scaled<'a> {
-    buf: &'a mut WorldBuffer,
+///
+/// `terrain: None` means "collecting the full, undamaged silhouette" (the
+/// generation-time bake pass — nothing has been carved yet). `terrain: Some`
+/// means "rendering the live object" — each pixel only plots if the terrain
+/// pixel it maps to is still solid, so a torch/explosion carving through part
+/// of the sprite erases exactly that part on screen, with no separate mask.
+struct Scaled<'a, C: Canvas> {
+    canvas: &'a mut C,
     ax: i32,
     ay: i32,
     s: i32,
-    obj: &'a SceneryObject,
-    theme: Theme,
+    terrain: Option<&'a Terrain>,
 }
 
-impl Scaled<'_> {
+impl<C: Canvas> Scaled<'_, C> {
     fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, c: Bgra) {
-        // Fast path: the vast majority of objects have never been touched by
-        // an explosion (mask is None) — blit the whole rect in one call, same
-        // as before masking existed.
-        if self.obj.mask.is_none() {
-            self.buf.fill_rect(
+        // Fast path: no live terrain to check against (baking pass) — blit
+        // the whole rect in one call.
+        if self.terrain.is_none() {
+            self.canvas.plot(
                 self.ax + (x - self.ax) * self.s,
                 self.ay + (y - self.ay) * self.s,
                 w * self.s as u32,
@@ -67,18 +122,21 @@ impl Scaled<'_> {
     fn set_pixel(&mut self, x: i32, y: i32, c: Bgra) {
         let wx0 = self.ax + (x - self.ax) * self.s;
         let wy0 = self.ay + (y - self.ay) * self.s;
-        if self.obj.mask.is_none() {
-            self.buf.fill_rect(wx0, wy0, self.s as u32, self.s as u32, c);
-            return;
-        }
-        // Masked path: mask resolution matches world pixels post-scale, so a
-        // crater boundary can cut through the middle of this 1x pixel's s×s
-        // block — check and plot each world pixel individually.
+        let terrain = match self.terrain {
+            None => {
+                self.canvas.plot(wx0, wy0, self.s as u32, self.s as u32, c);
+                return;
+            }
+            Some(t) => t,
+        };
+        // Live-terrain path: mask resolution matches world pixels post-scale,
+        // so a crater boundary can cut through the middle of this 1x pixel's
+        // s×s block — check and plot each world pixel individually.
         for dy in 0..self.s {
             for dx in 0..self.s {
                 let (wx, wy) = (wx0 + dx, wy0 + dy);
-                if self.obj.pixel_intact(wx, wy, self.theme) {
-                    self.buf.fill_rect(wx, wy, 1, 1, c);
+                if terrain.is_solid(wx, wy) {
+                    self.canvas.plot(wx, wy, 1, 1, c);
                 }
             }
         }
@@ -87,7 +145,7 @@ impl Scaled<'_> {
 
 // ── Archetype 0: Pastoral (hills) ─────────────────────────────────────────────
 
-fn draw_pastoral(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
+fn draw_pastoral<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
         0 => draw_flower(buf, cx, by),
         1 => draw_mushroom(buf, cx, by),
@@ -108,7 +166,7 @@ fn draw_pastoral(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
     }
 }
 
-fn draw_flower(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_flower<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stem   = Bgra::new(50, 160, 50);
     let dark   = Bgra::new(20, 90, 20);
     let petal  = Bgra::new(80, 80, 240);
@@ -136,7 +194,7 @@ fn draw_flower(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx,     by - 19, 2, 2, center);
 }
 
-fn draw_mushroom(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_mushroom<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stem  = Bgra::new(235, 230, 215);
     let sdark = Bgra::new(170, 160, 140);
     let cap   = Bgra::new(210, 50, 50);
@@ -162,7 +220,7 @@ fn draw_mushroom(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 5, by - 12, 2, 2, spot);
 }
 
-fn draw_mossy_rock(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_mossy_rock<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let rock  = Bgra::new(120, 115, 108);
     let rdark = Bgra::new(70, 65, 60);
     let rhi   = Bgra::new(165, 160, 150);
@@ -184,7 +242,7 @@ fn draw_mossy_rock(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 8,  by - 8,   3, 2, moss);
 }
 
-fn draw_fence_post(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_fence_post<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(180, 140, 90);
     let wdark = Bgra::new(110, 80, 45);
     let wtop  = Bgra::new(210, 170, 110);
@@ -208,7 +266,7 @@ fn draw_fence_post(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 4,  by - 8,  11, 2, wood);
 }
 
-fn draw_bush(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_bush<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let green  = Bgra::new(50, 155, 45);
     let dark   = Bgra::new(20, 80, 18);
     let light  = Bgra::new(85, 195, 75);
@@ -232,7 +290,7 @@ fn draw_bush(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── Archetype 1: Rugged (cliffs) ──────────────────────────────────────────────
 
-fn draw_rugged(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
+fn draw_rugged<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
         0 => draw_pine_tree(buf, cx, by),
         1 => draw_boulder(buf, cx, by),
@@ -252,7 +310,7 @@ fn draw_rugged(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
     }
 }
 
-fn draw_pine_tree(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_pine_tree<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let trunk  = Bgra::new(100, 65, 30);
     let tdark  = Bgra::new(55, 35, 12);
     let green  = Bgra::new(38, 120, 42);
@@ -295,7 +353,7 @@ fn draw_pine_tree(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 8, by - 17, 4, 2, light);
 }
 
-fn draw_boulder(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_boulder<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let rock  = Bgra::new(105, 100, 95);
     let rdark = Bgra::new(55, 50, 48);
     let rhi   = Bgra::new(158, 152, 144);
@@ -323,7 +381,7 @@ fn draw_boulder(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 3,  by - 5,   1, 3, crack);
 }
 
-fn draw_wooden_crate(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_wooden_crate<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     // Half-size crate: all coordinates/extents halved from the original art
     // (which matched the (10,18) footprint before it was halved to (5,9)
     // in terrain.rs).
@@ -353,7 +411,7 @@ fn draw_wooden_crate(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 3, by - 2, 1, 1, dark);
 }
 
-fn draw_dead_stump(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_dead_stump<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(125, 88, 50);
     let dark  = Bgra::new(65, 42, 22);
     let bark  = Bgra::new(90, 62, 33);
@@ -382,7 +440,7 @@ fn draw_dead_stump(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── Archetype 2: Tropical (islands) ───────────────────────────────────────────
 
-fn draw_tropical(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
+fn draw_tropical<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
         0 => draw_palm_tree(buf, cx, by),
         2 => draw_tent_shanty(buf, cx, by),
@@ -393,7 +451,7 @@ fn draw_tropical(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
     }
 }
 
-fn draw_palm_tree(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_palm_tree<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let trunk  = Bgra::new(160, 120, 60);
     let tdark  = Bgra::new(100, 72, 30);
     let ring   = Bgra::new(130, 95, 45);
@@ -438,7 +496,7 @@ fn draw_palm_tree(buf: &mut Scaled, cx: i32, by: i32) {
     }
 }
 
-fn draw_tent_shanty(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_tent_shanty<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let canvas = Bgra::new(200, 180, 130);
     let dark   = Bgra::new(80, 65, 40);
     let shadow = Bgra::new(140, 120, 85);
@@ -471,7 +529,7 @@ fn draw_tent_shanty(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 3, by - 7, 7, 7, Bgra::new(30, 25, 20));
 }
 
-fn draw_anchor(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_anchor<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let metal = Bgra::new(75, 80, 88);
     let dark  = Bgra::new(35, 38, 45);
     let rust  = Bgra::new(130, 75, 40);
@@ -503,7 +561,7 @@ fn draw_anchor(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── Archetype 3: Underground (caverns) ────────────────────────────────────────
 
-fn draw_underground(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
+fn draw_underground<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
         0 => draw_crystal_cluster(buf, cx, by),
         1 => draw_bone_pile(buf, cx, by),
@@ -523,7 +581,7 @@ fn draw_underground(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
     }
 }
 
-fn draw_crystal_cluster(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_crystal_cluster<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let crys  = Bgra::new(180, 80, 220);
     let cdark = Bgra::new(90, 30, 130);
     let clight= Bgra::new(230, 160, 255);
@@ -552,7 +610,7 @@ fn draw_crystal_cluster(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 3, by - 13, 2, 2, cdark);
 }
 
-fn draw_bone_pile(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_bone_pile<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let bone  = Bgra::new(230, 225, 200);
     let bdark = Bgra::new(155, 148, 120);
     let bhi   = Bgra::new(245, 242, 225);
@@ -583,7 +641,7 @@ fn draw_bone_pile(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 5, by - 8, 11, 1, bdark);
 }
 
-fn draw_torch(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_torch<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(140, 100, 48);
     let wdark = Bgra::new(75, 50, 18);
     let wrap  = Bgra::new(170, 130, 70);
@@ -610,7 +668,7 @@ fn draw_torch(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 2, by - 26, 5, 1, fire1);
 }
 
-fn draw_skull(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_skull<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let bone  = Bgra::new(220, 215, 195);
     let bdark = Bgra::new(130, 123, 105);
     let bhi   = Bgra::new(245, 240, 222);
@@ -647,7 +705,7 @@ fn draw_skull(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── Archetype 4: Arid (canyon/mesa) ──────────────────────────────────────────
 
-fn draw_arid(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
+fn draw_arid<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
         0 => draw_cactus(buf, cx, by),
         1 => draw_bleached_skull(buf, cx, by),
@@ -659,7 +717,7 @@ fn draw_arid(buf: &mut Scaled, cx: i32, by: i32, sprite: u8) {
     }
 }
 
-fn draw_cactus(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_cactus<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let green  = Bgra::new(40, 145, 50);
     let gdark  = Bgra::new(18, 85, 25);
     let glight = Bgra::new(75, 190, 80);
@@ -692,7 +750,7 @@ fn draw_cactus(buf: &mut Scaled, cx: i32, by: i32) {
     }
 }
 
-fn draw_bleached_skull(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_bleached_skull<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let bone  = Bgra::new(240, 232, 205);
     let bdark = Bgra::new(160, 150, 125);
     let sand  = Bgra::new(200, 185, 145);
@@ -720,7 +778,7 @@ fn draw_bleached_skull(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 6, by - 5, 13, 1, bone);
 }
 
-fn draw_crumbling_pillar(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_crumbling_pillar<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stone  = Bgra::new(165, 155, 140);
     let sdark  = Bgra::new(95, 88, 78);
     let shi    = Bgra::new(200, 192, 178);
@@ -752,7 +810,7 @@ fn draw_crumbling_pillar(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 5, by - 8,  11, 1, sdark);
 }
 
-fn draw_tumbleweed(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_tumbleweed<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let brown  = Bgra::new(155, 118, 62);
     let bdark  = Bgra::new(85, 60, 25);
     let tan    = Bgra::new(195, 165, 105);
@@ -784,7 +842,7 @@ fn draw_tumbleweed(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── New pastoral variants ──────────────────────────────────────────────────────
 
-fn draw_sunflower(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_sunflower<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stem  = Bgra::new(40, 140, 35);
     let dark  = Bgra::new(18, 75, 15);
     let petal = Bgra::new(255, 210, 40);
@@ -814,7 +872,7 @@ fn draw_sunflower(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 1, by - 27, 3, 2, Bgra::new(50, 130, 210));
 }
 
-fn draw_log(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_log<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(150, 105, 55);
     let dark  = Bgra::new(80, 50, 20);
     let end   = Bgra::new(175, 135, 80);
@@ -840,7 +898,7 @@ fn draw_log(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 16, by - 8,  1, 3, ring);
 }
 
-fn draw_pebble_cluster(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_pebble_cluster<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stone = Bgra::new(135, 128, 118);
     let dark  = Bgra::new(75, 70, 65);
     let hi    = Bgra::new(175, 168, 155);
@@ -866,7 +924,7 @@ fn draw_pebble_cluster(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── New rugged variants ────────────────────────────────────────────────────────
 
-fn draw_broken_wall(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_broken_wall<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stone = Bgra::new(130, 122, 110);
     let dark  = Bgra::new(65, 60, 52);
     let hi    = Bgra::new(165, 158, 145);
@@ -892,7 +950,7 @@ fn draw_broken_wall(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 17, by - 2, 3, 2, stone);
 }
 
-fn draw_lichen_rock(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_lichen_rock<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let rock  = Bgra::new(115, 108, 98);
     let dark  = Bgra::new(60, 56, 50);
     let hi    = Bgra::new(155, 148, 135);
@@ -916,7 +974,7 @@ fn draw_lichen_rock(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 10, by - 9,    3, 2, lichen);
 }
 
-fn draw_cairn(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_cairn<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stone = Bgra::new(125, 118, 108);
     let dark  = Bgra::new(65, 60, 54);
     let hi    = Bgra::new(162, 155, 142);
@@ -953,7 +1011,7 @@ fn draw_cairn(buf: &mut Scaled, cx: i32, by: i32) {
 // ── 2026-07-10 additions ───────────────────────────────────────────────────────
 
 /// Pastoral 8 — hay bale, footprint (8, 12): round straw bale on its side.
-fn draw_hay_bale(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_hay_bale<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let hay   = Bgra::new(205, 170, 70);
     let hdark = Bgra::new(140, 108, 32);
     let hhi   = Bgra::new(235, 205, 110);
@@ -975,7 +1033,7 @@ fn draw_hay_bale(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Pastoral 9 — scarecrow, footprint (7, 24): cross pole, coat, straw hat.
-fn draw_scarecrow(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_scarecrow<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let pole  = Bgra::new(110, 78, 36);
     let pdark = Bgra::new(60, 42, 16);
     let coat  = Bgra::new(150, 60, 50);
@@ -1004,7 +1062,7 @@ fn draw_scarecrow(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Rugged 7 — menhir, footprint (7, 26): weathered standing stone.
-fn draw_menhir(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_menhir<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stone = Bgra::new(118, 112, 104);
     let sdark = Bgra::new(62, 58, 52);
     let shi   = Bgra::new(160, 152, 140);
@@ -1030,7 +1088,7 @@ fn draw_menhir(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Rugged 8 — weathered signpost, footprint (10, 20): two boards on a post.
-fn draw_signpost(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_signpost<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(130, 95, 48);
     let wdark = Bgra::new(70, 48, 20);
     let whi   = Bgra::new(170, 132, 78);
@@ -1055,7 +1113,7 @@ fn draw_signpost(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Underground 7 — glowing mushroom cluster, footprint (10, 10).
-fn draw_glow_mushrooms(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_glow_mushrooms<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stem  = Bgra::new(190, 200, 185);
     let cap   = Bgra::new(70, 200, 160);
     let cdark = Bgra::new(25, 110, 85);
@@ -1080,7 +1138,7 @@ fn draw_glow_mushrooms(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Underground 8 — stalagmite, footprint (8, 22): floor spike rising to a tip.
-fn draw_stalagmite(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_stalagmite<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let rock  = Bgra::new(135, 125, 118);
     let rdark = Bgra::new(72, 66, 60);
     let rhi   = Bgra::new(178, 168, 158);
@@ -1106,7 +1164,7 @@ fn draw_stalagmite(buf: &mut Scaled, cx: i32, by: i32) {
 
 
 /// Pastoral 10 — stone well, footprint (10, 20): ring, posts, peaked roof.
-fn draw_well(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_well<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stone = Bgra::new(150, 145, 135);
     let sdark = Bgra::new(85, 80, 72);
     let wood  = Bgra::new(120, 85, 40);
@@ -1143,7 +1201,7 @@ fn draw_well(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Pastoral 11 — wheelbarrow, footprint (10, 9): tray, wheel, handles.
-fn draw_wheelbarrow(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_wheelbarrow<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(140, 100, 50);
     let wdark = Bgra::new(75, 50, 20);
     let whi   = Bgra::new(180, 140, 85);
@@ -1166,7 +1224,7 @@ fn draw_wheelbarrow(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Pastoral 12 — beehive on a post, footprint (6, 16): straw skep.
-fn draw_beehive(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_beehive<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let straw = Bgra::new(210, 175, 90);
     let sdark = Bgra::new(150, 115, 45);
     let shi   = Bgra::new(240, 210, 130);
@@ -1192,7 +1250,7 @@ fn draw_beehive(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Rugged 9 — campfire ring, footprint (9, 8): stones, logs, embers.
-fn draw_campfire(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_campfire<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stone = Bgra::new(110, 105, 98);
     let sdark = Bgra::new(60, 56, 50);
     let log   = Bgra::new(95, 65, 30);
@@ -1216,7 +1274,7 @@ fn draw_campfire(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Rugged 10 — leaning cartwheel, footprint (8, 16): spoked wheel.
-fn draw_cartwheel(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_cartwheel<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(125, 90, 45);
     let wdark = Bgra::new(68, 46, 18);
     let iron  = Bgra::new(75, 75, 82);
@@ -1246,7 +1304,7 @@ fn draw_cartwheel(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Rugged 11 — ram skull, footprint (8, 7): bleached skull, curled horns.
-fn draw_ram_skull(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_ram_skull<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let bone  = Bgra::new(228, 222, 200);
     let bdark = Bgra::new(150, 142, 118);
     let horn  = Bgra::new(180, 160, 120);
@@ -1269,7 +1327,7 @@ fn draw_ram_skull(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Underground 9 — minecart, footprint (11, 12): iron cart on short rails.
-fn draw_minecart(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_minecart<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let iron  = Bgra::new(105, 100, 110);
     let idark = Bgra::new(55, 52, 60);
     let ihi   = Bgra::new(150, 145, 155);
@@ -1295,7 +1353,7 @@ fn draw_minecart(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Underground 10 — cracked geode, footprint (9, 11): rock with crystal core.
-fn draw_geode(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_geode<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let rock  = Bgra::new(115, 108, 100);
     let rdark = Bgra::new(60, 55, 48);
     let crys  = Bgra::new(170, 90, 230);
@@ -1315,7 +1373,7 @@ fn draw_geode(buf: &mut Scaled, cx: i32, by: i32) {
 }
 
 /// Underground 11 — lantern post, footprint (5, 21): iron post, warm lamp.
-fn draw_lantern_post(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_lantern_post<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let iron  = Bgra::new(85, 82, 90);
     let idark = Bgra::new(45, 42, 50);
     let glass = Bgra::new(255, 200, 90);
@@ -1340,7 +1398,7 @@ fn draw_lantern_post(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── New tropical variants ──────────────────────────────────────────────────────
 
-fn draw_coconut(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_coconut<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let shell = Bgra::new(80, 52, 22);
     let sdark = Bgra::new(40, 24, 8);
     let fiber = Bgra::new(130, 98, 52);
@@ -1365,7 +1423,7 @@ fn draw_coconut(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 2, by - 12,  5, 2, Bgra::new(245, 240, 225));
 }
 
-fn draw_driftwood(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_driftwood<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(185, 172, 148);
     let dark  = Bgra::new(105, 95, 75);
     let hi    = Bgra::new(215, 205, 185);
@@ -1392,7 +1450,7 @@ fn draw_driftwood(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 2,  by - 7, 1, 3, dark);
 }
 
-fn draw_crab_trap(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_crab_trap<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let rope  = Bgra::new(185, 160, 100);
     let wood  = Bgra::new(160, 130, 75);
     let dark  = Bgra::new(75, 55, 22);
@@ -1423,7 +1481,7 @@ fn draw_crab_trap(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── New underground variants ───────────────────────────────────────────────────
 
-fn draw_stalactite_shard(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_stalactite_shard<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let stone = Bgra::new(140, 130, 118);
     let dark  = Bgra::new(70, 64, 56);
     let hi    = Bgra::new(185, 175, 160);
@@ -1450,7 +1508,7 @@ fn draw_stalactite_shard(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 8, by - 6, 1, 3, dark);
 }
 
-fn draw_rusted_chain(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_rusted_chain<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let rust  = Bgra::new(155, 80, 35);
     let rdark = Bgra::new(90, 42, 12);
     let rhi   = Bgra::new(195, 115, 60);
@@ -1475,7 +1533,7 @@ fn draw_rusted_chain(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 1, by - 13, 3, 1, rdark);
 }
 
-fn draw_ribcage(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_ribcage<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let bone  = Bgra::new(225, 218, 195);
     let bdark = Bgra::new(140, 132, 110);
     let bhi   = Bgra::new(242, 238, 220);
@@ -1501,7 +1559,7 @@ fn draw_ribcage(buf: &mut Scaled, cx: i32, by: i32) {
 
 // ── New arid variants ──────────────────────────────────────────────────────────
 
-fn draw_dry_shrub(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_dry_shrub<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let branch = Bgra::new(130, 105, 65);
     let dark   = Bgra::new(70, 52, 25);
     let spine  = Bgra::new(215, 205, 180);
@@ -1533,7 +1591,7 @@ fn draw_dry_shrub(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 1, by - 3, 5, 2, dark);
 }
 
-fn draw_sun_bleached_log(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_sun_bleached_log<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(215, 200, 170);
     let dark  = Bgra::new(120, 108, 85);
     let hi    = Bgra::new(238, 228, 205);
@@ -1558,7 +1616,7 @@ fn draw_sun_bleached_log(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 5, by - 9,  5, 2, wood);
 }
 
-fn draw_horns(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_horns<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let horn  = Bgra::new(220, 200, 155);
     let hdark = Bgra::new(140, 120, 80);
     let hhi   = Bgra::new(242, 228, 192);
@@ -1591,7 +1649,7 @@ fn draw_horns(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 14, by - 24, 2, 2, hhi);
 }
 
-fn draw_birdhouse(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_birdhouse<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let pole  = Bgra::new(110, 80, 45);
     let pdark = Bgra::new(70, 50, 25);
     let wall  = Bgra::new(200, 165, 110);
@@ -1620,7 +1678,7 @@ fn draw_birdhouse(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 1, by - 17, 3, 1, pdark);
 }
 
-fn draw_watering_can(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_watering_can<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let tin   = Bgra::new(120, 150, 160);
     let tdark = Bgra::new(70, 95, 105);
     let thi   = Bgra::new(175, 200, 208);
@@ -1642,7 +1700,7 @@ fn draw_watering_can(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx - 12, by - 10, 1, 3, tin);
 }
 
-fn draw_pumpkin(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_pumpkin<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let orange = Bgra::new(225, 130, 30);
     let odark  = Bgra::new(150, 75, 15);
     let ohi    = Bgra::new(250, 175, 70);
@@ -1664,7 +1722,7 @@ fn draw_pumpkin(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 1, by - 11, 3, 2, stem);
 }
 
-fn draw_anvil(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_anvil<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let iron  = Bgra::new(95, 100, 110);
     let idark = Bgra::new(50, 54, 62);
     let ihi   = Bgra::new(150, 158, 170);
@@ -1686,7 +1744,7 @@ fn draw_anvil(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 6, by - 12, 2, 2, idark);
 }
 
-fn draw_totem_pole(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_totem_pole<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(140, 95, 50);
     let wdark = Bgra::new(85, 55, 28);
     let paint = Bgra::new(190, 60, 45);
@@ -1718,7 +1776,7 @@ fn draw_totem_pole(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 5, by - 26, 3, 2, paint);
 }
 
-fn draw_firewood_stack(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_firewood_stack<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(150, 105, 55);
     let wdark = Bgra::new(90, 60, 30);
     let ring  = Bgra::new(200, 160, 105);
@@ -1738,7 +1796,7 @@ fn draw_firewood_stack(buf: &mut Scaled, cx: i32, by: i32) {
     }
 }
 
-fn draw_treasure_chest(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_treasure_chest<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wood  = Bgra::new(140, 95, 45);
     let wdark = Bgra::new(85, 55, 25);
     let band  = Bgra::new(190, 165, 70);
@@ -1760,7 +1818,7 @@ fn draw_treasure_chest(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx,     by - 7, 1, 2, band);
 }
 
-fn draw_ore_pick(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_ore_pick<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let rock  = Bgra::new(105, 100, 95);
     let rdark = Bgra::new(60, 56, 52);
     let ore   = Bgra::new(90, 190, 210);
@@ -1789,7 +1847,7 @@ fn draw_ore_pick(buf: &mut Scaled, cx: i32, by: i32) {
     buf.fill_rect(cx + 11, by - 18, 2, 2, sdark);
 }
 
-fn draw_candle_cluster(buf: &mut Scaled, cx: i32, by: i32) {
+fn draw_candle_cluster<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     let wax   = Bgra::new(230, 220, 195);
     let wdark = Bgra::new(160, 150, 125);
     let drip  = Bgra::new(245, 238, 218);

@@ -1638,7 +1638,7 @@ impl GameState {
             .wrapping_mul(0x6364136223846885)
             .wrapping_add((pos.y as u64).wrapping_mul(0x9e3779b97f4a7c15))
             .wrapping_add(self.tick as u64 * 0x517CC1B727220A95);
-        let count = 48; // 4× the old 12 — dense pool of fire
+        let count = 36; // dense pool of fire, trimmed down a bit from 48
         for _ in 0..count {
             rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
             let raw_angle = (rng >> 33) as f32 / (u32::MAX as f32);
@@ -1873,9 +1873,11 @@ impl GameState {
         // where a pure slide would trap it until it dies. The escape direction is
         // LATCHED at ignition (away from the blast) and committed to, so the worm
         // travels one way out of the pool instead of hopping back and forth in it.
-        const HOP_INTERVAL:  u32 = 14;   // hop every 14 ticks (~0.47 s) while burning
-        const HOP_VX:        f32 = 4.0;  // horizontal hop speed — big distance to clear peaks
-        const HOP_VY:        f32 = 4.0;  // upward hop speed (a touch lower than before)
+        // Burn-hop now fires on every damage tick (see `deal_damage` below) rather
+        // than its own interval, so it stays in lockstep with the 1 HP/BURN_INTERVAL
+        // damage tick — one jump away from the fire per tick of damage taken.
+        const HOP_VX:        f32 = 3.0;  // horizontal hop speed — distance trimmed down a bit
+        const HOP_VY:        f32 = 3.0;  // upward hop speed — raised back up from 2.0
         // WA-style gradual burn: a landed ember eats terrain away instead of
         // digging one deep pit up front (see the removed upfront crater in
         // apply_explosion_scaled). Tuned down from an initial WA-footage-driven
@@ -1887,24 +1889,18 @@ impl GameState {
         // so the eaten channel matches the flame the player sees rather than a
         // thin sliver under it. Depth over time is still bounded by INTERVAL +
         // DURATION below.
-        const BURN_CARVE_RADIUS:   f32 = 9.0;
-        const BURN_CARVE_INTERVAL: u32 = 8;
-        // 150 → 50 (1/3): the 5s carve window dug pits ~3x too deep on device;
-        // depth scales with carve count (INTERVAL cadence is unchanged), so a
-        // 1/3 window gives 1/3 the depth. Width (RADIUS) is untouched.
+        // 9.0 → 2.25 (1/4 depth): carve radius per hit cut to a quarter.
+        const BURN_CARVE_RADIUS:   f32 = 2.25;
+        // 8 → 32 (1/4 rate): carve 4x less often per patch.
+        const BURN_CARVE_INTERVAL: u32 = 32;
         const BURN_CARVE_DURATION_TICKS: u32 = 50; // ~1.7s @ 30fps — carving stops after this
 
         let wind = self.wind.value() * 0.05;
 
         // Away-from-flame direction accumulator (sum of soldier-minus-patch dx),
-        // used to LATCH an escape direction the tick a soldier first catches fire.
+        // used to re-latch the escape direction on every hop tick.
         let mut away_dx: Vec<Vec<f32>> =
             self.teams.iter().map(|t| vec![0.0f32; t.soldiers.len()]).collect();
-        // Which soldiers were already burning before this tick — so we only latch
-        // the escape direction on the fresh-ignition tick, not every tick.
-        let was_burning: Vec<Vec<bool>> = self.teams.iter()
-            .map(|t| t.soldiers.iter().map(|s| s.on_fire_ticks > 0).collect())
-            .collect();
 
         // Snapshot active soldier HP before the loop so we can detect fire damage.
         let ati = self.active_team();
@@ -2025,6 +2021,16 @@ impl GameState {
                         }
                     }
                 }
+
+                // Flames destroy landed crates instantly on contact.
+                for crate_ in &mut self.crates {
+                    if !crate_.landed { continue; }
+                    let dx = crate_.pos.x - patch.pos.x;
+                    let dy = crate_.pos.y - patch.pos.y;
+                    if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
+                        crate_.damage_this_turn = 20;
+                    }
+                }
             }
         }
 
@@ -2033,7 +2039,9 @@ impl GameState {
         }
 
         // Per-soldier burn effects (bounded, independent of flame count):
-        //  - damage: 1 HP every BURN_INTERVAL ticks while on fire.
+        //  - damage: 2.5 HP/BURN_INTERVAL average while on fire (2.5x the original
+        //    1 HP/BURN_INTERVAL) — alternates 2/3 HP per burn tick since damage is
+        //    integer HP.
         //  - slide: grounded burning soldiers slide DOWNHILL along the terrain (WA:
         //    burning worms slip down slopes into pits/water). try_move_horizontal +
         //    snap_to_surface follow the surface down; sliding off an edge becomes a
@@ -2049,7 +2057,8 @@ impl GameState {
                 if deal_damage {
                     self.teams[ti].soldiers[si].death_cause =
                         super::soldier::DeathCause::Explosion;
-                    self.teams[ti].soldiers[si].take_damage(1);
+                    let burn_dmg = if (self.tick / BURN_INTERVAL) % 2 == 0 { 2 } else { 3 };
+                    self.teams[ti].soldiers[si].take_damage(burn_dmg);
                     if !self.teams[ti].soldiers[si].is_alive() { continue; }
                 }
 
@@ -2058,11 +2067,13 @@ impl GameState {
                 if !matches!(self.teams[ti].soldiers[si].state,
                     SoldierState::Idle | SoldierState::Walking { .. }) { continue; }
 
-                // On the fresh-ignition tick, latch an escape direction (away from
-                // the blast centre) into `facing` and commit to it. This is what
-                // stops the back-and-forth: the worm travels one consistent way out
-                // of the pool instead of re-deciding each hop.
-                if !was_burning[ti][si] {
+                // Re-latch the escape direction (away from whichever flame pool(s)
+                // the worm is currently standing in) every hop tick, not just on
+                // fresh ignition. A worm that hops out of one pool and lands in a
+                // different one must flee THAT pool's centre, not keep running the
+                // original escape direction. Between hops we still commit to the
+                // last-latched direction so hop and slide don't fight each other.
+                if deal_damage {
                     let a = away_dx[ti][si];
                     if a != 0.0 {
                         self.teams[ti].soldiers[si].facing = if a > 0.0 { 1 } else { -1 };
@@ -2080,7 +2091,7 @@ impl GameState {
                     if f == 0.0 { 1.0 } else { f }
                 };
 
-                if (self.tick + si as u32 * 5) % HOP_INTERVAL == 0 {
+                if deal_damage {
                     // Burn-hop: jump toward `dir`. If a barrier (tall terrain, a
                     // barrel/mine) blocks that way, hop the OTHER way instead and
                     // commit to it — so a worm wedged against a wall keeps trying the

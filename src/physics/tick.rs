@@ -14,13 +14,15 @@ pub const TERMINAL_VELOCITY: f32 = 18.0;
 
 /// Wind strength is stored as a value in [-1.0, 1.0].
 /// This scale converts that to pixels per tick² of horizontal acceleration.
-pub const WIND_SCALE: f32 = 0.08;
+/// Reduced 20% (was 0.08) per user request.
+pub const WIND_SCALE: f32 = 0.064;
 
 /// Bazooka-specific wind scale — stronger than the shared `WIND_SCALE` so that
 /// strong wind can visibly hook a rocket around terrain, or even reverse its
 /// horizontal direction mid-flight (a signature WA trick). Hand-tuned, not
 /// derived from a measured constant — adjust based on playtest feel.
-pub const BAZOOKA_WIND_SCALE: f32 = 0.32;
+/// Reduced 20% (was 0.32) per user request.
+pub const BAZOOKA_WIND_SCALE: f32 = 0.256;
 
 /// Apply one physics tick to a projectile.
 ///
@@ -128,7 +130,7 @@ mod tests {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
         tick(&mut p, 1.0);
         assert!(p.vel.x > 0.0, "positive wind should push projectile right");
-        assert!((p.vel.x - WIND_SCALE).abs() < 1e-5);
+        assert!((p.vel.x - BAZOOKA_WIND_SCALE).abs() < 1e-5);
     }
 
     #[test]
@@ -136,14 +138,14 @@ mod tests {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
         tick(&mut p, -1.0);
         assert!(p.vel.x < 0.0, "negative wind should push projectile left");
-        assert!((p.vel.x + WIND_SCALE).abs() < 1e-5);
+        assert!((p.vel.x + BAZOOKA_WIND_SCALE).abs() < 1e-5);
     }
 
     #[test]
     fn wind_accumulates_over_ticks() {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
         tick_n(&mut p, 1.0, 5);
-        assert!((p.vel.x - WIND_SCALE * 5.0).abs() < 1e-4,
+        assert!((p.vel.x - BAZOOKA_WIND_SCALE * 5.0).abs() < 1e-4,
             "wind should accumulate over 5 ticks");
     }
 

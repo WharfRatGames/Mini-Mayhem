@@ -544,13 +544,15 @@ pub fn draw_hp_number_lifted(buf: &mut WorldBuffer, cx: i32, fy: i32, hp: u8, te
 /// `angle_rad`: aim angle in radians (0 = right, positive = upward).
 /// `power`: 0.0-1.0 controls arrow length.
 /// `pos`: foot position of the soldier.
-/// Draw Worms-style aiming: a reticle shows aim direction plus a thin horizontal
-/// charge bar below the soldier that fills left-to-right as A is held.
+/// Draw Worms-style aiming: a reticle shows aim direction plus a tapered charge
+/// wedge growing out of the muzzle along the aim vector as A is held.
 ///
 /// - Reticle: always visible crosshair at `reticle_dist` in the aim direction.
-/// - Charge bar: 80×6 px, 1 px dark border, 4 px fill interior, dark-red→orange gradient.
-///   Bazooka overcharge (power > 1.0) flips all fill pixels to bright orange.
-/// - `power_frac` 0.0–1.2 (0 = empty bar, 1.0 = full, >1.0 = bazooka overcharge).
+/// - Charge bar: original wedge taper (2px at muzzle -> 8px at tip), rounded off at
+///   both ends instead of hard corners; dark-red -> orange gradient over 0..1.0
+///   charge (orange is the terminal colour). The 1.0..MAX_CHARGE overcharge band
+///   is drawn in bright orange too.
+/// - `power_frac` 0.0–MAX_CHARGE (0 = empty, 1.0 = full, > 1.0 = overcharge band).
 pub fn draw_aim_arrow(
     buf:        &mut WorldBuffer,
     origin:     (f32, f32),
@@ -595,58 +597,40 @@ pub fn draw_aim_arrow(
     buf.set_pixel(rx,     ry + 1, wc);
     buf.set_pixel(rx + 1, ry + 1, wc);
 
-    // Rotated charge bar: only visible while charging. Border wraps exactly the filled
-    // portion — border and fill pixels are drawn together as the bar grows.
+    // Charge wedge: arty's original wedge shape/taper/gradient (dark-red -> orange,
+    // no yellow — orange is the terminal colour at both the normal-full point and
+    // the overcharge band), with the hard-cornered border/shadow dropped in favour
+    // of rounding off both ends of the taper.
     if power_frac > 0.005 {
         // Longer meter: full bar = MAX_CHARGE. The stretch from 1.0..MAX_CHARGE is the
         // bonus-range band, drawn in bright orange so it reads as "extra power".
-        let max          = crate::game::loop_runner::MAX_CHARGE;
-        let bar_len      = 100i32;
-        let interior     = (bar_len - 2) as f32; // 98 fillable columns
-        let fill_px      = (power_frac.min(max) / max * interior) as i32;
-        let normal_full  = (1.0 / max * interior) as i32; // column where power=1.0 lands
-        let border_col   = Bgra::new(255, 255, 255);
-        let shadow_col   = Bgra::new(0, 0, 0);
-        let right_cap    = (fill_px + 1).min(bar_len - 1);
+        let max        = crate::game::loop_runner::MAX_CHARGE;
+        let bar_len    = 100.0f32;
+        let fill_len   = (power_frac.min(max) / max * bar_len).max(1.0);
+        let normal_len = (1.0 / max * bar_len).max(1.0); // length where power=1.0 lands
+        let fill_px    = fill_len as i32;
 
-        // Shadow pass: draw the bar outline 1px offset (down-right) for contrast
-        // on any background colour.
-        for col in 0..=right_cap {
-            let base_x = ox as f32 + ca * col as f32;
-            let base_y = oy as f32 - sa * col as f32;
-            let is_cap = col == 0 || col == right_cap;
-            let half = (2 + col * 6 / fill_px.max(1)).min(8) as i32;
-            for row_off in -half..=half {
-                let is_border_row = row_off == -half || row_off == half;
-                if !(is_cap || is_border_row) { continue; }
-                let px = (base_x + sa * row_off as f32).round() as i32;
-                let py = (base_y + ca * row_off as f32).round() as i32;
-                buf.set_pixel(px + 1, py + 1, shadow_col);
-            }
-        }
+        let cap_len = 6.0f32.min(fill_len / 2.0); // rounding distance at each end
+        for col in 0..=fill_px {
+            let d = col as f32;
+            let base_x = ox as f32 + ca * d;
+            let base_y = oy as f32 - sa * d;
 
-        for col in 0..=right_cap {
-            let base_x = ox as f32 + ca * col as f32;
-            let base_y = oy as f32 - sa * col as f32;
-            let is_cap = col == 0 || col == right_cap;
-            // Taper: half-width grows from 2 at muzzle to 8 at end of current charge
-            let half = (2 + col * 6 / fill_px.max(1)).min(8) as i32;
+            // Original straight-edge linear taper (2px at muzzle -> 8px at tip),
+            // rounded off at both ends by easing the half-width down over `cap_len`.
+            let taper_half = 2.0 + (d / fill_len) * 6.0; // 2..8px
+            let round_mul  = (d / cap_len).min((fill_len - d) / cap_len).min(1.0).max(0.0);
+            let half = (taper_half * round_mul) as i32;
+
+            let color = if d > normal_len {
+                Bgra::new(255, 140, 0) // bonus overcharge band
+            } else {
+                let t = d / normal_len;
+                Bgra::new((120.0 + 135.0 * t) as u8, (120.0 * t) as u8, 0)
+            };
             for row_off in -half..=half {
                 let px = (base_x + sa * row_off as f32).round() as i32;
                 let py = (base_y + ca * row_off as f32).round() as i32;
-                let is_border_row = row_off == -half || row_off == half;
-                let color = if is_cap || is_border_row {
-                    border_col
-                } else if col >= 1 && col <= fill_px {
-                    if col > normal_full {
-                        Bgra::new(255, 140, 0) // bonus overcharge band
-                    } else {
-                        let t = (col - 1) as f32 / (normal_full.max(2) - 1) as f32;
-                        Bgra::new((120.0 + 135.0 * t) as u8, (120.0 * t) as u8, 0)
-                    }
-                } else {
-                    continue; // cap col, non-border interior — skip
-                };
                 buf.set_pixel(px, py, color);
             }
         }

@@ -89,14 +89,6 @@ pub struct SceneryObject {
     pub x: u32,
     pub y: u32,
     pub sprite: u8,
-    /// Per-pixel destruction state over the collision footprint box, in
-    /// world-pixel (post-scale) resolution: row-major over
-    /// `(y-height..=y) x (x-half_w..=x+half_w)`, true = still intact.
-    /// `None` means fully intact — the common case, so untouched objects
-    /// don't pay for an allocation. Craters clear bits within their radius
-    /// exactly like they clear terrain pixels (see `carve`), so an explosion
-    /// only eats the part of the object it actually overlaps.
-    pub mask: Option<Vec<bool>>,
 }
 
 impl SceneryObject {
@@ -129,52 +121,6 @@ impl SceneryObject {
 
     /// Unscaled (1×) sprite footprint, matching the raw pixel-art dimensions
     /// in renderer/scenery.rs.
-    /// True if the pixel at world (wx, wy) is still intact (not yet carved
-    /// away by a crater). Pixels outside the footprint box (thin decorative
-    /// overflow like torch flames, which the box deliberately excludes) are
-    /// always intact — only the tracked collision box is ever masked.
-    pub fn pixel_intact(&self, wx: i32, wy: i32, theme: Theme) -> bool {
-        let (half_w, height) = self.footprint(theme);
-        let lx = wx - self.x as i32 + half_w;
-        let ly = self.y as i32 - wy;
-        if lx < 0 || ly < 0 || lx > 2 * half_w || ly > height {
-            return true;
-        }
-        match &self.mask {
-            None => true,
-            Some(m) => {
-                let w = 2 * half_w + 1;
-                m.get((ly * w + lx) as usize).copied().unwrap_or(true)
-            }
-        }
-    }
-
-    /// Clear mask bits within a crater (ccx, ccy, sqrt(r2)) that fall inside
-    /// this object's footprint box — same per-pixel rule `Crater::carve` uses
-    /// on terrain. Returns true once every tracked pixel is destroyed (caller
-    /// should then drop the object).
-    pub fn carve(&mut self, theme: Theme, ccx: f32, ccy: f32, r2: f32) -> bool {
-        let (half_w, height) = self.footprint(theme);
-        let w = 2 * half_w + 1;
-        let mask = self.mask.get_or_insert_with(|| vec![true; (w * (height + 1)) as usize]);
-        let mut any_left = false;
-        for ly in 0..=height {
-            let wy = self.y as i32 - ly;
-            for lx in 0..w {
-                let idx = (ly * w + lx) as usize;
-                if !mask[idx] { continue; }
-                let wx = self.x as i32 - half_w + lx;
-                let (dx, dy) = (wx as f32 - ccx, wy as f32 - ccy);
-                if dx * dx + dy * dy <= r2 {
-                    mask[idx] = false;
-                } else {
-                    any_left = true;
-                }
-            }
-        }
-        !any_left
-    }
-
     fn base_footprint(&self, theme: Theme) -> (i32, i32) {
         match theme {
             // Round/organic sprites (rocks, bushes, piles) get a tighter box than
@@ -182,9 +128,9 @@ impl SceneryObject {
             // always overhangs the corners, so these are trimmed toward the solid
             // core instead of the decorative edges. Blocky sprites (posts, crates,
             // walls, logs) already match their visual bounds closely and are left
-            // as-is. A fully precise fix needs a real per-pixel mask per sprite
-            // (SceneryObject::mask is currently only populated by crater carving,
-            // never at spawn) — this is a pragmatic tightening, not that.
+            // as-is. Only used for placement spacing/clearance now — the real
+            // collision shape baked into terrain.solid is the sprite's exact
+            // per-pixel silhouette (see `scenery_pixels`), not this box.
             Theme::Pastoral => match self.sprite {
                 0 => (6, 24),  // flower
                 1 => (10, 16), // mushroom
@@ -575,7 +521,12 @@ impl Terrain {
         // The macro silhouette itself comes from the real WA masks (wa_density,
         // Phase 2 below); these only shape the residual fine noise texture/lean
         // folded in at reduced weight, plus is_cavern's own fill+carve thresholds.
-        let octaves = 3usize;
+        // 3 -> 2: FBM noise is only a low-weight (0.25) texture blend on top of
+        // the WA-collage silhouette that defines the macro shape, so dropping an
+        // octave trims per-pixel cost with minimal visual impact. Perf motivation:
+        // on-device profiling measured ~2.7s/seed of generate_tactical (density
+        // field fill is the dominant cost) vs ~100ms on desktop.
+        let octaves = 2usize;
         let warp_freq = 2.5;
         let warp_amp = rnd(&mut rng, 0.14, 0.16);
         let threshold = rnd(&mut rng, 0.46, 0.08);
@@ -667,6 +618,7 @@ impl Terrain {
             // water gap, and a hard side seal. Same box-blur+threshold treatment
             // as the island branch so cave walls come out rounded/organic.
             // Deterministic f64 math, no RNG draws inside the loop.
+            let carve_thr = rnd(&mut rng, 0.26, 0.08);
             let band_h = (CAVE_FLOOR - SKY_FLOOR) as usize;
             let band_w = WORLD_W as usize;
             let band_span = band_h as f64;
@@ -761,22 +713,29 @@ impl Terrain {
             });
             // Threshold into the bitmap: carve air where the smoothed field is
             // below the carve threshold (the inverted collage marks chambers as
-            // low density). 0.5 → 0.46 (expanded-corpus recalibration: our
-            // caverns ran solid_frac 0.562 vs reference 0.629 — carve less).
+            // low density). 2026-07-13 expanded-corpus round: fixed 0.32 →
+            // per-seed 0.26–0.34 — median carve drops (solid 0.583 vs ref
+            // 0.626) and the per-seed spread widens (ours p10..p90 was
+            // 0.558–0.608 vs reference 0.567–0.683).
             for ry in 0..band_h {
                 let y = SKY_FLOOR + ry as i32;
                 for x in 0..band_w {
-                    if cdens[ry * band_w + x] < 0.32 {
+                    if cdens[ry * band_w + x] < carve_thr {
                         terrain.set_solid(x as i32, y, false);
                     }
                 }
             }
 
             // C.6 — Air dilation: widen all air passages so soldiers (14px wide, 20px tall)
-            // can traverse them. Two passes of Moore-neighborhood dilation — each pass
+            // can traverse them. Three passes of Moore-neighborhood dilation — each pass
             // expands existing air by 1px on all sides, ONLY within the rock band (SKY_FLOOR
             // and below). Never touch the sealed top zone (y < SKY_FLOOR).
-            for _ in 0..2 {
+            // (Bumped 2 -> 3, not 4: two passes only widened passages by ~4px total,
+            // leaving some tunnels too tight for the 14px-wide soldier hitbox to pass.
+            // 4 passes over-widened chambers to the point the plasma torch's ~37-49px
+            // forward lookahead (step_plasma_torch in loop_runner.rs) frequently found
+            // no solid rock ahead and silently stopped carving on cavern maps.)
+            for _ in 0..3 {
                 let snap = terrain.solid.clone();
                 for y in SKY_FLOOR..CAVE_FLOOR - 1 {
                     for x in 1..WORLD_W as i32 - 1 {
@@ -1099,7 +1058,23 @@ impl Terrain {
         // `threshold`: the blur pulls small WA-silhouette stepping-stones' contours
         // inward, so this keeps them above threshold (and above the min_frag=50
         // cleanup floor below) instead of vanishing.
-        let thr = threshold - 0.03;
+        let mut thr = threshold - 0.03;
+        // Sparse-tail floor (expanded-corpus recalibration 2026-07-13): reference
+        // open-air maps never drop below ~0.36 solid_frac (p10), but fragmented
+        // collages could land at 0.17. If the field fills < MIN_FILL of the band
+        // at `thr`, lower thr to the exact quantile that yields MIN_FILL.
+        // select_nth is deterministic (exact value of the sorted position).
+        {
+            const MIN_FILL: f64 = 0.33;
+            let filled = dens.iter().filter(|&&d| d >= thr).count();
+            let want = (dens.len() as f64 * MIN_FILL) as usize;
+            if filled < want {
+                let mut sorted = dens.clone();
+                let nth = dens.len() - want;
+                sorted.select_nth_unstable_by(nth, |a, b| a.total_cmp(b));
+                thr = sorted[nth];
+            }
+        }
         for ry in 0..region_h {
             let y = TERRAIN_MIN_Y as usize + ry;
             for x in 0..region_w {
@@ -1182,19 +1157,39 @@ impl Terrain {
             Vec::new()
         };
         if cave {
-            for y in TERRAIN_MIN_Y..WATER_Y {
-                let ny = y as f64 / WORLD_H as f64;
-                for x in 0..WORLD_W {
-                    if y <= carve_floor[x as usize] { continue; }
-                    if !terrain.is_solid(x as i32, y as i32) { continue; }
-                    let nx = x as f64 / WORLD_W as f64;
-                    let c = (cave_a.get([nx * cave_sx, ny * cave_sy])
-                           + cave_b.get([nx * cave_sx * 0.6 + 100.0, ny * cave_sy * 0.6 + 100.0]) * 0.5) / 1.5;
-                    if c.abs() < cave_thresh {
-                        terrain.set_solid(x as i32, y as i32, false);
-                    }
+            // Parallel over disjoint row chunks — each pixel's write depends only
+            // on its own prior solid state (read once, before any write in this
+            // phase), never on a neighbour, so splitting rows is bit-identical to
+            // the serial loop (same argument as the density-field fill above).
+            let cave_w = WORLD_W as usize;
+            let cave_region_h = (WATER_Y - TERRAIN_MIN_Y) as usize;
+            let n_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+            let cave_rows_per = cave_region_h.div_ceil(n_threads);
+            let carve_floor = &carve_floor;
+            let cave_a = &cave_a; let cave_b = &cave_b;
+            std::thread::scope(|scope| {
+                for (chunk_i, chunk) in terrain.solid[world_index(0, TERRAIN_MIN_Y)..world_index(0, WATER_Y)]
+                    .chunks_mut(cave_rows_per * cave_w).enumerate()
+                {
+                    scope.spawn(move || {
+                        let y_start = TERRAIN_MIN_Y as usize + chunk_i * cave_rows_per;
+                        for (row_i, row) in chunk.chunks_mut(cave_w).enumerate() {
+                            let y = y_start + row_i;
+                            let ny = y as f64 / WORLD_H as f64;
+                            for x in 0..cave_w {
+                                if y as u32 <= carve_floor[x] { continue; }
+                                if !row[x] { continue; }
+                                let nx = x as f64 / WORLD_W as f64;
+                                let c = (cave_a.get([nx * cave_sx, ny * cave_sy])
+                                       + cave_b.get([nx * cave_sx * 0.6 + 100.0, ny * cave_sy * 0.6 + 100.0]) * 0.5) / 1.5;
+                                if c.abs() < cave_thresh {
+                                    row[x] = false;
+                                }
+                            }
+                        }
+                    });
                 }
-            }
+            });
         }
 
         // Phase 3.5 — Air dilation for cave-punched non-cavern maps.
@@ -1282,107 +1277,9 @@ impl Terrain {
         }
 
         // ── Phase 6b: Flood-fill fragment cleanup ─────────────────────────────────
-        // Remove solid components smaller than min_frag (noise junk / tiny floaters).
-        // Caverns are solid rock carved into large connected chambers, so they can
-        // afford a higher bar to clean up carve-noise debris.
-        // Island bar raised 50 → 4000 (MapGEN-corpus calibration 2026-07-10):
-        // reference maps hold 1-3 solid chunks; ours measured a median of 10,
-        // mostly confetti floaters. 4000px ≈ a 40x40 blob — anything smaller
-        // isn't a usable stepping stone (a soldier is 14x20), it's debris.
-        {
-            // Expanded-corpus recalibration: reference maps hold 1-3 chunks vs
-            // our 5, but a flat high cutoff guts fragmented collages (seed 4
-            // dropped to 7% solid). Two tiers instead: `min_frag` is always
-            // debris; chunks between it and `big_frag` are dropped only after
-            // the kept (larger) chunks already cover ≥85% of the solid mass —
-            // n_chunks comes down without ever hollowing out a map.
-            let min_frag: usize = if is_cavern { 1500 } else { 4000 };
-            let big_frag: usize = if is_cavern { 4000 } else { 16000 };
-            let mut comps: Vec<Vec<(i32, i32)>> = Vec::new();
-            let mut visited = vec![false; WORLD_PIXELS];
-            let mut stack: Vec<(i32, i32)> = Vec::new();
-            let mut comp: Vec<(i32, i32)> = Vec::new();
-            for y0 in TERRAIN_MIN_Y..WATER_Y {
-                for x0 in 0..WORLD_W {
-                    let i0 = world_index(x0, y0);
-                    if !terrain.solid[i0] || visited[i0] { continue; }
-                    stack.clear();
-                    comp.clear();
-                    stack.push((x0 as i32, y0 as i32));
-                    visited[i0] = true;
-                    while let Some((cx, cy)) = stack.pop() {
-                        comp.push((cx, cy));
-                        for (dx, dy) in [(-1,0),(1,0),(0,-1),(0,1)] {
-                            let nxp = cx + dx;
-                            let nyp = cy + dy;
-                            if nxp < 0 || nxp >= WORLD_W as i32 { continue; }
-                            if nyp < TERRAIN_MIN_Y as i32 || nyp >= WATER_Y as i32 { continue; }
-                            let j = world_index(nxp as u32, nyp as u32);
-                            if terrain.solid[j] && !visited[j] {
-                                visited[j] = true;
-                                stack.push((nxp, nyp));
-                            }
-                        }
-                    }
-                    if comp.len() < min_frag {
-                        for (cx, cy) in &comp { terrain.set_solid(*cx, *cy, false); }
-                    } else {
-                        comps.push(comp.clone());
-                    }
-                }
-            }
-            // Deterministic: components are found in scan order; stable sort by
-            // size (descending) only.
-            comps.sort_by(|a, b| b.len().cmp(&a.len()));
-            let total: usize = comps.iter().map(|c| c.len()).sum();
-            // Per-column count of components providing ground there: a chunk
-            // that is the SOLE ground under many columns is load-bearing for
-            // map coverage (chasms can sever the low waterline bridge into a
-            // mid-size strip — dropping it once left 276 bare columns and
-            // tripped island_relief_is_traversable) and must survive the
-            // mid-tier cleanup regardless of the mass budget.
-            let mut col_cover = vec![0u16; WORLD_W as usize];
-            let comp_cols: Vec<Vec<u32>> = comps
-                .iter()
-                .map(|comp| {
-                    let mut seen = vec![false; WORLD_W as usize];
-                    for (cx, _) in comp { seen[*cx as usize] = true; }
-                    let cols: Vec<u32> = (0..WORLD_W).filter(|&c| seen[c as usize]).collect();
-                    for &c in &cols { col_cover[c as usize] += 1; }
-                    cols
-                })
-                .collect();
-            let mut kept: usize = 0;
-            for (comp, cols) in comps.iter().zip(&comp_cols) {
-                let sole_ground = cols.iter().filter(|&&c| col_cover[c as usize] == 1).count();
-                if kept * 100 >= total * 85 && comp.len() < big_frag && sole_ground <= 30 {
-                    for (cx, cy) in comp { terrain.set_solid(*cx, *cy, false); }
-                    for &c in cols { col_cover[c as usize] -= 1; }
-                } else {
-                    kept += comp.len();
-                }
-            }
-        }
+        Self::cleanup_solid_fragments(&mut terrain, is_cavern);
 
-        // Populate spawn_y from topmost solid pixel per column.
-        // Scan from y=0 so solid pixels above TERRAIN_MIN_Y (sky floaters, overhangs)
-        // don't cause a wrong depth=0 fallback for the entire column.
-        // Clamp the reference to TERRAIN_MIN_Y so rare high-altitude pixels don't
-        // make deeper pixels appear absurdly deep in the texture.
-        for x in 0..WORLD_W as usize {
-            let topmost = (0..WATER_Y).find(|&y| terrain.is_solid(x as i32, y as i32));
-            terrain.spawn_y[x] = topmost.map(|y| y.max(TERRAIN_MIN_Y)).unwrap_or(TERRAIN_MAX_Y as u32);
-            let sky_limit = topmost.unwrap_or(WATER_Y);
-            terrain.sky_limit[x] = sky_limit;
-            let solid_to_water = sky_limit < WATER_Y
-                && (sky_limit..WATER_Y).all(|y| terrain.is_solid(x as i32, y as i32));
-            terrain.solid_to_water[x] = solid_to_water;
-            terrain.solid_runs[x] = if solid_to_water {
-                Vec::new()
-            } else {
-                terrain.solid_runs_for_column(x as i32, sky_limit)
-            };
-        }
+        Self::recompute_spawn_derived(&mut terrain);
 
         // Phase 7 (per-column spawn mounds) intentionally removed: spawns are now
         // chosen after generation by `find_team_spawns`, which lands soldiers on the
@@ -1428,7 +1325,7 @@ impl Terrain {
                 if placed.iter().any(|o| o.x.abs_diff(col) < MIN_SPACING) { continue; }
                 srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                 let sprite = (srng >> 33) as u8 % count;
-                let obj = SceneryObject { x: col, y: surface_y, sprite, mask: None };
+                let obj = SceneryObject { x: col, y: surface_y, sprite };
                 let (half_w, height) = obj.footprint(Theme::of(terrain.is_cavern, terrain.template_id));
                 let base = surface_y as i32;
                 // Objects sit ON the terrain surface, never inside it — but real
@@ -1455,9 +1352,163 @@ impl Terrain {
                 if placed.len() == NUM_OBJECTS as usize { break; }
             }
             terrain.scenery = placed;
+
+            // Bake each object's exact drawn silhouette into the solid
+            // bitmap — scenery is real terrain now (WA-style), not a
+            // decorative overlay: soldiers walk into it, explosions/torch
+            // carve it the same way they carve dirt, and there's no separate
+            // collision system to keep in sync with the renderer.
+            let theme = Theme::of(terrain.is_cavern, terrain.template_id);
+            for obj in terrain.scenery.clone() {
+                let scale = obj.scale(theme);
+                for (px, py) in crate::renderer::scenery::scenery_pixels(theme, obj.sprite, scale, obj.x as i32, obj.y as i32) {
+                    terrain.set_solid(px, py, true);
+                }
+            }
+
+            // Baked sprite silhouettes aren't guaranteed pixel-perfect flush
+            // against the ground (the placement check above only requires a
+            // solid pixel within EMBED_TOL below *some* columns of the
+            // footprint, not full-width contact) — an object can bake in as
+            // its own tiny disconnected component below the Phase 6b size
+            // floor, invisible to the fragment filter because it didn't exist
+            // yet when that pass ran. Re-running the same cleanup here (after
+            // scenery, before it's too late to fix) catches these; a
+            // disconnected sub-min_frag blob is debris same as pre-scenery
+            // noise, and any object that's genuinely grounded stays part of
+            // the connected landmass and is untouched.
+            let is_cavern = terrain.is_cavern;
+            Self::cleanup_solid_fragments(&mut terrain, is_cavern);
         }
 
+        // spawn_y/sky_limit/solid_runs were derived before scenery existed
+        // (and before the post-scenery fragment cleanup above); a tall baked
+        // object can raise a column's topmost solid pixel, and the cleanup
+        // pass can lower it back down — recompute for every column rather
+        // than tracking exactly which ones changed.
+        Self::recompute_spawn_derived(&mut terrain);
+
         terrain
+    }
+
+    /// Flood-fill fragment cleanup: remove solid components smaller than
+    /// `min_frag` (noise junk / tiny floaters) outright, and drop mid-size
+    /// components (below `big_frag`) once the kept (larger) components already
+    /// cover most of the solid mass — so `n_chunks` comes down without ever
+    /// hollowing out a map. Caverns are solid rock carved into large connected
+    /// chambers, so they can afford a higher bar to clean up carve-noise debris.
+    /// Island bar raised 50 → 4000 (MapGEN-corpus calibration 2026-07-10):
+    /// reference maps hold 1-3 solid chunks; ours measured a median of 10,
+    /// mostly confetti floaters. 4000px ≈ a 40x40 blob — anything smaller
+    /// isn't a usable stepping stone (a soldier is 14x20), it's debris.
+    /// A flat high cutoff guts fragmented collages (seed 4 dropped to 7% solid)
+    /// — the mass-budget mid-tier and sole-ground guard below exist to avoid that.
+    fn cleanup_solid_fragments(terrain: &mut Terrain, is_cavern: bool) {
+        // 2026-07-13 expanded-corpus round: cavern big_frag 4000 -> 20000
+        // (large free-floating rock blobs inside chambers survived; ref
+        // caverns hold ~2 chunks vs our 9), island big_frag 16000 -> 24000
+        // and mass budget 85 -> 80% (ours median 4 chunks vs ref 2). The
+        // sole-ground guard below still protects coverage.
+        // 2026-07-13 round 2: still 4 (island) / 8 (cavern) vs ref ~2 after
+        // the above — pushed further: cavern big_frag 20000 -> 28000, island
+        // 24000 -> 32000, mass budget 80 -> 72%. Turned out to be the wrong
+        // knob: the extra chunks were sub-min_frag scenery-bake orphans
+        // created *after* this pass ran (see the second call site, post
+        // scenery bake) — these threshold bumps measurably did nothing.
+        // Left at the round-2 values since they're harmless, but the real
+        // fix is calling this function again after scenery is baked in.
+        let min_frag: usize = if is_cavern { 1500 } else { 4000 };
+        let big_frag: usize = if is_cavern { 28000 } else { 32000 };
+        let mut comps: Vec<Vec<(i32, i32)>> = Vec::new();
+        let mut visited = vec![false; WORLD_PIXELS];
+        let mut stack: Vec<(i32, i32)> = Vec::new();
+        let mut comp: Vec<(i32, i32)> = Vec::new();
+        for y0 in TERRAIN_MIN_Y..WATER_Y {
+            for x0 in 0..WORLD_W {
+                let i0 = world_index(x0, y0);
+                if !terrain.solid[i0] || visited[i0] { continue; }
+                stack.clear();
+                comp.clear();
+                stack.push((x0 as i32, y0 as i32));
+                visited[i0] = true;
+                while let Some((cx, cy)) = stack.pop() {
+                    comp.push((cx, cy));
+                    for (dx, dy) in [(-1,0),(1,0),(0,-1),(0,1)] {
+                        let nxp = cx + dx;
+                        let nyp = cy + dy;
+                        if nxp < 0 || nxp >= WORLD_W as i32 { continue; }
+                        if nyp < TERRAIN_MIN_Y as i32 || nyp >= WATER_Y as i32 { continue; }
+                        let j = world_index(nxp as u32, nyp as u32);
+                        if terrain.solid[j] && !visited[j] {
+                            visited[j] = true;
+                            stack.push((nxp, nyp));
+                        }
+                    }
+                }
+                if comp.len() < min_frag {
+                    for (cx, cy) in &comp { terrain.set_solid(*cx, *cy, false); }
+                } else {
+                    comps.push(comp.clone());
+                }
+            }
+        }
+        // Deterministic: components are found in scan order; stable sort by
+        // size (descending) only.
+        comps.sort_by(|a, b| b.len().cmp(&a.len()));
+        let total: usize = comps.iter().map(|c| c.len()).sum();
+        // Per-column count of components providing ground there: a chunk
+        // that is the SOLE ground under many columns is load-bearing for
+        // map coverage (chasms can sever the low waterline bridge into a
+        // mid-size strip — dropping it once left 276 bare columns and
+        // tripped island_relief_is_traversable) and must survive the
+        // mid-tier cleanup regardless of the mass budget.
+        let mut col_cover = vec![0u16; WORLD_W as usize];
+        let comp_cols: Vec<Vec<u32>> = comps
+            .iter()
+            .map(|comp| {
+                let mut seen = vec![false; WORLD_W as usize];
+                for (cx, _) in comp { seen[*cx as usize] = true; }
+                let cols: Vec<u32> = (0..WORLD_W).filter(|&c| seen[c as usize]).collect();
+                for &c in &cols { col_cover[c as usize] += 1; }
+                cols
+            })
+            .collect();
+        let mut kept: usize = 0;
+        for (comp, cols) in comps.iter().zip(&comp_cols) {
+            let sole_ground = cols.iter().filter(|&&c| col_cover[c as usize] == 1).count();
+            if kept * 100 >= total * 72 && comp.len() < big_frag && sole_ground <= 30 {
+                for (cx, cy) in comp { terrain.set_solid(*cx, *cy, false); }
+                for &c in cols { col_cover[c as usize] -= 1; }
+            } else {
+                kept += comp.len();
+            }
+        }
+    }
+
+    /// Populate spawn_y/sky_limit/solid_to_water/solid_runs from the current
+    /// solid bitmap, for every column. Must be re-run any time solid pixels
+    /// change after the initial fill (scenery bake, post-scenery fragment
+    /// cleanup) — these caches drive spawn placement, the renderer's sky-aware
+    /// viewport copy, and column-run lookups, and go stale silently otherwise.
+    fn recompute_spawn_derived(terrain: &mut Terrain) {
+        // Scan from y=0 so solid pixels above TERRAIN_MIN_Y (sky floaters, overhangs)
+        // don't cause a wrong depth=0 fallback for the entire column.
+        // Clamp the reference to TERRAIN_MIN_Y so rare high-altitude pixels don't
+        // make deeper pixels appear absurdly deep in the texture.
+        for x in 0..WORLD_W as usize {
+            let topmost = (0..WATER_Y).find(|&y| terrain.is_solid(x as i32, y as i32));
+            terrain.spawn_y[x] = topmost.map(|y| y.max(TERRAIN_MIN_Y)).unwrap_or(TERRAIN_MAX_Y as u32);
+            let sky_limit = topmost.unwrap_or(WATER_Y);
+            terrain.sky_limit[x] = sky_limit;
+            let solid_to_water = sky_limit < WATER_Y
+                && (sky_limit..WATER_Y).all(|y| terrain.is_solid(x as i32, y as i32));
+            terrain.solid_to_water[x] = solid_to_water;
+            terrain.solid_runs[x] = if solid_to_water {
+                Vec::new()
+            } else {
+                terrain.solid_runs_for_column(x as i32, sky_limit)
+            };
+        }
     }
 
     /// Pick deterministic spawn positions for a team, scanning the real
@@ -1526,20 +1577,31 @@ impl Terrain {
             // last-resort's fixed-midpoint default. Maximizing spread within the
             // real cave candidate pool instead means a cramped chamber still spreads
             // its team as far apart as the chamber allows, never duplicates a spot.
+            // Quality floor (matches the "last resort" pass further down): a pick
+            // scoring below this is still cramped — accepting it would exhaust this
+            // chamber's own candidate pool on tightly-packed picks before falling
+            // through to the generic-spawning section below, whose fine-grained
+            // `standable_cave_foot_simple`-based pool often finds far better spread
+            // in other chambers that this coarser `standable_cave_foot_y` pool missed.
+            const MIN_ACCEPTABLE_SCORE: i32 = 250;
             while spawns.len() < count && !cave_cands.is_empty() {
                 let pick = cave_cands.iter()
                     .filter(|&&(cx, cy)| used.iter().all(|&(ux, uy)| ux != cx || uy != cy))
-                    .max_by_key(|&&(cx, cy)| {
-                        used.iter().map(|&(ux, uy)| {
+                    .map(|&(cx, cy)| {
+                        let score = used.iter().map(|&(ux, uy)| {
                             let dx = (ux - cx).abs() * 1000 / MIN_SEP;
                             let dy = (uy - cy).abs() * 1000 / MIN_SEP_V;
                             dx.max(dy)
-                        }).min().unwrap_or(i32::MAX)
+                        }).min().unwrap_or(i32::MAX);
+                        (score, cx, cy)
                     })
-                    .copied();
+                    .max_by_key(|&(score, cx, _)| (score, -cx));
                 match pick {
-                    Some((cx, cy)) => { spawns.push(WorldPos::new(cx as f32, cy as f32)); used.push((cx, cy)); }
-                    None => break,
+                    Some((score, cx, cy)) if score >= MIN_ACCEPTABLE_SCORE || used.is_empty() => {
+                        spawns.push(WorldPos::new(cx as f32, cy as f32));
+                        used.push((cx, cy));
+                    }
+                    _ => break, // no acceptably-spread pick left in this pool
                 }
             }
             if spawns.len() >= count { return spawns; }
@@ -1686,30 +1748,67 @@ impl Terrain {
 
         // Last resort (very fragmented/sparse half): the natural landforms couldn't
         // seat the whole team. NEVER mutate the terrain (no artificial mounds or
-        // platforms) — instead greedily disperse across the same candidate pool,
-        // same idea as the main wide-landform pass: each pick maximizes the worst-
-        // case separation (as a fraction of MIN_SEP/MIN_SEP_V, matching sep_ok's
-        // OR rule) to whoever's already placed. A first-fit left-to-right scan here
-        // would clump the whole team on the first usable cluster of columns on a
-        // badly fragmented map (e.g. a seed with zero landforms >=60px wide) even
-        // though a lone usable column exists far away — greedy dispersion picks
-        // that far column instead. Integer math only (no floats — must stay
-        // identical across x86/ARM).
+        // platforms) — instead greedily disperse across a candidate pool, same idea
+        // as the main wide-landform pass: each pick maximizes the worst-case
+        // separation (as a fraction of MIN_SEP/MIN_SEP_V, matching sep_ok's OR rule)
+        // to whoever's already placed. A first-fit left-to-right scan here would
+        // clump the whole team on the first usable cluster of columns on a badly
+        // fragmented map (e.g. a seed with zero landforms >=60px wide) even though a
+        // lone usable column exists far away — greedy dispersion picks that far
+        // column instead. Integer math only (no floats — must stay identical across
+        // x86/ARM).
+        //
+        // The pool is `cands` (surface standable columns) densified with fine-grained
+        // cave-floor points (every 4px, not the coarse 80px step used by the
+        // cave-floor-fill pass above) — on a heavily fragmented surface, real cave
+        // floor is often the only place left with enough spread to seat the whole
+        // team without clustering; sampling it coarsely starved this pass of real
+        // candidates and forced tightly-packed picks even when open cave floor was
+        // available a few pixels to either side of the coarse samples. This applies
+        // to true cavern maps too (previously skipped here): `cands` is built from
+        // `standable_foot_levels`, which requires open sky above and so is nearly
+        // empty underground — without cave-floor points in the pool this pass (and
+        // Step 3 below) had almost nothing to disperse across on a cavern map,
+        // forcing severe clustering onto whatever few sky-connected spots existed.
+        let mut fallback_pool: Vec<(i32, i32)> = cands.clone();
+        {
+            let mut cx = lo;
+            while cx <= hi {
+                if let Some(fy) = self.standable_cave_foot_simple(cx) {
+                    if clear_of_scenery(cx) { fallback_pool.push((cx, fy)); }
+                }
+                cx += 4;
+            }
+        }
+        // Quality floor: a pick scoring below this (out of 1000 = full MIN_SEP/
+        // MIN_SEP_V separation) is still "cramped" — accepting it would keep
+        // piling soldiers onto the same narrow ledge just because it's the least-
+        // bad option in THIS pool, even though Step 3 below can find real
+        // macro-dispersion across the FULL map width (it divides lo..hi evenly
+        // among the remaining soldiers rather than hill-climbing from `used`).
+        // Without this floor, a map with only a handful of narrow footholds would
+        // cram 3-4 soldiers onto each foothold instead of falling through to
+        // Step 3's wide search — exactly the "5-6 soldiers in the same spot" bug.
+        const MIN_ACCEPTABLE_SCORE: i32 = 250; // >=25% of MIN_SEP/MIN_SEP_V
         if spawns.len() < count {
             while spawns.len() < count {
-                let pick = cands.iter()
+                let pick = fallback_pool.iter()
                     .filter(|&&(cx, cy)| used.iter().all(|&(ux, uy)| ux != cx || uy != cy))
-                    .max_by_key(|&&(cx, cy)| {
-                        used.iter().map(|&(ux, uy)| {
+                    .map(|&(cx, cy)| {
+                        let score = used.iter().map(|&(ux, uy)| {
                             let dx = (ux - cx).abs() * 1000 / MIN_SEP;
                             let dy = (uy - cy).abs() * 1000 / MIN_SEP_V;
                             dx.max(dy)
-                        }).min().unwrap_or(i32::MAX)
+                        }).min().unwrap_or(i32::MAX);
+                        (score, cx, cy)
                     })
-                    .copied();
+                    .max_by_key(|&(score, cx, _)| (score, -cx));
                 match pick {
-                    Some((cx, cy)) => { spawns.push(WorldPos::new(cx as f32, cy as f32)); used.push((cx, cy)); }
-                    None => break,
+                    Some((score, cx, cy)) if score >= MIN_ACCEPTABLE_SCORE || used.is_empty() => {
+                        spawns.push(WorldPos::new(cx as f32, cy as f32));
+                        used.push((cx, cy));
+                    }
+                    _ => break, // no acceptably-spread pick left — defer to Step 3
                 }
             }
         }
@@ -1721,27 +1820,83 @@ impl Terrain {
             // band is empty air — mid-air over mid-terrain (the soldier falls).
             let i = spawns.len() as i32;
             let base = (lo + (hi - lo) * (2 * i + 1) / (2 * count as i32)).clamp(lo, hi);
+            // Two-pass search: first pass demands real separation (sep_ok, same rule
+            // as every earlier pass) so this pathological fallback still spreads the
+            // team out instead of clustering them just because the strict candidate
+            // pool ran dry. Only if NO separated spot exists anywhere in the band
+            // (a truly tiny/degenerate map) does the second pass fall back to merely
+            // distinct — never re-using the exact same pixel, but no longer promising
+            // real spacing.
+            // On a cavern map `standable_foot_levels` requires open sky above and so
+            // is almost always empty underground — use the cave-appropriate probe
+            // instead, or this whole pathological fallback (and its "relaxed" pass
+            // below) finds almost nothing and clusters everyone onto the rare
+            // sky-connected spot it does find.
+            let foot_levels_at = |px: i32| -> Vec<i32> {
+                if self.is_cavern {
+                    self.standable_cave_foot_simple(px).into_iter().collect()
+                } else {
+                    self.standable_foot_levels(px)
+                }
+            };
             let mut spot: Option<(i32, i32)> = None;
             'search: for d in 0..=(hi - lo) {
                 for px in [base + d, base - d] {
                     if px < lo || px > hi { continue; }
-                    for fy in self.standable_foot_levels(px) {
-                        if used.iter().all(|&(ux, uy)| ux != px || uy != fy) {
+                    for fy in foot_levels_at(px) {
+                        if sep_ok(&used, px, fy, MIN_SEP, MIN_SEP_V) {
                             spot = Some((px, fy));
                             break 'search;
                         }
                     }
                 }
             }
+            // Relaxed fallback: no fully-separated spot exists in the band. Rather
+            // than grabbing the literal first distinct point nearest `base` (which
+            // let two different soldier indices independently converge on adjacent
+            // columns of the same tiny leftover patch — e.g. 1px apart — since each
+            // index's own outward search stops at its own first hit with no
+            // awareness of the other), collect every distinct standable point in
+            // the whole band and pick whichever maximizes the worst-case separation
+            // to everyone already placed, same scoring as the "last resort" pass.
             if spot.is_none() {
-                'surf: for d in 0..=(hi - lo) {
+                let mut best: Option<(i32, i32, i32)> = None; // (score, px, fy)
+                for d in 0..=(hi - lo) {
                     for px in [base + d, base - d] {
                         if px < lo || px > hi { continue; }
-                        if let Some(sy) = self.surface_y_at(px as u32) {
-                            let fy = sy as i32 - 1;
-                            if fy > 0 && used.iter().all(|&(ux, uy)| ux != px || uy != fy) {
-                                spot = Some((px, fy));
-                                break 'surf;
+                        for fy in foot_levels_at(px) {
+                            if !used.iter().all(|&(ux, uy)| ux != px || uy != fy) { continue; }
+                            let score = used.iter().map(|&(ux, uy)| {
+                                let dx = (ux - px).abs() * 1000 / MIN_SEP;
+                                let dy = (uy - fy).abs() * 1000 / MIN_SEP_V;
+                                dx.max(dy)
+                            }).min().unwrap_or(i32::MAX);
+                            if best.map_or(true, |(bs, _, _)| score > bs) {
+                                best = Some((score, px, fy));
+                            }
+                        }
+                    }
+                }
+                spot = best.map(|(_, px, fy)| (px, fy));
+            }
+            if spot.is_none() {
+                for require_sep in [true, false] {
+                    if spot.is_some() { break; }
+                    'surf: for d in 0..=(hi - lo) {
+                        for px in [base + d, base - d] {
+                            if px < lo || px > hi { continue; }
+                            if let Some(sy) = self.surface_y_at(px as u32) {
+                                let fy = sy as i32 - 1;
+                                if fy <= 0 { continue; }
+                                let ok = if require_sep {
+                                    sep_ok(&used, px, fy, MIN_SEP, MIN_SEP_V)
+                                } else {
+                                    used.iter().all(|&(ux, uy)| ux != px || uy != fy)
+                                };
+                                if ok {
+                                    spot = Some((px, fy));
+                                    break 'surf;
+                                }
                             }
                         }
                     }

@@ -22,10 +22,11 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] WA mask library grown 2→12 (10 island, 2 cavern) — extracted from real WA `MapGen.exe` output under Wine across several game types; caverns now use real extracted cavern art instead of inverted island art (v0.5.4.420)
 - [x] Terrain calibrated against a real MapGEN reference corpus — 150 reference maps generated headless (custom settings file, `objects 0`; `tools/gen_mapgen_corpus.py`) and compared to our seeds with a new stats harness (`tools/terrain_stats.py` + `dump-terrain` bin): relief span, roughness, solid fraction, overhangs and fragment counts all tuned toward the measured reference bands (v0.5.4.428)
 - [x] Recalibration round 2 against an expanded corpus (70 maps/class) — land mass and ground coverage now match the reference medians (solid 0.426 vs 0.411, coverage 0.938 vs 0.935), surface span uncapped (`DEPTH_RAMP` was pinning it at ~253px), mass-aware fragment filter with sole-ground protection (no more gutted sparse seeds), wide grapple chasms no longer drown to the waterline, low land bridges close collage gaps (v0.5.4.429)
+- [x] Recalibration round 3 against the 170-map/class corpus — threshold-only retuning of the fragment filter (`big_frag`/mass-budget bumped twice) measurably did nothing (`n_chunks` identical before/after); real cause was scenery-bake orphans, see the fragment-filter-reorder entry below (v0.5.4.430)
 - [x] Scenery library grown to 16/15/15 per theme — birdhouse, watering can, pumpkin (pastoral); anvil, totem pole, firewood stack (rugged); treasure chest, ore pick, candle cluster (underground) (v0.5.4.429)
 - [x] Mask library rebuilt clean, 20 island + 8 cavern — every old mask replaced with sprite-free MapGEN-sourced silhouettes (the originals baked in decorative props that leaked into maps as floating debris); `extract_wa_mask.py` grew `--nonblack`/`--clean-sprites` + cavern sky fill (v0.5.4.428)
 - [x] Open water guaranteed at both map ends on every non-cavern map, with thin reference-matched margins; guarded by `island_edges_are_open_water` (v0.5.4.428)
-- [x] Barrel-fire terrain carving depth reduced to ~1/3 (carve window 150→50 ticks) after on-device playtesting (v0.5.4.428)
+- [x] Barrel-fire terrain carving depth reduced to ~1/3 (carve window 150→50 ticks) after on-device playtesting (v0.5.4.428); further cut to 1/4 depth and 1/4 rate (`BURN_CARVE_RADIUS` 9.0→2.25, `BURN_CARVE_INTERVAL` 8→32) (v0.5.4.430)
 - [x] Scenery pass: boulder hitbox/art mismatch fixed (soldiers stand on top, objects rest on top), bone pile/ribcage rescaled, pine/cairn silhouette gaps filled, channel-reversed sprite colours corrected, and 15 new decorations across all three themes (v0.5.4.428)
 - [ ] Bazooka physics matching WA's real feel — v0.5.4.421 (first attempt) ported reference-derived gravity/wind/launch/charge constants but playtesting said it still didn't match WA; reverted 2026-07-07 after 7 RE rounds failed to find a confirmable charge-duration ground truth. Bazooka is back to the shared gravity/launch/charge physics; revisit if a reliable measurement method turns up
 - [x] Bazooka wind-hook — strong wind can visibly curve a bazooka around terrain corners, or even reverse its horizontal direction mid-flight on slow/near-vertical shots, the classic WA trick. Scoped narrower than the reverted attempt above: only the wind constant changed (`BAZOOKA_WIND_SCALE`, 4x the shared value), gravity/launch/charge left alone, linear velocity-independent wind model kept as-is (v0.5.4.421)
@@ -35,6 +36,18 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Scenery destructible exactly like terrain — per-pixel mask over each object's
       footprint, cleared by the same blast-circle rule as terrain.solid; explosions
       only eat the part of a tree/rock/crate they actually overlap (v0.5.4.407)
+- [x] Scenery baked directly into `terrain.solid` at generation time (WA-style), replacing
+      the separate per-object destruction-mask system above — every sprite's exact drawn
+      silhouette (not just its bounding box) is rasterized into the terrain bitmap via a
+      new `Canvas` trait shared by the renderer and a one-time `MaskCanvas` bake pass, so
+      walking, blasts, bullets, and the plasma torch all collide with scenery the same way
+      they collide with dirt; fixes the torch stalling in front of trees/rocks until the
+      aim angle changed (v0.5.4.430)
+- [x] Fragment-filter reordered to also run after scenery baking — baked sprite
+      silhouettes not perfectly flush against the ground could survive as tiny
+      disconnected components invisible to the original single cleanup pass (which ran
+      before scenery existed); fixed cavern `n_chunks` 8→2 (dead on MapGEN-corpus
+      reference median), island 4→3, no `solid_frac` regression (v0.5.4.430)
 - [x] Euler projectile ballistics
 - [x] Wind simulation
 - [x] Gravity, bounce, and friction physics
@@ -101,6 +114,24 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Shotgun reworked to a single precise hitscan ray per trigger pull (up to 25 damage, 50 for both shots) — the pellet scatter at the impact point is purely cosmetic (v0.5.4.410)
 - [x] Chain-reaction damage (mine/barrel cascades, death explosions, full burns) tallies into one popup instead of a flurry of separate numbers (v0.5.4.411)
 - [x] Plasma torch tunnels widened (bore r15→r17) so soldiers always fit through (v0.5.4.411)
+- [x] Plasma torch was completely non-functional (never carved, direction couldn't
+      be steered, turn ended almost instantly after deploy) — deploy called
+      `turn.on_fired()` immediately, exiting `TurnPhase::Acting` before the torch's
+      carve/steer dispatch (only reachable from the `Acting` branch) ever ran once;
+      not a regression from any recent perf work, reproduced on unmodified HEAD.
+      Fixed by deferring `on_fired()` to when the torch actually finishes (fuel out
+      or A-press-to-stop, both pre-existing). Flame FX radius also enlarged to
+      visually match the 34px carve bore instead of reading as a tiny spark inside
+      it (pending version bump)
+- [x] Match-start time cut from 5-10s to a couple seconds for hotseat/vs-CPU/test
+      too (not just live): background-image decode was pulling all 54 pool PNGs
+      (~12.5MB) into memory synchronously on first access via a single shared
+      `OnceLock` — split into per-slot locks so only the one PNG the current seed
+      picks gets decoded. Terrain-gen also dropped FBM octaves 3→2 and
+      parallelized the cave-punch tunnel phase (~4.75s/seed → ~2.44s/seed
+      on-device); a half-resolution density-field experiment got it to ~1.27s/seed
+      but was reverted after it broke plasma torch carving on every map via
+      aliasing away thin solid walls (pending version bump)
 - [x] Live match-start ready gate — server holds turn 1 and broadcasts frozen state until every client has loaded in; both players see turn 1 start on the same tick (v0.5.4.411/.412)
 - [x] Live damage popups always land on screen — camera holds on the damaged soldier during retreat (`damage_focus` now synced) instead of playing out off-camera (v0.5.4.412)
 - [x] Damage-popup colour now matches the victim's picked lobby colour instead of raw team index — correct in 4-colour live casual (v0.5.4.412)
@@ -160,6 +191,11 @@ A living document of what's shipped, what's in progress, and what's coming.
 
 ## 🚧 In Progress / Near-Term
 
+- [ ] **Charge meter WA overhaul + fire/wind tuning + spawn-clustering fix, on `.126`
+      test device only, no version bump yet** — WA-accurate wedge-shaped charge meter
+      (captured via live Wine RE), auto-fire-at-max for all charge weapons, fire damage
+      2.5x, wind reduced 20%, and a fix for a reported spawn bug (5-6 soldiers landing
+      on top of each other on fragmented/cavern seeds). See STATUS.md 2026-07-11 entry.
 - [ ] **Bug reporter fixes, not yet built/committed** — screenshot dimming bug (was re-dimming
       the live WorldBuffer every tick instead of the pristine capture, crushing to black
       within 1-2 ticks), Discord forwarding fixed (missing `?key=` on the bot notify call was

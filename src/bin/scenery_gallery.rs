@@ -147,7 +147,7 @@ fn main() {
         const ANCHOR_X: i32 = 200;
         const ANCHOR_Y: i32 = 120;
         for col in 0..COLS {
-            terrain.scenery = vec![SceneryObject { x: ANCHOR_X as u32, y: ANCHOR_Y as u32, sprite: col as u8, mask: None }];
+            terrain.scenery = vec![SceneryObject { x: ANCHOR_X as u32, y: ANCHOR_Y as u32, sprite: col as u8 }];
 
             wbuf.fill_rect(ANCHOR_X - CELL_W as i32 / 2, ANCHOR_Y - CELL_H as i32, CELL_W, CELL_H, arty::renderer::fb::Bgra::new(30, 33, 46));
             draw_scenery(&mut wbuf, &terrain, ANCHOR_X, ANCHOR_Y);
@@ -157,7 +157,7 @@ fn main() {
             let dst_y = (row_y0 + ROW_LABEL) as i32;
             canvas.blit(&wbuf, ANCHOR_X - CELL_W as i32 / 2, ANCHOR_Y - CELL_H as i32, CELL_W, CELL_H, dst_x, dst_y);
 
-            let (hw, h) = SceneryObject { x: ANCHOR_X as u32, y: ANCHOR_Y as u32, sprite: col as u8, mask: None }.footprint(theme);
+            let (hw, h) = SceneryObject { x: ANCHOR_X as u32, y: ANCHOR_Y as u32, sprite: col as u8 }.footprint(theme);
             draw_label(&mut canvas, dst_x + 2, dst_y + CELL_H as i32 - 22, row.sprite_names[col]);
             let dims = format!("{}x{}", hw * 2, h);
             draw_label(&mut canvas, dst_x + 2, dst_y + CELL_H as i32 - 12, &dims);

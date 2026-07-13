@@ -1,5 +1,173 @@
 # Mini Mayhem — Project Status
 
+## 2026-07-13 — v0.5.4.430: expanded-corpus fragment-filter fix (scenery-bake orphans), barrel-fire carve retuned
+
+**Corpus grown 70 → 170 maps per class** (island/cavern/bng, `~/arty-mapgen-corpus`) —
+generated via `tools/gen_mapgen_corpus.py`. Re-measuring against the larger corpus
+showed `n_chunks` (disconnected solid components) still high — island 4 vs reference
+median 2, cavern 8 vs reference median 2-3 — despite two rounds of threshold-only
+retuning on the Phase 6b flood-fill fragment cleanup (`big_frag` island 16000→24000→
+32000, cavern 4000→20000→28000, mass budget 85%→80%→72%). Both rounds measurably did
+nothing: identical `n_chunks` and `solid_frac` before and after round 2.
+
+**Root cause found, not another threshold**: today's scenery-bake-into-`terrain.solid`
+change (see below/yesterday's entry) rasterizes each object's silhouette *after* the
+Phase 6b cleanup pass already ran. An object not perfectly flush against the ground
+(the placement check only requires a solid pixel within `EMBED_TOL` below *some*
+columns of its footprint, not full-width contact) bakes in as its own tiny
+disconnected component — invisible to a cleanup pass that ran before it existed.
+Confirmed directly: seed 3 had a surviving 3312px island fragment, smaller than even
+the original 4000px `min_frag` floor, which is only possible if it was created after
+that pass.
+
+**Fix** (`src/world/terrain.rs`): extracted the flood-fill logic into
+`Terrain::cleanup_solid_fragments`, now called a second time after scenery is baked
+in; `spawn_y`/`sky_limit`/`solid_to_water`/`solid_runs` derivation also extracted into
+`Terrain::recompute_spawn_derived` and re-run in full afterward (replacing the
+touched-columns-only version from yesterday's bake-in patch, since the second cleanup
+pass can touch columns outside the scenery footprint). Result: cavern `n_chunks`
+8 → **2** (dead on reference median), island 4 → **3** (improved; residual gap is
+unrelated to scenery). `solid_frac` unchanged on both map types — no coverage
+regression. Verified via `cargo test --test fix_verification --test parity --test
+wa_collage_check` (4/4, 23/23, 7/7).
+
+**Barrel-fire terrain carving cut to 1/4 depth and 1/4 rate** (`step_fire_patches`,
+`src/game/state.rs`): `BURN_CARVE_RADIUS` 9.0 → 2.25 (carve radius per hit),
+`BURN_CARVE_INTERVAL` 8 → 32 (ticks between carve events); `BURN_CARVE_DURATION_TICKS`
+left at 50. Further hand-tuned cut on top of the earlier 150→50 duration change
+(v0.5.4.428) — still not WA-footage-measured, see `project-arty-fire-terrain-eating`
+notes.
+
+VERSION/REQUIRED_VERSION bumped to 0.5.4.430. Built and deployed this round.
+
+## 2026-07-12 — Scenery baked into terrain.solid (WA-style), barrel-fire carve retuned — not built/deployed, no version bump yet
+
+**Torch-vs-scenery bug fixed by going further than a point fix.** Reported symptom:
+the plasma torch stalled in front of scenery objects (trees, rocks, etc.) until the
+aim angle changed, instead of always carving through them. Root cause: scenery was
+never part of the `terrain.solid` collision bitmap — it lived in a separate
+`SceneryObject` layer with its own lazy per-object destruction `mask`, so the torch's
+forward look-ahead (`has_solid` check in `step_plasma_torch`) saw "nothing" even when
+a prop visually blocked the path.
+
+Rather than patch the torch's look-ahead to also check the scenery layer, scenery is
+now baked directly into `terrain.solid` at generation time, exactly like Worms
+Armageddon — matching an explicit ask to stop treating scenery as a decorative
+overlay with its own parallel collision system:
+- Added a generic `Canvas` trait (`src/renderer/scenery.rs`) that the ~40 hand-drawn
+  `draw_*` sprite functions render through — implemented for `WorldBuffer` (real
+  screen rendering, unchanged behaviour) and a new `MaskCanvas` that instead collects
+  every absolute world pixel a sprite touches.
+- `Terrain::generate_tactical` (`src/world/terrain.rs`) now rasterizes each placed
+  object's *exact* drawn silhouette (not just its bounding box) into `terrain.solid`
+  via `scenery_pixels()`, then recomputes per-column caches and `spawn_y` for every
+  touched column.
+- `SceneryObject` shrank from `{ x, y, sprite, mask: Option<Vec<bool>> }` to
+  `{ x, y, sprite }` — the per-object destruction mask, `pixel_intact()`, and
+  `carve()` are gone.
+- `Crater::carve` (`src/world/crater.rs`) no longer has a separate scenery-mask carve
+  branch — the ordinary solid-pixel-clearing loop already destroys baked scenery
+  pixels; `Crater::carve` now only does bookkeeping (drops an object from the render
+  list once every solid pixel under its footprint box is gone).
+- `stamp_objects()` (`src/game/loop_runner.rs`) no longer stamps scenery every tick
+  (only barrels/mines, which move) — scenery is permanent baked terrain.
+- `step_plasma_torch`'s look-ahead reverted to a plain `terrain.is_solid()` check —
+  no special-casing needed since scenery *is* solid terrain now.
+
+Verified via `cargo check --tests` and `cargo test --test fix_verification --test
+parity --test wa_collage_check` (4/4, 23/23, 7/7 passing). Not built or deployed.
+
+**Barrel-fire terrain carving cut to 1/4 depth and 1/4 rate** (`step_fire_patches`,
+`src/game/state.rs`): `BURN_CARVE_RADIUS` 9.0 → 2.25 (carve radius per hit),
+`BURN_CARVE_INTERVAL` 8 → 32 (ticks between carve events); `BURN_CARVE_DURATION_TICKS`
+left at 50. This is a further hand-tuned cut on top of the earlier 150→50 duration
+change (v0.5.4.428) — still not WA-footage-measured, see
+`project-arty-fire-terrain-eating` notes.
+
+## 2026-07-11 — Match-start perf + plasma torch fully broken (turn-phase bug) — on `.126` test device only, no version bump yet
+
+**Match-start time**: was 5-10s (hotseat/vs-CPU/test, not just live). Two real
+causes, one dead end:
+- **Background image decode** (`src/renderer/bg_image.rs`): `DECODED` was a single
+  `OnceLock` wrapping all 54 background PNGs (~12.5MB) — first access to *any* one
+  decoded all 54 synchronously. This was the dominant multi-second stall. Fixed by
+  splitting into per-slot `OnceLock`s (mirroring the `SCALED` array's existing
+  pattern), so only the PNG the current seed picks gets decoded.
+- **Terrain-gen perf** (`Terrain::generate_tactical`, `src/world/terrain.rs`):
+  FBM octaves 3→2, and the cave-punch tunnel phase parallelized over row chunks
+  (`std::thread::scope`) — ~4.75s/seed → ~2.44s/seed on-device (Miyoo ARM).
+- **Dead end (reverted)**: tried computing the non-cavern density field at half
+  resolution + bilinear upsample before threshold (~1.27s/seed) — reverted after
+  it broke plasma torch carving on every map (see below). Sampling at half-res by
+  skipping rows/columns (not pre-filtering) can alias away thin high-frequency
+  solid features, silently thinning walls at torch-carving scale even though
+  MapGEN-corpus silhouette stats looked fine.
+- Cavern air-dilation passes settled at 3 (was 2, briefly tried 4): 2 left some
+  tunnels too tight for the 14px soldier hitbox; 4 over-widened chambers enough
+  that the torch's forward lookahead sometimes found no rock ahead.
+
+**Plasma torch was completely non-functional** (not a regression from the perf
+work above — reproduced on unmodified committed HEAD): deploying the torch called
+`game.turn.on_fired()` immediately, flipping `TurnPhase::Acting → Watching`. But
+the torch's carve/steer dispatch (`step_plasma_torch`, `process_fire`'s Up/Down
+handling) only runs from the `Acting` match arm in `tick()` — `Watching` is a
+different branch that never calls it, and since the torch isn't a tracked
+projectile, `Watching`'s "all resolved" check was trivially true and fell straight
+through to `Retreating` within a tick or two of deploy. Net effect: torch never
+carved, direction-switching had no visible effect, turn ended almost immediately
+after deploy. Fixed by removing the premature `on_fired()` call at deploy time —
+`on_fired()` is still called (unchanged) once the torch actually finishes, from
+`step_plasma_torch`'s fuel-exhausted path and the A-press-to-stop handler.
+Also enlarged the torch's flame FX radii (`loop_runner.rs` ~4364) to visually
+match `TORCH_RADIUS` (17px/34px bore) — previously the flame ball (r=6-7) read as
+a tiny spark inside a much wider carved tunnel.
+
+## 2026-07-11 — Charge meter WA overhaul, fire/wind tuning, spawn-clustering fix — on `.126` test device only, no version bump yet
+
+**Charge meter reworked to match real WA** (captured live via the Wine RE rig —
+`assets/Worms Armageddon/WA_patched.exe` — plus applying the bazooka charge-timing
+numbers already measured in an earlier RE session): `draw_aim_arrow`
+(`src/renderer/draw_sprites.rs`) now draws the original wedge taper (2px at the
+muzzle → 8px at the tip) with rounded ends instead of a hard-bordered/bumpy shape,
+dark-red → orange gradient only (no yellow/blue/white — orange is the terminal
+colour, matching WA and the arty-specific 1.0..`MAX_CHARGE` overcharge band).
+`CHARGE_RATE` (`src/game/loop_runner.rs`) is `0.0216` (8% faster than the original
+`0.02`), and every charge-meter weapon (not just bazooka) now auto-fires at
+`MAX_CHARGE` like real WA — shotgun is unaffected, it already fires instantly and
+never enters this code path.
+
+**Fire damage** (`src/game/state.rs`, `step_fire_patches`) increased 2.5x (alternates
+2/3 HP per `BURN_INTERVAL` tick, same cadence as before); Molotov fire-patch count
+trimmed 48→36; burn-hop (soldiers jumping away from flame) now fires on every damage
+tick instead of its own interval, re-latching the escape direction toward whichever
+flame pool is currently under the soldier rather than a direction fixed at ignition.
+
+**Wind reduced 20%**: `WIND_SCALE` 0.08→0.064, `BAZOOKA_WIND_SCALE` 0.32→0.256
+(`src/physics/tick.rs`). Also fixed two pre-existing broken unit tests
+(`positive_wind_pushes_bazooka_rightward` / `negative_wind_pushes_bazooka_leftward`)
+that were comparing a bazooka projectile's wind push against the wrong constant
+(`WIND_SCALE` instead of `BAZOOKA_WIND_SCALE`) — bug predates this session, caught
+incidentally while touching the file.
+
+**Spawn-clustering fix** (`Terrain::find_team_spawns`, `src/world/terrain.rs`):
+reported bug — a seed spawning 5-6 soldiers on top of each other. Root cause: the
+cavern-branch and "last resort" greedy-dispersion fallback passes had no quality
+floor, so they'd keep accepting worse and worse picks from an exhausted local
+candidate pool instead of deferring to a better pool or Step 3's whole-map dispersion;
+Step 3 itself always used the surface-oriented `standable_foot_levels` probe (requires
+open sky above), which is nearly empty on true cavern maps, so most of a fragmented
+cavern team piled onto the one sky-connected sliver it could find. Fixed by adding a
+minimum-separation-score floor to both dispersion loops, densifying the cave-floor
+candidate pool for cavern maps too, and switching Step 3 to the cave-appropriate
+probe (`standable_cave_foot_simple`) underground with best-match (not first-match)
+scoring. Verified across 3000 generated seeds: worst-case cluster shrank from 8
+soldiers stacked within ~2px to a max of 3 soldiers 11-19px apart. `wa_collage_check`
+7/7, `parity` 23/23, `spawn_tests` 4/4 all still pass.
+
+All changes pushed directly to the Miyoo `.126` test device for playtesting
+(hash-verified) — **no `VERSION`/`REQUIRED_VERSION` bump yet**, not on `.110`, no
+server/changelog/GitHub/Discord deploy.
+
 ## 2026-07-10 — Map-gen recalibration round 2 (expanded corpus) + 9 new scenery objects (v0.5.4.429)
 
 **Corpus expanded 50 → 70 maps per class** (island/bng/cavern; new indices 050–069 sweep the

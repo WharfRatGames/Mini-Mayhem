@@ -52,32 +52,32 @@ impl Crater {
             terrain.recompute_column_cache(x);
         }
 
-        // Scenery is destroyed by explosions just like the ground it sits on.
-        // Lives here (not in the explosion code) so every carve path agrees:
-        // local sim, server, the live client's crater_log replay, and TAT all
-        // call carve — scenery removal stays deterministic across all of them.
-        // Small carves (bullets r≤4, plasma-torch nibbles) only chip terrain,
-        // so they leave scenery standing.
-        //
-        // Exactly like terrain: only the pixels the blast circle actually
-        // overlaps are removed (SceneryObject::carve), and the object is
-        // dropped only once every tracked pixel is gone. A graze at the edge
-        // of a big tree nicks the corner and leaves the rest of the tree.
-        if r >= 8.0 {
-            let theme = super::terrain::Theme::of(terrain.is_cavern, terrain.template_id);
-            terrain.scenery.retain_mut(|obj| {
-                let (half_w, height) = obj.footprint(theme);
-                // Broad-phase: closest point of the footprint box to the blast
-                // centre, to skip the per-pixel carve on objects nowhere near it.
-                let nx = self.cx.clamp((obj.x as i32 - half_w) as f32, (obj.x as i32 + half_w) as f32);
-                let ny = self.cy.clamp((obj.y as i32 - height) as f32, obj.y as f32);
-                let (dx, dy) = (nx - self.cx, ny - self.cy);
-                if dx * dx + dy * dy > r2 {
-                    return true;
-                }
-                !obj.carve(theme, self.cx, self.cy, r2)
-            });
-        }
+        // Scenery is baked directly into terrain.solid at generation time (see
+        // `scenery_pixels` / `Terrain::generate_tactical`), so the ordinary
+        // pixel-clearing loop above already destroys exactly the sprite
+        // pixels this blast overlaps — no separate object mask to carve.
+        // What's left here is bookkeeping: once every solid pixel under an
+        // object's footprint box is gone, drop it from the render list so
+        // `draw_scenery` stops iterating a fully-destroyed prop.
+        let theme = super::terrain::Theme::of(terrain.is_cavern, terrain.template_id);
+        let keep: Vec<bool> = terrain.scenery.iter().map(|obj| {
+            let (half_w, height) = obj.footprint(theme);
+            // Broad-phase: skip the per-pixel liveness scan for objects nowhere
+            // near this blast — they were already alive and stay alive.
+            let nx = self.cx.clamp((obj.x as i32 - half_w) as f32, (obj.x as i32 + half_w) as f32);
+            let ny = self.cy.clamp((obj.y as i32 - height) as f32, obj.y as f32);
+            let (dx, dy) = (nx - self.cx, ny - self.cy);
+            if dx * dx + dy * dy > r2 {
+                return true;
+            }
+            let x0 = (obj.x as i32 - half_w).max(0);
+            let x1 = (obj.x as i32 + half_w).min(WORLD_W as i32 - 1);
+            let y0 = (obj.y as i32 - height).max(0);
+            let y1 = (obj.y as i32).min(WATER_Y as i32 - 1);
+            (y0..=y1).any(|y| (x0..=x1).any(|x| terrain.is_solid(x, y)))
+        }).collect();
+        let mut i = 0;
+        terrain.scenery.retain(|_| { let k = keep[i]; i += 1; k });
     }
 
     /// Returns true if this crater overlaps with a given world position.

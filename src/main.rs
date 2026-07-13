@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.429";
+const VERSION: &str = "0.5.4.430";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -574,7 +574,7 @@ fn main() {
                 format!("YOU ARE {}", colour_name)
             };
             draw_msg(&mut buf, &mut fb, &msg);
-            std::thread::sleep(std::time::Duration::from_millis(800));
+            std::thread::sleep(std::time::Duration::from_millis(300));
         } else {
             // B pressed — drop connection and return to title
             net_conn = None;
@@ -2144,7 +2144,7 @@ fn show_login_bonus(
 }
 
 /// Full-screen match intro: shows both teams side-by-side with avatars and ELO.
-/// Dismisses on A/Start or after 3 seconds.
+/// Dismisses on A/Start or after ~2.5 seconds.
 fn show_match_intro(
     fb:        &mut Framebuffer,
     buf:       &mut WorldBuffer,
@@ -2165,7 +2165,8 @@ fn show_match_intro(
     let mid = sw / 2;
     const AV: u32 = 80;
 
-    for tick in 0u32..150 {
+    const INTRO_TICKS: u32 = 75;
+    for tick in 0u32..INTRO_TICKS {
         input.poll();
         if skippable && (input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start)) { break; }
 
@@ -2224,7 +2225,7 @@ fn show_match_intro(
         draw_str_scaled(buf, vs, mid - vw/2, sh / 2 - 14, Bgra::new(255, 215, 50), 3);
 
         // Countdown bar
-        let filled = (sw * (89i32 - tick as i32) / 89).max(0) as u32;
+        let filled = (sw * (INTRO_TICKS as i32 - 1 - tick as i32) / (INTRO_TICKS as i32 - 1)).max(0) as u32;
         buf.fill_rect(0, sh - 5, SCREEN_W, 5, Bgra::new(25, 25, 40));
         buf.fill_rect(0, sh - 5, filled, 5, Bgra::new(70, 70, 140));
 

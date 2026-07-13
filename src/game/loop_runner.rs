@@ -438,6 +438,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     game.step_barrels();
     if game.explosions.len() > exp_barrels { game.emit_sound(crate::audio::Sfx::Barrel); }
     game.step_fire_patches();
+    game.flush_crate_damage();
     game.step_black_holes();
     game.step_death_explosions();
     game.step_explosions();
@@ -1675,11 +1676,19 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             // Torch burn sound is driven by audio::update_torch() in render() from the
             // live torch state, so it plays only WHILE the torch is active (and stops
             // on early release) — no one-shot emit_sound here.
-            // Stop the turn timer the moment the torch is deployed (matches every other
-            // weapon) rather than only once it finishes burning; step_plasma_torch keeps
-            // running via the `in_torch` bypass above regardless of turn phase.
+            // has_fired blocks re-opening the weapon menu / firing another weapon
+            // while torching (the `in_torch` OR-clause in process_acting_sim keeps
+            // this soldier active despite it), but do NOT call on_fired() here: that
+            // flips TurnPhase::Acting -> Watching, and step_plasma_torch/process_fire's
+            // torch-steering dispatch only runs from the Acting match arm in tick()
+            // (loop_runner.rs ~239-257) — Watching is a different branch that never
+            // calls it. Calling on_fired() at deploy time silently stopped the torch
+            // from ever carving or steering: Watching's "all resolved" check is
+            // trivially true (torch isn't a tracked projectile) so it fell through to
+            // Retreating within a tick or two of deploy. on_fired() is called instead
+            // in step_plasma_torch (fuel exhausted) and the A-press-to-stop handler
+            // above, once the torch is actually done.
             game.teams[ti].soldiers[si].has_fired = true;
-            game.turn.on_fired();
         }
         return;
     }
@@ -1754,9 +1763,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
     // All other weapons: hold A to charge, release to fire (Worms-style one-way).
     // charge_armed prevents the menu-confirm A press from firing: A must be released
     // at least once before charging begins.
-    const CHARGE_RATE: f32 = 0.02;  // 0.6/s at 30 Hz; full charge ~50 ticks
-
-    let is_bazooka = weapon == WeaponKind::Bazooka;
+    const CHARGE_RATE: f32 = 0.0216;  // original 0.02 rate, 8% faster
 
     if !input.held(Button::A) {
         if !game.aim.charge_armed {
@@ -1770,7 +1777,10 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         // power=1.0 still maps to the same velocity as before (feel unchanged for a
         // normal full charge); the extra band 1.0..MAX_CHARGE is bonus range.
         game.aim.power = (game.aim.power + CHARGE_RATE).min(MAX_CHARGE);
-        if is_bazooka && game.aim.power >= MAX_CHARGE {
+        // WA auto-fires once the bar is full rather than waiting for release —
+        // every charge-meter weapon does this now (shotgun never reaches this
+        // code path; it fires instantly on press, see WeaponKind::Shotgun above).
+        if game.aim.power >= MAX_CHARGE {
             fire_weapon(game);
             game.aim.power = 0.0;
         }
@@ -1832,6 +1842,9 @@ fn step_plasma_torch(game: &mut GameState) {
     // Check BEYOND the carve zone (tip_dist + tip_radius) so the first-tick
     // carve doesn't cause has_solid=false on tick 2.
     let check_start = TORCH_TIP_DIST + TORCH_RADIUS + 2.0; // 37px from soldier
+    // Scenery is baked into terrain.solid at generation time (WA-style — see
+    // Terrain::generate_tactical), so a plain solid check already "sees" a
+    // tree/rock ahead exactly like dirt; no separate scenery lookup needed.
     let has_solid = (0..=4).any(|i| {
         let d = check_start + i as f32 * 3.0;
         game.terrain.is_solid((sx + dx * d) as i32, (body_cy + dy * d) as i32)
@@ -4358,16 +4371,24 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             let facing = game.teams[ti].soldiers[si].facing as f32;
             let (dx, dy) = torch.dir.to_vec(facing);
             let sx = game.teams[ti].soldiers[si].pos.x;
-            let sy = game.teams[ti].soldiers[si].pos.y - 8.0;
-            let tip_x = (sx + dx * 12.0) as i32;
-            let tip_y = (sy + dy * 12.0) as i32;
+            // Matches step_plasma_torch's body_cy (true vertical body midpoint) and
+            // TORCH_TIP_DIST (18px), so the flame sits at the same point the carve
+            // circle is centered on instead of a separately-tuned offset.
+            let sy = game.teams[ti].soldiers[si].pos.y
+                - (crate::renderer::draw_sprites::SOLDIER_H as f32 * 0.5);
+            let tip_x = (sx + dx * 18.0) as i32;
+            let tip_y = (sy + dy * 18.0) as i32;
             if tip_x >= cam_x as i32 && tip_x < cam_x as i32 + sw {
+                // Radii scaled to match TORCH_RADIUS (17, 34px bore) so the flame
+                // visually fills the tunnel it's carving instead of reading as a
+                // small spark inside a much wider bore.
                 let phase = game.tick as f32 * 0.6;
-                let r1 = if phase.sin() > 0.0 { 7 } else { 6 };
-                let r2 = if phase.cos() > 0.0 { 5 } else { 4 };
+                let r1 = if phase.sin() > 0.0 { 17 } else { 16 };
+                let r2 = if phase.cos() > 0.0 { 13 } else { 12 };
+                let r3 = if phase.sin() > 0.0 { 6 } else { 5 };
                 buf.fill_circle(tip_x, tip_y, r1, Bgra::new(220, 60, 10));
                 buf.fill_circle(tip_x, tip_y, r2, Bgra::new(255, 150, 30));
-                buf.fill_circle(tip_x, tip_y, 2,  Bgra::new(255, 240, 120));
+                buf.fill_circle(tip_x, tip_y, r3, Bgra::new(255, 240, 120));
             }
         }
     }
@@ -5423,22 +5444,11 @@ fn stamp_objects(game: &mut GameState) {
         }
     }
 
-    // Scenery objects are solid: soldiers can stand on / climb them, and
-    // projectiles collide with them, using the same footprint box the
-    // renderer draws (and craters carve).
-    let theme = crate::world::terrain::Theme::of(game.terrain.is_cavern, game.terrain.template_id);
-    for obj in &game.terrain.scenery.clone() {
-        let (half_w, height) = obj.footprint(theme);
-        let cx = obj.x as i32;
-        let cy = obj.y as i32;
-        for dy in 0..=height {
-            for dx in -half_w..=half_w {
-                if obj.pixel_intact(cx + dx, cy - dy, theme) {
-                    game.terrain.stamp_object(cx + dx, cy - dy);
-                }
-            }
-        }
-    }
+    // Scenery is baked directly into terrain.solid at generation time (see
+    // Terrain::generate_tactical / renderer::scenery::scenery_pixels), so it's
+    // already solid ground like any other dirt pixel — no per-tick object
+    // stamp needed here (unlike barrels/mines, which move and must be
+    // re-stamped every tick).
 
     // Armed / triggered mines: 8×8 px footprint
     for mine in &game.mines {
