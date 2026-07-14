@@ -1,6 +1,6 @@
 # Mini-Mayhem Wiki
 
-**Mini-Mayhem** (code name *Arty*) is a Worms-style artillery game for the **Miyoo Mini Plus** handheld, written entirely in Rust. Two teams of soldiers lob explosives at each other across destructible terrain until only one side is standing.
+**Mini-Mayhem** (code name *Arty*) is a turn-based 2D artillery game for the **Miyoo Mini Plus** handheld, written entirely in Rust. Two teams of soldiers lob explosives at each other across destructible terrain until only one side is standing.
 
 ---
 

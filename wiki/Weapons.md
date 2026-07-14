@@ -36,7 +36,7 @@ Melee swing launches the target soldier with massive knockback. No blast damage 
 Burns a tunnel through terrain in the aimed direction. Does not damage soldiers directly. Useful for repositioning or creating kill pits. The turn timer pauses while the torch is running, so you won't lose your turn mid-tunnel.
 
 ### Jumpbot × 1
-Placed at the soldier's feet like TNT — no aim or charge. It then walks off on its own, hopping forward in little leaps, vaulting obstacles it can't step over and reversing when it hits a wall. Its fuse runs on a fixed real-time countdown regardless of whose turn it is; it explodes when the fuse expires, when it touches water, or when the placing team presses the detonate button during their turn. Big blast (75 damage, 45px radius). The gait matches a real WA Sheep, measured frame-by-frame.
+Placed at the soldier's feet like TNT — no aim or charge. It then walks off on its own, hopping forward in little leaps, vaulting obstacles it can't step over and reversing when it hits a wall. Its fuse runs on a fixed real-time countdown regardless of whose turn it is; it explodes when the fuse expires, when it touches water, or when the placing team presses the detonate button during their turn. Big blast (75 damage, 45px radius). It moves with a distinctive hopping gait.
 
 ### Molotov Cocktail ∞
 Throws a bottle that shatters on impact, spraying a wide pool of flames — but leaves **no crater** (the fire does the work, not the blast). Flames flicker and burn out over a long time, sliding downhill and pooling in pits, wind-affected in flight. A soldier caught in the fire takes steady damage over time and reacts by hopping and moving to escape — heading one way out of the flames, jumping the other way if it hits a wall. It's deadly if the soldier is cornered against a barrier with nowhere to go, but out in the open it can usually get clear.
@@ -91,9 +91,7 @@ Some powerful loadout weapons are locked for the opening turns to prevent first-
 ## Damage Reference
 
 Max damage is dealt at the centre of the blast and falls off linearly to zero at the edge of the
-radius. Explosive damage/radius values are calibrated against the original Worms Armageddon weapon
-table (extracted directly from the game's data — e.g. WA Bazooka/Grenade 50, Dynamite/Sheep 75,
-Holy Hand Grenade 100, with matching blast radii), then tuned for Mini Mayhem's scale and balance.
+radius. Values below are tuned for Mini Mayhem's scale and balance.
 
 | Weapon (in-game name) | Max damage | Blast radius | Notes |
 |---|---|---|---|
