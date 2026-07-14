@@ -17,7 +17,7 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 - Atmospheric visuals: parallax backgrounds, drifting clouds, wind-driven debris, biome-tinted skies
 
 ### Weapons
-Bazooka, Grenade (variable fuse), Shotgun, Pistol (5-shot burst), MAC-10 (∞), TNT, Landmine, Molotov Cocktail (2 uses, 48 flames, ~2.5 min burn), Clump Bomb, Homing Missile, Plasma Torch, Ninja Rope, Baseball Bat — plus crate-only weapons: Meteor Bomb, Revolver, Blasthive (homing bees), Garcia (targeted artillery), Air Strike, Black Hole Bomb, Hand of Jerry, Sacred Ordnance, Robot (autonomous walking Sheep-style bomb — climbs, jumps obstacles, 10s fuse, manual detonate). Weapon/health/scrap crate drops with rarity tiers.
+Bazooka, Grenade (variable fuse), Shotgun, Pistol (5-shot burst), MAC-10 (∞), TNT, Landmine, Molotov Cocktail (2 uses, 48 flames, ~2.5 min burn), Clump Bomb, Homing Missile, Plasma Torch (pauses the turn timer while tunnelling), Ninja Rope (5 uses; momentum-carry swing with mid-air re-hook), Baseball Bat — plus crate-only weapons: Meteor Bomb, Revolver, Blasthive (homing bees), Garcia (targeted artillery), Air Strike, Black Hole Bomb, Hand of Jerry, Sacred Ordnance, Jumpbot (autonomous walking hop-bomb — hops forward, vaults obstacles, reverses at walls, 10s fuse, manual detonate; gait measured frame-by-frame from a real WA Sheep). Explosive damage/radius calibrated to the original WA weapon table (see [wiki/Weapons.md](wiki/Weapons.md#damage-reference)). Weapon/health/scrap crate drops with rarity tiers.
 
 ### Game Modes
 - **Singleplayer** — VS CPU or local hotseat

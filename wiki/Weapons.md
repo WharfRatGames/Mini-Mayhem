@@ -20,8 +20,8 @@ Fires 5 pellets in a tight spread. High damage at close range, minimal knockback
 ### MAC-10 × 2
 Full-auto burst — fires a rapid stream of bullets in a tight arc. Medium damage per hit, very fast fire rate. Effective at close-to-medium range.
 
-### Ninja Rope ∞
-Fires a grappling hook that sticks to terrain. Swing across gaps and up to high ground on a real pendulum — pump the swing from the sides of the arc to build height, and reel the rope in and out to control your radius. The rope bends around corners and unwinds as you swing back, so it wraps naturally through caves and around pillars. Fire again in mid-air to re-hook for a repeat swing. Swinging into an enemy knocks them aside without ending your turn. Does no damage itself.
+### Ninja Rope × 5
+Fires a grappling hook that sticks to terrain. Swing across gaps and up to high ground on a real pendulum — pump the swing from the sides of the arc to build height, and reel the rope in and out to control your radius. The rope bends around corners and unwinds as you swing back, so it wraps naturally through caves and around pillars. Momentum carries through when you let go, and you can rebuild it by re-hooking in mid-air; corner-wraps slingshot you around. Swinging into an enemy knocks them aside without ending your turn. Does no damage itself. Five ropes per loadout.
 
 ### TNT × 1
 Place it and run — the fuse burns for a random 4–5 seconds. Massive blast radius and damage. Unlocked after 5 full turn rotations.
@@ -33,7 +33,10 @@ Dropped at the soldier's feet. Arms after a short delay, then detonates when any
 Melee swing launches the target soldier with massive knockback. No blast damage — pure physics chaos. Unlocked after 3 full turn rotations.
 
 ### Plasma Torch × 3
-Burns a tunnel through terrain in the aimed direction. Does not damage soldiers directly. Useful for repositioning or creating kill pits.
+Burns a tunnel through terrain in the aimed direction. Does not damage soldiers directly. Useful for repositioning or creating kill pits. The turn timer pauses while the torch is running, so you won't lose your turn mid-tunnel.
+
+### Jumpbot × 1
+Placed at the soldier's feet like TNT — no aim or charge. It then walks off on its own, hopping forward in little leaps, vaulting obstacles it can't step over and reversing when it hits a wall. Its fuse runs on a fixed real-time countdown regardless of whose turn it is; it explodes when the fuse expires, when it touches water, or when the placing team presses the detonate button during their turn. Big blast (75 damage, 45px radius). The gait matches a real WA Sheep, measured frame-by-frame.
 
 ### Molotov Cocktail ∞
 Throws a bottle that shatters on impact, spraying a wide pool of flames — but leaves **no crater** (the fire does the work, not the blast). Flames flicker and burn out over a long time, sliding downhill and pooling in pits, wind-affected in flight. A soldier caught in the fire takes steady damage over time and reacts by hopping and moving to escape — heading one way out of the flames, jumping the other way if it hits a wall. It's deadly if the soldier is cornered against a barrier with nowhere to go, but out in the open it can usually get clear.
@@ -82,3 +85,37 @@ Some powerful loadout weapons are locked for the opening turns to prevent first-
 | Baseball Bat | 3 full turn rotations |
 | TNT | 5 full turn rotations |
 | Air Strike | 7 full turn rotations |
+
+---
+
+## Damage Reference
+
+Max damage is dealt at the centre of the blast and falls off linearly to zero at the edge of the
+radius. Explosive damage/radius values are calibrated against the original Worms Armageddon weapon
+table (extracted directly from the game's data — e.g. WA Bazooka/Grenade 50, Dynamite/Sheep 75,
+Holy Hand Grenade 100, with matching blast radii), then tuned for Mini Mayhem's scale and balance.
+
+| Weapon (in-game name) | Max damage | Blast radius | Notes |
+|---|---|---|---|
+| Bazooka | 50 | 45 px | arc, wind-affected |
+| Grenade | 45 | 30 px | timed fuse, bounces |
+| Clump Bomb | 30 / cluster | 20 px | splits into clusters |
+| Meteor Bomb | 18 / fragment | 14 px | fragment spray (can't one-shot) |
+| TNT | 75 | 75 px | ~4–5s fuse |
+| Mine | 50 | 55 px | proximity trigger |
+| Sacred Ordnance | 80 | 80 px | rolls to a stop, then detonates |
+| Hand of Jerry | 45 | 55 px | bounces before detonating |
+| Homing Missile | 45 | 30 px | steers to cursor |
+| Air Strike | 50 / bomb | 45 px | spread of bombs |
+| Black Hole Bomb | 35 | — | gravity well, no crater |
+| Jumpbot | 75 | 45 px | walks off, hop gait |
+| Molotov Cocktail | 20 impact + fire DoT | 20 px | no crater; fire does the work |
+| Shotgun | 20 / pellet (×5) | 12 px | hitscan |
+| Minigun | 12 / bullet | 8 px | full-auto |
+| MAC-10 | 5 / bullet | 6 px | full-auto burst |
+| Revolver | 15 / shot | — | hitscan, pinpoint |
+| Pistol | 5 / bullet | — | hitscan |
+| Blasthive | 5 / bee sting (×6) | 15 px | homing bees |
+| Baseball Bat | 25 + big knockback | — | melee, no blast |
+| Plasma Torch | 0 (digs terrain) | — | pauses turn timer |
+| Ninja Rope | 0 | — | utility |

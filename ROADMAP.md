@@ -211,7 +211,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 
 - [ ] **Spectator mode** — watch a live match in progress without participating
 - [ ] **Replay system** — save and replay matches locally
-- [ ] **Additional weapons** — new crate-only weapons to expand the pool (Robot/Sheep-style walker added 2026-07-08; still open for more)
+- [ ] **Additional weapons** — new crate-only weapons to expand the pool (Robot/Sheep-style walker added 2026-07-08, renamed **Jumpbot** with a frame-accurate WA-Sheep hop gait 2026-07-14; still open for more)
 - [ ] **Map variety** — more real WA terrain masks beyond the current 2, additional sub-variants (library grown 2→18 total across island/cavern as of 2026-07-08; still open for more)
 - [ ] **Input stream logging** — full per-match input logs for future replay analysis and anti-cheat
 - [ ] **Tournament bracket** — organized competitive play with bracket progression

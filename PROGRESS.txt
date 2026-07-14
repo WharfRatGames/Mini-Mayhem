@@ -1,9 +1,43 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.429 (commit e315c25, DEPLOYED 2026-07-10 to Pi server/
-  GitHub release/Discord/Windows bundle). BOTH Miyoos (.110 and .126) were
-  OFFLINE at deploy time — .126 still on .428, .110 still on .427; push when
-  they're back on the LAN.
+Current version: 0.5.4.431 (commit e912a19, DEPLOYED 2026-07-14 to Pi server/
+  GitHub release/Discord/Windows bundle). Miyoo .126 got the push (hash
+  verified); .110 was OFFLINE — it will auto-update from the server when back
+  on the LAN.
+
+2026-07-14 (v0.5.4.431; VERSION + REQUIRED_VERSION bumped — msg.rs struct
+  renamed) — JUMPBOT + WA WEAPON/PHYSICS REVERSE-ENGINEERING.
+  ---------------------------------------------------------------------------
+  - Robot weapon renamed JUMPBOT throughout (WeaponKind, JumpbotState,
+    NetJumpbot, Sfx, all consts/fns, parity structs). Wire layout unchanged.
+  - Jumpbot ground gait retuned to a hop cadence (leap/settle/pause over an
+    11-tick cycle via walk_ticks), ~0.87 px/tick net, replacing the flat 1.2
+    walk — matches the real WA Sheep, measured frame-by-frame (see below).
+  - Plasma torch now pauses the turn timer while running.
+  - Barrel fire patches detonate nearby armed mines.
+  - Ninja rope overhaul: horizontal swing momentum, unclamped momentum
+    conservation on reel, max len 512 / min 10, thicker rope with pointed
+    tip, 5 uses per loadout; fixed a drag-softlock where the turn never ended.
+  - Parity 23/23.
+
+  WA reverse-engineering (source for the tuning above; done via radare2 on
+  WA.exe + a headless-Wine dynamic-analysis rig, winedbg child-attach):
+  - WEAPON DAMAGE TABLE extracted live: the per-weapon config table is
+    [game+0x510], stride 0x1d0, 71 records; blast damage = int at record+0x54,
+    blast radius = record+0x60, melee/direct damage = record+0x38. Confirmed
+    values: Bazooka 50, Grenade 50, Mortar 15, Cluster 20, Banana/Super-Banana
+    75, Holy Hand-Grenade 100, Petrol 15, Dynamite 75, Sheep/Super/Aqua Sheep
+    75, Mine 50, Mad Cow/Old Woman 75, Armageddon 50; radii Bazooka 48,
+    Grenade 50, Dynamite 78, Sheep 153, HHG 56. Fire Punch/Baseball Bat 30,
+    Battle Axe 50 (melee, +0x38). Arty's weapon table is calibrated to these
+    (see wiki/Weapons.md Damage Reference).
+  - PHYSICS ENGINE decompiled + confirmed live: worm gravity 0.300 px/f2
+    (0x4ccc), projectile gravity 0.240 px/f2, damped retention 0.800 (0xcccc),
+    slope-normal reflection via 1024-entry sin/cos tables with ~0.95 bounce
+    friction; velocity 16.16 fixed at [obj+0x90/0x94].
+  - SHEEP WALK measured on the real display: position-stepped (not velocity),
+    ~0.9 px/frame @30fps, hopping gait (creep -> leap ~1.75px -> settle ->
+    pause), reverses at walls. This is what the Jumpbot gait now replicates.
 
 2026-07-10 (v0.5.4.429; VERSION + REQUIRED_VERSION bumped together —
   terrain determinism + scenery counts changed) —

@@ -1,5 +1,35 @@
 # Mini Mayhem — Project Status
 
+## 2026-07-14 — v0.5.4.431: Jumpbot (WA-Sheep gait), torch stops timer, barrel fire detonates mines, ninja rope overhaul
+
+**Robot → Jumpbot.** The autonomous walking weapon is renamed **Jumpbot** across all paths
+(`WeaponKind`, `JumpbotState`, `NetJumpbot`, `Sfx`, all `JUMPBOT_*` consts/fns, parity structs;
+wire layout unchanged). Its ground gait is retuned from a flat 1.2 px/tick walk to a **hop cadence**
+(leap → settle → pause over an 11-tick cycle, driven off the already-synced `walk_ticks`),
+netting ~0.87 px/tick — matching the **real WA Sheep, measured frame-by-frame** (see below).
+
+**Other gameplay this release** (queued from the prior session, shipped together): plasma torch now
+**pauses the turn timer** while running; **barrel fire detonates nearby armed mines**; **ninja rope
+overhaul** — horizontal swing momentum, unclamped momentum-conservation on reel, max length 512 /
+min 10, thicker rope with a pointed tip, 5 uses per loadout, and a fix for a drag-softlock where the
+turn never ended.
+
+**WA reverse-engineering** (the source for the above tuning). Using radare2 on `WA.exe` plus a
+headless-Wine dynamic-analysis rig (winedbg child-attach), we:
+- **Extracted the live weapon table** — `[game+0x510]`, stride `0x1d0`, 71 records; blast damage at
+  `+0x54`, radius at `+0x60`, melee damage at `+0x38`. Confirmed values (Bazooka 50, Dynamite/Sheep
+  75, Holy Hand-Grenade 100, radii Bazooka 48 / Dynamite 78, etc.). Arty's weapon table is calibrated
+  to these — full table in [wiki/Weapons.md](wiki/Weapons.md#damage-reference).
+- **Decompiled the physics engine** — worm gravity 0.300 px/f² (`0x4ccc`), projectile gravity 0.240,
+  damped retention 0.800 (`0xcccc`), slope-normal reflection via the 1024-entry sin/cos tables with
+  ~0.95 bounce friction.
+- **Measured the Sheep walk on the real display** — position-stepped (not velocity), ~0.9 px/frame
+  @30fps, hopping gait (creep → leap ~1.75px → settle → pause), reverses at walls. The Jumpbot gait
+  now replicates it.
+
+Parity 23/23. Deployed to Pi + GitHub release + Discord + Windows bundle; Miyoo .126 pushed, .110
+offline (auto-updates when back).
+
 ## 2026-07-13 — v0.5.4.430: expanded-corpus fragment-filter fix (scenery-bake orphans), barrel-fire carve retuned
 
 **Corpus grown 70 → 170 maps per class** (island/cavern/bng, `~/arty-mapgen-corpus`) —
