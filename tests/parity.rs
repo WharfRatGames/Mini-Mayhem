@@ -92,7 +92,7 @@ struct GarciaSn {
 }
 
 #[derive(Debug, PartialEq)]
-struct RobotSn {
+struct JumpbotSn {
     pos: (f32, f32), vel_y: f32, vel_x: f32, facing: i32,
     fuse_ticks: u32, grounded: bool, walk_ticks: u32, owner_team: usize, just_jumped: bool,
 }
@@ -146,7 +146,7 @@ struct SyncedSnapshot {
     // special weapon sessions
     rope: Option<RopeSnap>,
     garcia: Option<GarciaSn>,
-    robot: Option<RobotSn>,
+    jumpbot: Option<JumpbotSn>,
     airstrike: Option<AirstrikeSn>,
     homing_missile: Option<HomingMissileSn>,
     // plasma torch (0=inactive, 1-3=dir, fuel_ticks)
@@ -165,7 +165,7 @@ struct SyncedSnapshot {
 fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
     use arty::game::state::{
         GameState, GameResult, MineState, CrateKind, TorchDir,
-        AirstrikeState, GarciaState, RobotState, HomingMissileState, PlasmaTorchState,
+        AirstrikeState, GarciaState, JumpbotState, HomingMissileState, PlasmaTorchState,
     };
     use arty::game::soldier::SoldierState;
     use arty::physics::projectile::FuseState;
@@ -175,7 +175,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         teams, turn, projectiles, crates, mines, barrels,
         fire_patches, black_holes, wind, aim, result, crater_log,
         graves, rope, messages, blood_splats, plasma_torch,
-        garcia, robot, airstrike, homing_missile,
+        garcia, jumpbot, airstrike, homing_missile,
         // ── Synced to wire but managed locally by the live client, not from server ──
         tick:                _, // game.tick increments locally on client; StateMsg.tick used for dedup
         sounds:              _, // per-tick event channel; tested in round_trip_preserves_synced_state
@@ -385,10 +385,10 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         }
     });
 
-    // ── robot ─────────────────────────────────────────────────────────────────
-    let robot = robot.as_ref().map(|r| {
-        let RobotState { x, y, vel_y, vel_x, facing, fuse_ticks, grounded, walk_ticks, owner_team, just_jumped } = r;
-        RobotSn {
+    // ── jumpbot ─────────────────────────────────────────────────────────────────
+    let jumpbot = jumpbot.as_ref().map(|r| {
+        let JumpbotState { x, y, vel_y, vel_x, facing, fuse_ticks, grounded, walk_ticks, owner_team, just_jumped } = r;
+        JumpbotSn {
             pos: (*x, *y), vel_y: *vel_y, vel_x: *vel_x, facing: *facing,
             fuse_ticks: *fuse_ticks, grounded: *grounded, walk_ticks: *walk_ticks,
             owner_team: *owner_team, just_jumped: *just_jumped,
@@ -455,7 +455,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
     SyncedSnapshot {
         teams, turn_team: turn.current_team, turn_number: turn.turn_number, wind: wind.value(),
         projectiles, crates, mines, barrels, black_holes, fire_patches,
-        crater_log: crater_log.clone(), aim_power, result, rope, garcia, robot, airstrike,
+        crater_log: crater_log.clone(), aim_power, result, rope, garcia, jumpbot, airstrike,
         homing_missile, torch_dir, torch_fuel, graves, blood_splats, messages,
     }
 }
@@ -497,7 +497,7 @@ fn round_trip_preserves_synced_state() {
     use arty::game::state::{
         DroppedCrate, CrateKind, Barrel, BarrelState, BlackHole,
         FirePatch, RopeState, PlasmaTorchState, TorchDir,
-        GarciaState, RobotState, AirstrikeState, HomingMissileState,
+        GarciaState, JumpbotState, AirstrikeState, HomingMissileState,
         GameMessage, Grave,
     };
 
@@ -582,8 +582,8 @@ fn round_trip_preserves_synced_state() {
         blink_timer: 5, falling: false, fall_y: 0.0, vel_y: 0.0, bounce_count: 0,
     });
 
-    // Robot (walking)
-    server.robot = Some(RobotState {
+    // Jumpbot (walking)
+    server.jumpbot = Some(JumpbotState {
         x: 600.0, y: 250.0, vel_y: 0.0, vel_x: 0.0, facing: -1,
         fuse_ticks: 90, grounded: true, walk_ticks: 12, owner_team: 0, just_jumped: false,
     });
@@ -690,17 +690,17 @@ fn garcia_state_parity() {
     assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 2, 0)));
 }
 
-/// Robot walking (grounded) and falling (unsupported) states both survive.
+/// Jumpbot walking (grounded) and falling (unsupported) states both survive.
 #[test]
-fn robot_state_parity() {
+fn jumpbot_state_parity() {
     let mut server = build_game(9);
-    server.robot = Some(arty::game::state::RobotState {
+    server.jumpbot = Some(arty::game::state::JumpbotState {
         x: 300.0, y: 200.0, vel_y: 0.0, vel_x: 0.0, facing: 1,
         fuse_ticks: 120, grounded: true, walk_ticks: 5, owner_team: 1, just_jumped: false,
     });
     assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
 
-    let r = server.robot.as_mut().unwrap();
+    let r = server.jumpbot.as_mut().unwrap();
     r.grounded = false; r.vel_y = 6.0; r.facing = -1; r.fuse_ticks = 40;
     assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 2, 0)));
 }

@@ -98,7 +98,7 @@ pub enum Sfx {
     Minigun         = 18,
     Uzi             = 19,
     Pistol          = 20,
-    Robot           = 21,
+    Jumpbot           = 21,
 }
 
 impl Sfx {
@@ -116,7 +116,7 @@ impl Sfx {
             18 => Sfx::Minigun,
             19 => Sfx::Uzi,
             20 => Sfx::Pistol,
-            21 => Sfx::Robot,
+            21 => Sfx::Jumpbot,
             _ => return None,
         })
     }
@@ -133,7 +133,7 @@ impl Sfx {
             Sfx::Revolver | Sfx::Shotgun | Sfx::Bat | Sfx::CrateDrop |
             Sfx::PlasmaTorch | Sfx::Garcia | Sfx::Smash | Sfx::Death |
             Sfx::DeathWater | Sfx::HolyHandGrenade | Sfx::Minigun | Sfx::Uzi |
-            Sfx::Pistol | Sfx::Robot => {}
+            Sfx::Pistol | Sfx::Jumpbot => {}
         }
     }
 }
@@ -163,7 +163,7 @@ pub fn play(s: Sfx) {
         Sfx::Minigun         => play_minigun(),
         Sfx::Uzi             => play_uzi(),
         Sfx::Pistol          => play_pistol(),
-        Sfx::Robot           => play_explosion(),
+        Sfx::Jumpbot           => play_explosion(),
     }
 }
 

@@ -55,13 +55,13 @@ pub fn draw_garcia_sprite(buf: &mut WorldBuffer, cx: i32, cy: i32, render_w: i32
     }
 }
 
-/// Draw the autonomous walking Robot: a small procedural clockwork-robot
+/// Draw the autonomous walking Jumpbot: a small procedural clockwork-jumpbot
 /// sprite, mirrored by `facing` (1 = right, -1 = left). `feet_y` is the
-/// Robot's ground-contact y (matches `RobotState.y`, the same feet-baseline
+/// Jumpbot's ground-contact y (matches `JumpbotState.y`, the same feet-baseline
 /// convention soldiers use), `w`/`h` are the overall body footprint.
 /// `walk_ticks` drives the 2-frame leg-stride animation while `grounded` is
 /// true; when airborne both legs hang together (no stride).
-pub fn draw_robot_sprite(buf: &mut WorldBuffer, x: i32, feet_y: i32, facing: i32, w: i32, h: i32, walk_ticks: u32, grounded: bool) {
+pub fn draw_jumpbot_sprite(buf: &mut WorldBuffer, x: i32, feet_y: i32, facing: i32, w: i32, h: i32, walk_ticks: u32, grounded: bool) {
     let steel    = Bgra::new(140, 148, 160);
     let steel_dk = Bgra::new(60,  66,  76);
     let eye      = Bgra::new(70, 210, 255);

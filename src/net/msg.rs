@@ -134,7 +134,7 @@ pub struct StateMsg {
     /// Colour identity (0-3) per compact team index.
     pub team_colors:        Vec<u8>,
     pub garcia:             Option<NetGarcia>,
-    pub robot:              Option<NetRobot>,
+    pub jumpbot:              Option<NetJumpbot>,
     pub airstrike:          Option<NetAirstrike>,
     pub homing_missile:     Option<NetHomingMissile>,
     /// Active plasma-torch direction: 0=none, 1=UpForward, 2=Forward, 3=DownForward.
@@ -234,7 +234,7 @@ pub struct NetGarcia {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetRobot {
+pub struct NetJumpbot {
     pub x:          f32,
     pub y:          f32,
     pub vel_y:      f32,

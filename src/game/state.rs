@@ -305,11 +305,11 @@ pub struct GarciaState {
     pub bounce_count: u32,
 }
 
-/// Autonomous walking Robot (WA Sheep-style) session; None = inactive.
+/// Autonomous walking Jumpbot (WA Sheep-style) session; None = inactive.
 /// Placed like TNT (no aim/charge), then walks/climbs/falls on its own until
 /// its fuse expires, it touches water, or it's caught in another explosion.
 #[derive(Debug, Clone)]
-pub struct RobotState {
+pub struct JumpbotState {
     pub x:          f32,
     pub y:          f32,
     pub vel_y:      f32,
@@ -323,7 +323,7 @@ pub struct RobotState {
     pub grounded:   bool,
     /// Cosmetic walk-cycle/footstep timing.
     pub walk_ticks: u32,
-    /// Team index that placed this Robot — only this team can detonate it
+    /// Team index that placed this Jumpbot — only this team can detonate it
     /// early (A press) during their own turn.
     pub owner_team: usize,
     /// True from the moment it jumps to clear a blocked obstacle until it
@@ -435,8 +435,8 @@ pub struct GameState {
     pub plasma_torch: Option<PlasmaTorchState>,
     /// Garcia targeting / falling session; None = inactive.
     pub garcia: Option<GarciaState>,
-    /// Autonomous walking Robot session; None = inactive.
-    pub robot: Option<RobotState>,
+    /// Autonomous walking Jumpbot session; None = inactive.
+    pub jumpbot: Option<JumpbotState>,
     /// Airstrike targeting / active session; None = inactive.
     pub airstrike: Option<AirstrikeState>,
     /// Homing missile target-picking session; None = inactive.
@@ -514,7 +514,7 @@ impl GameState {
             pending_deaths: Vec::new(),
             plasma_torch: None,
             garcia: None,
-            robot: None,
+            jumpbot: None,
             airstrike: None,
             homing_missile: None,
             meteor_chain: false,
@@ -796,14 +796,14 @@ impl GameState {
             }
         }
 
-        // Chain-detonate the Robot if it's caught in this blast — set its fuse to
+        // Chain-detonate the Jumpbot if it's caught in this blast — set its fuse to
         // expire next tick rather than recursing into apply_explosion_scaled here
-        // (step_robot's normal fuse-expiry path fires the actual explosion).
-        if let Some(robot) = &mut self.robot {
-            let dx = robot.x - pos.x;
-            let dy = robot.y - pos.y;
+        // (step_jumpbot's normal fuse-expiry path fires the actual explosion).
+        if let Some(jumpbot) = &mut self.jumpbot {
+            let dx = jumpbot.x - pos.x;
+            let dy = jumpbot.y - pos.y;
             if (dx * dx + dy * dy).sqrt() < radius {
-                robot.fuse_ticks = robot.fuse_ticks.min(1);
+                jumpbot.fuse_ticks = jumpbot.fuse_ticks.min(1);
             }
         }
 
@@ -1257,7 +1257,7 @@ impl GameState {
                 let slot = ((w - 0.84) / 0.14 * 5.0) as usize;
                 [WeaponKind::BlackHoleBomb, WeaponKind::Revolver,
                  WeaponKind::Minigun, WeaponKind::HolyHandGrenade,
-                 WeaponKind::Robot][slot.min(4)]
+                 WeaponKind::Jumpbot][slot.min(4)]
             } else {
                 WeaponKind::Garcia
             };
@@ -2018,6 +2018,18 @@ impl GameState {
                         let dy = barrel.pos.y - patch.pos.y;
                         if (dx*dx + dy*dy).sqrt() < 6.0 {
                             barrel.state = BarrelState::Triggered { ticks: 5 };
+                        }
+                    }
+                }
+
+                // Flames detonate nearby armed mines.
+                for mine in &mut self.mines {
+                    if mine.state == MineState::Armed {
+                        let dx = mine.pos.x - patch.pos.x;
+                        let dy = mine.pos.y - patch.pos.y;
+                        if (dx*dx + dy*dy).sqrt() < 6.0 {
+                            mine.state = MineState::Triggered;
+                            mine.trigger_ticks = 5;
                         }
                     }
                 }

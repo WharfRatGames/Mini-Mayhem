@@ -10,7 +10,7 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{
     WorldBuffer, Bgra,
-    draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_headstone, draw_explosion, draw_garcia_sprite, draw_robot_sprite},
+    draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_headstone, draw_explosion, draw_garcia_sprite, draw_jumpbot_sprite},
     skeleton::{draw_soldier_skeletal, SoldierAnim},
     draw_terrain,
     hud::{draw_game_over, draw_pause_menu},
@@ -21,14 +21,17 @@ use super::soldier::SoldierState;
 
 // ── Grappling hook constants ──────────────────────────────────────────────────
 const ROPE_HOOK_SPEED:    f32 = 33.0;  // px/tick — reference extends 20 px/frame @50fps = 1000 px/s → /30fps ≈ 33
-const ROPE_SWING_FORCE:   f32 = 0.27;  // tangential impulse — reference: 0.1 px/frame² @50fps (0x1999), ratio 0.1/0.3 to gravity
+const ROPE_SWING_FORCE:   f32 = 0.278; // HORIZONTAL impulse — reference FUN_00513f00: (right−left)×0x1999
+                                       // = 0.1 px/frame² @50fps applied straight to vx (no rotation) → ×(50/30)²
 const ROPE_GRAVITY:       f32 = 0.8;   // pendulum gravity, matched to reference: 0.3 px/frame² @ 50fps
                                        // → 0.3·50²=750 px/s² → /30² ≈ 0.83 px/tick² (worm-scale ~0.73); use 0.8
 const ROPE_RETRACT:       f32 = 6.7;   // px/tick reel — reference: 4 px/frame @50fps (0x40000) = 200 px/s → /30
                                        // reference rope: 8px segments, 64 max = 512px, min ~10px (ours kept screen-tuned below)
-const ROPE_MIN_LEN:       f32 = 20.0;
-const ROPE_MAX_LEN:       f32 = 320.0;
-const ROPE_MAX_SPEED:     f32 = 40.0;  // px/tick per component — prevents tunnelling
+const ROPE_MIN_LEN:       f32 = 10.0;  // reference FUN_00500d00: rejects lengths < 0xa0000 = 10px
+const ROPE_MAX_LEN:       f32 = 512.0; // reference: 64 segments × 8px
+const ROPE_MAX_SPEED:     f32 = 60.0;  // anti-tunnel guard only — reference is uncapped; swept collision is the real safety
+const ROPE_AIR_GRAVITY:   f32 = 0.8;   // worm gravity (0.3 @50fps) applied to the active soldier while
+                                       // airborne during a rope session, so detach arcs match the swing
 // Firing-angle limit: restricted mode can't fire below horizontal; unrestricted
 // allows 54° below horizon (-0.9425 rad). Compile-time toggle to avoid a synced field.
 const ROPE_MAX_DOWN_ANGLE:            f32 = 0.0;
@@ -201,17 +204,17 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     // Object mask: re-stamp barrels + armed mines so collision sees them as solid.
     stamp_objects(game);
 
-    // Robot: fixed real-time fuse keeps running regardless of whose turn/phase
+    // Jumpbot: fixed real-time fuse keeps running regardless of whose turn/phase
     // it is (unlike Garcia/Airstrike, which only tick during their owner's own
     // Watching phase) — so it's ticked here, unconditionally, every tick.
-    if game.robot.is_some() {
-        step_robot(game, input);
+    if game.jumpbot.is_some() {
+        step_jumpbot(game, input);
     }
 
     tick_fire_grace(game); // weapon-confirm suppression — one source
-    // Timer pauses while the player is charging a power shot (A held). It still
-    // ticks while the weapon menu is open so pressure stays on.
-    if game.aim.power <= 0.0 {
+    // Timer pauses while the player is charging a power shot (A held) or torching.
+    // It still ticks while the weapon menu is open so pressure stays on.
+    if game.aim.power <= 0.0 && game.plasma_torch.is_none() {
         game.turn.tick();
     }
 
@@ -307,13 +310,13 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             let all_grounded = game.teams.iter().flat_map(|t| t.soldiers.iter())
                 .all(|s| !matches!(s.state, SoldierState::Airborne { .. }));
             // Don't let the placing team's own turn advance into Retreating while
-            // their own Robot is still walking/counting down — hold Watching until
+            // their own Jumpbot is still walking/counting down — hold Watching until
             // it detonates, then the normal retreat window opens right after.
             // Scoped to `owner_team == active_team` so it never blocks a later,
-            // unrelated team's turn just because someone else's Robot is still
+            // unrelated team's turn just because someone else's Jumpbot is still
             // alive elsewhere on the map.
-            let robot_blocking = game.robot.as_ref().map_or(false, |r| r.owner_team == game.active_team());
-            if game.projectiles.is_empty() && game.explosions.is_empty() && game.pending_deaths.is_empty() && game.black_holes.is_empty() && game.garcia.is_none() && game.airstrike.is_none() && !robot_blocking && all_grounded {
+            let jumpbot_blocking = game.jumpbot.as_ref().map_or(false, |r| r.owner_team == game.active_team());
+            if game.projectiles.is_empty() && game.explosions.is_empty() && game.pending_deaths.is_empty() && game.black_holes.is_empty() && game.garcia.is_none() && game.airstrike.is_none() && !jumpbot_blocking && all_grounded {
                 let hit = game.active_worm_hit;
                 game.active_worm_hit = false;
                 game.retreat_locked  = hit;
@@ -337,6 +340,14 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             use crate::game::soldier::SoldierState as SS;
             let ti0 = game.active_team();
             let si0 = game.teams[ti0].active;
+            // A soldier still hanging on the rope when the turn times out is
+            // Airborne, and the rope constraint keeps them swinging forever, so
+            // the Airborne-wait below would never resolve — the turn softlocks
+            // and no input is processed in Ending. Force-detach so plain gravity
+            // drops them to a landing and the turn can advance.
+            if game.rope.is_some() {
+                game.rope = None;
+            }
             let damage_tallying = game.any_soldier_tallying();
             if (game.teams[ti0].soldiers[si0].is_alive()
                 && matches!(game.teams[ti0].soldiers[si0].state, SS::Airborne { .. }))
@@ -1451,15 +1462,31 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
                 Some(true)  => {}                                 // hook flying → wait
             }
         }
-        // Up/Down: adjust rope length while attached
+        // Up/Down: adjust rope length while attached. Velocity scales by
+        // old/new length at reel time, full vector, unclamped — the reference
+        // does this inside the reel handler itself (FUN_00513f00 → FUN_00500d00),
+        // so reel-in accelerates and paying out damps.
+        let mut reel_scale: Option<f32> = None;
         if let Some(ref mut rope) = game.rope {
             if !rope.flying {
+                let old_len = rope.length;
                 if input.held(Button::Up) {
                     rope.length = (rope.length - ROPE_RETRACT).max(ROPE_MIN_LEN);
                 }
                 if input.held(Button::Down) {
                     rope.length = (rope.length + ROPE_RETRACT).min(ROPE_MAX_LEN);
                 }
+                if (rope.length - old_len).abs() > f32::EPSILON {
+                    reel_scale = Some(old_len / rope.length);
+                }
+            }
+        }
+        if let Some(scale) = reel_scale {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            if let SoldierState::Airborne { ref mut vel, .. } = game.teams[ti].soldiers[si].state {
+                vel.x *= scale;
+                vel.y *= scale;
             }
         }
         return;
@@ -1545,12 +1572,12 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
-    // Robot: instant placement on A press — no charge needed, walks off on its own.
-    if weapon == WeaponKind::Robot {
+    // Jumpbot: instant placement on A press — no charge needed, walks off on its own.
+    if weapon == WeaponKind::Jumpbot {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
-            fire_robot(game, ti, si);
+            fire_jumpbot(game, ti, si);
         }
         return;
     }
@@ -1955,48 +1982,61 @@ fn step_plasma_torch(game: &mut GameState) {
     }
 }
 
-const ROBOT_W: i32 = 10;
-const ROBOT_H: i32 = 14;
-const ROBOT_HALF_W: i32 = 5;
-const ROBOT_FUSE_TICKS: u32 = 300; // 10s @ 30Hz total lifespan
+const JUMPBOT_W: i32 = 10;
+const JUMPBOT_H: i32 = 14;
+const JUMPBOT_HALF_W: i32 = 5;
+const JUMPBOT_FUSE_TICKS: u32 = 300; // 10s @ 30Hz total lifespan
 /// Countdown number only appears above its head for the final 5 seconds.
-const ROBOT_COUNTDOWN_TICKS: u32 = 150;
-const ROBOT_WALK_SPEED: f32 = 1.2;
+const JUMPBOT_COUNTDOWN_TICKS: u32 = 150;
+/// Ground gait: a hop cadence rather than a flat walk, matching the live-measured
+/// WA Sheep (see memory reference-wa-movement-physics). Over an 11-tick cycle it
+/// leaps forward, settles, then briefly pauses — netting ~0.87 px/tick average
+/// (≈0.9 px/frame @30fps, the measured sheep pace) with a visible hopping rhythm.
+const JUMPBOT_GAIT_CYCLE: u32 = 11;
+/// Per-tick horizontal step for a given point in the gait cycle (px, unsigned).
+/// Sums to ~9.5px over the 11-tick cycle → ~0.86 px/tick net.
+fn jumpbot_gait_step(walk_ticks: u32) -> f32 {
+    match walk_ticks % JUMPBOT_GAIT_CYCLE {
+        0..=2 => 2.5, // leap (7.5px over 3 ticks)
+        3..=4 => 1.0, // settle (2.0px over 2 ticks)
+        _     => 0.0, // pause between hops (6 ticks stationary)
+    }
+}
 /// Upward speed for the obstacle-clearing jump (not a player action — purely
 /// automatic terrain-detection, matching WA's Sheep).
-const ROBOT_JUMP_SPEED: f32 = 6.5;
+const JUMPBOT_JUMP_SPEED: f32 = 6.5;
 /// Horizontal speed while airborne from a jump — faster than the walk speed
 /// so it visibly arcs over the obstacle instead of barely creeping forward.
-/// Tuned so a ~0.4s hop (see ROBOT_JUMP_SPEED/gravity above) covers ~40-60px,
+/// Tuned so a ~0.4s hop (see JUMPBOT_JUMP_SPEED/gravity above) covers ~40-60px,
 /// matching WA's Sheep jump distance.
-const ROBOT_JUMP_VX: f32 = 3.8;
+const JUMPBOT_JUMP_VX: f32 = 3.8;
 
-/// Place a Robot at the active soldier's feet — instant placement like TNT,
-/// no aim/charge. It then walks/climbs/falls autonomously (see `step_robot`)
+/// Place a Jumpbot at the active soldier's feet — instant placement like TNT,
+/// no aim/charge. It then walks/climbs/falls autonomously (see `step_jumpbot`)
 /// until its fuse expires, it touches water, or it's caught in another blast.
-pub fn fire_robot(game: &mut GameState, ti: usize, si: usize) {
-    use crate::game::state::RobotState;
+pub fn fire_jumpbot(game: &mut GameState, ti: usize, si: usize) {
+    use crate::game::state::JumpbotState;
     if !game.teams[ti].consume_weapon() { return; }
     game.teams[ti].prune_empty_weapons();
     let facing = game.teams[ti].soldiers[si].facing as i32;
     let sx = game.teams[ti].soldiers[si].pos.x + facing as f32 * 6.0;
     let sy = game.teams[ti].soldiers[si].pos.y - 4.0;
-    game.robot = Some(RobotState {
+    game.jumpbot = Some(JumpbotState {
         x: sx, y: sy, vel_y: 0.0, vel_x: 0.0, facing,
-        fuse_ticks: ROBOT_FUSE_TICKS, grounded: false, walk_ticks: 0,
+        fuse_ticks: JUMPBOT_FUSE_TICKS, grounded: false, walk_ticks: 0,
         owner_team: ti, just_jumped: false,
     });
     game.teams[ti].soldiers[si].has_fired = true;
     game.turn.on_fired();
 }
 
-/// Is the Robot's footprint resting on solid terrain? Mirrors `is_on_ground`
-/// but for the Robot's smaller, standalone footprint (not a soldier slot).
-fn robot_is_on_ground(game: &GameState) -> bool {
-    let r = match game.robot.as_ref() { Some(r) => r, None => return false };
+/// Is the Jumpbot's footprint resting on solid terrain? Mirrors `is_on_ground`
+/// but for the Jumpbot's smaller, standalone footprint (not a soldier slot).
+fn jumpbot_is_on_ground(game: &GameState) -> bool {
+    let r = match game.jumpbot.as_ref() { Some(r) => r, None => return false };
     let x = r.x as i32;
     let y = r.y as i32;
-    [x - ROBOT_HALF_W, x, x + ROBOT_HALF_W].iter().any(|&xc| {
+    [x - JUMPBOT_HALF_W, x, x + JUMPBOT_HALF_W].iter().any(|&xc| {
         if game.terrain.is_solid(xc, y) { return false; }
         game.terrain.is_blocked(xc, y + 1)
             || game.terrain.is_blocked(xc, y + 2)
@@ -2004,12 +2044,12 @@ fn robot_is_on_ground(game: &GameState) -> bool {
     })
 }
 
-/// Snap the Robot onto the terrain surface after a gravity fall, matching
-/// `snap_to_surface`'s soldier logic but on the Robot's own footprint.
-fn robot_snap_to_surface(game: &mut GameState) {
-    let (x, y) = match game.robot.as_ref() { Some(r) => (r.x as i32, r.y as i32), None => return };
-    let x_l = x - ROBOT_HALF_W;
-    let x_r = x + ROBOT_HALF_W;
+/// Snap the Jumpbot onto the terrain surface after a gravity fall, matching
+/// `snap_to_surface`'s soldier logic but on the Jumpbot's own footprint.
+fn jumpbot_snap_to_surface(game: &mut GameState) {
+    let (x, y) = match game.jumpbot.as_ref() { Some(r) => (r.x as i32, r.y as i32), None => return };
+    let x_l = x - JUMPBOT_HALF_W;
+    let x_r = x + JUMPBOT_HALF_W;
     let any_solid = |game: &GameState, yy: i32| {
         game.terrain.is_blocked(x_l, yy) || game.terrain.is_blocked(x, yy) || game.terrain.is_blocked(x_r, yy)
     };
@@ -2022,7 +2062,7 @@ fn robot_snap_to_surface(game: &mut GameState) {
         let fy = start + gap;
         if fy >= crate::world::WORLD_H as i32 { break; }
         if any_solid(game, fy) {
-            if let Some(r) = game.robot.as_mut() {
+            if let Some(r) = game.jumpbot.as_mut() {
                 r.y = (fy - 1).max(0) as f32;
                 r.grounded = true;
                 r.vel_y = 0.0;
@@ -2032,45 +2072,48 @@ fn robot_snap_to_surface(game: &mut GameState) {
     }
 }
 
-/// Walk one step in the Robot's current facing direction: climb small steps
+/// Walk one step in the Jumpbot's current facing direction: climb small steps
 /// (0-8px, matching `try_move_horizontal`). Returns true if it moved (small
 /// step included), false if nothing clears — caller decides whether to jump
 /// or reverse.
-fn robot_try_move_horizontal(game: &mut GameState) -> bool {
-    let (cur_x, cur_y, facing) = match game.robot.as_ref() {
-        Some(r) => (r.x, r.y, r.facing),
+fn jumpbot_try_move_horizontal(game: &mut GameState) -> bool {
+    let (cur_x, cur_y, facing, walk_ticks) = match game.jumpbot.as_ref() {
+        Some(r) => (r.x, r.y, r.facing, r.walk_ticks),
         None => return true,
     };
-    let new_x = cur_x + ROBOT_WALK_SPEED * facing as f32;
+    // Hop cadence (leap/settle/pause) instead of a flat step — matches the
+    // measured WA Sheep gait. A pause tick (step 0.0) keeps the bot in place
+    // this tick without triggering the obstacle-jump path.
+    let new_x = cur_x + jumpbot_gait_step(walk_ticks) * facing as f32;
     let ix = new_x as i32;
-    let ix_l = ix - ROBOT_HALF_W;
-    let ix_r = ix + ROBOT_HALF_W;
+    let ix_l = ix - JUMPBOT_HALF_W;
+    let ix_r = ix + JUMPBOT_HALF_W;
 
     for step_up in 0i32..=8 {
         let try_y = cur_y - step_up as f32;
         if try_y < 0.0 { break; }
         let fy = try_y as i32;
         let terrain_clear = (ix_l..=ix_r)
-            .all(|xc| (0..=ROBOT_H).all(|h| !game.terrain.is_blocked(xc, fy - h)));
+            .all(|xc| (0..=JUMPBOT_H).all(|h| !game.terrain.is_blocked(xc, fy - h)));
         if terrain_clear {
-            if let Some(r) = game.robot.as_mut() {
+            if let Some(r) = game.jumpbot.as_mut() {
                 r.x = new_x;
                 r.y = try_y;
             }
-            robot_snap_to_surface(game);
+            jumpbot_snap_to_surface(game);
             return true;
         }
     }
     false
 }
 
-/// Advance the Robot one tick while airborne from an obstacle-clearing jump:
+/// Advance the Jumpbot one tick while airborne from an obstacle-clearing jump:
 /// ballistic motion, preserving `vel_x` (unlike a natural ledge-drop, which
 /// falls straight down). Horizontal collision just stops `vel_x` on contact —
 /// no mid-air climbing, matching WA's Sheep ("nothing special happens while
 /// airborne").
-fn robot_jump_step(game: &mut GameState) {
-    let (x, y, vel_x, vel_y) = match game.robot.as_ref() {
+fn jumpbot_jump_step(game: &mut GameState) {
+    let (x, y, vel_x, vel_y) = match game.jumpbot.as_ref() {
         Some(r) => (r.x, r.y, r.vel_x, r.vel_y),
         None => return,
     };
@@ -2078,14 +2121,14 @@ fn robot_jump_step(game: &mut GameState) {
     let new_y = y + new_vel_y;
     let new_x = x + vel_x;
     let ix = new_x as i32;
-    let ix_l = ix - ROBOT_HALF_W;
-    let ix_r = ix + ROBOT_HALF_W;
+    let ix_l = ix - JUMPBOT_HALF_W;
+    let ix_r = ix + JUMPBOT_HALF_W;
     // Test clearance at the RISEN y (new_y), not the old ground-level y — the
     // whole point of jumping is to clear an obstacle that blocks at ground
     // level, so checking at the old y would always see it as still blocked.
     let fy = new_y as i32;
-    let x_clear = (ix_l..=ix_r).all(|xc| (0..=ROBOT_H).all(|h| !game.terrain.is_blocked(xc, fy - h)));
-    if let Some(r) = game.robot.as_mut() {
+    let x_clear = (ix_l..=ix_r).all(|xc| (0..=JUMPBOT_H).all(|h| !game.terrain.is_blocked(xc, fy - h)));
+    if let Some(r) = game.jumpbot.as_mut() {
         r.vel_y = new_vel_y;
         r.y = new_y;
         // Only apply the horizontal move if clear — but keep `vel_x` intact
@@ -2102,11 +2145,11 @@ fn robot_jump_step(game: &mut GameState) {
     // (still within snap_to_surface's 10px landing-scan window) and cancel
     // the jump the same tick it started.
     if new_vel_y > 0.0 {
-        robot_snap_to_surface(game);
+        jumpbot_snap_to_surface(game);
     }
 }
 
-/// Advance the autonomous Robot walker one tick. Ticked unconditionally every
+/// Advance the autonomous Jumpbot walker one tick. Ticked unconditionally every
 /// tick regardless of turn/phase (see call site in `simulate_with_muzzle`) since
 /// its fuse is a fixed real-time countdown, matching WA's Sheep.
 ///
@@ -2117,88 +2160,88 @@ fn robot_jump_step(game: &mut GameState) {
 /// `active`/`inp` selection in src/server/main.rs), so an off-turn press from
 /// the other team never reaches here — this check is a same-turn convenience,
 /// not a true "any time" remote detonator.
-fn step_robot(game: &mut GameState, input: &InputState) {
+fn step_jumpbot(game: &mut GameState, input: &InputState) {
     use crate::physics::WeaponKind;
     use crate::world::WorldPos;
 
-    let manual_detonate = game.robot.as_ref().map_or(false, |r| {
+    let manual_detonate = game.jumpbot.as_ref().map_or(false, |r| {
         r.owner_team == game.active_team() && input.just_pressed(Button::A)
     });
     if manual_detonate {
-        let (x, y) = { let r = game.robot.as_ref().unwrap(); (r.x, r.y) };
-        game.robot = None;
-        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Robot, 1.0);
-        game.emit_sound(crate::audio::Sfx::Robot);
+        let (x, y) = { let r = game.jumpbot.as_ref().unwrap(); (r.x, r.y) };
+        game.jumpbot = None;
+        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Jumpbot, 1.0);
+        game.emit_sound(crate::audio::Sfx::Jumpbot);
         return;
     }
 
     let expired = {
-        let r = match game.robot.as_mut() { Some(r) => r, None => return };
+        let r = match game.jumpbot.as_mut() { Some(r) => r, None => return };
         r.fuse_ticks = r.fuse_ticks.saturating_sub(1);
         r.fuse_ticks == 0
     };
     if expired {
-        let (x, y) = { let r = game.robot.as_ref().unwrap(); (r.x, r.y) };
-        game.robot = None;
-        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Robot, 1.0);
-        game.emit_sound(crate::audio::Sfx::Robot);
+        let (x, y) = { let r = game.jumpbot.as_ref().unwrap(); (r.x, r.y) };
+        game.jumpbot = None;
+        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Jumpbot, 1.0);
+        game.emit_sound(crate::audio::Sfx::Jumpbot);
         return;
     }
 
-    let in_water = game.robot.as_ref().map_or(false, |r| r.y >= crate::world::WATER_Y as f32);
+    let in_water = game.jumpbot.as_ref().map_or(false, |r| r.y >= crate::world::WATER_Y as f32);
     if in_water {
-        let (x, y) = { let r = game.robot.as_ref().unwrap(); (r.x, r.y) };
-        game.robot = None;
-        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Robot, 1.0);
-        game.emit_sound(crate::audio::Sfx::Robot);
+        let (x, y) = { let r = game.jumpbot.as_ref().unwrap(); (r.x, r.y) };
+        game.jumpbot = None;
+        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Jumpbot, 1.0);
+        game.emit_sound(crate::audio::Sfx::Jumpbot);
         return;
     }
 
-    if robot_is_on_ground(game) {
-        if let Some(r) = game.robot.as_mut() { r.grounded = true; r.vel_y = 0.0; r.vel_x = 0.0; }
-        let moved = robot_try_move_horizontal(game);
+    if jumpbot_is_on_ground(game) {
+        if let Some(r) = game.jumpbot.as_mut() { r.grounded = true; r.vel_y = 0.0; r.vel_x = 0.0; }
+        let moved = jumpbot_try_move_horizontal(game);
         if moved {
-            if let Some(r) = game.robot.as_mut() { r.just_jumped = false; }
+            if let Some(r) = game.jumpbot.as_mut() { r.just_jumped = false; }
         } else {
-            let just_jumped = game.robot.as_ref().map_or(false, |r| r.just_jumped);
+            let just_jumped = game.jumpbot.as_ref().map_or(false, |r| r.just_jumped);
             if just_jumped {
                 // Already jumped for this obstacle and landed still blocked — turn around,
                 // matching WA's Sheep (one jump attempt per obstacle, then reverse).
-                if let Some(r) = game.robot.as_mut() { r.facing = -r.facing; r.just_jumped = false; }
+                if let Some(r) = game.jumpbot.as_mut() { r.facing = -r.facing; r.just_jumped = false; }
             } else {
                 // Too tall to step over — launch an automatic obstacle-clearing jump.
                 // Not player-controlled: purely terrain-detection driven, like WA's Sheep.
-                if let Some(r) = game.robot.as_mut() {
+                if let Some(r) = game.jumpbot.as_mut() {
                     r.grounded = false;
-                    r.vel_y = -ROBOT_JUMP_SPEED;
-                    r.vel_x = ROBOT_JUMP_VX * r.facing as f32;
+                    r.vel_y = -JUMPBOT_JUMP_SPEED;
+                    r.vel_x = JUMPBOT_JUMP_VX * r.facing as f32;
                     r.just_jumped = true;
                 }
                 // Apply one ballistic step immediately — otherwise the position
                 // hasn't actually left the ground this tick, so next tick's
-                // `robot_is_on_ground` check would still see it as grounded,
+                // `jumpbot_is_on_ground` check would still see it as grounded,
                 // re-enter this branch, and zero vel_x/vel_y right back out
                 // before the jump ever moved anywhere.
-                robot_jump_step(game);
+                jumpbot_jump_step(game);
             }
         }
     } else {
-        let jumping = game.robot.as_ref().map_or(false, |r| r.vel_x != 0.0);
+        let jumping = game.jumpbot.as_ref().map_or(false, |r| r.vel_x != 0.0);
         if jumping {
-            robot_jump_step(game);
+            jumpbot_jump_step(game);
         } else {
             // Natural ledge-drop (walked off an edge, not an obstacle jump): straight
             // vertical fall, no horizontal drift.
-            if let Some(r) = game.robot.as_mut() {
+            if let Some(r) = game.jumpbot.as_mut() {
                 r.grounded = false;
                 r.vel_y = (r.vel_y + 1.2).min(20.0);
                 r.y += r.vel_y;
             }
-            robot_snap_to_surface(game);
+            jumpbot_snap_to_surface(game);
         }
     }
 
-    if let Some(r) = game.robot.as_mut() { r.walk_ticks = r.walk_ticks.wrapping_add(1); }
+    if let Some(r) = game.jumpbot.as_mut() { r.walk_ticks = r.walk_ticks.wrapping_add(1); }
 }
 
 fn step_garcia(game: &mut GameState, input: &InputState) {
@@ -3660,8 +3703,8 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 4, icon_cy - 3,  5, 5, wht);
                 buf.fill_rect(icon_cx - 1, icon_cy + 2,  5, 6, wht);
             }
-            WeaponKind::Robot => {
-                // Clockwork robot head: metal block head, glowing eyes, mouth, antenna.
+            WeaponKind::Jumpbot => {
+                // Clockwork jumpbot head: metal block head, glowing eyes, mouth, antenna.
                 let steel    = if selected { Bgra::new(170, 180, 195) } else { Bgra::new(100, 108, 120) };
                 let steel_dk = Bgra::new(50, 56, 65);
                 let eye      = if selected { Bgra::new(80, 220, 255) } else { Bgra::new(40, 130, 160) };
@@ -3980,7 +4023,7 @@ pub fn draw_weapon_menu(
             WeaponKind::MolotovCocktail => "MOLOTOV",
             WeaponKind::HomingMissile   => "HOMING MSL.",
             WeaponKind::Pistol          => "PISTOL",
-            WeaponKind::Robot           => "ROBOT",
+            WeaponKind::Jumpbot           => "JUMPBOT",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };
@@ -4422,22 +4465,22 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 
     mark!("garcia");
 
-    // 5d-2. Robot: walking clockwork sprite + final-5s countdown over its head
-    if let Some(ref robot) = game.robot {
-        draw_robot_sprite(buf, robot.x as i32, robot.y as i32, robot.facing, 16, 16, robot.walk_ticks, robot.grounded);
-        if robot.fuse_ticks <= ROBOT_COUNTDOWN_TICKS {
+    // 5d-2. Jumpbot: walking clockwork sprite + final-5s countdown over its head
+    if let Some(ref jumpbot) = game.jumpbot {
+        draw_jumpbot_sprite(buf, jumpbot.x as i32, jumpbot.y as i32, jumpbot.facing, 16, 16, jumpbot.walk_ticks, jumpbot.grounded);
+        if jumpbot.fuse_ticks <= JUMPBOT_COUNTDOWN_TICKS {
             use crate::renderer::font::{draw_str, str_width};
-            let secs = (robot.fuse_ticks / 30) + 1; // ceil, so it reads 5..1 not 4..0
+            let secs = (jumpbot.fuse_ticks / 30) + 1; // ceil, so it reads 5..1 not 4..0
             let msg  = secs.to_string();
             let mw   = str_width(&msg);
-            let mx   = robot.x as i32 - mw / 2;
-            let my   = robot.y as i32 - 16 - 12;
+            let mx   = jumpbot.x as i32 - mw / 2;
+            let my   = jumpbot.y as i32 - 16 - 12;
             draw_str(buf, &msg, mx + 1, my + 1, Bgra::new(0, 0, 0));
             draw_str(buf, &msg, mx, my, Bgra::new(255, 80, 60));
         }
     }
 
-    mark!("robot");
+    mark!("jumpbot");
 
     // 5e-2. Airstrike: crosshair during targeting; plane silhouette during active
     if let Some(ref air) = game.airstrike {
@@ -4950,24 +4993,56 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         let spos = game.teams[rtx].soldiers[rsx].pos;
         let rope_col = Bgra::new(180, 200, 140);
         let hook_col = Bgra::new(220, 180, 80);
+        // 3px-thick segment: center line plus one line offset to each side along
+        // the rounded perpendicular unit vector (.round(), not truncation — see
+        // thick-line rounding rule).
+        fn rope_seg(buf: &mut WorldBuffer, x0: i32, y0: i32, x1: i32, y1: i32, col: Bgra) {
+            buf.draw_line(x0, y0, x1, y1, col);
+            let dx = (x1 - x0) as f32;
+            let dy = (y1 - y0) as f32;
+            let len = (dx * dx + dy * dy).sqrt().max(0.1);
+            let ox = (-dy / len).round() as i32;
+            let oy = (dx / len).round() as i32;
+            buf.draw_line(x0 + ox, y0 + oy, x1 + ox, y1 + oy, col);
+            buf.draw_line(x0 - ox, y0 - oy, x1 - ox, y1 - oy, col);
+        }
+        // Pointed hook tip: a small triangle at the rope's far end, tip pointing
+        // away from the last segment (into the wall / direction of flight).
+        fn rope_point(buf: &mut WorldBuffer, from: (f32, f32), end: (f32, f32), col: Bgra) {
+            let dx = end.0 - from.0;
+            let dy = end.1 - from.1;
+            let len = (dx * dx + dy * dy).sqrt().max(0.1);
+            let (ux, uy) = (dx / len, dy / len);
+            let (px_, py_) = (-uy, ux);
+            // Draw shrinking perpendicular slices from the base toward the tip.
+            for i in 0..=5 {
+                let half = 3.0 * (1.0 - i as f32 / 5.0);
+                let cx = end.0 + ux * i as f32;
+                let cy = end.1 + uy * i as f32;
+                buf.draw_line(
+                    (cx + px_ * half).round() as i32, (cy + py_ * half).round() as i32,
+                    (cx - px_ * half).round() as i32, (cy - py_ * half).round() as i32,
+                    col,
+                );
+            }
+        }
         if rope.flying {
             // Straight line to the in-flight hook.
             let end = rope.hook;
-            buf.draw_line(spos.x as i32, spos.y as i32 - 6, end.x as i32, end.y as i32, rope_col);
-            buf.draw_line(spos.x as i32 + 1, spos.y as i32 - 5, end.x as i32, end.y as i32, rope_col);
-            buf.fill_rect(end.x as i32 - 2, end.y as i32 - 2, 4, 4, hook_col);
+            rope_seg(buf, spos.x as i32, spos.y as i32 - 6, end.x as i32, end.y as i32, rope_col);
+            rope_point(buf, (spos.x, spos.y - 6.0), (end.x, end.y), hook_col);
         } else {
             // Polyline: soldier → each wrap pivot (nearest first) → anchor. `wrap` runs
             // anchor→soldier, so walk it in reverse from the soldier's hand.
             let mut px = spos.x as i32;
             let mut py = spos.y as i32 - 6;
             for pivot in rope.wrap.iter().rev() {
-                buf.draw_line(px, py, pivot.x as i32, pivot.y as i32, rope_col);
+                rope_seg(buf, px, py, pivot.x as i32, pivot.y as i32, rope_col);
                 px = pivot.x as i32;
                 py = pivot.y as i32;
             }
-            buf.draw_line(px, py, rope.anchor.x as i32, rope.anchor.y as i32, rope_col);
-            buf.fill_rect(rope.anchor.x as i32 - 2, rope.anchor.y as i32 - 2, 4, 4, hook_col);
+            rope_seg(buf, px, py, rope.anchor.x as i32, rope.anchor.y as i32, rope_col);
+            rope_point(buf, (px as f32, py as f32), (rope.anchor.x, rope.anchor.y), hook_col);
         }
     }
 
@@ -5255,7 +5330,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
             WeaponKind::MolotovCocktail => "MOLOTOV",
             WeaponKind::HomingMissile   => "HOMING MSL.",
-            WeaponKind::Robot           => "ROBOT",
+            WeaponKind::Jumpbot           => "JUMPBOT",
             _ => "WEAPON",
         };
         // Small box bottom-left, sized to fit the weapon name + hint
@@ -5481,9 +5556,15 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
             for _ in 0..steps {
                 hx += sx;
                 hy += sy;
+                let soldier_pos = game.teams[ati].soldiers[asi].pos;
+                let tdx = hx - soldier_pos.x;
+                let tdy = hy - soldier_pos.y;
                 if hx < 0.0 || hx >= crate::world::WORLD_W as f32
                     || hy < 0.0
                     || hy >= crate::world::WATER_Y as f32
+                    // Reference caps the hook's ray-march at max rope length
+                    // (FUN_00519a60 stops at maxlen [0x98]) — out of rope = miss.
+                    || (tdx * tdx + tdy * tdy).sqrt() > ROPE_MAX_LEN
                 {
                     // Missed — cancel rope
                     game.rope = None;
@@ -5491,9 +5572,8 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     break;
                 }
                 if game.terrain.is_solid(hx as i32, hy as i32) {
-                    let soldier_pos = game.teams[ati].soldiers[asi].pos;
-                    let dx = hx - soldier_pos.x;
-                    let dy = hy - soldier_pos.y;
+                    let dx = tdx;
+                    let dy = tdy;
                     let dist = (dx * dx + dy * dy).sqrt().max(1.0).min(ROPE_MAX_LEN);
                     let anchor = crate::world::WorldPos::new(hx, hy);
                     if let Some(ref mut r) = game.rope {
@@ -5656,33 +5736,26 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
 
                             // 1. Pendulum gravity
                             vel.y = (vel.y + ROPE_GRAVITY).min(ROPE_MAX_SPEED);
-                            // 2. Swing force from Left/Right input — applied ALONG the
-                            //    rope tangent (perpendicular to rope dir), not a fixed
-                            //    horizontal push, so it accelerates correctly everywhere
-                            //    on the arc. At rest (dir=(0,1)): right=(dir_y,-dir_x)=(1,0),
-                            //    left=(-dir_y,dir_x). World-relative (independent of facing).
-                            if input.held(Button::Right) {
-                                vel.x +=  dir_y * ROPE_SWING_FORCE;
-                                vel.y += -dir_x * ROPE_SWING_FORCE;
-                            }
-                            if input.held(Button::Left) {
-                                vel.x += -dir_y * ROPE_SWING_FORCE;
-                                vel.y +=  dir_x * ROPE_SWING_FORCE;
-                            }
-                            // 3. Angular momentum conservation on rope-length change.
-                            //    When the rope shortens, tangential speed must increase to
-                            //    conserve angular momentum (L = r × v_tangential = constant).
-                            //    This is the "figure skater pulling arms in" acceleration.
+                            // 2. Swing force from Left/Right input — a plain HORIZONTAL
+                            //    impulse on vx, exactly as the reference does it
+                            //    (FUN_00513f00: (right−left)×0x1999 straight onto vx, no
+                            //    rotation). Pumping therefore gains most at the bottom of
+                            //    the arc and nothing at the sides — the WA pumping phase.
+                            //    The constraint below strips whatever lands radial.
+                            if input.held(Button::Right) { vel.x += ROPE_SWING_FORCE; }
+                            if input.held(Button::Left)  { vel.x -= ROPE_SWING_FORCE; }
+                            // 3. Momentum scaling on rope-length change — exactly the
+                            //    reference formula (FUN_00500d00 tail): the FULL velocity
+                            //    vector is multiplied by old_len/new_len, unclamped, in
+                            //    BOTH directions — shortening (reel-in / corner-wrap)
+                            //    speeds you up, paying out damps you. This is the
+                            //    slingshot. ROPE_MAX_SPEED below is the only guard.
                             if let Some(ref rope_m) = game.rope {
                                 let new_len = rope_m.length;
-                                if new_len < length0 && new_len > 0.1 {
-                                    let scale = length0 / new_len; // conservation factor
-                                    // Only scale the tangential component
-                                    let radial_pre = vel.x * dir_x + vel.y * dir_y;
-                                    let tx = vel.x - dir_x * radial_pre;
-                                    let ty = vel.y - dir_y * radial_pre;
-                                    vel.x = dir_x * radial_pre + tx * scale.min(2.0);
-                                    vel.y = dir_y * radial_pre + ty * scale.min(2.0);
+                                if new_len > 0.1 && (new_len - length0).abs() > f32::EPSILON {
+                                    let scale = length0 / new_len;
+                                    vel.x *= scale;
+                                    vel.y *= scale;
                                 }
                             }
                             // 4. Project velocity onto tangent plane (remove outward radial).
@@ -5808,7 +5881,12 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         }
                     }
                     // ── Normal airborne physics ───────────────────────────────
-                    vel.y = (vel.y + 0.5).min(23.0); // raised cap to preserve rope-release / slingshot momentum
+                    // During a rope session the active soldier falls at the WA worm
+                    // rate (matching ROPE_GRAVITY) so detach arcs carry the swing's
+                    // momentum instead of going floaty — covers detach flight, the
+                    // hook-flying window, and re-attach gaps until landing.
+                    let g = if is_active && game.rope_session { ROPE_AIR_GRAVITY } else { 0.5 };
+                    vel.y = (vel.y + g).min(23.0); // raised cap to preserve rope-release / slingshot momentum
                     game.teams[ti].soldiers[si].airtime += 1;
                     // One full revolution = 4 frames × 5 ticks = 20 ticks, then stay upright
                     if spinning && game.teams[ti].soldiers[si].airtime >= 20 {

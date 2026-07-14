@@ -147,7 +147,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
             blink_timer: g.blink_timer,
             falling: g.falling, fall_y: g.fall_y, vel_y: g.vel_y, bounce_count: g.bounce_count,
         }),
-        robot: game.robot.as_ref().map(|r| NetRobot {
+        jumpbot: game.jumpbot.as_ref().map(|r| NetJumpbot {
             x: r.x, y: r.y, vel_y: r.vel_y, vel_x: r.vel_x, facing: r.facing,
             fuse_ticks: r.fuse_ticks, grounded: r.grounded, walk_ticks: r.walk_ticks,
             owner_team: r.owner_team, just_jumped: r.just_jumped,
@@ -495,10 +495,10 @@ pub fn apply_server_state(
             falling: ng.falling, fall_y: ng.fall_y, vel_y: ng.vel_y, bounce_count: ng.bounce_count,
         });
     }
-    // Sync Robot walker
+    // Sync Jumpbot walker
     {
-        use crate::game::state::RobotState;
-        game.robot = state.robot.as_ref().map(|nr| RobotState {
+        use crate::game::state::JumpbotState;
+        game.jumpbot = state.jumpbot.as_ref().map(|nr| JumpbotState {
             x: nr.x, y: nr.y, vel_y: nr.vel_y, vel_x: nr.vel_x, facing: nr.facing,
             fuse_ticks: nr.fuse_ticks, grounded: nr.grounded, walk_ticks: nr.walk_ticks,
             owner_team: nr.owner_team, just_jumped: nr.just_jumped,
@@ -583,7 +583,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         fire_patches: _, black_holes: _, wind: _, aim: _, result: _, tick: _,
         crater_log: _, sounds: _, fx_events: _, graves: _, weapon_menu_open: _,
         weapon_menu_cursor: _, rope: _, messages: _, blood_splats: _,
-        plasma_torch: _, garcia: _, robot: _, airstrike: _, homing_missile: _,
+        plasma_torch: _, garcia: _, jumpbot: _, airstrike: _, homing_missile: _,
         damage_focus: _, // synced: StateMsg.damage_focus — live-client camera hold on the damaged soldier
         // ── Not networked: client-only visuals / server-internal sim state ──
         // (terrain is rebuilt on the client from `crater_log`; `explosions` from craters)
@@ -759,11 +759,11 @@ fn _garcia_parity_checklist(g: &crate::game::state::GarciaState) {
     } = g;
 }
 
-/// Adding a field to `RobotState` breaks this.
+/// Adding a field to `JumpbotState` breaks this.
 #[allow(dead_code)]
-fn _robot_parity_checklist(r: &crate::game::state::RobotState) {
-    let crate::game::state::RobotState {
-        // ── Synced via NetRobot ──
+fn _jumpbot_parity_checklist(r: &crate::game::state::JumpbotState) {
+    let crate::game::state::JumpbotState {
+        // ── Synced via NetJumpbot ──
         x: _, y: _, vel_y: _, vel_x: _, facing: _, fuse_ticks: _, grounded: _, walk_ticks: _,
         owner_team: _, just_jumped: _,
     } = r;

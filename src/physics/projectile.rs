@@ -37,9 +37,9 @@ pub enum WeaponKind {
     Uzi,
     MolotovCocktail,
     Pistol,
-    /// Autonomous walking robot (WA Sheep-style) — placed like TNT, then walks
+    /// Autonomous walking jumpbot (WA Sheep-style) — placed like TNT, then walks
     /// on its own until its fuse expires, it touches water, or is chain-detonated.
-    Robot,
+    Jumpbot,
 }
 
 impl WeaponKind {
@@ -74,7 +74,7 @@ impl WeaponKind {
             Self::Garcia           => 55.0,
             Self::MolotovCocktail  => 20.0,   // small shattering blast; fire does the work
             Self::Pistol           => 0.0,    // hitscan, no blast
-            Self::Robot            => 45.0,
+            Self::Jumpbot            => 45.0,
         }
     }
 
@@ -109,7 +109,7 @@ impl WeaponKind {
             Self::Garcia           => 45,
             Self::MolotovCocktail  => 20,    // direct-impact damage; fire patches do the rest
             Self::Pistol           => 5,     // per bullet
-            Self::Robot            => 75,
+            Self::Jumpbot            => 75,
         }
     }
 
@@ -137,7 +137,7 @@ impl WeaponKind {
             Self::Garcia         => 18.0,
             Self::MolotovCocktail => 3.0,   // fire patches provide knockback; blast is minor
             Self::Pistol          => 1.0,
-            Self::Robot           => 18.0,
+            Self::Jumpbot           => 18.0,
             _                    => 6.0,
         }
     }
@@ -199,7 +199,7 @@ impl WeaponKind {
             Self::Revolver        => 31,
             Self::Minigun         => 32,
             Self::HolyHandGrenade => 33,
-            Self::Robot           => 34,
+            Self::Jumpbot           => 34,
             // Ultra Rare
             Self::Garcia          => 40,
             // Not in loadout / internal
@@ -230,7 +230,7 @@ impl WeaponKind {
             Self::MolotovCocktail => "MOLOTOV",
             Self::Pistol          => "PISTOL",
             Self::BaseballBat     => "BAT",
-            Self::Robot           => "ROBOT",
+            Self::Jumpbot           => "JUMPBOT",
             _                     => "WEAPON",
         }
     }
@@ -270,7 +270,7 @@ impl WeaponKind {
             Self::Uzi              => 25,
             Self::MolotovCocktail  => 26,
             Self::Pistol           => 27,
-            Self::Robot            => 28,
+            Self::Jumpbot            => 28,
         }
     }
 
@@ -303,7 +303,7 @@ impl WeaponKind {
             25 => Self::Uzi,
             26 => Self::MolotovCocktail,
             27 => Self::Pistol,
-            28 => Self::Robot,
+            28 => Self::Jumpbot,
             _  => Self::Bazooka,
         }
     }
@@ -324,7 +324,7 @@ impl WeaponKind {
             WeaponKind::FreezeGrenade | WeaponKind::Earthquake | WeaponKind::Drill |
             WeaponKind::HomingMissile | WeaponKind::MineLayer | WeaponKind::ConcreteDonkey |
             WeaponKind::SuperSheep | WeaponKind::Uzi |
-            WeaponKind::MolotovCocktail | WeaponKind::Pistol | WeaponKind::Robot => k.to_net_u8()
+            WeaponKind::MolotovCocktail | WeaponKind::Pistol | WeaponKind::Jumpbot => k.to_net_u8()
         }
     }
 
