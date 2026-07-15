@@ -1,8 +1,19 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.433 (commit 37651e6, DEPLOYED 2026-07-14 to Pi server/
-  GitHub release/Discord/Windows bundle). Both Miyoos (.110/.126) were OFFLINE
-  at deploy — they auto-update from the server on next launch.
+Current version: 0.5.4.433 (code commit 37651e6, DEPLOYED 2026-07-14 to Pi
+  server/GitHub release/Discord/Windows bundle; parity-test follow-up 7cf8a0d,
+  CI green). Both Miyoos (.110/.126) were OFFLINE at deploy — they auto-update
+  from the server on next launch.
+
+2026-07-15 (test-only, no version bump, not redeployed) — PARITY TEST FIX.
+  ---------------------------------------------------------------------------
+  - explosion_damage_emits_popup failed on CI after the .433 relief change:
+    seed 650's terrain shifted so the bazooka blast now splashes neighbouring
+    soldiers, flushing several DamagePopup events on one tick. The test grabbed
+    the first in event order (a 4-dmg neighbour splash) instead of the target's
+    50-dmg tally. Fixed by settling spawns first, then capturing the popup
+    nearest the target soldier's own position (within 24px). No gameplay or
+    generation change — deployed .433 binary unaffected. Parity 23/23, CI green.
 
 2026-07-14 (v0.5.4.433; VERSION + REQUIRED_VERSION bumped — terrain determinism
   change) — MAP RELIEF TUNING.

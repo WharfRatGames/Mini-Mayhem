@@ -1,5 +1,15 @@
 # Mini Mayhem — Project Status
 
+## 2026-07-15 — parity test fix (test-only, no version bump)
+
+`explosion_damage_emits_popup` failed on CI after the .433 relief change. Seed 650's terrain
+shifted so the bazooka blast now splashes neighbouring soldiers, flushing several `DamagePopup`
+events on the same tick; the test captured the first in event order (a 4-damage neighbour splash)
+instead of the target's 50-damage tally. Fixed by settling spawns first, then capturing the popup
+**nearest the target soldier's own position** (within 24px), ignoring splash from other soldiers.
+No gameplay or generation change — the deployed .433 binary is unaffected. Parity 23/23, CI green
+(commit `7cf8a0d`).
+
 ## 2026-07-14 — v0.5.4.433: map relief tuning
 
 **RELIEF_COMPRESSION 1.05 → 1.00** (`src/world/wa_templates.rs`). Open-air terrain now carries
