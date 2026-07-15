@@ -1124,6 +1124,16 @@ fn explosion_damage_emits_popup() {
     use arty::renderer::fx::FxEvent;
 
     let mut server = build_game(650);
+    // Let spawns settle onto the terrain first: on some seeds a soldier lands a
+    // few px and emits a small fall-damage popup, which would otherwise be the
+    // first popup this test captures instead of the explosion tally. Settling
+    // decouples the test from where each seed's soldiers happen to spawn.
+    {
+        let settle_input = InputState::new();
+        for _ in 0..60u32 {
+            server_tick(&mut server, &settle_input, None, None);
+        }
+    }
     let target = server.teams[1].soldiers[0].pos;
     let hp_before = server.teams[1].soldiers[0].hp;
     server.fx_events.clear();
@@ -1146,13 +1156,30 @@ fn explosion_damage_emits_popup() {
     let mut found: Option<(u8, u8, arty::net::msg::StateMsg)> = None;
     for tick in 0..120u32 {
         server_tick(&mut server, &input, None, None);
-        let popup = server.fx_events.iter().find_map(|ev| match *ev {
-            FxEvent::DamagePopup { amount, color_id, .. } => Some((amount, color_id)),
-            _ => None,
-        });
-        if let Some((amount, color_id)) = popup {
-            found = Some((amount, color_id, build_state(&server, tick, 0)));
-            break;
+        // The blast can splash nearby soldiers on tightly-packed seeds, so
+        // several popups may flush on the same tick; pick the one belonging to
+        // the target (nearest its current position), not just the first in the
+        // event list, so the tally we assert on is the target's.
+        let tpos = server.teams[1].soldiers[0].pos;
+        let popup = server
+            .fx_events
+            .iter()
+            .filter_map(|ev| match *ev {
+                FxEvent::DamagePopup { x, y, amount, color_id } => {
+                    let dx = x - tpos.x;
+                    let dy = y - tpos.y;
+                    Some((dx * dx + dy * dy, amount, color_id))
+                }
+                _ => None,
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        // Only accept the target's own popup (spawned at its position); ignore
+        // splash popups from nearby soldiers that may flush on an earlier tick.
+        if let Some((d2, amount, color_id)) = popup {
+            if d2 <= 24.0 * 24.0 {
+                found = Some((amount, color_id, build_state(&server, tick, 0)));
+                break;
+            }
         }
     }
     let (amount, color_id, state) = found.expect("settled tally must emit FxEvent::DamagePopup");
