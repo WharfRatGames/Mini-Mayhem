@@ -46,13 +46,13 @@ impl WeaponKind {
     /// Blast radius in pixels when this weapon explodes.
     pub fn blast_radius(self) -> f32 {
         match self {
-            Self::Bazooka        => 45.0,
-            Self::Grenade        => 30.0,
+            Self::Bazooka        => 48.0,
+            Self::Grenade        => 50.0,
             Self::Shotgun        => 12.0,
-            Self::ClusterBomb    => 20.0,
+            Self::ClusterBomb    => 53.0,
             Self::Landmine       => 55.0,
-            Self::Tnt            => 75.0,   // 2.5× grenade
-            Self::HolyHandGrenade => 80.0,
+            Self::Tnt            => 78.0,   // 2.5× grenade
+            Self::HolyHandGrenade => 56.0,
             Self::AirStrike      => 45.0,
             Self::Minigun        => 8.0,
             Self::Uzi            => 6.0,
@@ -60,21 +60,21 @@ impl WeaponKind {
             Self::FreezeGrenade  => 35.0,
             Self::Earthquake     => 0.0,    // world shake, no crater
             Self::Drill          => 10.0,
-            Self::HomingMissile  => 30.0,
+            Self::HomingMissile  => 59.0,
             Self::MineLayer      => 25.0,
             Self::ConcreteDonkey => 40.0,
             Self::DeathExplosion => 50.0,
             Self::BananaBomb     => 14.0,   // fragment blast radius
-            Self::SuperSheep     => 40.0,
+            Self::SuperSheep     => 55.0,
             Self::NinjaRope      => 0.0,
             Self::Revolver       => 0.0,    // hitscan, no blast
             Self::Blasthive        => 15.0,   // per bee sting (wider for reliable hits)
             Self::BlackHoleBomb    => 0.0,    // no crater; gravity well handles range
             Self::PlasmaTorch      => 0.0,    // tunnels terrain; no blast
             Self::Garcia           => 55.0,
-            Self::MolotovCocktail  => 20.0,   // small shattering blast; fire does the work
+            Self::MolotovCocktail  => 55.0,   // small shattering blast; fire does the work
             Self::Pistol           => 0.0,    // hitscan, no blast
-            Self::Jumpbot            => 45.0,
+            Self::Jumpbot            => 55.0,
         }
     }
 
@@ -82,32 +82,32 @@ impl WeaponKind {
     pub fn max_damage(self) -> u32 {
         match self {
             Self::Bazooka        => 50,
-            Self::Grenade        => 45,
+            Self::Grenade        => 50,
             Self::Shotgun        => 20,   // per pellet
-            Self::ClusterBomb    => 30,   // per cluster
+            Self::ClusterBomb    => 20,   // per cluster
             Self::Landmine       => 50,
             Self::Tnt            => 75,
-            Self::HolyHandGrenade => 80,
+            Self::HolyHandGrenade => 100,
             Self::AirStrike      => 50,
             Self::Minigun        => 12,   // per bullet
             Self::Uzi            => 5,    // per bullet (40% cut from 8)
-            Self::BaseballBat    => 25,
+            Self::BaseballBat    => 30,
             Self::FreezeGrenade  => 10,
             Self::Earthquake     => 20,
             Self::Drill          => 15,
-            Self::HomingMissile  => 45,
+            Self::HomingMissile  => 50,
             Self::MineLayer      => 50,
             Self::ConcreteDonkey => 100,
             Self::DeathExplosion => 40,
             Self::BananaBomb     => 18,   // fragment damage (direct hit max 38 — can't one-shot)
-            Self::SuperSheep     => 60,
+            Self::SuperSheep     => 75,
             Self::NinjaRope      => 0,
             Self::Revolver       => 15,
             Self::Blasthive        => 5,     // per bee sting
             Self::BlackHoleBomb    => 35,    // collapse burst damage
             Self::PlasmaTorch      => 0,     // no explosion
             Self::Garcia           => 45,
-            Self::MolotovCocktail  => 20,    // direct-impact damage; fire patches do the rest
+            Self::MolotovCocktail  => 15,    // direct-impact damage; fire patches do the rest
             Self::Pistol           => 5,     // per bullet
             Self::Jumpbot            => 75,
         }

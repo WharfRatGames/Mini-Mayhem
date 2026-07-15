@@ -49,6 +49,8 @@ def gen_one(out_path: Path, gtype: str, complexity: int) -> bool:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--count", type=int, default=50)
+    ap.add_argument("--start", type=int, default=0,
+                    help="index offset for output filenames (append to corpus)")
     ap.add_argument("--out", default=str(Path.home() / "arty-mapgen-corpus"))
     ap.add_argument("--types", nargs="*", default=TYPES)
     args = ap.parse_args()
@@ -60,7 +62,7 @@ def main():
         d = out_root / gtype
         d.mkdir(parents=True, exist_ok=True)
         for i in range(args.count):
-            p = d / f"{i:03d}.png"
+            p = d / f"{args.start + i:03d}.png"
             if p.exists():
                 continue
             complexity = 10 + (i * 80) // max(args.count - 1, 1)  # sweep 10..90

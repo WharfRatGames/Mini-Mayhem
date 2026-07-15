@@ -30,6 +30,13 @@ headless-Wine dynamic-analysis rig (winedbg child-attach), we:
 Parity 23/23. Deployed to Pi + GitHub release + Discord + Windows bundle; Miyoo .126 pushed, .110
 offline (auto-updates when back).
 
+**Follow-up (post-.431, ships next deploy): weapon damage + blast radii matched to the extracted WA
+table.** Damage — Grenade 45→50, Holy Hand-Grenade 80→100, Homing Missile 45→50, Super Sheep 60→75,
+Baseball Bat 25→30, Molotov 20→15, Clump Bomb 30→20. Radius — Bazooka 45→48, Grenade 30→50, Clump
+20→53, TNT 75→78, HHG 80→56, Homing 30→59, Molotov 20→55, Jumpbot/Super Sheep →55. (WA's raw animal
+radius read 153 — judged non-radius and set to a sensible 55. Firearms + Arty-only weapons have no
+clean WA analog and were left unchanged.) See [wiki/Weapons.md](wiki/Weapons.md#damage-reference).
+
 ## 2026-07-13 — v0.5.4.430: expanded-corpus fragment-filter fix (scenery-bake orphans), barrel-fire carve retuned
 
 **Corpus grown 70 → 170 maps per class** (island/cavern/bng, `~/arty-mapgen-corpus`) —

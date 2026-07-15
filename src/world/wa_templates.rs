@@ -25,7 +25,7 @@ pub const WA_MASK_H: u32 = 696;
 /// Open/island-style WA silhouettes (terrain surrounded by sky + water).
 /// Extracted from real WA MapGen output across several game types (island,
 /// bazooka-and-grenades, destructible-WfW, roper) via `tools/extract_wa_mask.py`.
-static WA_ISLAND_MASKS: [&[u8]; 20] = [
+static WA_ISLAND_MASKS: [&[u8]; 28] = [
     include_bytes!("wa_masks/island0.bin"),
     include_bytes!("wa_masks/island1.bin"),
     // island2-9 replaced 2026-07-10 (MapGEN-corpus batch, see island14+
@@ -60,12 +60,23 @@ static WA_ISLAND_MASKS: [&[u8]; 20] = [
     include_bytes!("wa_masks/island17.bin"),
     include_bytes!("wa_masks/island18.bin"),
     include_bytes!("wa_masks/island19.bin"),
+    // 2026-07-14 expanded-corpus batch (400/class): eight more island
+    // silhouettes hand-picked from the MapGEN corpus for clean arches,
+    // overhangs and floating chunks (see island14+ comment for pipeline).
+    include_bytes!("wa_masks/island20.bin"),
+    include_bytes!("wa_masks/island21.bin"),
+    include_bytes!("wa_masks/island22.bin"),
+    include_bytes!("wa_masks/island23.bin"),
+    include_bytes!("wa_masks/island24.bin"),
+    include_bytes!("wa_masks/island25.bin"),
+    include_bytes!("wa_masks/island26.bin"),
+    include_bytes!("wa_masks/island27.bin"),
 ];
 
 /// Enclosed cavern-style WA silhouettes (solid border, play area carved
 /// inside) — extracted from real WA MapGen "Cavern" game-type output.
 /// `collage_params` picks this set automatically for cavern seeds.
-static WA_CAVERN_MASKS: [&[u8]; 8] = [
+static WA_CAVERN_MASKS: [&[u8]; 16] = [
     include_bytes!("wa_masks/cavern0.bin"),
     include_bytes!("wa_masks/cavern1.bin"),
     // Extracted via MapGen.exe under Wine + connected-component cleanup
@@ -77,7 +88,39 @@ static WA_CAVERN_MASKS: [&[u8]; 8] = [
     include_bytes!("wa_masks/cavern5.bin"),
     include_bytes!("wa_masks/cavern6.bin"),
     include_bytes!("wa_masks/cavern7.bin"),
+    // 2026-07-14 expanded-corpus batch (400/class): eight more enclosed
+    // chambers hand-picked from the MapGEN corpus (see island14+ comment).
+    include_bytes!("wa_masks/cavern8.bin"),
+    include_bytes!("wa_masks/cavern9.bin"),
+    include_bytes!("wa_masks/cavern10.bin"),
+    include_bytes!("wa_masks/cavern11.bin"),
+    include_bytes!("wa_masks/cavern12.bin"),
+    include_bytes!("wa_masks/cavern13.bin"),
+    include_bytes!("wa_masks/cavern14.bin"),
+    include_bytes!("wa_masks/cavern15.bin"),
 ];
+
+/// Open (non-cavern) WA silhouettes from the "bng" (bazooka-and-grenades /
+/// base-and-guns) MapGEN game type: denser, chunkier land masses with a
+/// dominant ground band and rolling hilltops (measured solid fraction ~0.4–0.6
+/// vs. island's ~0.35–0.46). `collage_params` rolls this set for a share of
+/// non-cavern seeds so bng's heavier terrain reads as a distinct map style.
+/// Extracted 2026-07-14 from the MapGEN corpus (`tools/gen_mapgen_corpus.py`)
+/// via `extract_wa_mask.py --nonblack --clean-sprites` (see island14+ comment).
+static WA_BNG_MASKS: [&[u8]; 8] = [
+    include_bytes!("wa_masks/bng0.bin"),
+    include_bytes!("wa_masks/bng1.bin"),
+    include_bytes!("wa_masks/bng2.bin"),
+    include_bytes!("wa_masks/bng3.bin"),
+    include_bytes!("wa_masks/bng4.bin"),
+    include_bytes!("wa_masks/bng5.bin"),
+    include_bytes!("wa_masks/bng6.bin"),
+    include_bytes!("wa_masks/bng7.bin"),
+];
+
+/// Share of non-cavern seeds (percent) that draw from `WA_BNG_MASKS` instead of
+/// `WA_ISLAND_MASKS`. Non-cavern is ~80% of seeds, so 33 here ≈ 26% of all maps.
+const BNG_SHARE_PCT: u64 = 33;
 
 fn mask_bit(mask: &[u8], x: u32, y: u32) -> bool {
     let row_bytes = WA_MASK_W / 8;
@@ -114,7 +157,15 @@ const MAX_SEGMENTS: usize = 4;
 /// island_relief_is_traversable guard keeps the mobility budget honest.
 /// 1.05: expanded-corpus recalibration (70/class) — our span sat at 241px vs the
 /// island class's 344; each 0.1 of compression is worth ~65px of span.
-const RELIEF_COMPRESSION: f64 = 1.05;
+/// 1.00: bng-family recalibration (80/class, 2026-07-14) — with bng in the mix
+/// our open-air span measured 280px vs the ~308px island/bng 2:1 blend target;
+/// measured only ~+9px (280.5→289.5), so the old ~65px/0.1 heuristic badly
+/// overestimated — realized ~18px per 0.1 of compression here. Confirmed 1.00
+/// is the sweet spot: a follow-up trial at 0.95 measured 283px (WORSE) —
+/// this is a multiplier on y_scale, so higher = more relief = more span, and
+/// the lever is weak/noisy (±0.05 moves the median less than run-to-run
+/// scatter). 1.00 is the best measured point; not chasing the residual ~18px.
+const RELIEF_COMPRESSION: f64 = 1.00;
 /// Mask row that lands at the terrain band's vertical middle when sampling.
 /// Slightly below mask center so the compressed silhouette keeps a sensible
 /// ground level rather than floating high in the band.
@@ -159,18 +210,24 @@ fn smoothstep(t: f64) -> f64 {
 /// empty). Uses a private LCG stream — adding/removing draws in terrain.rs
 /// does not shift these picks and vice versa.
 pub fn collage_params(seed: u64, cavern: bool) -> CollageParams {
+    let mut r = seed ^ 0xC011_A6E5_EEDB_A5E5u64;
+    let rnd = |r: &mut u64, lo: f64, span: f64| lo + (lcg(r) & 0xFFFF) as f64 / 65535.0 * span;
+
+    // A share of non-cavern seeds draw from the denser bng art instead of
+    // island, giving heavier base-and-guns silhouettes as a distinct style.
+    // Roll here (deterministic, private LCG) so the pick rides the seed only.
+    let bng = !cavern && !WA_BNG_MASKS.is_empty() && lcg(&mut r) % 100 < BNG_SHARE_PCT;
     let (set, invert): (&'static [&'static [u8]], bool) =
         if cavern && WA_CAVERN_MASKS.is_empty() {
             (&WA_ISLAND_MASKS, true)
         } else if cavern {
             (&WA_CAVERN_MASKS, false)
+        } else if bng {
+            (&WA_BNG_MASKS, false)
         } else {
             (&WA_ISLAND_MASKS, false)
         };
     let n_masks = set.len() as u64;
-
-    let mut r = seed ^ 0xC011_A6E5_EEDB_A5E5u64;
-    let rnd = |r: &mut u64, lo: f64, span: f64| lo + (lcg(r) & 0xFFFF) as f64 / 65535.0 * span;
 
     let n_segs = 2 + (lcg(&mut r) % (MAX_SEGMENTS as u64 - 1)) as usize; // 2–4
 

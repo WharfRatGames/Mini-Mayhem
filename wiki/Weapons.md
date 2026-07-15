@@ -36,7 +36,7 @@ Melee swing launches the target soldier with massive knockback. No blast damage 
 Burns a tunnel through terrain in the aimed direction. Does not damage soldiers directly. Useful for repositioning or creating kill pits. The turn timer pauses while the torch is running, so you won't lose your turn mid-tunnel.
 
 ### Jumpbot × 1
-Placed at the soldier's feet like TNT — no aim or charge. It then walks off on its own, hopping forward in little leaps, vaulting obstacles it can't step over and reversing when it hits a wall. Its fuse runs on a fixed real-time countdown regardless of whose turn it is; it explodes when the fuse expires, when it touches water, or when the placing team presses the detonate button during their turn. Big blast (75 damage, 45px radius). It moves with a distinctive hopping gait.
+Placed at the soldier's feet like TNT — no aim or charge. It then walks off on its own, hopping forward in little leaps, vaulting obstacles it can't step over and reversing when it hits a wall. Its fuse runs on a fixed real-time countdown regardless of whose turn it is; it explodes when the fuse expires, when it touches water, or when the placing team presses the detonate button during their turn. Big blast (75 damage, 55px radius). It moves with a distinctive hopping gait.
 
 ### Molotov Cocktail ∞
 Throws a bottle that shatters on impact, spraying a wide pool of flames — but leaves **no crater** (the fire does the work, not the blast). Flames flicker and burn out over a long time, sliding downhill and pooling in pits, wind-affected in flight. A soldier caught in the fire takes steady damage over time and reacts by hopping and moving to escape — heading one way out of the flames, jumping the other way if it hits a wall. It's deadly if the soldier is cornered against a barrier with nowhere to go, but out in the open it can usually get clear.
@@ -95,25 +95,25 @@ radius. Values below are tuned for Mini Mayhem's scale and balance.
 
 | Weapon (in-game name) | Max damage | Blast radius | Notes |
 |---|---|---|---|
-| Bazooka | 50 | 45 px | arc, wind-affected |
-| Grenade | 45 | 30 px | timed fuse, bounces |
-| Clump Bomb | 30 / cluster | 20 px | splits into clusters |
+| Bazooka | 50 | 48 px | arc, wind-affected |
+| Grenade | 50 | 50 px | timed fuse, bounces |
+| Clump Bomb | 20 / cluster | 53 px | splits into clusters |
 | Meteor Bomb | 18 / fragment | 14 px | fragment spray (can't one-shot) |
-| TNT | 75 | 75 px | ~4–5s fuse |
+| TNT | 75 | 78 px | ~4–5s fuse |
 | Mine | 50 | 55 px | proximity trigger |
-| Sacred Ordnance | 80 | 80 px | rolls to a stop, then detonates |
+| Sacred Ordnance | 100 | 56 px | rolls to a stop, then detonates |
 | Hand of Jerry | 45 | 55 px | bounces before detonating |
-| Homing Missile | 45 | 30 px | steers to cursor |
+| Homing Missile | 50 | 59 px | steers to cursor |
 | Air Strike | 50 / bomb | 45 px | spread of bombs |
 | Black Hole Bomb | 35 | — | gravity well, no crater |
-| Jumpbot | 75 | 45 px | walks off, hop gait |
-| Molotov Cocktail | 20 impact + fire DoT | 20 px | no crater; fire does the work |
+| Jumpbot | 75 | 55 px | walks off, hop gait |
+| Molotov Cocktail | 15 impact + fire DoT | 55 px | no crater; fire does the work |
 | Shotgun | 20 / pellet (×5) | 12 px | hitscan |
 | Minigun | 12 / bullet | 8 px | full-auto |
 | MAC-10 | 5 / bullet | 6 px | full-auto burst |
 | Revolver | 15 / shot | — | hitscan, pinpoint |
 | Pistol | 5 / bullet | — | hitscan |
 | Blasthive | 5 / bee sting (×6) | 15 px | homing bees |
-| Baseball Bat | 25 + big knockback | — | melee, no blast |
+| Baseball Bat | 30 + big knockback | — | melee, no blast |
 | Plasma Torch | 0 (digs terrain) | — | pauses turn timer |
 | Ninja Rope | 0 | — | utility |

@@ -10,3 +10,7 @@ deploy/assets/
 !deploy/assets.zip
 admin_key.txt
 progress.txt
+# credentials — never commit
+assets/ben.txt
+**/ben.txt
+*.creds
