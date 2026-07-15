@@ -1,9 +1,38 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.431 (commit e912a19, DEPLOYED 2026-07-14 to Pi server/
-  GitHub release/Discord/Windows bundle). Miyoo .126 got the push (hash
-  verified); .110 was OFFLINE — it will auto-update from the server when back
-  on the LAN.
+Current version: 0.5.4.433 (commit 37651e6, DEPLOYED 2026-07-14 to Pi server/
+  GitHub release/Discord/Windows bundle). Both Miyoos (.110/.126) were OFFLINE
+  at deploy — they auto-update from the server on next launch.
+
+2026-07-14 (v0.5.4.433; VERSION + REQUIRED_VERSION bumped — terrain determinism
+  change) — MAP RELIEF TUNING.
+  ---------------------------------------------------------------------------
+  - RELIEF_COMPRESSION 1.05 -> 1.00 in src/world/wa_templates.rs. Calibration
+    against the MapGEN reference corpus: this is a multiplier on y_scale, so
+    HIGHER = more relief = more surface span. Measured the best surf_span of
+    three trial points (289.5px @1.00 vs 280.5 @1.05 vs 283 @0.95). The lever
+    is weak/noisy in this range (a +-0.05 nudge moves the median less than the
+    run-to-run scatter), so not chasing the residual ~18px to the ~308 blend
+    target. cliff_frac 0.094, safely under the traversability guard's 0.20 cap.
+  - Remaining fidelity gaps (overhang_frac 0.074 vs ~0.14, cavern subdivision
+    n_chunks 1 vs 2) need generation-logic changes, not a constant tweak.
+
+2026-07-14 (v0.5.4.432; VERSION + REQUIRED_VERSION bumped — terrain mask
+  library + selection change) — BNG TERRAIN FAMILY + EXPANDED MASK LIBRARY.
+  ---------------------------------------------------------------------------
+  - New "bng" open-air mask family (bng0-7.bin) — denser, chunkier land masses
+    with rolling hilltops. Selected on ~26% of open-air seeds via a new roll in
+    collage_params (BNG_SHARE_PCT=33 of non-cavern seeds).
+  - Expanded WA_ISLAND_MASKS 20 -> 28 (island20-27) and WA_CAVERN_MASKS 8 -> 16
+    (cavern8-15) — less repetitive map-to-map.
+  - Masks extracted from an expanded MapGEN corpus (100+130 more per type,
+    generated under Wine/Xvfb) via tools/extract_wa_mask.py --nonblack
+    --clean-sprites. bng2-5 swapped for cleaner candidates.
+  - Corpus tooling: gen_mapgen_corpus.py gained a --start offset (append to
+    corpus instead of skip-existing); new tools/corpus_progress.py progress/
+    rate/ETA viewer (--watch, default --target 400).
+  - No terrain.rs / StateMsg changes: bng rides the existing template_id/theme
+    machinery; only the mask library and the collage_params selection changed.
 
 2026-07-14 (v0.5.4.431; VERSION + REQUIRED_VERSION bumped — msg.rs struct
   renamed) — JUMPBOT + WA WEAPON/PHYSICS REVERSE-ENGINEERING.

@@ -1,5 +1,30 @@
 # Mini Mayhem — Project Status
 
+## 2026-07-14 — v0.5.4.433: map relief tuning
+
+**RELIEF_COMPRESSION 1.05 → 1.00** (`src/world/wa_templates.rs`). Open-air terrain now carries
+slightly more vertical variation between hilltops and valleys. Calibrated against the MapGEN
+reference corpus: the constant is a multiplier on `y_scale`, so **higher = more relief = more
+surface span**. 1.00 measured the best `surf_span` of three trial points (289.5px @1.00 vs 280.5
+@1.05 vs 283 @0.95). The lever is **weak and noisy** in this range — a ±0.05 nudge moves the median
+less than the run-to-run scatter — so we're not chasing the residual ~18px to the ~308 island/bng
+blend target. `cliff_frac` 0.094, safely under the `island_relief_is_traversable` guard's 0.20 cap.
+Remaining fidelity gaps (`overhang_frac` 0.074 vs ~0.14, cavern subdivision) need generation-logic
+changes, not a constant tweak. Terrain determinism change → VERSION + REQUIRED_VERSION bumped.
+
+## 2026-07-14 — v0.5.4.432: bng terrain family + expanded mask library
+
+**New "bng" open-air terrain family** — denser, chunkier land masses with rolling hilltops, drawn
+from 8 new masks (`bng0-7.bin`) and selected on **~26% of open-air seeds** via a new roll in
+`collage_params` (`BNG_SHARE_PCT`). Also expanded the mask library: **WA_ISLAND_MASKS 20 → 28**
+(island20-27) and **WA_CAVERN_MASKS 8 → 16** (cavern8-15), so maps feel less repetitive match to
+match. Masks were extracted from an expanded MapGEN reference corpus (100+130 more per type,
+generated headless under Wine/Xvfb) via `tools/extract_wa_mask.py --nonblack --clean-sprites`.
+Corpus tooling gained a `--start` append offset and a new `tools/corpus_progress.py` progress/ETA
+viewer. No `terrain.rs`/`StateMsg` changes — bng rides the existing template_id/theme machinery;
+only the mask library and collage selection changed. Terrain change → VERSION + REQUIRED_VERSION
+bumped.
+
 ## 2026-07-14 — v0.5.4.431: Jumpbot (WA-Sheep gait), torch stops timer, barrel fire detonates mines, ninja rope overhaul
 
 **Robot → Jumpbot.** The autonomous walking weapon is renamed **Jumpbot** across all paths
