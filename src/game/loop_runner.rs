@@ -13,7 +13,7 @@ use crate::renderer::{
     draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_headstone, draw_explosion, draw_garcia_sprite, draw_jumpbot_sprite},
     skeleton::{draw_soldier_skeletal, SoldierAnim},
     draw_terrain,
-    hud::{draw_game_over, draw_pause_menu},
+    hud::{draw_game_over, draw_pause_menu, TeamEndStat},
     camera::Camera,
 };
 use super::state::{GameState, GameMessage, RopeState};
@@ -649,9 +649,9 @@ pub fn tick(
         render(game, buf, cam, lstate);
         let winner = if let GameResult::Winner(t) = game.result { Some(t) } else { None };
         let wa = winner.and_then(|w| game.teams.get(w)).map(|t| t.avatar_id).unwrap_or(0);
-        let (kills, hp_left, memo) = match_end_stats(game);
+        let (stats, memo) = match_end_stats(game);
         let wc = winner.and_then(|w| game.teams.get(w)).map(|t| t.color_id).unwrap_or(0);
-        draw_game_over(buf, winner, my_team, cam.left_edge() as i32, cam.top_edge(), wa, 0, 0, kills, hp_left, &memo, wc);
+        draw_game_over(buf, winner, my_team, cam.left_edge() as i32, cam.top_edge(), wa, 0, 0, &stats, &memo, wc);
         if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
             return false;
         }
@@ -2884,9 +2884,15 @@ pub fn replay_tick(game: &mut GameState, prev_bits: u16, curr_bits: u16) -> bool
     let menu_open = process_weapon_menu(game, &input);
     if !menu_open {
         server_tick(game, &input, None, None);
-        game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
+        retain_non_pickup_messages(game);
     }
     menu_open
+}
+
+/// Drop crate-pickup notices from the message list. Used by the TAT replay
+/// paths so the fast-forward/replay doesn't re-show stale pickup messages.
+pub fn retain_non_pickup_messages(game: &mut GameState) {
+    game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
 }
 
 /// Place a TNT stick in front of the active soldier with a 5-second fuse (150 ticks at 30 Hz).
@@ -5229,54 +5235,27 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // 7b''. Floating damage-number popups, drawn over the fx particles.
     crate::renderer::fx::draw_fx_text(buf, &game.fx_text, cam_x);
 
-    // 7c. TNT fuse countdown banner — screen-anchored so it's visible regardless of camera
+    mark!("fx_overlay");
+
+    // 7c/8. Top-centre banner queue — TNT fuse, action prompts, then messages,
+    // collected in priority order and drawn as one stack (max 3) so they never
+    // overlap. Heights are consumed sequentially from y=4.
+    let mut banners: Vec<(String, Bgra)> = Vec::new();
     if game.tnt_placed {
         use crate::physics::projectile::{WeaponKind, FuseState};
-        use crate::renderer::font::{draw_str_scaled, str_width_scaled};
         if let Some(tnt) = game.projectiles.iter().find(|p| p.kind == WeaponKind::Tnt) {
             if let FuseState::Burning(ticks) = tnt.fuse {
-                let secs   = ticks / 30;
-                let msg    = format!("TNT  {}", secs);
-                let mw     = str_width_scaled(&msg, 2);
-                let mx     = cam_x as i32 + sw / 2 - mw / 2;
-                let my     = 24i32;
-                buf.fill_rect(mx - 6, my - 4, (mw + 12) as u32, 22, Bgra::new(60, 10, 10));
-                buf.fill_rect(mx - 6, my - 4, (mw + 12) as u32,  1, Bgra::new(200, 50, 30));
-                buf.fill_rect(mx - 6, my + 17, (mw + 12) as u32, 1, Bgra::new(200, 50, 30));
-                draw_str_scaled(buf, &msg, mx + 1, my + 1, Bgra::new(0, 0, 0), 2);
-                draw_str_scaled(buf, &msg, mx,     my,     Bgra::new(255, 120, 60), 2);
+                banners.push((format!("TNT  {}", ticks / 30), Bgra::new(255, 120, 60)));
             }
         }
     }
-
-    mark!("fx_overlay");
-
-    // 8. Status indicators — fuse timer (grenade), 2nd-shot prompt (shotgun), shots remaining (revolver)
     if game.turn.is_acting() {
-        use crate::physics::projectile::WeaponKind;
-        use crate::renderer::font::{draw_str_scaled, str_width_scaled};
         let active = game.active_team_ref().active_soldier();
         if game.shotgun_shots_left > 0 && !active.has_fired {
-            let msg = "SHOT 2 - PRESS A";
-            let mw = str_width_scaled(msg, 2);
-            let mx = cam_x as i32 + sw / 2 - mw / 2;
-            let my = 4;
-            buf.fill_rect(mx - 4, my - 3, (mw + 8) as u32, 19, Bgra::new(0, 0, 0));
-            buf.fill_rect(mx - 4, my - 3, (mw + 8) as u32, 1, Bgra::new(80, 80, 100));
-            buf.fill_rect(mx - 4, my + 15, (mw + 8) as u32, 1, Bgra::new(80, 80, 100));
-            draw_str_scaled(buf, msg, mx + 1, my + 1, Bgra::new(0, 0, 0), 2);
-            draw_str_scaled(buf, msg, mx,     my,     Bgra::new(255, 180, 60), 2);
+            banners.push(("SHOT 2 - PRESS A".to_string(), Bgra::new(255, 180, 60)));
         }
         if game.revolver_shots_left > 0 {
-            let msg = format!("SHOTS: {}", game.revolver_shots_left);
-            let mw = str_width_scaled(&msg, 2);
-            let mx = cam_x as i32 + sw / 2 - mw / 2;
-            let my = 4;
-            buf.fill_rect(mx - 4, my - 3, (mw + 8) as u32, 19, Bgra::new(0, 0, 0));
-            buf.fill_rect(mx - 4, my - 3, (mw + 8) as u32, 1, Bgra::new(80, 80, 100));
-            buf.fill_rect(mx - 4, my + 15, (mw + 8) as u32, 1, Bgra::new(80, 80, 100));
-            draw_str_scaled(buf, &msg, mx + 1, my + 1, Bgra::new(0, 0, 0), 2);
-            draw_str_scaled(buf, &msg, mx,     my,     Bgra::new(255, 220, 80), 2);
+            banners.push((format!("SHOTS: {}", game.revolver_shots_left), Bgra::new(255, 220, 80)));
         }
     }
 
@@ -5289,16 +5268,28 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
         const AV: u32 = 56;
         const BAR_H: i32 = 5;
         const BAR_GAP: i32 = 3;
+        // Row height for teams 3/4, stacked below the top pair (avatar + bar + labels).
+        const ROW_H: i32 = AV as i32 + BAR_GAP + BAR_H + 24;
 
-        for ti in 0..game.teams.len().min(2) {
+        let active_ti = game.active_team();
+        for ti in 0..game.teams.len().min(4) {
             let t = &game.teams[ti];
-            let av_x = if ti == 0 {
+            let av_x = if ti % 2 == 0 {
                 cam_x as i32 + 4
             } else {
                 cam_x as i32 + sw - AV as i32 - 4
             };
-            let av_y = cam_y as i32 + 4;
+            let av_y = cam_y as i32 + 4 + (ti as i32 / 2) * ROW_H;
             draw_avatar(buf, av_x, av_y, AV, t.avatar_id);
+            // Active team gets a thin outline in its colour so the turn owner is
+            // visible without the old bottom-bar strips.
+            if ti == active_ti {
+                let oc = Bgra::new(255, 220, 0);
+                buf.fill_rect(av_x - 2, av_y - 2, AV + 4, 2, oc);
+                buf.fill_rect(av_x - 2, av_y + AV as i32, AV + 4, 2, oc);
+                buf.fill_rect(av_x - 2, av_y, 2, AV, oc);
+                buf.fill_rect(av_x + AV as i32, av_y, 2, AV, oc);
+            }
 
             // Health meter: total current HP / (soldiers.len() * 100)
             let max_hp = (t.soldiers.len() * 100) as u32;
@@ -5309,6 +5300,14 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             if cur_hp > 0 {
                 let filled = ((cur_hp as i64 * bar_w as i64) / max_hp as i64).max(1) as u32;
                 buf.fill_rect(av_x, bar_y, filled, BAR_H as u32, TEAM_COLOURS[t.color_id as usize]);
+            }
+
+            // Alive count — beside the HP bar on the screen-centre side.
+            {
+                use crate::renderer::font::{draw_str, str_width};
+                let alive_str = format!("x{}", t.alive_count());
+                let ax = if ti % 2 == 0 { av_x + bar_w + 4 } else { av_x - str_width(&alive_str) - 4 };
+                draw_str(buf, &alive_str, ax, bar_y - 1, TEAM_COLOURS[t.color_id as usize]);
             }
 
             // ELO — shown below HP bar for ranked matches
@@ -5341,96 +5340,32 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 
     mark!("avatars");
 
-    // 8b/8c. Top-of-screen message stack — drawn after avatars so messages appear on top
+    // 8b/8c. Top-of-screen banner stack — TNT/prompts (collected above) followed
+    // by game messages, drawn after avatars so banners appear on top. Max 3.
     {
-        use crate::renderer::font::{draw_str_scaled, str_width_scaled};
         use crate::renderer::draw_sprites::TEAM_COLOURS;
         let cx = cam_x as i32 + sw / 2;
-        let mut top_y: i32 = 4;
-
-        // Word-wrap `text` into lines that each fit within `max_w` px at `scale`.
-        let wrap = |text: &str, scale: i32, max_w: i32| -> Vec<String> {
-            let mut lines: Vec<String> = Vec::new();
-            let mut cur = String::new();
-            for word in text.split_whitespace() {
-                let trial = if cur.is_empty() { word.to_string() } else { format!("{} {}", cur, word) };
-                if str_width_scaled(&trial, scale) <= max_w {
-                    cur = trial;
-                } else {
-                    if !cur.is_empty() { lines.push(std::mem::take(&mut cur)); }
-                    cur = word.to_string();
-                }
-            }
-            if !cur.is_empty() { lines.push(cur); }
-            if lines.is_empty() { lines.push(String::new()); }
-            lines
-        };
-
-        let draw_top_msg =
-            |buf: &mut crate::renderer::WorldBuffer, text: &str, col: Bgra, y: i32| -> i32 {
-                const PAD: i32 = 4;
-                let max_w = sw - PAD * 2;
-                // Keep the big scale=2 font: fit on one line, else word-wrap into 2 lines.
-                // Only drop to scale=1 if it still won't fit (very long text / single words).
-                let (scale, lines) = if str_width_scaled(text, 2) <= max_w {
-                    (2, vec![text.to_string()])
-                } else {
-                    let w2 = wrap(text, 2, max_w);
-                    if w2.len() <= 2 && w2.iter().all(|l| str_width_scaled(l, 2) <= max_w) {
-                        (2, w2)
-                    } else {
-                        (1, wrap(text, 1, max_w))
-                    }
-                };
-
-                let line_h  = 8 * scale;
-                let gap     = scale;
-                let n       = lines.len() as i32;
-                let block_h = n * line_h + (n - 1) * gap;
-                let box_w   = lines.iter().map(|l| str_width_scaled(l, scale)).max().unwrap_or(0);
-                let bx      = cx - box_w / 2;
-                buf.fill_rect(bx - PAD, y - PAD + 1, (box_w + PAD * 2) as u32, (block_h + PAD * 2) as u32, Bgra::new(0, 0, 0));
-                buf.fill_rect(bx - PAD, y - PAD + 1, (box_w + PAD * 2) as u32, 1, Bgra::new(60, 60, 80));
-                buf.fill_rect(bx - PAD, y + block_h + PAD, (box_w + PAD * 2) as u32, 1, Bgra::new(60, 60, 80));
-                let mut ly = y;
-                for line in &lines {
-                    let lw = str_width_scaled(line, scale);
-                    let lx = cx - lw / 2;
-                    draw_str_scaled(buf, line, lx + 1, ly + 1, Bgra::new(0, 0, 0), scale);
-                    draw_str_scaled(buf, line, lx,     ly,     col, scale);
-                    ly += line_h + gap;
-                }
-                block_h + PAD * 2 + 3
-            };
 
         // In live mode filter messages: hide crate-collection notices belonging to
         // the opponent so only the collecting player sees what they picked up.
-        let visible_msgs: Vec<&GameMessage> = game.messages.iter().filter(|m| {
-            match (my_team, m.team) {
-                (Some(mine), Some(t)) => t == mine, // live: only own-team messages
-                _ => true,
-            }
-        }).collect();
-
         let msg_colour = |t: Option<usize>| -> Bgra {
             match t {
                 Some(t) => TEAM_COLOURS[game.teams.get(t).map(|tm| tm.color_id as usize).unwrap_or(t.min(3))],
                 None    => Bgra::new(255, 210, 50),
             }
         };
-        if let Some(msg) = visible_msgs.first() {
-            let col = msg_colour(msg.team);
-            let h = draw_top_msg(buf, &msg.text, col, top_y);
-            top_y += h;
+        for m in game.messages.iter().filter(|m| {
+            match (my_team, m.team) {
+                (Some(mine), Some(t)) => t == mine, // live: only own-team messages
+                _ => true,
+            }
+        }) {
+            banners.push((m.text.clone(), msg_colour(m.team)));
         }
 
-        let mut extra_rows = 0;
-        for msg in visible_msgs.iter().skip(1) {
-            let col = msg_colour(msg.team);
-            let h = draw_top_msg(buf, &msg.text, col, top_y);
-            top_y += h;
-            extra_rows += 1;
-            if extra_rows >= 2 { break; }
+        let mut top_y: i32 = 4;
+        for (text, col) in banners.iter().take(3) {
+            top_y += draw_banner(buf, text, *col, cx, sw, top_y);
         }
     }
 
@@ -5440,70 +5375,15 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // HUD strips are keyed by colour identity (0-3 = Red/Blue/Green/Yellow), so
     // each player's strip shows in the colour they picked, regardless of their
     // compact team index.
-    let find_team = |color: usize| game.teams.iter().find(|t| t.color_id as usize == color);
-    let team_alive: [u32; 4] = std::array::from_fn(|i| {
-        find_team(i).map(|t| t.alive_count()).unwrap_or(0)
-    });
-    let team_hp: [u32; 4] = std::array::from_fn(|i| {
-        find_team(i).map(|t| t.total_hp()).unwrap_or(0)
-    });
-    let active_color = game.teams.get(game.active_team()).map(|t| t.color_id as usize).unwrap_or(0);
     // Clear stale HUD pixels (wind meter / weapon name / FPS) left over from a
     // previous frame's camera position before redrawing the HUD this frame.
     buf.fill_deep_water_band();
 
+    let cur_weapon = weapon_name(game.teams[game.active_team()].current_weapon());
     draw_hud_world(buf, cam_x, cam_y, &game.wind, game.turn.secs_remaining(),
-        game.turn.turn_number, active_color, &team_alive, &team_hp);
+        game.turn.turn_number, cur_weapon, lstate.display_fps);
 
     mark!("hud");
-
-    // 9. Weapon indicator (bottom-left, shows current weapon name)
-    {
-        use crate::renderer::font::{draw_str, draw_str_shadow, str_width};
-        use crate::renderer::fb::Bgra;
-        use crate::physics::projectile::WeaponKind;
-        use crate::world::{SCREEN_H, SCREEN_W};
-        let ti = game.active_team();
-        let si = game.teams[ti].active;
-        let weapon = game.teams[ti].current_weapon();
-        let name = match weapon {
-            WeaponKind::Bazooka     => "BAZOOKA",
-            WeaponKind::Grenade     => "GRENADE",
-            WeaponKind::Shotgun     => "SHOTGUN",
-            WeaponKind::ClusterBomb => "CLUMP BOMB",
-            WeaponKind::Tnt         => "TNT",
-            WeaponKind::Landmine    => "MINE",
-            WeaponKind::BananaBomb  => "METEOR BOMB",
-            WeaponKind::Revolver    => "REVOLVER",
-            WeaponKind::NinjaRope   => "GRAPPLE",
-            WeaponKind::BaseballBat => "BAT",
-            WeaponKind::Blasthive       => "BLASTHIVE",
-            WeaponKind::BlackHoleBomb   => "BLACK HOLE",
-            WeaponKind::Minigun         => "MINIGUN",
-            WeaponKind::Uzi             => "MAC-10",
-            WeaponKind::Pistol          => "PISTOL",
-            WeaponKind::PlasmaTorch     => "TORCH",
-            WeaponKind::Jackhammer      => "JACKHAMMER",
-            WeaponKind::Garcia          => "HAND OF JERRY",
-            WeaponKind::AirStrike       => "AIR STRIKE",
-            WeaponKind::HolyHandGrenade => "SACRED ORD.",
-            WeaponKind::MolotovCocktail => "MOLOTOV",
-            WeaponKind::HomingMissile   => "HOMING MSL.",
-            WeaponKind::Jumpbot           => "JUMPBOT",
-            _ => "WEAPON",
-        };
-        // Small box bottom-left, sized to fit the weapon name + hint
-        let bx = cam_x as i32 + 6;
-        let by = cam_y as i32 + SCREEN_H as i32 - 24;
-        let hint = "[SEL]";
-        let name_w = str_width(name);
-        let hint_w = str_width(hint);
-        let box_w = (name_w + hint_w + 12).max(74) as u32;
-        buf.fill_rect(bx - 2, by - 2, box_w, 18, Bgra::new(10, 10, 25));
-        draw_str_shadow(buf, name, bx, by, Bgra::new(255, 220, 80));
-        draw_str(buf, hint, bx + name_w + 8, by + 2, Bgra::new(110, 110, 150));
-    }
-
     mark!("weapon_indicator");
 
     // 9b. Seed display (TEST mode only) — upper-right corner, screen-anchored
@@ -5526,15 +5406,6 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
 
     mark!("seed_display");
 
-    // 9c. FPS counter — bottom-right corner, screen-anchored
-    {
-        use crate::renderer::font::{draw_str, str_width};
-        use crate::renderer::fb::Bgra;
-        let fps_str = format!("{} FPS", lstate.display_fps);
-        let x = cam_x as i32 + sw - str_width(&fps_str) - 6;
-        let y = cam_y as i32 + crate::renderer::HUD_Y - 12;
-        draw_str(buf, &fps_str, x, y, Bgra::new(200, 200, 200));
-    }
     mark!("fps_counter");
 
     // 9d. Per-section pixel-write breakdown (TEST mode only) — top sections by
@@ -5578,6 +5449,79 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     lstate.pixel_stats = pixel_stats;
 }
 
+/// Display name for a weapon, shared by the HUD bar and anywhere else that
+/// labels the current weapon.
+pub fn weapon_name(weapon: crate::physics::projectile::WeaponKind) -> &'static str {
+    use crate::physics::projectile::WeaponKind;
+    match weapon {
+        WeaponKind::Bazooka         => "BAZOOKA",
+        WeaponKind::Grenade         => "GRENADE",
+        WeaponKind::Shotgun         => "SHOTGUN",
+        WeaponKind::ClusterBomb     => "CLUMP BOMB",
+        WeaponKind::Tnt             => "TNT",
+        WeaponKind::Landmine        => "MINE",
+        WeaponKind::BananaBomb      => "METEOR BOMB",
+        WeaponKind::Revolver        => "REVOLVER",
+        WeaponKind::NinjaRope       => "GRAPPLE",
+        WeaponKind::BaseballBat     => "BAT",
+        WeaponKind::Blasthive       => "BLASTHIVE",
+        WeaponKind::BlackHoleBomb   => "BLACK HOLE",
+        WeaponKind::Minigun         => "MINIGUN",
+        WeaponKind::Uzi             => "MAC-10",
+        WeaponKind::Pistol          => "PISTOL",
+        WeaponKind::PlasmaTorch     => "TORCH",
+        WeaponKind::Jackhammer      => "JACKHAMMER",
+        WeaponKind::Garcia          => "HAND OF JERRY",
+        WeaponKind::AirStrike       => "AIR STRIKE",
+        WeaponKind::HolyHandGrenade => "SACRED ORD.",
+        WeaponKind::MolotovCocktail => "MOLOTOV",
+        WeaponKind::HomingMissile   => "HOMING MSL.",
+        WeaponKind::Jumpbot         => "JUMPBOT",
+        _ => "WEAPON",
+    }
+}
+
+/// Draw one top-centre banner box (black, bordered, centred, word-wrapped) and
+/// return the vertical space it consumed. Shared by the TNT fuse countdown,
+/// action prompts, game messages, and the live disconnect banner (main.rs).
+pub fn draw_banner(buf: &mut WorldBuffer, text: &str, col: Bgra, cx: i32, sw: i32, y: i32) -> i32 {
+    use crate::renderer::font::{draw_str_scaled, str_width_scaled, wrap_text};
+    const PAD: i32 = 4;
+    let max_w = sw - PAD * 2;
+    // Keep the big scale=2 font: fit on one line, else word-wrap into 2 lines.
+    // Only drop to scale=1 if it still won't fit (very long text / single words).
+    let (scale, lines) = if str_width_scaled(text, 2) <= max_w {
+        (2, vec![text.to_string()])
+    } else {
+        let w2 = wrap_text(text, 2, max_w);
+        if w2.len() <= 2 && w2.iter().all(|l| str_width_scaled(l, 2) <= max_w) {
+            (2, w2)
+        } else {
+            (1, wrap_text(text, 1, max_w))
+        }
+    };
+    if lines.is_empty() { return 0; }
+
+    let line_h  = 8 * scale;
+    let gap     = scale;
+    let n       = lines.len() as i32;
+    let block_h = n * line_h + (n - 1) * gap;
+    let box_w   = lines.iter().map(|l| str_width_scaled(l, scale)).max().unwrap_or(0);
+    let bx      = cx - box_w / 2;
+    buf.fill_rect(bx - PAD, y - PAD + 1, (box_w + PAD * 2) as u32, (block_h + PAD * 2) as u32, Bgra::new(0, 0, 0));
+    buf.fill_rect(bx - PAD, y - PAD + 1, (box_w + PAD * 2) as u32, 1, Bgra::new(60, 60, 80));
+    buf.fill_rect(bx - PAD, y + block_h + PAD, (box_w + PAD * 2) as u32, 1, Bgra::new(60, 60, 80));
+    let mut ly = y;
+    for line in &lines {
+        let lw = str_width_scaled(line, scale);
+        let lx = cx - lw / 2;
+        draw_str_scaled(buf, line, lx + 1, ly + 1, Bgra::new(0, 0, 0), scale);
+        draw_str_scaled(buf, line, lx,     ly,     col, scale);
+        ly += line_h + gap;
+    }
+    block_h + PAD * 2 + 3
+}
+
 /// HUD drawn at world-space x=cam_x so it stays fixed on screen during panning.
 fn draw_hud_world(
     buf:         &mut WorldBuffer,
@@ -5586,12 +5530,10 @@ fn draw_hud_world(
     wind:        &crate::physics::Wind,
     turn_secs:   u32,
     turn_number: u32,
-    active_team: usize,
-    team_alive:  &[u32; 4],
-    total_hp:    &[u32; 4],
+    weapon:      &str,
+    fps:         u32,
 ) {
-    use crate::renderer::font::{draw_str, str_width};
-    use crate::renderer::draw_sprites::TEAM_COLOURS;
+    use crate::renderer::font::{draw_str, draw_str_shadow, str_width};
 
     let ox    = cam_x as i32;
     let hud_y = cam_y as i32 + crate::renderer::HUD_Y;
@@ -5601,6 +5543,10 @@ fn draw_hud_world(
     buf.fill_rect(ox, hud_y, crate::world::SCREEN_W,
         crate::renderer::HUD_H, Bgra::new(15, 15, 25));
 
+    // Current weapon + menu hint (left)
+    draw_str_shadow(buf, weapon, ox + 4, hud_y + 6, Bgra::new(255, 220, 80));
+    draw_str(buf, "[SEL]", ox + 4 + str_width(weapon) + 8, hud_y + 6, Bgra::new(110, 110, 150));
+
     // Timer
     let timer_str    = format!("{:02}", turn_secs);
     let timer_colour = if turn_secs <= 5 { Bgra::new(220, 60, 60) } else { Bgra::new(255, 220, 0) };
@@ -5609,10 +5555,15 @@ fn draw_hud_world(
 
     // Turn number
     let turn_str = format!("T{}", turn_number);
-    draw_str(buf, &turn_str, timer_x - str_width(&turn_str) - 6, hud_y + 6,
-        Bgra::new(220, 220, 220));
+    let turn_x   = timer_x - str_width(&turn_str) - 6;
+    draw_str(buf, &turn_str, turn_x, hud_y + 6, Bgra::new(220, 220, 220));
+
+    // FPS — in-bar, left of the turn number
+    let fps_str = format!("{} FPS", fps);
+    draw_str(buf, &fps_str, turn_x - str_width(&fps_str) - 10, hud_y + 6, Bgra::new(140, 140, 160));
+
     // Wind meter — centre-anchored deflection gauge
-    let bar_w = 160i32;
+    let bar_w = 120i32;
     let bar_h = 8u32;
     let bar_x = ox + sw / 2 - bar_w / 2;
     let bar_y = hud_y + 6;
@@ -5633,30 +5584,6 @@ fn draw_hud_world(
     }
     // Centre tick — zero-wind reference point
     buf.fill_rect(centre_x - 1, bar_y, 2, bar_h, Bgra::new(140, 140, 180));
-
-    // Team strips (left)
-    for team in 0..4usize {
-        if team_alive[team] == 0 { continue; }
-        let strip_x = ox + 4 + team as i32 * 36;
-        let strip_y = hud_y + 3;
-        let colour  = TEAM_COLOURS[team];
-
-        if team == active_team {
-            buf.fill_rect(strip_x - 1, strip_y - 1, 34, 16, Bgra::new(255, 220, 0));
-        }
-        buf.fill_rect(strip_x, strip_y, 32, 14, Bgra::new(15, 15, 25));
-
-        let alive_str = format!("x{}", team_alive[team]);
-        draw_str(buf, &alive_str, strip_x + 1, strip_y + 1, colour);
-
-        let max_hp  = team_alive[team] * 100;
-        let hp_frac = (total_hp[team] as f32 / max_hp as f32).clamp(0.0, 1.0);
-        let bar_w   = (28.0 * hp_frac) as u32;
-        buf.fill_rect(strip_x + 2, strip_y + 9, 28, 3, Bgra::new(40, 40, 40));
-        if bar_w > 0 {
-            buf.fill_rect(strip_x + 2, strip_y + 9, bar_w, 3, colour);
-        }
-    }
 }
 
 /// Re-stamp the object mask each tick from current barrel and armed-mine positions.
@@ -6312,19 +6239,19 @@ pub fn update_visuals(game: &mut GameState) {
 /// Call after render() in TAT and live-mode client paths.
 /// Compute kill/HP stats and pick a memorable one-liner for the end screen.
 /// Returns ([team0_kills, team1_kills], [team0_hp, team1_hp], memorable_line).
-pub fn match_end_stats(game: &GameState) -> ([u32; 2], [u32; 2], String) {
-    let kills0 = game.teams.get(1).map(|t| t.soldiers.iter().filter(|s| s.is_dead()).count() as u32).unwrap_or(0);
-    let kills1 = game.teams.get(0).map(|t| t.soldiers.iter().filter(|s| s.is_dead()).count() as u32).unwrap_or(0);
-    let hp0    = game.teams.get(0).map(|t| t.total_hp()).unwrap_or(0);
-    let hp1    = game.teams.get(1).map(|t| t.total_hp()).unwrap_or(0);
+pub fn match_end_stats(game: &GameState) -> (Vec<TeamEndStat>, String) {
+    let stats: Vec<TeamEndStat> = game.teams.iter().map(|t| TeamEndStat {
+        color_id: t.color_id,
+        alive:    t.alive_count(),
+        total:    t.soldiers.len() as u32,
+        hp:       t.total_hp(),
+    }).collect();
 
-    let winner_alive0 = game.teams.get(0).map(|t| t.alive_count()).unwrap_or(0);
-    let winner_alive1 = game.teams.get(1).map(|t| t.alive_count()).unwrap_or(0);
-    let craters       = game.crater_log.len() as u32;
-    let turns         = game.turn.turn_number / 2;
-    let big_blast     = game.crater_log.iter().any(|c| c.2 > 65.0);
-    let winner_hp     = hp0.max(hp1);
-    let clean_sweep   = kills0 == 4 || kills1 == 4;
+    let craters     = game.crater_log.len() as u32;
+    let turns       = game.turn.turn_number / game.teams.len().max(1) as u32;
+    let big_blast   = game.crater_log.iter().any(|c| c.2 > 65.0);
+    let winner_hp   = stats.iter().map(|s| s.hp).max().unwrap_or(0);
+    let clean_sweep = stats.iter().any(|s| s.total > 0 && s.alive == 0 && s.total == 4);
 
     // Each candidate embeds the triggering stat so the screen shows both fact and quip.
     let mut candidates: Vec<String> = Vec::new();
@@ -6336,7 +6263,7 @@ pub fn match_end_stats(game: &GameState) -> ([u32; 2], [u32; 2], String) {
     if turns > 18   { candidates.push(format!("{} turns of war. A long and gruelling battle.", turns)); }
     if turns < 5    { candidates.push(format!("{} turns. Over in a flash.", turns)); }
     if big_blast    { candidates.push("A truly massive explosion. They felt that one.".to_string()); }
-    if winner_alive0 == 1 || winner_alive1 == 1 { candidates.push("Last soldier standing.".to_string()); }
+    if stats.iter().any(|s| s.alive == 1) { candidates.push("Last soldier standing.".to_string()); }
     // Always-eligible fallbacks
     candidates.push("Well fought.".to_string());
     candidates.push("The battlefield is silent.".to_string());
@@ -6344,7 +6271,7 @@ pub fn match_end_stats(game: &GameState) -> ([u32; 2], [u32; 2], String) {
 
     // Use map_seed — stable for the entire match, never changes after game ends.
     let pick = (game.map_seed.wrapping_mul(2654435761) as usize) % candidates.len();
-    ([kills0, kills1], [hp0, hp1], candidates.swap_remove(pick))
+    (stats, candidates.swap_remove(pick))
 }
 
 pub fn draw_weapon_menu_overlay(game: &GameState, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32) {

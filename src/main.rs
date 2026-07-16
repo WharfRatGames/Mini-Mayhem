@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.436";
+const VERSION: &str = "0.5.4.437";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -16,8 +16,7 @@ use renderer::{Framebuffer, WorldBuffer, Camera};
 use renderer::hud::{COLOR_DARK_BG};
 use input::InputState;
 use game::{
-    title::{TitleScreen, CHOICE_QUIT, CHOICE_LIVE, CHOICE_TAKE_A_TURN,
-             CHOICE_SP, CHOICE_HOTSEAT, CHOICE_VS_CPU, CHOICE_SETTINGS},
+    title::{TitleScreen, TitleChoice},
     cpu::CpuState,
     state::GameState,
     team::{Team, Difficulty},
@@ -141,27 +140,24 @@ fn main() {
     if let Some((tok, port, since)) = pending_reconnect.take() {
         if since.elapsed() < std::time::Duration::from_secs(180) {
             let mut cursor: usize = 0; // 0=RECONNECT, 1=ABANDON
-            let accept = loop {
-                input.poll();
+            let accept = run_screen_loop(&mut fb, &mut input, &mut buf, true, |input, buf, fb| {
                 let secs_left = 180u64.saturating_sub(since.elapsed().as_secs());
-                draw_reconnect_popup(&mut buf, &mut fb, cursor, secs_left);
+                draw_reconnect_popup(buf, fb, cursor, secs_left);
                 if input.just_pressed(input::Button::Up)   { cursor = 0; }
                 if input.just_pressed(input::Button::Down) { cursor = 1; }
                 if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
-                    break cursor == 0;
+                    return Some(cursor == 0);
                 }
-                if input.just_pressed(input::Button::B) { break false; }
-                std::thread::sleep(TICK_DURATION);
-            };
+                if input.just_pressed(input::Button::B) { return Some(false); }
+                None
+            });
             if accept { force_reconnect = Some((tok, port)); }
             game::account::clear_pending_reconnect();
         }
     }
     let is_reconnect_resume = force_reconnect.is_some();
-    let choice = if is_reconnect_resume { CHOICE_LIVE } else { loop {
-        let c = loop {
-            let frame_start = Instant::now();
-            input.poll();
+    let choice = if is_reconnect_resume { TitleChoice::Live } else { loop {
+        let c = run_screen_loop(&mut fb, &mut input, &mut buf, false, |input, buf, _fb| {
             // Non-blocking poll — cache result once background thread finishes.
             if !update_available {
                 if let Ok((true, _)) = update_rx.try_recv() {
@@ -169,44 +165,33 @@ fn main() {
                     title.set_update_available(true);
                 }
             }
-            if let Some(c) = title.update(&input, &mut buf) { break c; }
-            buf.blit_to_fb(&mut fb, 0, 0);
-            let elapsed = frame_start.elapsed();
-            if elapsed < TICK_DURATION { std::thread::sleep(TICK_DURATION - elapsed); }
-        };
-        if c == CHOICE_SP { title.continue_to_sp_submenu(); continue; }
+            title.update(input, buf)
+        });
+        if c == TitleChoice::Sp { title.continue_to_sp_submenu(); continue; }
         // MY TEAM — roster management, no login required
-        if c == game::title::CHOICE_MY_TEAM {
+        if c == game::title::TitleChoice::MyTeam {
             use game::account::{load_cached_rosters, load_saved_creds, Roster};
             let rosters = { let mut r = load_cached_rosters(); if r.is_empty() { r.push(Roster::default_named(0)); } r };
             let token = load_saved_creds().map(|(_, t)| t).unwrap_or_default();
             show_my_teams_menu(&mut fb, &mut input, &mut buf, &rosters, &token);
             continue; // back to title
         }
-        if c == CHOICE_SETTINGS {
-            let mut settings_screen = game::settings::SettingsScreen::new();
-            loop {
-                let fs = std::time::Instant::now();
-                input.poll();
-                if let Some(game::settings::SettingsAction::Back) = settings_screen.update(&input, &mut buf) { break; }
-                buf.blit_to_fb(&mut fb, 0, 0);
-                let e = fs.elapsed();
-                if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-            }
+        if c == TitleChoice::Settings {
+            show_settings_screen(&mut fb, &mut input, &mut buf);
             continue;
         }
-        if c == game::title::CHOICE_MISSIONS {
+        if c == game::title::TitleChoice::Missions {
             let token = game::account::load_saved_creds().map(|(_, t)| t).unwrap_or_default();
             show_missions_screen(&mut fb, &mut input, &mut buf, &token);
             title.continue_to_submenu(); // return to MULTIPLAYER submenu
             continue;
         }
-        if c == game::title::CHOICE_ACCOUNT {
+        if c == game::title::TitleChoice::Account {
             run_account_menu(&mut fb, &mut input, &mut buf);
             title.continue_to_submenu();
             continue;
         }
-        if c != game::title::CHOICE_MULTI { break c; }
+        if c != game::title::TitleChoice::Multi { break c; }
         input.poll();
         // Re-check for updates the moment MULTIPLAYER is selected — overlaps the
         // HTTP round-trip with submenu navigation so the MP gate rarely waits.
@@ -217,18 +202,18 @@ fn main() {
         }
         title.continue_to_submenu();
     }};
-    if choice == CHOICE_QUIT { return; }
+    if choice == TitleChoice::Quit { return; }
     // ── Unified update gate: optional for SP, required for MP ────────────────
     // Non-blocking drain — catches results that arrived while in the title loop.
     if !update_available {
         if let Ok((true, _)) = update_rx.try_recv() { update_available = true; }
     }
-    let is_sp_mode = matches!(choice, CHOICE_HOTSEAT | CHOICE_VS_CPU)
-        || choice == game::title::CHOICE_TEST;
-    let is_mp_mode = choice == CHOICE_LIVE
-        || choice == CHOICE_TAKE_A_TURN
-        || choice == game::title::CHOICE_LIVE_RANKED
-        || choice == game::title::CHOICE_TAT_RANKED;
+    let is_sp_mode = matches!(choice, TitleChoice::Hotseat | TitleChoice::VsCpu)
+        || choice == game::title::TitleChoice::Test;
+    let is_mp_mode = choice == TitleChoice::Live
+        || choice == TitleChoice::TakeATurn
+        || choice == game::title::TitleChoice::LiveRanked
+        || choice == game::title::TitleChoice::TatRanked;
     // MP/TAT always re-checks regardless of skip_update — the sentinel only prevents
     // retry loops at boot; for multiplayer entry we must know the current version even
     // if a prior update attempt failed and we're stuck on the old binary. The check
@@ -275,17 +260,17 @@ fn main() {
         if !proceed { continue 'game; }
     }
     // HOTSEAT = local 2-player, VS_CPU = CPU AI
-    let is_live         = choice == CHOICE_LIVE;
-    let is_tat          = choice == CHOICE_TAKE_A_TURN;
-    let is_test         = choice == game::title::CHOICE_TEST;
-    let is_hotseat      = choice == CHOICE_HOTSEAT || is_test;
-    let is_vs_cpu       = choice == CHOICE_VS_CPU;
-    let is_live_ranked  = choice == game::title::CHOICE_LIVE_RANKED;
-    let is_tat_ranked   = choice == game::title::CHOICE_TAT_RANKED;
-    let is_live_stats        = choice == game::title::CHOICE_LIVE_STATS;
-    let is_tat_stats         = choice == game::title::CHOICE_TAT_STATS;
-    let is_leaderboard_casual = choice == game::title::CHOICE_LEADERBOARD_CASUAL;
-    let is_leaderboard_ranked = choice == game::title::CHOICE_LEADERBOARD_RANKED;
+    let is_live         = choice == TitleChoice::Live;
+    let is_tat          = choice == TitleChoice::TakeATurn;
+    let is_test         = choice == game::title::TitleChoice::Test;
+    let is_hotseat      = choice == TitleChoice::Hotseat || is_test;
+    let is_vs_cpu       = choice == TitleChoice::VsCpu;
+    let is_live_ranked  = choice == game::title::TitleChoice::LiveRanked;
+    let is_tat_ranked   = choice == game::title::TitleChoice::TatRanked;
+    let is_live_stats        = choice == game::title::TitleChoice::LiveStats;
+    let is_tat_stats         = choice == game::title::TitleChoice::TatStats;
+    let is_leaderboard_casual = choice == game::title::TitleChoice::LeaderboardCasual;
+    let is_leaderboard_ranked = choice == game::title::TitleChoice::LeaderboardRanked;
     let cpu_team: Option<usize> = if is_vs_cpu { Some(1) } else { None };
 
     // Stats screens
@@ -339,15 +324,11 @@ fn main() {
             (t, r)
         } else {
             let mut acct = AccountScreen::new();
-            let result = loop {
-                let fs = std::time::Instant::now();
-                input.poll();
+            let result = run_screen_loop(&mut fb, &mut input, &mut buf, false, |input, buf, _fb| {
                 buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32,
                     renderer::Bgra::new(8, 8, 20));
-                if let Some(a) = acct.update(&input, &mut buf, 0) { break a; }
-                buf.blit_to_fb(&mut fb, 0, 0);
-                let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-            };
+                acct.update(input, buf, 0)
+            });
             match result {
                 AccountAction::LoggedIn { token, username, rosters, .. } => { live_username = username; (token, rosters) }
                 AccountAction::Back => { continue 'game; }
@@ -365,15 +346,11 @@ fn main() {
         }
         // Roster picker
         let mut picker = RosterPicker::new(token, rosters);
-        let picked = loop {
-            let fs = std::time::Instant::now();
-            input.poll();
+        let picked = run_screen_loop(&mut fb, &mut input, &mut buf, false, |input, buf, _fb| {
             buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32,
                 renderer::Bgra::new(8, 8, 20));
-            if let Some(a) = picker.update(&input, &mut buf, 0) { break a; }
-            buf.blit_to_fb(&mut fb, 0, 0);
-            let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-        };
+            picker.update(input, buf, 0)
+        });
         if let Ok(Some((earned, weekly))) = bonus_rx.try_recv() {
             show_login_bonus(&mut buf, &mut fb, &mut input, earned, weekly);
         }
@@ -1093,13 +1070,12 @@ fn main() {
             }
             if opponent_left_ticks > 0 && paused_secs.is_none() {
                 opponent_left_ticks -= 1;
-                use renderer::font::{draw_str_scaled, str_width_scaled};
-                let msg = "OPPONENT DISCONNECTED";
-                let mw = str_width_scaled(msg, 1);
-                let mx = cam.left_edge() as i32 + world::SCREEN_W as i32 / 2 - mw / 2;
+                // Shared banner style; fade handled by dimming the text colour.
                 let alpha = (opponent_left_ticks.min(30) as f32 / 30.0 * 255.0) as u8;
-                buf.fill_rect(mx - 6, 10, (mw + 12) as u32, 18, renderer::Bgra::new(40, 10, 10));
-                draw_str_scaled(&mut buf, msg, mx, 13, renderer::Bgra::new(255, alpha / 2 + 80, alpha / 2 + 80), 1);
+                let cx = cam.left_edge() as i32 + world::SCREEN_W as i32 / 2;
+                game::loop_runner::draw_banner(&mut buf, "OPPONENT DISCONNECTED",
+                    renderer::Bgra::new(255, alpha / 2 + 80, alpha / 2 + 80),
+                    cx, world::SCREEN_W as i32, 13);
             } else if opponent_left_ticks > 0 {
                 opponent_left_ticks -= 1;
             }
@@ -1162,12 +1138,12 @@ fn main() {
                 game_over_ticks += 1;
                 let winner = if let game::state::GameResult::Winner(t) = fr { Some(*t) } else { None };
                 let wa = if let Some(w) = winner { game.teams.get(w).map(|t| t.avatar_id).unwrap_or(0) } else { 0 };
-                let (kills, hp_left, memo) = game::loop_runner::match_end_stats(&game);
+                let (stats, memo) = game::loop_runner::match_end_stats(&game);
                 let wc = winner.and_then(|w| game.teams.get(w)).map(|t| t.color_id).unwrap_or(0);
                 // Pass None (not Some(my_team)) so the headline reads
                 // "RED/BLUE TEAM WINS!" identically to local modes. The ELO line
                 // is gated on elo_delta != 0, so ranked still shows it.
-                crate::renderer::hud::draw_game_over(&mut buf, winner, None, cam.left_edge() as i32, cam.top_edge(), wa, elo_delta, scrap_earned, kills, hp_left, &memo, wc);
+                crate::renderer::hud::draw_game_over(&mut buf, winner, None, cam.left_edge() as i32, cam.top_edge(), wa, elo_delta, scrap_earned, &stats, &memo, wc);
                 // Countdown bar at bottom
                 {
                     use world::{SCREEN_W, SCREEN_H};
@@ -1685,20 +1661,15 @@ fn show_roster_picker(
     };
     // list_only: skip auto-opening editor so first A press selects immediately
     let mut picker = RosterPicker::new_list_only(token.to_string(), rs);
-    loop {
-        let fs = std::time::Instant::now();
-        input.poll();
+    run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 8, 20));
         match picker.update(input, buf, 0) {
-            Some(RosterAction::Selected(r)) => return Some(r),
-            Some(RosterAction::Skip)        => return Some(game::account::Roster::default_named(0)),
-            Some(RosterAction::Back)        => return None,
-            None => {}
+            Some(RosterAction::Selected(r)) => Some(Some(r)),
+            Some(RosterAction::Skip)        => Some(Some(game::account::Roster::default_named(0))),
+            Some(RosterAction::Back)        => Some(None),
+            None => None,
         }
-        buf.blit_to_fb(fb, 0, 0);
-        let e = fs.elapsed();
-        if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-    }
+    })
 }
 
 /// MULTIPLAYER → ACCOUNT entry point.
@@ -1718,13 +1689,11 @@ fn run_account_menu(
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
         let msg = format!("LOGGED IN AS  {}", username.to_uppercase());
-        loop {
-            let fs = std::time::Instant::now();
-            input.poll();
-            if input.just_pressed(input::Button::B) { break; }
+        run_screen_loop(fb, input, buf, false, |input, buf, fb| {
+            if input.just_pressed(input::Button::B) { return Some(()); }
             if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
                 do_logout(buf, fb);
-                break;
+                return Some(());
             }
             buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
             renderer::hud::draw_screen_header(buf, "ACCOUNT");
@@ -1734,18 +1703,15 @@ fn run_account_menu(
                 buf, None, &[("LOG OUT", true)], 0, 0,
                 &renderer::hud::ListStyle { panel_y: sh/2 - 8, on_image: false, ..Default::default() });
             renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
-            buf.blit_to_fb(fb, 0, 0);
-            let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-        }
+            None
+        });
     } else {
         // Not logged in — show full login/register screen
         use game::account::{AccountScreen, AccountAction};
         let mut acct = AccountScreen::new();
-        loop {
-            let fs = std::time::Instant::now();
-            input.poll();
+        run_screen_loop(fb, input, buf, false, |input, buf, fb| {
             buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 8, 20));
-            if let Some(action) = acct.update(&input, buf, 0) {
+            if let Some(action) = acct.update(input, buf, 0) {
                 match action {
                     AccountAction::LoggedIn { username, .. } => {
                         let msg = format!("WELCOME  {}", username.to_uppercase());
@@ -1754,12 +1720,26 @@ fn run_account_menu(
                     }
                     AccountAction::Back => {}
                 }
-                break;
+                return Some(());
             }
-            buf.blit_to_fb(fb, 0, 0);
-            let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-        }
+            None
+        });
     }
+}
+
+/// SETTINGS from the title menu — thin wrapper mirroring the other show_* screens.
+fn show_settings_screen(
+    fb:    &mut renderer::Framebuffer,
+    input: &mut input::InputState,
+    buf:   &mut WorldBuffer,
+) {
+    let mut screen = game::settings::SettingsScreen::new();
+    run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
+        match screen.update(input, buf) {
+            Some(game::settings::SettingsAction::Back) => Some(()),
+            None => None,
+        }
+    })
 }
 
 /// Clear saved credentials and flash the shared LOGGED OUT toast.
@@ -1784,11 +1764,8 @@ fn show_my_teams_menu(
     let mut cursor = 0usize;
     let username = game::account::load_saved_creds().map(|(u, _)| u).unwrap_or_default();
 
-    loop {
-        let fs = std::time::Instant::now();
-        input.poll();
-
-        if input.just_pressed(input::Button::B) { return; }
+    run_screen_loop(fb, input, buf, false, |input, buf, fb| {
+        if input.just_pressed(input::Button::B) { return Some(()); }
         let n = ITEMS.len();
         if input.just_pressed(input::Button::Up)   { cursor = (cursor + n - 1) % n; }
         if input.just_pressed(input::Button::Down) { cursor = (cursor + 1) % n; }
@@ -1800,7 +1777,7 @@ fn show_my_teams_menu(
                 1 => { show_store_screen(fb, input, buf, token); }
                 2 => { show_equip_screen(fb, input, buf, rosters, token); }
                 3 => { show_profile_screen(fb, input, buf, token, &username); }
-                4 => { do_logout(buf, fb); return; }
+                4 => { do_logout(buf, fb); return Some(()); }
                 _ => {}
             }
         }
@@ -1810,11 +1787,8 @@ fn show_my_teams_menu(
         let header = if username.is_empty() { None } else { Some(username.as_str()) };
         renderer::hud::draw_list_panel(buf, header, ITEMS, cursor, scroll, &style);
         crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
-
-        buf.blit_to_fb(fb, 0, 0);
-        let e = fs.elapsed();
-        if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-    }
+        None
+    })
 }
 
 fn show_store_screen(
@@ -1842,21 +1816,16 @@ fn show_store_screen(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || { tx.send(fetch_profile(&tok)).ok(); });
 
-    loop {
-        let fs = std::time::Instant::now();
-        input.poll();
+    run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
         if let Ok(Some(p)) = rx.try_recv() {
             screen.set_profile(p.0, &p.1, &p.2, &p.3, &p.4, p.5);
         }
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 12, 28));
         match screen.update(input, buf) {
-            Some(StoreAction::Back) => return,
-            None => {}
+            Some(StoreAction::Back) => Some(()),
+            None => None,
         }
-        buf.blit_to_fb(fb, 0, 0);
-        let e = fs.elapsed();
-        if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-    }
+    })
 }
 
 fn show_equip_screen(
@@ -1890,15 +1859,13 @@ fn show_equip_screen(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || { tx.send(fetch_profile(&tok)).ok(); });
 
-    loop {
-        let fs = std::time::Instant::now();
-        input.poll();
+    run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
         if let Ok(Some(p)) = rx.try_recv() {
             screen.set_profile(p.0, p.1, p.2, p.3, p.4);
         }
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, COLOR_DARK_BG);
         match screen.update(input, buf) {
-            Some(CosmeticsAction::Back) => return,
+            Some(CosmeticsAction::Back) => Some(()),
             Some(CosmeticsAction::Saved(r)) => {
                 // Post updated cosmetics to server
                 let h = r.hat_ids;
@@ -1924,14 +1891,11 @@ fn show_equip_screen(
                     updated[pos] = r;
                 }
                 save_cached_rosters(&updated);
-                return;
+                Some(())
             }
-            None => {}
+            None => None,
         }
-        buf.blit_to_fb(fb, 0, 0);
-        let e = fs.elapsed();
-        if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-    }
+    })
 }
 
 fn show_missions_screen(
@@ -1944,15 +1908,11 @@ fn show_missions_screen(
     draw_status(buf, fb, "LOADING...");
     let mut screen = MissionsScreen::new(token.to_string());
     screen.load();
-    loop {
-        let fs = std::time::Instant::now();
-        input.poll();
+    run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, COLOR_DARK_BG);
-        if let Some(MissionsAction::Back) = screen.update(input, buf) { return; }
-        buf.blit_to_fb(fb, 0, 0);
-        let e = fs.elapsed();
-        if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-    }
+        if let Some(MissionsAction::Back) = screen.update(input, buf) { return Some(()); }
+        None
+    })
 }
 
 fn draw_status(buf: &mut renderer::WorldBuffer, fb: &mut renderer::Framebuffer, msg: &str) {
@@ -2176,8 +2136,7 @@ fn show_update_screen(
     const LOG_LINE_H: i32 = 8 * LOG_SCALE + 6; // glyph height at this scale + gap
     let max_lines = ((sh - 70 - 54) / LOG_LINE_H).max(1) as usize;
     let mut changelog: Vec<String> = vec!["loading update notes...".to_string()];
-    loop {
-        input.poll();
+    run_screen_loop(fb, input, buf, true, |input, buf, fb| {
         if let Ok(cl) = changelog_rx.try_recv() {
             changelog = cl.iter()
                 .take(5) // last 5 versions' worth of notes
@@ -2204,17 +2163,17 @@ fn show_update_screen(
                 Some(b) if b.len() > 4 && b[0] == 0x7f && &b[1..4] == b"ELF" => {
                     draw_msg(buf, fb, "APPLYING UPDATE...");
                     updater::apply_binary(&b, buf, fb);
-                    return false; // apply_binary called exec; if we're here exec failed
+                    return Some(false); // apply_binary called exec; if we're here exec failed
                 }
                 _ => {
                     draw_msg(buf, fb, "DOWNLOAD FAILED"); std::thread::sleep(std::time::Duration::from_secs(2));
-                    if !forced { return true; } // pre-title path: don't trap the player offline
+                    if !forced { return Some(true); } // pre-title path: don't trap the player offline
                 }
             }
         }
         // B/Start: SP → skip update and proceed; MP → back to title
         if allow_skip && (input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start)) {
-            return !forced;
+            return Some(!forced);
         }
         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
         buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
@@ -2230,8 +2189,33 @@ fn show_update_screen(
             let b_label = if forced { "B = BACK" } else { "B = SKIP" };
             draw_str_scaled(buf, b_label, sw/2 - str_width_scaled(b_label,2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
         }
+        None
+    })
+}
+
+/// Standard menu-screen frame loop: poll → frame() → blit → sleep to TICK_DURATION.
+/// `frame` returns Some(r) to exit the loop with that result (the final frame is
+/// not blitted — matching how the old inline loops broke before their blit).
+/// `fixed_sleep` preserves the uncompensated `sleep(TICK_DURATION)` cadence of
+/// the older screens; false = compensated (sleep only the remainder).
+fn run_screen_loop<R>(
+    fb:    &mut renderer::Framebuffer,
+    input: &mut input::InputState,
+    buf:   &mut WorldBuffer,
+    fixed_sleep: bool,
+    mut frame: impl FnMut(&mut input::InputState, &mut WorldBuffer, &mut renderer::Framebuffer) -> Option<R>,
+) -> R {
+    loop {
+        let fs = std::time::Instant::now();
+        input.poll();
+        if let Some(r) = frame(input, buf, fb) { return r; }
         buf.blit_to_fb(fb, 0, 0);
-        std::thread::sleep(TICK_DURATION);
+        if fixed_sleep {
+            std::thread::sleep(TICK_DURATION);
+        } else {
+            let e = fs.elapsed();
+            if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
+        }
     }
 }
 
@@ -2426,14 +2410,10 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
         (t, u, r)
     } else {
         let mut acct = AccountScreen::new();
-        let result = loop {
-            let fs = std::time::Instant::now();
-            input.poll();
+        let result = run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
             buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 8, 20));
-            if let Some(a) = acct.update(input, buf, 0) { break a; }
-            buf.blit_to_fb(fb, 0, 0);
-            let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-        };
+            acct.update(input, buf, 0)
+        });
         match result {
             AccountAction::LoggedIn { token, username, rosters } => (token, username, rosters),
             AccountAction::Back => return,
@@ -2472,14 +2452,10 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
         let mut rs = rosters.to_vec();
         if rs.is_empty() { rs.push(game::account::Roster::default_named(0)); }
         let mut picker = RosterPicker::new(token.to_string(), rs);
-        let picked = loop {
-            let fs = std::time::Instant::now();
-            input.poll();
+        let picked = run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
             buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 8, 20));
-            if let Some(a) = picker.update(input, buf, 0) { break a; }
-            buf.blit_to_fb(fb, 0, 0);
-            let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-        };
+            picker.update(input, buf, 0)
+        });
         let r = match picked {
             RosterAction::Selected(r) => r,
             RosterAction::Skip => game::account::Roster::default_named(0),
@@ -2502,14 +2478,9 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
                 // Re-show account screen
                 use game::account::{AccountScreen, AccountAction};
                 let mut acct = AccountScreen::new();
-                let result = loop {
-                    let fs = std::time::Instant::now();
-                    input.poll();
-                    if let Some(a) = acct.update(input, buf, 0) { break a; }
-                    buf.blit_to_fb(fb, 0, 0);
-                    let e = fs.elapsed();
-                    if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
-                };
+                let result = run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
+                    acct.update(input, buf, 0)
+                });
                 match result {
                     AccountAction::LoggedIn { token: t2, username: u2, .. } => {
                         lobby = LobbyScreen::new(t2, u2, VERSION);
@@ -2552,12 +2523,12 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
                         }
                     }
                     // Show game-over screen if match ended, otherwise move-submitted confirmation
-                    if let Some((winner, av, col, kills, hp_left, memo)) = tat_end_screen {
+                    if let Some((winner, av, col, stats, memo)) = tat_end_screen {
                         let mut go_ticks = 0u32;
                         loop {
                             let fs = std::time::Instant::now();
                             input.poll();
-                            crate::renderer::hud::draw_game_over(buf, winner, Some(my_slot), 0, 0, av, 0, tat_scrap, kills, hp_left, &memo, col);
+                            crate::renderer::hud::draw_game_over(buf, winner, Some(my_slot), 0, 0, av, 0, tat_scrap, &stats, &memo, col);
                             buf.blit_to_fb(fb, 0, 0);
                             go_ticks += 1;
                             if go_ticks >= 300 || input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) { break; }
@@ -2609,7 +2580,7 @@ fn run_tat_game(
     opp_boot_color_ids:    &[u8; 4],
     opp_gun_style_ids:     &[u8; 4],
     days_remaining: i32,
-) -> Option<(game::lobby::Move, u32, u32, std::collections::HashMap<&'static str, u32>, Option<(Option<usize>, u8, u8, [u32;2], [u32;2], String)>)> { // (move, kills, deaths, weapon_kills, end_screen)
+) -> Option<(game::lobby::Move, u32, u32, std::collections::HashMap<&'static str, u32>, Option<(Option<usize>, u8, u8, Vec<crate::renderer::hud::TeamEndStat>, String)>)> { // (move, kills, deaths, weapon_kills, end_screen)
     use game::turn::TurnPhase;
 
     let mut game = build_default_game_opts(seed, has_mines, has_barrels);
@@ -2743,7 +2714,7 @@ fn run_tat_game(
                 let frame_start = std::time::Instant::now();
                 // server_tick emits detonation SFX itself (plays locally here).
                 game::loop_runner::server_tick(&mut game, &empty, None, None);
-                game.messages.retain(|m| !m.text.contains("got a ") && !m.text.contains("picked up"));
+                game::loop_runner::retain_non_pickup_messages(&mut game);
                 if let Some(ref hm) = game.homing_missile {
                     replay_cam.follow(world::WorldPos::new(if hm.confirmed { game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.x } else { hm.render_x }, hm.render_y));
                 } else if let Some(ref g) = game.garcia {
@@ -2937,8 +2908,8 @@ fn run_tat_game(
         let winner = if let game::state::GameResult::Winner(t) = game.result { Some(t) } else { None };
         let av  = winner.and_then(|w| game.teams.get(w)).map(|t| t.avatar_id).unwrap_or(0);
         let col = winner.and_then(|w| game.teams.get(w)).map(|t| t.color_id).unwrap_or(0);
-        let (kills, hp_left, memo) = game::loop_runner::match_end_stats(&game);
-        Some((winner, av, col, kills, hp_left, memo))
+        let (stats, memo) = game::loop_runner::match_end_stats(&game);
+        Some((winner, av, col, stats, memo))
     } else { None };
     Some((game::lobby::Move { angle: pre_angle, power: pre_power, facing: pre_facing, active_soldier: pre_active, inputs: recorded_inputs }, my_kills, my_deaths, weapon_kills, end_screen))
 }
@@ -3076,9 +3047,8 @@ fn show_leaderboard_screen(
     let col_me_you  = Bgra::new(255, 160, 40);
     let dim_line    = Bgra::new(40, 40, 70);
 
-    loop {
-        input.poll();
-        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { break; }
+    run_screen_loop(fb, input, buf, true, |input, buf, _fb| {
+        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { return Some(()); }
         if input.held(input::Button::Down) || input.held(input::Button::Up) {
             hold_ticks += 1;
         } else {
@@ -3218,10 +3188,8 @@ fn show_leaderboard_screen(
         } else {
             crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
         }
-
-        buf.blit_to_fb(fb, 0, 0);
-        std::thread::sleep(TICK_DURATION);
-    }
+        None
+    })
 }
 
 fn show_stats_screen(
@@ -3269,9 +3237,8 @@ fn show_stats_screen(
     let val_col    = Bgra::new(240, 240, 255);
     let dim_line   = Bgra::new(50, 50, 80);
 
-    loop {
-        input.poll();
-        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { break; }
+    run_screen_loop(fb, input, buf, true, |input, buf, _fb| {
+        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { return Some(()); }
 
         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(6, 8, 20));
         // Header
@@ -3309,10 +3276,8 @@ fn show_stats_screen(
         // Footer
         buf.fill_rect(0, sh - 26, SCREEN_W, 1, dim_line);
         crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
-
-        buf.blit_to_fb(fb, 0, 0);
-        std::thread::sleep(TICK_DURATION);
-    }
+        None
+    })
 }
 
 fn show_profile_screen(
@@ -3357,9 +3322,8 @@ fn show_profile_screen(
     let val_col   = Bgra::new(240, 240, 255);
     let dim_line  = Bgra::new(50, 50, 80);
 
-    loop {
-        input.poll();
-        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { break; }
+    run_screen_loop(fb, input, buf, true, |input, buf, _fb| {
+        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { return Some(()); }
 
         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
         // Header
@@ -3470,8 +3434,6 @@ fn show_profile_screen(
         }
 
         crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
-
-        buf.blit_to_fb(fb, 0, 0);
-        std::thread::sleep(TICK_DURATION);
-    }
+        None
+    })
 }

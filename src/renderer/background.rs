@@ -212,7 +212,7 @@ pub fn draw_debris(buf: &mut WorldBuffer, terrain: &Terrain, particles: &[BgPart
         if sy < 0 || wy0 >= WATER_Y as i32 { continue; }
 
         let colour = if p.glow {
-            let flick = ((tick.wrapping_add(sx as u32 * 7 + sy as u32 * 3)) % 5) as i32 * 12;
+            let flick = ((tick.wrapping_add((sx as u32).wrapping_mul(7).wrapping_add((sy as u32).wrapping_mul(3)))) % 5) as i32 * 12;
             Bgra::new((220 + flick).min(255) as u8, (110 + flick / 2).min(255) as u8, 40)
         } else {
             style.colour

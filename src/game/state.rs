@@ -1647,7 +1647,7 @@ impl GameState {
         let mut rng = (pos.x as u64)
             .wrapping_mul(0x6364136223846885)
             .wrapping_add((pos.y as u64).wrapping_mul(0x9e3779b97f4a7c15))
-            .wrapping_add(self.tick as u64 * 0x517CC1B727220A95);
+            .wrapping_add((self.tick as u64).wrapping_mul(0x517CC1B727220A95));
         let count = 36; // dense pool of fire, trimmed down a bit from 48
         for _ in 0..count {
             rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);

@@ -48,4 +48,4 @@ pub use draw_sprites::{
     TEAM_COLOURS, SOLDIER_W, SOLDIER_H,
 };
 pub use font::{draw_char, draw_str, draw_str_shadow, str_width};
-pub use hud::{draw_hud, draw_game_over, draw_countdown, draw_pause_menu, HUD_H, HUD_Y};
+pub use hud::{draw_game_over, draw_pause_menu, HUD_H, HUD_Y};

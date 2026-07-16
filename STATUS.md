@@ -1,5 +1,25 @@
 # Mini Mayhem — Project Status
 
+## 2026-07-16 — v0.5.4.437: HUD streamline, 4-team game-over, debug-crash fixes, screen-loop refactor
+
+**In-match HUD condensed.** Weapon name + `[SEL]`, a 120px wind gauge, FPS, turn number and timer
+all live in the single bottom bar; the separate weapon box, floating FPS and bottom team strips are
+gone. Corner avatars are the one health display — now up to **4 teams** (extra rows stack below),
+each with an `x{alive}` count and a yellow outline on the active team. TNT fuse, shot prompts and
+game messages render through one shared `draw_banner` stack (max 3, no more top-centre overlaps);
+the live disconnect banner uses the same style. Legacy `draw_hud`/`draw_countdown` deleted.
+
+- **Debug-build crashes fixed:** two arithmetic overflows (background flicker hash, molotov fire
+  RNG seed — the latter in sim code, fixed with wrapping ops bit-identical to release, so
+  determinism is unchanged). Debug matches now soak clean; likely fixes Windows debug crashes.
+- **Game-over generalized:** `match_end_stats` → `Vec<TeamEndStat>`; one survivors/HP row per team
+  (kill attribution was never tracked — the old "kills" was the other team's deaths). New hud test mod.
+- **HOW TO PLAY rewritten:** every page now fits the ~15-line render window (TIPS/COSMETICS were
+  half-invisible); Jackhammer/Jumpbot/Garcia/Sacred Ordnance documented; controls page leads.
+- **Screen-loop refactor:** `TitleChoice` is a real enum; `run_screen_loop()` replaced 15 copies of
+  the menu poll/draw/blit/sleep boilerplate, preserving each screen's cadence. Net ~−300 lines.
+- No synced-state changes; parity 24/24. `VERSION` + `REQUIRED_VERSION` bumped in lockstep.
+
 ## 2026-07-16 — v0.5.4.436: Menu streamline + jackhammer drill ×2
 
 **Menus condensed and deduped, zero functionality loss.** MULTIPLAYER is now one flat submenu

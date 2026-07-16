@@ -1,8 +1,46 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.436 (menu streamline + jackhammer drill x2; VERSION +
-  REQUIRED_VERSION bumped, deploying 2026-07-16 — see entry below for Miyoo
-  status).
+Current version: 0.5.4.437 (HUD streamline + 4-team game-over + debug-overflow
+  fixes + screen-loop refactor + help-guide rewrite; VERSION + REQUIRED_VERSION
+  bumped, deploying 2026-07-16).
+
+2026-07-16 (v0.5.4.437; VERSION + REQUIRED_VERSION bumped) — HUD STREAMLINE +
+  CLEANUP BATCH.
+  ---------------------------------------------------------------------------
+  - DEBUG OVERFLOW FIXES: background.rs:215 flicker hash (negative particle x)
+    and state.rs:1650 molotov fire RNG seed (tick * const overflows past tick
+    ~35) both switched to wrapping ops — bit-identical to release wrapping, so
+    sim determinism unchanged. Debug builds now survive full matches (soak-
+    tested under Xvfb); likely fixes the Windows debug-build crashes too.
+  - HUD: weapon name + [SEL], 120px wind meter, FPS, T{n} and timer all live in
+    draw_hud_world's bottom bar (separate weapon box + floating FPS deleted).
+    Team strips deleted — corner avatars are the single health display, now up
+    to 4 teams (rows stack below the top pair), with x{alive} count and a
+    yellow outline on the active team. New shared pub draw_banner +
+    weapon_name() in loop_runner.rs; TNT fuse / shotgun-revolver prompts /
+    messages flow through one top-centre banner stack (max 3, no overlap);
+    main.rs disconnect banner uses the same style. Legacy hud.rs draw_hud /
+    draw_countdown + tests deleted (~200 lines); pickup-message filter deduped
+    into retain_non_pickup_messages().
+  - GAME OVER: match_end_stats returns Vec<TeamEndStat{color_id,alive,total,
+    hp}> (kills were never attributed — old number was just the other team's
+    deaths); draw_game_over draws one per-team row, tighter spacing for 3-4
+    teams. Callers + TAT end-screen tuple updated; new hud.rs test mod (5
+    tests) replaces the deleted legacy one.
+  - HELP GUIDE REWRITE: draw_help only renders ~15 lines/page but most pages
+    had 16-28 — over half of TIPS/COSMETICS was invisible. All pages now <=14
+    lines; added Jackhammer, Jumpbot, Garcia, Sacred Ordnance; GAME MODES page
+    matches the flattened menu; CONTROLS page shared with Settings leads the
+    pager; TIPS split into TIPS + MORE TIPS.
+  - SCREEN-LOOP REFACTOR (behaviour-preserving): TitleChoice u8 consts → real
+    enum (never serialized); new run_screen_loop() helper in main.rs replaced
+    15 poll/draw/blit/sleep loop copies (title, settings→show_settings_screen,
+    account x4, roster pickers x3, my-teams, store, equip, missions, stats,
+    profile, leaderboard, update screen, reconnect popup), each keeping its
+    exact fixed/compensated sleep cadence. Casual lobby / match intro / login
+    bonus / splash intentionally untouched. Net -300 lines.
+  - No GameState/InputMsg/net_sync changes; parity 24/24; hud tests 5/5;
+    menus + new HUD verified in-game under Xvfb.
 
 2026-07-16 (v0.5.4.436; VERSION + REQUIRED_VERSION bumped) — MENU STREAMLINE.
   ---------------------------------------------------------------------------
