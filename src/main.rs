@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.434";
+const VERSION: &str = "0.5.4.435";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -616,6 +616,7 @@ fn main() {
             (WeaponKind::Blasthive,     None),
             (WeaponKind::BlackHoleBomb, None),
             (WeaponKind::PlasmaTorch,   None),
+            (WeaponKind::Jackhammer,    None),
             (WeaponKind::Garcia,          None),
             (WeaponKind::Jumpbot,           None),
             (WeaponKind::AirStrike,       None),
