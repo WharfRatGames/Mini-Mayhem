@@ -67,8 +67,6 @@ pub struct LobbyScreen {
 
 const MENU_ITEMS_CASUAL: &[&str] = &["MATCHMAKE", "GET CODE", "JOIN MATCH", "MY MATCHES", "LOG OUT"];
 const MENU_ITEMS_RANKED: &[&str] = &["FIND RANKED MATCH", "MY MATCHES", "LOG OUT"];
-// Alias used elsewhere in the file
-const MENU_ITEMS: &[&str] = MENU_ITEMS_CASUAL;
 
 impl LobbyScreen {
     pub fn new(token: String, username: String, version: &'static str) -> Self {
@@ -432,13 +430,10 @@ impl LobbyScreen {
                     let y = start_y + i as i32 * item_h;
                     let selected = i == self.cursor;
                     if selected {
-                        buf.fill_rect(cam_x + sw/2 - 140, y - 4, 280, 26, Bgra::new(40, 44, 90));
+                        crate::renderer::hud::draw_menu_selection(buf, cam_x + sw/2 - 140, y - 4, 280, 26);
                     }
-                    let col = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(170, 170, 200) };
+                    let col = if selected { Bgra::new(255, 225, 55) } else { Bgra::new(170, 170, 200) };
                     let iw = str_width_scaled(item, 2);
-                    if selected {
-                        draw_str_scaled(buf, ">", cam_x + sw/2 - iw/2 - 22, y, Bgra::new(255, 180, 0), 2);
-                    }
                     draw_str_scaled(buf, item, cam_x + sw/2 - iw/2, y, col, 2);
                 }
                 let hint = "B=BACK";

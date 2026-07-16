@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.435";
+const VERSION: &str = "0.5.4.436";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -108,66 +108,10 @@ fn main() {
     if !skip_update {
         if let Ok((true, tls_broken)) = update_rx.recv_timeout(std::time::Duration::from_secs(8)) {
             update_available = true;
-            use renderer::Bgra;
-            use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
-            use world::{SCREEN_W, SCREEN_H};
-            let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
-            let bar_x = 40i32; let bar_w = sw - 80;
-            let bar_y = sh/2 + 10; let bar_h = 24i32;
-            let changelog_rx = spawn_changelog_fetch();
-            let max_lines = ((sh - 70 - 54) / 12).max(1) as usize;
-            let mut changelog: Vec<String> = vec!["loading update notes...".to_string()];
-            'pretitle_update: loop {
-                input.poll();
-                if let Ok(cl) = changelog_rx.try_recv() {
-                    changelog = cl.iter()
-                        .flat_map(|line| wrap_text(line, 1, sw - 36))
-                        .take(max_lines)
-                        .collect();
-                }
-                if input.just_pressed(input::Button::A) {
-                    let binary = updater::stream_binary(|done, total| {
-                        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-                        buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-                        let t = "DOWNLOADING UPDATE";
-                        draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255,210,50), 2);
-                        buf.fill_rect(bar_x-2, bar_y-2, (bar_w+4) as u32, (bar_h+4) as u32, Bgra::new(60,60,100));
-                        buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h as u32, Bgra::new(20,20,40));
-                        let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
-                        let filled = (bar_w as f32 * frac) as u32;
-                        if filled > 0 { buf.fill_rect(bar_x, bar_y, filled, bar_h as u32, Bgra::new(80,200,120)); }
-                        let pct = format!("{}%", (frac * 100.0) as u32);
-                        draw_str(&mut buf, &pct, sw/2 - str_width(&pct)/2, bar_y + bar_h + 10, Bgra::new(180,180,200));
-                        buf.blit_to_fb(&mut fb, 0, 0);
-                    });
-                    match binary {
-                        Some(b) if b.starts_with(b"\x7fELF") => {
-                            draw_msg(&mut buf, &mut fb, "APPLYING UPDATE...");
-                            updater::apply_binary(&b, &mut buf, &mut fb);
-                        }
-                        _ => { draw_msg(&mut buf, &mut fb, "DOWNLOAD FAILED"); std::thread::sleep(std::time::Duration::from_secs(2)); }
-                    }
-                    break 'pretitle_update;
-                }
-                if !tls_broken && (input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start)) {
-                    break 'pretitle_update; // normal update — skip allowed
-                }
-                buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-                buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-                let t = if tls_broken { "UPDATE REQUIRED" } else { "UPDATE AVAILABLE" };
-                draw_str_scaled(&mut buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255,210,50), 2);
-                let v = format!("VERSION {}", VERSION);
-                draw_str_scaled(&mut buf, &v, sw/2 - str_width_scaled(&v,1)/2, 34, Bgra::new(100,100,140), 1);
-                for (i, line) in changelog.iter().enumerate() {
-                    draw_str(&mut buf, line, 18, 54 + i as i32 * 12, Bgra::new(110,130,160));
-                }
-                draw_str_scaled(&mut buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 38, Bgra::new(80,220,120), 2);
-                if !tls_broken {
-                    draw_str_scaled(&mut buf, "B = SKIP", sw/2 - str_width_scaled("B = SKIP",2)/2, sh - 20, Bgra::new(140,140,160), 1);
-                }
-                buf.blit_to_fb(&mut fb, 0, 0);
-                std::thread::sleep(TICK_DURATION);
-            }
+            let title = if tls_broken { "UPDATE REQUIRED" } else { "UPDATE AVAILABLE" };
+            // Not forced (a skip proceeds into the game, never back to a title
+            // that doesn't exist yet); tls_broken disables skipping entirely.
+            show_update_screen(&mut fb, &mut input, &mut buf, title, false, !tls_broken);
         }
     }
 
@@ -326,7 +270,8 @@ fn main() {
         }
     }
     if update_available && (is_sp_mode || is_mp_mode) {
-        let proceed = show_update_screen(&mut fb, &mut input, &mut buf, is_mp_mode);
+        let title = if is_mp_mode { "UPDATE REQUIRED FOR MULTIPLAYER" } else { "UPDATE AVAILABLE" };
+        let proceed = show_update_screen(&mut fb, &mut input, &mut buf, title, is_mp_mode, true);
         if !proceed { continue 'game; }
     }
     // HOTSEAT = local 2-player, VS_CPU = CPU AI
@@ -353,12 +298,14 @@ fn main() {
             draw_msg(&mut buf, &mut fb, "LOG IN FIRST");
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
+        title.continue_to_submenu();
         continue 'game;
     }
 
     // Leaderboard screens
     if is_leaderboard_casual || is_leaderboard_ranked {
         show_leaderboard_screen(&mut fb, &mut input, &mut buf, is_leaderboard_ranked);
+        title.continue_to_submenu();
         continue 'game;
     }
 
@@ -506,7 +453,8 @@ fn main() {
                     update_available = true;
                     // Go straight to the update screen (A = install) instead of
                     // dumping the player back at the title with just a banner.
-                    show_update_screen(&mut fb, &mut input, &mut buf, true);
+                    show_update_screen(&mut fb, &mut input, &mut buf,
+                        "UPDATE REQUIRED FOR MULTIPLAYER", true, true);
                     continue 'game;
                 }
                 Ok(ConnectOutcome::Failed) => {
@@ -1762,32 +1710,30 @@ fn run_account_menu(
     buf:   &mut WorldBuffer,
 ) {
     use renderer::Bgra;
-    use renderer::font::{draw_str_scaled, draw_str_shadow_scaled, str_width_scaled};
+    use renderer::font::{draw_str_scaled, str_width_scaled};
     use world::{SCREEN_W, SCREEN_H};
 
     if let Some((username, _token)) = game::account::load_saved_creds() {
-        // Already logged in — show "logged in as" + logout option
+        // Already logged in — same list-style menu as MY TEAMS / lobby
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
+        let msg = format!("LOGGED IN AS  {}", username.to_uppercase());
         loop {
             let fs = std::time::Instant::now();
             input.poll();
-            if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { break; }
-            if input.just_pressed(input::Button::Y) {
-                game::account::clear_saved_creds();
-                draw_msg(buf, fb, "LOGGED OUT");
-                std::thread::sleep(std::time::Duration::from_secs(1));
+            if input.just_pressed(input::Button::B) { break; }
+            if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
+                do_logout(buf, fb);
                 break;
             }
             buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-            buf.fill_rect(0, 0, SCREEN_W, 36, Bgra::new(18, 22, 50));
-            let tw = str_width_scaled("ACCOUNT", 2);
-            draw_str_shadow_scaled(buf, "ACCOUNT", sw/2 - tw/2, 9, Bgra::new(255, 210, 50), 2);
-            let msg = format!("LOGGED IN AS  {}", username.to_uppercase());
+            renderer::hud::draw_screen_header(buf, "ACCOUNT");
             let mw = str_width_scaled(&msg, 2);
-            draw_str_scaled(buf, &msg, sw/2 - mw/2, sh/2 - 30, Bgra::new(120, 200, 120), 2);
-            draw_str_scaled(buf, "Y  LOG OUT", sw/2 - str_width_scaled("Y  LOG OUT", 2)/2, sh/2 + 10, Bgra::new(220, 100, 80), 2);
-            draw_str_scaled(buf, "B  BACK",    sw/2 - str_width_scaled("B  BACK", 2)/2,    sh/2 + 40, Bgra::new(140, 140, 140), 2);
+            draw_str_scaled(buf, &msg, sw/2 - mw/2, sh/2 - 60, Bgra::new(120, 200, 120), 2);
+            renderer::hud::draw_list_panel(
+                buf, None, &[("LOG OUT", true)], 0, 0,
+                &renderer::hud::ListStyle { panel_y: sh/2 - 8, on_image: false, ..Default::default() });
+            renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
             buf.blit_to_fb(fb, 0, 0);
             let e = fs.elapsed(); if e < TICK_DURATION { std::thread::sleep(TICK_DURATION - e); }
         }
@@ -1816,6 +1762,13 @@ fn run_account_menu(
     }
 }
 
+/// Clear saved credentials and flash the shared LOGGED OUT toast.
+fn do_logout(buf: &mut WorldBuffer, fb: &mut renderer::Framebuffer) {
+    game::account::clear_saved_creds();
+    draw_msg(buf, fb, "LOGGED OUT");
+    std::thread::sleep(std::time::Duration::from_secs(1));
+}
+
 fn show_my_teams_menu(
     fb:      &mut renderer::Framebuffer,
     input:   &mut input::InputState,
@@ -1823,14 +1776,12 @@ fn show_my_teams_menu(
     rosters: &[game::account::Roster],
     token:   &str,
 ) {
-    use renderer::Bgra;
-    use renderer::font::{draw_str_scaled, draw_str_shadow_scaled, str_width_scaled, draw_str, str_width};
-    use world::{SCREEN_W, SCREEN_H};
-
-    const ITEMS: &[&str] = &["ROSTERS", "STORE", "EQUIP", "PROFILE", "LOG OUT"];
+    const ITEMS: &[(&str, bool)] = &[
+        ("ROSTERS", false), ("STORE", false), ("EQUIP", false),
+        ("PROFILE", false), ("LOG OUT", true),
+    ];
+    let style = renderer::hud::ListStyle::default();
     let mut cursor = 0usize;
-    let mut scroll = 0usize;
-    const VISIBLE: usize = 4;
     let username = game::account::load_saved_creds().map(|(u, _)| u).unwrap_or_default();
 
     loop {
@@ -1839,15 +1790,9 @@ fn show_my_teams_menu(
 
         if input.just_pressed(input::Button::B) { return; }
         let n = ITEMS.len();
-        if input.just_pressed(input::Button::Up) {
-            cursor = (cursor + n - 1) % n;
-            if cursor < scroll { scroll = cursor; }
-        }
-        if input.just_pressed(input::Button::Down) {
-            cursor = (cursor + 1) % n;
-            if cursor == 0 { scroll = 0; }
-            else if cursor >= scroll + VISIBLE { scroll = cursor + 1 - VISIBLE; }
-        }
+        if input.just_pressed(input::Button::Up)   { cursor = (cursor + n - 1) % n; }
+        if input.just_pressed(input::Button::Down) { cursor = (cursor + 1) % n; }
+        let scroll = renderer::hud::list_scroll_for(cursor, style.max_visible);
 
         if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
             match cursor {
@@ -1855,55 +1800,15 @@ fn show_my_teams_menu(
                 1 => { show_store_screen(fb, input, buf, token); }
                 2 => { show_equip_screen(fb, input, buf, rosters, token); }
                 3 => { show_profile_screen(fb, input, buf, token, &username); }
-                4 => {
-                    game::account::clear_saved_creds();
-                    draw_msg(buf, fb, "LOGGED OUT");
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    return;
-                }
+                4 => { do_logout(buf, fb); return; }
                 _ => {}
             }
         }
 
         // Draw — same layout as title submenus
         renderer::title_bg::draw_title_bg(buf, 0);
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        let panel_y = 261i32;
-        let item_h  = 34i32;
-        if !username.is_empty() {
-            use renderer::font::str_width;
-            let uw = str_width(&username);
-            draw_str(buf, &username, sw/2 - uw/2, panel_y - 14, Bgra::new(110, 115, 165));
-        }
-
-        let start_y = panel_y + 8;
-        let visible_items = ITEMS.iter().enumerate().skip(scroll).take(VISIBLE);
-        for (i, &item) in visible_items {
-            let slot = (i - scroll) as i32;
-            let iy = start_y + slot * item_h;
-            let iw = str_width_scaled(item, 2);
-            let selected = i == cursor;
-            if selected {
-                crate::renderer::hud::draw_menu_selection(buf, sw/2 - 155, iy - 4, 310, 28);
-            }
-            let col = if selected {
-                if i == n - 1 { Bgra::new(255, 100, 80) } else { Bgra::new(255, 225, 55) }
-            } else {
-                if i == n - 1 { Bgra::new(180, 70, 60) } else { Bgra::new(0, 0, 0) }
-            };
-            draw_str_shadow_scaled(buf, item, sw/2 - iw/2, iy, col, 2);
-        }
-        // scroll indicators
-        if scroll > 0 {
-            let aw = str_width_scaled("▲", 2);
-            draw_str_scaled(buf, "▲", sw/2 - aw/2, start_y - item_h, Bgra::new(150, 150, 180), 2);
-        }
-        if scroll + VISIBLE < n {
-            let slot_y = start_y + VISIBLE as i32 * item_h;
-            let aw = str_width_scaled("▼", 2);
-            draw_str_scaled(buf, "▼", sw/2 - aw/2, slot_y, Bgra::new(150, 150, 180), 2);
-        }
+        let header = if username.is_empty() { None } else { Some(username.as_str()) };
+        renderer::hud::draw_list_panel(buf, header, ITEMS, cursor, scroll, &style);
         crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
 
         buf.blit_to_fb(fb, 0, 0);
@@ -2248,13 +2153,16 @@ fn spawn_changelog_fetch() -> std::sync::mpsc::Receiver<Vec<String>> {
 }
 
 /// Update screen: changelog + "A = INSTALL NOW". `forced` = MP entry (B backs
-/// out to the title); otherwise B skips and play continues. Returns whether the
-/// player may proceed into the chosen mode.
+/// out to the title); otherwise B skips and play continues. `allow_skip=false`
+/// (broken TLS at boot) disables B entirely — the player must install.
+/// Returns whether the player may proceed into the chosen mode.
 fn show_update_screen(
     fb:    &mut renderer::Framebuffer,
     input: &mut input::InputState,
     buf:   &mut WorldBuffer,
+    title: &str,
     forced: bool,
+    allow_skip: bool,
 ) -> bool {
     use renderer::Bgra;
     use renderer::font::{draw_str_scaled, draw_str, str_width_scaled, str_width, wrap_text};
@@ -2298,26 +2206,30 @@ fn show_update_screen(
                     updater::apply_binary(&b, buf, fb);
                     return false; // apply_binary called exec; if we're here exec failed
                 }
-                _ => { draw_msg(buf, fb, "DOWNLOAD FAILED"); std::thread::sleep(std::time::Duration::from_secs(2)); }
+                _ => {
+                    draw_msg(buf, fb, "DOWNLOAD FAILED"); std::thread::sleep(std::time::Duration::from_secs(2));
+                    if !forced { return true; } // pre-title path: don't trap the player offline
+                }
             }
         }
         // B/Start: SP → skip update and proceed; MP → back to title
-        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) {
+        if allow_skip && (input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start)) {
             return !forced;
         }
         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
         buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-        let t = if forced { "UPDATE REQUIRED FOR MULTIPLAYER" } else { "UPDATE AVAILABLE" };
-        let t_col = if forced { Bgra::new(255, 80, 80) } else { Bgra::new(255, 210, 50) };
-        draw_str_scaled(buf, t, sw/2 - str_width_scaled(t,2)/2, 10, t_col, 2);
+        let t_col = if forced || !allow_skip { Bgra::new(255, 80, 80) } else { Bgra::new(255, 210, 50) };
+        draw_str_scaled(buf, title, sw/2 - str_width_scaled(title,2)/2, 10, t_col, 2);
         let v = format!("VERSION {}", VERSION);
         draw_str_scaled(buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
         for (i, line) in changelog.iter().enumerate() {
             draw_str_scaled(buf, line, 18, 54 + i as i32 * LOG_LINE_H, Bgra::new(190, 205, 230), LOG_SCALE);
         }
         draw_str_scaled(buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
-        let b_label = if forced { "B = BACK" } else { "B = SKIP" };
-        draw_str_scaled(buf, b_label, sw/2 - str_width_scaled(b_label,2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
+        if allow_skip {
+            let b_label = if forced { "B = BACK" } else { "B = SKIP" };
+            draw_str_scaled(buf, b_label, sw/2 - str_width_scaled(b_label,2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
+        }
         buf.blit_to_fb(fb, 0, 0);
         std::thread::sleep(TICK_DURATION);
     }

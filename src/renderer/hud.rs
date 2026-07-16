@@ -409,6 +409,80 @@ pub fn draw_menu_selection(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32
     draw_str_shadow_scaled(buf, ">", arrow_x, arrow_y, Bgra::new(255, 180, 0), 2);
 }
 
+/// Unified layout for the centered scrolling list menus (title, submenus, my-teams).
+pub struct ListStyle {
+    pub panel_y:     i32,
+    pub item_h:      i32,
+    pub max_visible: usize,
+    /// true = drawn over the title image (unselected text black);
+    /// false = drawn over a dark screen (unselected text light).
+    pub on_image:    bool,
+}
+
+impl Default for ListStyle {
+    fn default() -> Self {
+        Self { panel_y: 281, item_h: 38, max_visible: 4, on_image: true }
+    }
+}
+
+/// Scroll offset that keeps `cursor` inside the visible window.
+pub fn list_scroll_for(cursor: usize, max_visible: usize) -> usize {
+    cursor.saturating_sub(max_visible - 1)
+}
+
+/// Draw a centered scrolling list menu with the unified selection highlight.
+/// Items are (label, is_danger) — danger items (e.g. LOG OUT) draw red.
+/// `header` is an optional dim line above the list (e.g. logged-in username).
+/// Caller handles input; pass `scroll` from `list_scroll_for`.
+pub fn draw_list_panel(
+    buf:    &mut WorldBuffer,
+    header: Option<&str>,
+    items:  &[(&str, bool)],
+    cursor: usize,
+    scroll: usize,
+    style:  &ListStyle,
+) {
+    let sw = SCREEN_W as i32;
+    let start_y = style.panel_y + 8;
+    if let Some(h) = header {
+        draw_str(buf, h, sw/2 - str_width(h)/2, style.panel_y - 14, Bgra::new(110, 115, 165));
+    }
+    if scroll > 0 {
+        draw_str(buf, "^", sw/2 - 8, start_y - 16, Bgra::new(180, 180, 220));
+    }
+    let visible = items.iter().enumerate().skip(scroll).take(style.max_visible);
+    let mut shown = 0i32;
+    for (i, &(item, danger)) in visible {
+        let iy = start_y + shown * style.item_h;
+        shown += 1;
+        let iw = str_width_scaled(item, 2);
+        let selected = i == cursor;
+        if selected {
+            draw_menu_selection(buf, sw/2 - 155, iy - 4, 310, 28);
+        }
+        let col = match (selected, danger) {
+            (true,  true)  => Bgra::new(255, 100, 80),
+            (true,  false) => Bgra::new(255, 225, 55),
+            (false, true)  => Bgra::new(180, 70, 60),
+            (false, false) => if style.on_image { Bgra::new(0, 0, 0) } else { Bgra::new(170, 170, 200) },
+        };
+        draw_str_shadow_scaled(buf, item, sw/2 - iw/2, iy, col, 2);
+    }
+    if scroll + style.max_visible < items.len() {
+        let arrow_y = start_y + shown * style.item_h;
+        draw_str(buf, "v", sw/2 - 8, arrow_y, Bgra::new(180, 180, 220));
+    }
+}
+
+/// Standard full-width screen header bar with a centered 2x title.
+pub fn draw_screen_header(buf: &mut WorldBuffer, title: &str) {
+    let sw = SCREEN_W as i32;
+    buf.fill_rect(0, 0, SCREEN_W, 36, Bgra::new(18, 22, 50));
+    buf.fill_rect(0, 36, SCREEN_W, 1, Bgra::new(60, 60, 120));
+    let tw = str_width_scaled(title, 2);
+    draw_str_shadow_scaled(buf, title, sw/2 - tw/2, 9, Bgra::new(255, 220, 50), 2);
+}
+
 /// Draw the pause menu overlay.
 /// Returns true if Quit was selected, false if Resume.
 /// `cursor` is 0 = Resume, 1 = Quit.
@@ -419,12 +493,12 @@ pub fn draw_pause_menu(buf: &mut WorldBuffer, cursor: u8, cam_x: i32, cam_y: u32
     let panel_x = cam_x + (SCREEN_W - panel_w) as i32 / 2;
     let panel_y = cam_y as i32 + (SCREEN_H - panel_h) as i32 / 2;
 
-    // Background + border
-    buf.fill_rect(panel_x, panel_y, panel_w, panel_h, Bgra::new(8, 10, 24));
-    buf.fill_rect(panel_x, panel_y, panel_w, 2, Bgra::new(80, 80, 140));
-    buf.fill_rect(panel_x, panel_y + panel_h as i32 - 2, panel_w, 2, Bgra::new(80, 80, 140));
-    buf.fill_rect(panel_x, panel_y, 2, panel_h, Bgra::new(80, 80, 140));
-    buf.fill_rect(panel_x + panel_w as i32 - 2, panel_y, 2, panel_h, Bgra::new(80, 80, 140));
+    // Background + border (shared menu palette)
+    buf.fill_rect(panel_x, panel_y, panel_w, panel_h, COLOR_PANEL_BG);
+    buf.fill_rect(panel_x, panel_y, panel_w, 2, COLOR_BORDER);
+    buf.fill_rect(panel_x, panel_y + panel_h as i32 - 2, panel_w, 2, COLOR_BORDER);
+    buf.fill_rect(panel_x, panel_y, 2, panel_h, COLOR_BORDER);
+    buf.fill_rect(panel_x + panel_w as i32 - 2, panel_y, 2, panel_h, COLOR_BORDER);
 
     // Title — 2x scaled to match other menus
     let title = "PAUSED";
@@ -440,13 +514,10 @@ pub fn draw_pause_menu(buf: &mut WorldBuffer, cursor: u8, cam_x: i32, cam_y: u32
         let item_y = panel_y + 46 + i as i32 * 30;
         let selected = i as u8 == cursor;
         if selected {
-            buf.fill_rect(panel_x + 10, item_y - 2, panel_w - 20, 20, Bgra::new(30, 35, 70));
+            draw_menu_selection(buf, panel_x + 10, item_y - 2, panel_w as i32 - 20, 20);
         }
-        let col = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(170, 170, 200) };
+        let col = if selected { Bgra::new(255, 225, 55) } else { Bgra::new(170, 170, 200) };
         let iw = str_width_scaled(item, 2);
-        if selected {
-            draw_str_scaled(buf, ">", panel_x + (panel_w as i32 - iw) / 2 - 22, item_y, Bgra::new(255, 180, 0), 2);
-        }
         draw_str_scaled(buf, item, panel_x + (panel_w as i32 - iw) / 2, item_y, col, 2);
     }
 }

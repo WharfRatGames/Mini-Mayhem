@@ -1,9 +1,75 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.433 (code commit 37651e6, DEPLOYED 2026-07-14 to Pi
-  server/GitHub release/Discord/Windows bundle; parity-test follow-up 7cf8a0d,
-  CI green). Both Miyoos (.110/.126) were OFFLINE at deploy — they auto-update
-  from the server on next launch.
+Current version: 0.5.4.436 (menu streamline + jackhammer drill x2; VERSION +
+  REQUIRED_VERSION bumped, deploying 2026-07-16 — see entry below for Miyoo
+  status).
+
+2026-07-16 (v0.5.4.436; VERSION + REQUIRED_VERSION bumped) — MENU STREAMLINE.
+  ---------------------------------------------------------------------------
+  - BUG FIX: the ranked leaderboard was unreachable — both the LIVE and TAT
+    submenus returned CHOICE_LEADERBOARD_CASUAL (title.rs). main.rs and the
+    server API handled ranked fine; it just could never be selected.
+  - Flattened navigation: MULTIPLAYER is now one flat scrolling submenu
+    (LIVE CASUAL / LIVE RANKED / TAT CASUAL / TAT RANKED / LEADERBOARDS /
+    STATS / MISSIONS / ACCOUNT). Sub::Live/Sub::Tat and the duplicate
+    LIVE_ITEMS/TAT_ITEMS arrays are gone; LEADERBOARDS and STATS are tiny
+    2-item pickers (Sub::Leaderboards/Sub::Stats). All existing CHOICE_*
+    constants are still returned, so main.rs dispatch is untouched.
+    Leaderboard/stats now return to the MP submenu like missions/account.
+  - Shared menu styling in renderer/hud.rs: draw_list_panel + ListStyle +
+    draw_screen_header + list_scroll_for. Adopted by the title menu, MY TEAMS
+    (was panel_y=261/item_h=34, now the title's 281/38), the logged-in ACCOUNT
+    screen, and the help-page header. Pause menu uses the shared
+    COLOR_PANEL_BG/COLOR_BORDER palette + draw_menu_selection; TAT lobby menu
+    uses the shared selection highlight. Logout is a red LOG OUT list item
+    everywhere via a shared do_logout() (the "press Y" account screen is gone).
+  - Dedupe: pre-title inline update screen replaced by show_update_screen
+    (gained title/allow_skip params; broken-TLS boot still unskippable, and a
+    failed pre-title download still lets the player proceed offline). Controls
+    text single-sourced: title.rs exports PAGE_CONTROLS/PAGE_SPECIAL_CONTROLS,
+    settings.rs imports them, and HOW TO PLAY gained the general controls page
+    it never had. Removed dead MENU_ITEMS alias (lobby.rs); renamed store gun
+    style id 14 "Revolver" -> "Six Shooter" (distinct sprite from id 8; both
+    ids kept — they're server-persisted in inventories).
+  - No GameState/InputMsg/net_sync changes; parity 24/24. Visually verified
+    under Xvfb: title, SP submenu, flat MP submenu + scrolling, LB picker.
+
+2026-07-16 (source-only, no version bump, not built/redeployed) — JACKHAMMER
+  DRILL LENGTH DOUBLED.
+  ---------------------------------------------------------------------------
+  - Jackhammer activation fuel 90 -> 180 ticks (~3s -> ~6s of drilling), so the
+    drill sinks the soldier roughly twice as far down. Single-constant change in
+    step_jackhammer's activation block (loop_runner.rs). No protocol/StateMsg
+    change (jackhammer_fuel already carries it).
+
+2026-07-16 (v0.5.4.435; VERSION + REQUIRED_VERSION bumped) — JACKHAMMER IN TEST
+  MODE.
+  ---------------------------------------------------------------------------
+  - Test mode uses a separate hardcoded weapon set (all_weapons in main.rs),
+    distinct from the normal team loadout, so the new Jackhammer wasn't showing
+    up in test mode. Added it there. This was why it "didn't show" on first
+    check. Deployed; .126 hash-verified, .110 offline (OTA next launch).
+
+2026-07-15/16 (v0.5.4.434; VERSION + REQUIRED_VERSION bumped) — NEW WEAPON:
+  JACKHAMMER.
+  ---------------------------------------------------------------------------
+  - Repurposed the dead `Drill` WeaponKind into `Jackhammer` (reuses wire ID 20,
+    no protocol churn), modeled on the plasma torch. Drills STRAIGHT DOWN (no
+    aiming): A starts, A again stops; the soldier sinks into a fresh vertical
+    shaft (step_jackhammer in loop_runner.rs), enemies in the shaft take ~1/tick
+    contact damage, barrels in the bore trigger, and it ends on A-press / open
+    air / fuel-out (90 ticks at ship, later doubled).
+  - Synced via new StateMsg.jackhammer_fuel (0 = inactive) + JackhammerState
+    { fuel_ticks }, reconstructed in apply_server_state; crater flash suppressed
+    on live clients while drilling, like the torch. Parity checklists updated
+    (net_sync.rs + tests/parity.rs) and a new weapon_sim_parity_jackhammer test
+    added — parity 24/24 across all 5 paths.
+  - Sfx::Jackhammer (assets/sfx/drill.wav, converted from the WA drill loop)
+    routed through emit_sound; dig chips via emit_fx. Turn timer + weapon menu
+    gated while drilling. Hand-drawn menu icon (T-grip + motor + chisel bit).
+  - 3 uses in the team loadout; added to the common crate tier (now 8 weapons).
+  - Deployed to Pi/GitHub/Discord/Windows; commit 7a278ce. drill.wav is
+    gitignored (assets ship via assets.zip / Pi manifest, not git).
 
 2026-07-15 (test-only, no version bump, not redeployed) — PARITY TEST FIX.
   ---------------------------------------------------------------------------

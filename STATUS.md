@@ -1,5 +1,51 @@
 # Mini Mayhem — Project Status
 
+## 2026-07-16 — v0.5.4.436: Menu streamline + jackhammer drill ×2
+
+**Menus condensed and deduped, zero functionality loss.** MULTIPLAYER is now one flat submenu
+(LIVE CASUAL / LIVE RANKED / TAT CASUAL / TAT RANKED / LEADERBOARDS / STATS / MISSIONS / ACCOUNT)
+instead of the LIVE/TAT double-dive; LEADERBOARDS and STATS are 2-item pickers. **Bug fix:** the
+ranked leaderboard was unreachable — both old submenus returned the casual choice constant.
+
+- **Shared styling:** new `draw_list_panel`/`ListStyle`/`draw_screen_header`/`list_scroll_for` in
+  `renderer/hud.rs`, adopted by the title, MY TEAMS (layout constants unified with the title's),
+  the logged-in ACCOUNT screen, help pages, pause menu (shared palette + selection highlight), and
+  the TAT lobby menu. Logout is a red LOG OUT list item everywhere via shared `do_logout()`.
+- **Dedupe:** pre-title inline update screen replaced by a parameterised `show_update_screen`
+  (`title`/`allow_skip`); controls text single-sourced in `title.rs`
+  (`PAGE_CONTROLS`/`PAGE_SPECIAL_CONTROLS`) and shared with Settings — HOW TO PLAY gained the
+  general controls page it never had. Dead `MENU_ITEMS` alias removed; store gun style 14 renamed
+  "Six Shooter" (name collided with id 8's "Revolver"; both sprites/ids kept).
+- **Jackhammer:** drill length doubled (fuel 90 → 180 ticks, ~6 s) — first build to ship it.
+- No `GameState`/`InputMsg`/`net_sync` changes; parity 24/24. `VERSION` + `REQUIRED_VERSION`
+  bumped in lockstep.
+
+## 2026-07-16 — v0.5.4.434 / .435: Jackhammer weapon
+
+**New weapon — the Jackhammer.** A straight-down drilling utility, built by repurposing the
+long-dead `Drill` `WeaponKind` (wire ID 20 reused, no protocol churn) and modeled on the plasma
+torch. Press **A** to start drilling and **A** again to stop early; the soldier sinks into a fresh
+vertical shaft (`step_jackhammer` in `loop_runner.rs`), any enemy caught in the shaft takes ~1/tick
+contact damage, barrels in the bore are triggered, and the session ends on A-press, on breaking
+through into open air, or when the fuel runs out. Straight-down only (no aiming), matching the WA
+jackhammer.
+
+- **Networking:** new `StateMsg.jackhammer_fuel` (0 = inactive) with a `JackhammerState { fuel_ticks }`
+  reconstructed in `apply_server_state`; crater flash suppressed on live clients while drilling,
+  same as the torch. Full parity checklists + a new `weapon_sim_parity_jackhammer` test (parity 24/24).
+- **FX / audio:** `Sfx::Jackhammer` (`assets/sfx/drill.wav`, converted from the WA drill loop) routed
+  through `emit_sound` so it replicates to every mode; dig chips via `emit_fx`. Turn timer and weapon
+  menu are gated while drilling.
+- **Availability:** hand-drawn menu icon; **3 uses** in the team loadout; added to the **common crate
+  tier**; and (in .435) added to the **test-mode** full weapon set — it had been missing there, which
+  is why it didn't show up in test mode initially.
+- **Tuning:** drill length later doubled — activation fuel `90 → 180` ticks (~6 s of drilling).
+
+Both version bumps were done in lockstep (`VERSION` + `REQUIRED_VERSION`). Deployed to the Pi
+server / GitHub release / Discord / Windows bundle; Miyoo `.126` hash-verified, `.110` was offline
+and will OTA-self-update on next launch. Commits `7a278ce` (.434) and `590a41b` (.435). The
+drill-length change is source-only (not yet built/redeployed).
+
 ## 2026-07-15 — parity test fix (test-only, no version bump)
 
 `explosion_damage_emits_popup` failed on CI after the .433 relief change. Seed 650's terrain

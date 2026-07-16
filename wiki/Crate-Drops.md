@@ -20,7 +20,7 @@ Each turn has a **30% chance** of dropping a crate somewhere on the map. Crates 
 
 | Rarity | Weapons | Chance each |
 |---|---|---|
-| **Common** | Mine, Shotgun, TNT, Grapple, Baseball Bat, Plasma Torch | ~10% |
+| **Common** | Mine, Shotgun, TNT, Grapple, Baseball Bat, Plasma Torch, Clump Bomb, Jackhammer | ~7.5% |
 | **Uncommon** | Blasthive, Meteor Bomb, Sacred Ordnance, Air Strike | ~8% |
 | **Rare** | Black Hole, Revolver | ~3% |
 | **Ultra Rare** | Hand of Jerry | ~2% |
@@ -31,12 +31,14 @@ Each turn has a **30% chance** of dropping a crate somewhere on the map. Crates 
 
 | Weapon | Rate |
 |---|---|
-| Mine | 7.5% |
-| Shotgun | 7.5% |
-| TNT | 7.5% |
-| Grapple | 7.5% |
-| Baseball Bat | 7.5% |
-| Plasma Torch | 7.5% |
+| Mine | 5.6% |
+| Shotgun | 5.6% |
+| TNT | 5.6% |
+| Grapple | 5.6% |
+| Baseball Bat | 5.6% |
+| Plasma Torch | 5.6% |
+| Clump Bomb | 5.6% |
+| Jackhammer | 5.6% |
 | Blasthive | 6.0% |
 | Meteor Bomb | 6.0% |
 | Sacred Ordnance | 6.0% |

@@ -35,6 +35,9 @@ Melee swing launches the target soldier with massive knockback. No blast damage 
 ### Plasma Torch × 3
 Burns a tunnel through terrain in the aimed direction. Does not damage soldiers directly. Useful for repositioning or creating kill pits. The turn timer pauses while the torch is running, so you won't lose your turn mid-tunnel.
 
+### Jackhammer × 3
+Drills **straight down** through the ground — no aiming or charge. Press **A** to start drilling and **A** again to stop early. The soldier sinks into a fresh vertical shaft, and any enemy caught in the shaft takes steady contact damage. Runs for a fixed duration (about 6 seconds) or until it breaks through into open air. The turn timer pauses while it's running, so you won't lose your turn mid-drill. Also turns up in common weapon crates.
+
 ### Jumpbot × 1
 Placed at the soldier's feet like TNT — no aim or charge. It then walks off on its own, hopping forward in little leaps, vaulting obstacles it can't step over and reversing when it hits a wall. Its fuse runs on a fixed real-time countdown regardless of whose turn it is; it explodes when the fuse expires, when it touches water, or when the placing team presses the detonate button during their turn. Big blast (75 damage, 55px radius). It moves with a distinctive hopping gait.
 
@@ -116,4 +119,5 @@ radius. Values below are tuned for Mini Mayhem's scale and balance.
 | Blasthive | 5 / bee sting (×6) | 15 px | homing bees |
 | Baseball Bat | 30 + big knockback | — | melee, no blast |
 | Plasma Torch | 0 (digs terrain) | — | pauses turn timer |
+| Jackhammer | ~1 / tick contact (digs terrain) | — | drills straight down; pauses turn timer |
 | Ninja Rope | 0 | — | utility |

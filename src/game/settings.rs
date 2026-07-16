@@ -6,41 +6,9 @@ use crate::world::{SCREEN_W, SCREEN_H};
 
 const SETTINGS_PATH: &str = "/mnt/SDCARD/.arty_settings";
 
-const CONTROLS_PAGES: &[(&str, &[&str])] = &[
-    ("CONTROLS", &[
-        "D-PAD LEFT/RIGHT   Move",
-        "D-PAD UP/DOWN      Aim angle",
-        "HOLD A + RELEASE   Charge and fire",
-        "B                  Jump forward",
-        "Y                  Backflip",
-        "SELECT             Weapon menu",
-        "START              Pause / menu",
-        "",
-        "R1 + D-PAD         Pan camera (snaps back)",
-        "L1 + D-PAD         Pan camera (stays put)",
-        "",
-        "WEAPON MENU",
-        "  D-PAD  Browse    A  Confirm    B  Cancel",
-        "  L1 / R1  Adjust grenade fuse",
-    ]),
-    ("SPECIAL CONTROLS", &[
-        "GRAPPLE HOOK",
-        "  A          Fire / Release / Re-rope",
-        "  UP / DOWN  Shorten / Lengthen rope",
-        "  LEFT / RIGHT  Swing while attached",
-        "",
-        "PLASMA TORCH",
-        "  HOLD A       Burn  (release to stop)",
-        "  UP / DOWN    Aim angle",
-        "",
-        "AIR STRIKE",
-        "  UP / DOWN    Move cursor",
-        "  A            Call strike",
-        "",
-        "REVOLVER / SHOTGUN",
-        "  A            Fire (up to 6 / 2 shots)",
-    ]),
-];
+// Controls reference text is shared with the title's HOW TO PLAY pager —
+// single source in title.rs.
+use super::title::CONTROLS_PAGES;
 
 #[derive(Clone)]
 pub struct Settings {
@@ -177,7 +145,8 @@ impl SettingsScreen {
     fn draw_controls(&self, buf: &mut WorldBuffer, page: usize) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
-        let (title, lines) = CONTROLS_PAGES[page];
+        let page_ref = &CONTROLS_PAGES[page];
+        let (title, lines) = (page_ref.title, page_ref.lines);
 
         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
 

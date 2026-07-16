@@ -25,14 +25,62 @@ pub const CHOICE_ACCOUNT:            u8 = 18;
 
 const ITEMS:      &[&str] = &["SINGLEPLAYER", "MULTIPLAYER", "MY TEAMS", "SETTINGS", "HOW TO PLAY", "QUIT"];
 const SP_ITEMS:   &[&str] = &["VS CPU", "HOTSEAT", "TEST"];
-const MP_ITEMS:   &[&str] = &["LIVE GAME", "TAKE A TURN", "MISSIONS", "ACCOUNT"];
-const LIVE_ITEMS: &[&str] = &["CASUAL", "RANKED", "LEADERBOARD", "STATS"];
-const TAT_ITEMS:  &[&str] = &["CASUAL", "RANKED", "LEADERBOARD", "STATS"];
+const MP_ITEMS:   &[&str] = &["LIVE CASUAL", "LIVE RANKED", "TAT CASUAL", "TAT RANKED",
+                              "LEADERBOARDS", "STATS", "MISSIONS", "ACCOUNT"];
+const LB_ITEMS:    &[&str] = &["CASUAL", "RANKED"];
+const STATS_ITEMS: &[&str] = &["LIVE", "TAT"];
 
 // Max items visible in the panel before scrolling kicks in.
 const MAX_VISIBLE: usize = 4;
 
+/// Single source for controls reference text — shown both in the title's
+/// HOW TO PLAY pager and in SETTINGS → CONTROLS.
+pub const PAGE_CONTROLS: HelpPage = HelpPage {
+    title: "CONTROLS",
+    lines: &[
+        "D-PAD LEFT/RIGHT   Move",
+        "D-PAD UP/DOWN      Aim angle",
+        "HOLD A + RELEASE   Charge and fire",
+        "B                  Jump forward",
+        "Y                  Backflip",
+        "SELECT             Weapon menu",
+        "START              Pause / menu",
+        "",
+        "R1 + D-PAD         Pan camera (snaps back)",
+        "L1 + D-PAD         Pan camera (stays put)",
+        "",
+        "WEAPON MENU",
+        "  D-PAD  Browse    A  Confirm    B  Cancel",
+        "  L1 / R1  Adjust grenade fuse",
+    ],
+};
+
+pub const PAGE_SPECIAL_CONTROLS: HelpPage = HelpPage {
+    title: "SPECIAL CONTROLS",
+    lines: &[
+        "GRAPPLE HOOK",
+        "  A          Fire / Release / Re-rope",
+        "  UP / DOWN  Shorten / Lengthen rope",
+        "  LEFT / RIGHT  Swing while attached",
+        "",
+        "PLASMA TORCH",
+        "  HOLD A       Burn  (release to stop)",
+        "  UP / DOWN    Aim angle",
+        "",
+        "AIR STRIKE",
+        "  UP / DOWN    Move cursor",
+        "  A            Call strike",
+        "",
+        "REVOLVER / SHOTGUN",
+        "  A            Fire (up to 6 / 2 shots)",
+    ],
+};
+
+/// Pages shown by SETTINGS → CONTROLS.
+pub const CONTROLS_PAGES: &[HelpPage] = &[PAGE_CONTROLS, PAGE_SPECIAL_CONTROLS];
+
 const HOW_TO_PAGES: &[HelpPage] = &[
+    PAGE_CONTROLS,
     HelpPage {
         title: "WEAPON CONTROLS",
         lines: &[
@@ -300,16 +348,16 @@ const HOW_TO_PAGES: &[HelpPage] = &[
 ];
 
 fn scroll_for(cursor: usize, _n: usize) -> usize {
-    cursor.saturating_sub(MAX_VISIBLE - 1)
+    crate::renderer::hud::list_scroll_for(cursor, MAX_VISIBLE)
 }
 
-struct HelpPage {
-    title: &'static str,
-    lines: &'static [&'static str],
+pub struct HelpPage {
+    pub title: &'static str,
+    pub lines: &'static [&'static str],
 }
 
 #[derive(PartialEq)]
-enum Sub { None, SP, MP, Live, Tat, HowToPlay }
+enum Sub { None, SP, MP, Leaderboards, Stats, HowToPlay }
 
 pub struct TitleScreen {
     cursor:        usize,
@@ -364,41 +412,39 @@ impl TitleScreen {
                 if input.just_pressed(Button::B)    { self.sub = Sub::None; self.scroll_offset = 0; }
                 if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
                     match self.sub_cursor {
-                        0 => { self.sub = Sub::Live; self.sub_cursor = 0; self.scroll_offset = 0; }
-                        1 => { self.sub = Sub::Tat;  self.sub_cursor = 0; self.scroll_offset = 0; }
-                        2 => return Some(CHOICE_MISSIONS),
-                        3 => return Some(CHOICE_ACCOUNT),
+                        0 => return Some(CHOICE_LIVE),
+                        1 => return Some(CHOICE_LIVE_RANKED),
+                        2 => return Some(CHOICE_TAKE_A_TURN),
+                        3 => return Some(CHOICE_TAT_RANKED),
+                        4 => { self.sub = Sub::Leaderboards; self.sub_cursor = 0; self.scroll_offset = 0; }
+                        5 => { self.sub = Sub::Stats;        self.sub_cursor = 0; self.scroll_offset = 0; }
+                        6 => return Some(CHOICE_MISSIONS),
+                        7 => return Some(CHOICE_ACCOUNT),
                         _ => { self.sub = Sub::None; self.scroll_offset = 0; }
                     }
                 }
             }
-            Sub::Live => {
-                let n = LIVE_ITEMS.len();
+            Sub::Leaderboards => {
+                let n = LB_ITEMS.len();
                 if input.just_pressed(Button::Up)   { self.nav_up(n); }
                 if input.just_pressed(Button::Down) { self.nav_down(n); }
-                if input.just_pressed(Button::B)    { self.sub = Sub::MP; self.sub_cursor = 0; self.scroll_offset = 0; }
+                if input.just_pressed(Button::B)    { self.sub = Sub::MP; self.sub_cursor = 4; self.scroll_offset = scroll_for(4, MP_ITEMS.len()); }
                 if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
                     match self.sub_cursor {
-                        0 => return Some(CHOICE_LIVE),
-                        1 => return Some(CHOICE_LIVE_RANKED),
-                        2 => return Some(CHOICE_LEADERBOARD_CASUAL),
-                        3 => return Some(CHOICE_LIVE_STATS),
-                        _ => { self.sub = Sub::MP; self.sub_cursor = 0; self.scroll_offset = 0; }
+                        0 => return Some(CHOICE_LEADERBOARD_CASUAL),
+                        _ => return Some(CHOICE_LEADERBOARD_RANKED),
                     }
                 }
             }
-            Sub::Tat => {
-                let n = TAT_ITEMS.len();
+            Sub::Stats => {
+                let n = STATS_ITEMS.len();
                 if input.just_pressed(Button::Up)   { self.nav_up(n); }
                 if input.just_pressed(Button::Down) { self.nav_down(n); }
-                if input.just_pressed(Button::B)    { self.sub = Sub::MP; self.sub_cursor = 0; self.scroll_offset = 0; }
+                if input.just_pressed(Button::B)    { self.sub = Sub::MP; self.sub_cursor = 5; self.scroll_offset = scroll_for(5, MP_ITEMS.len()); }
                 if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
                     match self.sub_cursor {
-                        0 => return Some(CHOICE_TAKE_A_TURN),
-                        1 => return Some(CHOICE_TAT_RANKED),
-                        2 => return Some(CHOICE_LEADERBOARD_CASUAL),
-                        3 => return Some(CHOICE_TAT_STATS),
-                        _ => { self.sub = Sub::MP; self.sub_cursor = 0; self.scroll_offset = 0; }
+                        0 => return Some(CHOICE_LIVE_STATS),
+                        _ => return Some(CHOICE_TAT_STATS),
                     }
                 }
             }
@@ -457,43 +503,18 @@ impl TitleScreen {
 
         // Which items and cursor to show
         let (items, cursor) = match self.sub {
-            Sub::MP         => (MP_ITEMS   as &[&str], self.sub_cursor),
-            Sub::SP         => (SP_ITEMS   as &[&str], self.sub_cursor),
-            Sub::Live       => (LIVE_ITEMS as &[&str], self.sub_cursor),
-            Sub::Tat        => (TAT_ITEMS  as &[&str], self.sub_cursor),
-            _               => (ITEMS      as &[&str], self.cursor),
+            Sub::MP           => (MP_ITEMS    as &[&str], self.sub_cursor),
+            Sub::SP           => (SP_ITEMS    as &[&str], self.sub_cursor),
+            Sub::Leaderboards => (LB_ITEMS    as &[&str], self.sub_cursor),
+            Sub::Stats        => (STATS_ITEMS as &[&str], self.sub_cursor),
+            _                 => (ITEMS       as &[&str], self.cursor),
         };
 
-        let item_h = 38i32;
-        let n_items  = items.len() as i32;
-        let label_offset = 8;
-        let panel_h  = n_items * item_h + label_offset + 30;
-        let panel_y  = 281i32;
-
-
         // Menu items overlaid directly on image — scroll window keeps cursor visible
-        let scroll = self.scroll_offset;
-        let visible: Vec<(usize, &&str)> = items.iter().enumerate()
-            .skip(scroll).take(MAX_VISIBLE).collect();
-        let start_y = panel_y + label_offset;
-        // Scroll arrows
-        if scroll > 0 {
-            draw_str_scaled(buf, "^", sw/2 - 8, start_y - 16, Bgra::new(180, 180, 220), 1);
-        }
-        if scroll + MAX_VISIBLE < items.len() {
-            let arrow_y = start_y + visible.len() as i32 * item_h;
-            draw_str_scaled(buf, "v", sw/2 - 8, arrow_y, Bgra::new(180, 180, 220), 1);
-        }
-        for (slot, (i, &item)) in visible.iter().enumerate() {
-            let iy = start_y + slot as i32 * item_h;
-            let iw = str_width_scaled(item, 2);
-            let selected = *i == cursor;
-            if selected {
-                crate::renderer::hud::draw_menu_selection(buf, sw/2 - 155, iy - 4, 310, 28);
-            }
-            let col = if selected { Bgra::new(255, 225, 55) } else { Bgra::new(0, 0, 0) };
-            draw_str_shadow_scaled(buf, item, sw/2 - iw/2, iy, col, 2);
-        }
+        let list: Vec<(&str, bool)> = items.iter().map(|&s| (s, false)).collect();
+        crate::renderer::hud::draw_list_panel(
+            buf, None, &list, cursor, self.scroll_offset,
+            &crate::renderer::hud::ListStyle::default());
 
         // Hint + version
         if self.sub != Sub::None && self.sub != Sub::HowToPlay {
@@ -520,13 +541,8 @@ impl TitleScreen {
         // Background
         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(6, 8, 20));
 
-        // Header bar
-        buf.fill_rect(0, 0, SCREEN_W, 36, Bgra::new(18, 22, 50));
-        buf.fill_rect(0, 36, SCREEN_W, 1, Bgra::new(60, 60, 120));
-
-        // Page title
-        let tw = str_width_scaled(page.title, 2);
-        draw_str_scaled(buf, page.title, sw/2 - tw/2, 9, Bgra::new(255, 220, 50), 2);
+        // Header bar + page title
+        crate::renderer::hud::draw_screen_header(buf, page.title);
 
         // Page indicator dots
         let dot_total = n_pages as i32 * 10;

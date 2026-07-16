@@ -72,7 +72,7 @@ pub static CATALOG: &[(&str, u8, &str, u32)] = &[
     ("gun_style", 11, "SMG",           350),
     ("gun_style", 12, "Flintlock",    500),
     ("gun_style", 13, "Crossbow",     600),
-    ("gun_style", 14, "Revolver",    400),
+    ("gun_style", 14, "Six Shooter", 400),
     ("gun_style", 15, "Laser Pistol",500),
     ("gun_style", 16, "Gold Musket", 900),
     ("gun_style", 17, "Fusion Rifle",      650),

@@ -81,7 +81,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 *The actual game*
 
 - [x] Turn-based system with timer and retreat phase
-- [x] Bazooka, Grenade, Shotgun, MAC-10, Pistol, TNT, Landmine, Ninja Rope, Baseball Bat, Plasma Torch, Clump Bomb, Homing Missile, Molotov (loadout)
+- [x] Bazooka, Grenade, Shotgun, MAC-10, Pistol, TNT, Landmine, Ninja Rope, Baseball Bat, Plasma Torch, Jackhammer, Clump Bomb, Homing Missile, Molotov (loadout)
 - [x] Blasthive, Meteor Bomb, Revolver, Black Hole Bomb, Air Strike, Garcia, Hand of Jerry, Sacred Ordnance (crate-only)
 - [x] Molotov Cocktail — 48 fire patches, ~2.5 min burn, pooling fire physics; fire overhaul (v0.5.4.425): animated flame sprites, no crater, per-soldier bounded burn damage, and burning soldiers hop/slide out of the flames (barrier-aware, pass through each other) instead of getting stuck and instakilled
 - [x] Fire terrain-eating matched to real WA — a reference clip (`assets/barrel.mp4`) settled it: only exploding **barrel** fire eats terrain; molotov/petrol and crate fire scorch but leave terrain intact. Gated via `FirePatch.carves` (true only for barrels) (v0.5.4.426), and the carve widened to match the flame sprite (`BURN_CARVE_RADIUS` 1.5→9.0) (v0.5.4.427). This corrected the earlier premise that all fire carves — the long RE effort to "calibrate the carve rate" was chasing a non-problem
@@ -147,6 +147,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Scenery hitboxes removed entirely — following .416's footprint-tightening pass, decorative props (rocks/bushes/crates/crystals/etc.) no longer collide at all; soldiers and projectiles pass straight through (v0.5.4.417)
 - [x] Grapple wall-stick fix — swinging into a wall used to hard-detach the rope and force-land the soldier at the last clear point (read as getting stuck); now the soldier stops at the last clear point with velocity zeroed but stays attached, so gravity/tension pulls them free next tick instead of forcing a landing (v0.5.4.417)
 - [x] Dead gray-barrel scenery prop removed — `draw_barrel` was part of an unreachable 4th "Tropical" scenery archetype never wired into the live Theme enum (Underground/Pastoral/Rugged only); inert dead code, not something ever seen in-game (v0.5.4.417)
+- [x] **Jackhammer** — new straight-down drilling utility (repurposed the dead `Drill` WeaponKind), modeled on the plasma torch. Press A to start drilling and A again to stop; the soldier sinks into a fresh vertical shaft while enemies caught in it take contact damage, and it ends on A-press / breaking into open air / fuel-out. Synced via `StateMsg.jackhammer_fuel` (crater flash suppressed on live clients like the torch); `Sfx::Jackhammer` (`drill.wav`) via `emit_sound`, dig FX via `emit_fx`; hand-drawn menu icon; turn timer + weapon menu gated while drilling. 3 uses in the loadout, added to the common crate tier, and to the test-mode full set (v0.5.4.434/.435). Drill length later doubled (fuel 90→180 ticks, ~6s)
 
 ---
 

@@ -1733,7 +1733,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
             if !game.teams[ti].consume_weapon() { return; }
             game.teams[ti].prune_empty_weapons();
             game.jackhammer = Some(crate::game::state::JackhammerState {
-                fuel_ticks: 90, // 3 s × 30 Hz
+                fuel_ticks: 180, // 6 s × 30 Hz — doubled drill length
             });
             // Drilling sound is driven by audio::update_jackhammer() in render() from
             // the live jackhammer state, mirroring the torch — no one-shot emit here.
