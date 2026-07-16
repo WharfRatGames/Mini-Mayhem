@@ -144,6 +144,10 @@ pub struct StateMsg {
     /// Remaining fuel ticks for the plasma torch (0 when inactive).
     #[serde(default)]
     pub torch_fuel:         u32,
+    /// Remaining fuel ticks for the jackhammer (0 when inactive). Lets the live
+    /// client reconstruct the drilling session for animation/SFX/FX suppression.
+    #[serde(default)]
+    pub jackhammer_fuel:    u32,
     /// Some(seconds_remaining) while the match is paused waiting for the
     /// opponent to reconnect; None during normal play.
     pub paused_opponent:    Option<u32>,

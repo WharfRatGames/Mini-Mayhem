@@ -22,7 +22,7 @@ pub enum WeaponKind {
     BaseballBat,
     FreezeGrenade,
     Earthquake,
-    Drill,
+    Jackhammer,
     HomingMissile,
     MineLayer,
     ConcreteDonkey,
@@ -59,7 +59,7 @@ impl WeaponKind {
             Self::BaseballBat    => 0.0,    // knockback only, no blast
             Self::FreezeGrenade  => 35.0,
             Self::Earthquake     => 0.0,    // world shake, no crater
-            Self::Drill          => 10.0,
+            Self::Jackhammer          => 10.0,
             Self::HomingMissile  => 59.0,
             Self::MineLayer      => 25.0,
             Self::ConcreteDonkey => 40.0,
@@ -94,7 +94,7 @@ impl WeaponKind {
             Self::BaseballBat    => 30,
             Self::FreezeGrenade  => 10,
             Self::Earthquake     => 20,
-            Self::Drill          => 15,
+            Self::Jackhammer          => 15,
             Self::HomingMissile  => 50,
             Self::MineLayer      => 50,
             Self::ConcreteDonkey => 100,
@@ -186,6 +186,7 @@ impl WeaponKind {
             Self::NinjaRope       => 13,
             Self::BaseballBat     => 14,
             Self::PlasmaTorch     => 15,
+            Self::Jackhammer      => 18,  // common — digging utility, next to torch
             Self::Pistol          => 2,   // common — shows right after Bazooka/Grenade
             Self::Uzi             => 16,
             Self::MolotovCocktail => 17,
@@ -225,6 +226,7 @@ impl WeaponKind {
             Self::Blasthive        => "BLASTHIVE",
             Self::BlackHoleBomb   => "BLACK HOLE",
             Self::PlasmaTorch     => "PLASMA TORCH",
+            Self::Jackhammer      => "JACKHAMMER",
             Self::Garcia          => "HAND OF JERRY",
             Self::Uzi             => "MAC-10",
             Self::MolotovCocktail => "MOLOTOV",
@@ -262,7 +264,7 @@ impl WeaponKind {
             Self::Minigun          => 17,
             Self::FreezeGrenade    => 18,
             Self::Earthquake       => 19,
-            Self::Drill            => 20,
+            Self::Jackhammer       => 20,
             Self::HomingMissile    => 21,
             Self::MineLayer        => 22,
             Self::ConcreteDonkey   => 23,
@@ -295,7 +297,7 @@ impl WeaponKind {
             17 => Self::Minigun,
             18 => Self::FreezeGrenade,
             19 => Self::Earthquake,
-            20 => Self::Drill,
+            20 => Self::Jackhammer,
             21 => Self::HomingMissile,
             22 => Self::MineLayer,
             23 => Self::ConcreteDonkey,
@@ -321,7 +323,7 @@ impl WeaponKind {
             WeaponKind::NinjaRope | WeaponKind::Blasthive | WeaponKind::BlackHoleBomb |
             WeaponKind::PlasmaTorch | WeaponKind::Garcia | WeaponKind::AirStrike |
             WeaponKind::DeathExplosion | WeaponKind::HolyHandGrenade | WeaponKind::Minigun |
-            WeaponKind::FreezeGrenade | WeaponKind::Earthquake | WeaponKind::Drill |
+            WeaponKind::FreezeGrenade | WeaponKind::Earthquake | WeaponKind::Jackhammer |
             WeaponKind::HomingMissile | WeaponKind::MineLayer | WeaponKind::ConcreteDonkey |
             WeaponKind::SuperSheep | WeaponKind::Uzi |
             WeaponKind::MolotovCocktail | WeaponKind::Pistol | WeaponKind::Jumpbot => k.to_net_u8()
@@ -686,7 +688,7 @@ mod tests {
             BananaBomb, BaseballBat, Revolver, NinjaRope,
             Blasthive, BlackHoleBomb, PlasmaTorch, Garcia, AirStrike,
             DeathExplosion, HolyHandGrenade, Minigun, FreezeGrenade,
-            Earthquake, Drill, HomingMissile, MineLayer, ConcreteDonkey, SuperSheep, Uzi,
+            Earthquake, Jackhammer, HomingMissile, MineLayer, ConcreteDonkey, SuperSheep, Uzi,
             MolotovCocktail,
         ];
         for kind in all {

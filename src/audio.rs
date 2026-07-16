@@ -54,6 +54,7 @@ pub fn play_mine_arm()          { _play("arm_beep.wav"); }
 pub fn play_barrel_explosion()  { _play_once("barrell.wav"); }
 pub fn play_revolver()          { _play_revolver(); }
 pub fn play_plasma_torch()      { _play("torch.wav"); }
+pub fn play_jackhammer()        { _play("drill.wav"); }
 pub fn play_garcia()            { _play_once("garcia.wav"); }
 pub fn play_smash()             { _play_once("smash.wav"); }
 pub fn play_shotgun_fire()      { _play("shotgun.wav"); }
@@ -99,6 +100,7 @@ pub enum Sfx {
     Uzi             = 19,
     Pistol          = 20,
     Jumpbot           = 21,
+    Jackhammer      = 22,
 }
 
 impl Sfx {
@@ -117,6 +119,7 @@ impl Sfx {
             19 => Sfx::Uzi,
             20 => Sfx::Pistol,
             21 => Sfx::Jumpbot,
+            22 => Sfx::Jackhammer,
             _ => return None,
         })
     }
@@ -133,7 +136,7 @@ impl Sfx {
             Sfx::Revolver | Sfx::Shotgun | Sfx::Bat | Sfx::CrateDrop |
             Sfx::PlasmaTorch | Sfx::Garcia | Sfx::Smash | Sfx::Death |
             Sfx::DeathWater | Sfx::HolyHandGrenade | Sfx::Minigun | Sfx::Uzi |
-            Sfx::Pistol | Sfx::Jumpbot => {}
+            Sfx::Pistol | Sfx::Jumpbot | Sfx::Jackhammer => {}
         }
     }
 }
@@ -164,6 +167,7 @@ pub fn play(s: Sfx) {
         Sfx::Uzi             => play_uzi(),
         Sfx::Pistol          => play_pistol(),
         Sfx::Jumpbot           => play_explosion(),
+        Sfx::Jackhammer      => play_jackhammer(),
     }
 }
 
@@ -194,6 +198,7 @@ mod imp {
     static WATER:     OnceLock<Vec<i16>> = OnceLock::new();
     static HUM:       OnceLock<Vec<i16>> = OnceLock::new();
     static TORCH:     OnceLock<Vec<i16>> = OnceLock::new();
+    static DRILL:     OnceLock<Vec<i16>> = OnceLock::new();
     static GARCIA:    OnceLock<Vec<i16>> = OnceLock::new();
     static SMASH:       OnceLock<Vec<i16>> = OnceLock::new();
     static HALLELUJAH:  OnceLock<Vec<i16>> = OnceLock::new();
@@ -362,6 +367,7 @@ mod imp {
         try_load(&WATER,     &dir, "water.wav");
         try_load(&HUM,       &dir, "hum.wav");
         try_load(&TORCH,     &dir, "torch.wav");
+        try_load(&DRILL,     &dir, "drill.wav");
         try_load(&GARCIA,    &dir, "garcia.wav");
         try_load(&SMASH,       &dir, "smash.wav");
         try_load(&HALLELUJAH,  &dir, "hallelujah.wav");
@@ -602,6 +608,7 @@ mod imp {
             "water.wav"             => WATER.get().cloned(),
             "hum.wav"               => HUM.get().cloned(),
             "torch.wav"             => TORCH.get().cloned(),
+            "drill.wav"             => DRILL.get().cloned(),
             "garcia.wav"            => GARCIA.get().cloned(),
             "smash.wav"             => SMASH.get().cloned(),
             "hallelujah.wav"        => HALLELUJAH.get().cloned(),
@@ -728,6 +735,7 @@ mod imp_desktop {
         let files = &[
             "bazooka_explosion.wav","grenade.wav","meteor.wav","mine.wav","arm_beep.wav",
             "barrell.wav","tnt.wav","shotgun.wav","bat.wav","hum.wav","torch.wav",
+            "drill.wav",
             "garcia.wav","smash.wav","hallelujah.wav","minigun.wav","mac10.wav",
             "revolver_shot.wav","wet.wav","water.wav","pistol.wav",
         ];

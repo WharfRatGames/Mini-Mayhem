@@ -152,6 +152,8 @@ struct SyncedSnapshot {
     // plasma torch (0=inactive, 1-3=dir, fuel_ticks)
     torch_dir: u8,
     torch_fuel: u32,
+    // jackhammer (0=inactive, else fuel_ticks)
+    jackhammer_fuel: u32,
     // cosmetic state (server-authoritative)
     graves: Vec<GraveSnap>,
     blood_splats: Vec<BloodSplatSnap>,
@@ -166,6 +168,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
     use arty::game::state::{
         GameState, GameResult, MineState, CrateKind, TorchDir,
         AirstrikeState, GarciaState, JumpbotState, HomingMissileState, PlasmaTorchState,
+        JackhammerState,
     };
     use arty::game::soldier::SoldierState;
     use arty::physics::projectile::FuseState;
@@ -174,7 +177,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         // ── Included in snapshot (all must be round-tripped by apply_server_state) ──
         teams, turn, projectiles, crates, mines, barrels,
         fire_patches, black_holes, wind, aim, result, crater_log,
-        graves, rope, messages, blood_splats, plasma_torch,
+        graves, rope, messages, blood_splats, plasma_torch, jackhammer,
         garcia, jumpbot, airstrike, homing_missile,
         // ── Synced to wire but managed locally by the live client, not from server ──
         tick:                _, // game.tick increments locally on client; StateMsg.tick used for dedup
@@ -427,6 +430,12 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         (d, *fuel_ticks)
     }).unwrap_or((0, 0));
 
+    // ── jackhammer ──────────────────────────────────────────────────────────────
+    let jackhammer_fuel = jackhammer.as_ref().map(|j| {
+        let JackhammerState { fuel_ticks } = j;
+        *fuel_ticks
+    }).unwrap_or(0);
+
     // ── graves ────────────────────────────────────────────────────────────────
     let graves = graves.iter().map(|g| {
         let arty::game::state::Grave {
@@ -456,7 +465,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         teams, turn_team: turn.current_team, turn_number: turn.turn_number, wind: wind.value(),
         projectiles, crates, mines, barrels, black_holes, fire_patches,
         crater_log: crater_log.clone(), aim_power, result, rope, garcia, jumpbot, airstrike,
-        homing_missile, torch_dir, torch_fuel, graves, blood_splats, messages,
+        homing_missile, torch_dir, torch_fuel, jackhammer_fuel, graves, blood_splats, messages,
     }
 }
 
@@ -1070,6 +1079,20 @@ fn weapon_sim_parity_homing_missile() {
         (UP_BITS, 10),   // move cursor up
         (A_BITS, 1),     // confirm target
         (0, 40),         // let missile fly
+    ]);
+}
+
+/// Jackhammer: A activates, then it drills straight down for its fuel duration,
+/// sinking the soldier and carving a shaft. Covers the drilling session in all paths.
+#[test]
+fn weapon_sim_parity_jackhammer() {
+    use arty::physics::projectile::WeaponKind;
+    assert_all_paths_in_sync(46, |g| {
+        g.teams[0].weapons = vec![(WeaponKind::Jackhammer, Some(3))];
+        g.teams[0].selected_weapon = 0;
+    }, &[
+        (A_BITS, 1),   // activate the jackhammer
+        (0, 60),       // drill down for a couple of seconds
     ]);
 }
 

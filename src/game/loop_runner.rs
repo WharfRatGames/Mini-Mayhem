@@ -214,7 +214,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
     tick_fire_grace(game); // weapon-confirm suppression — one source
     // Timer pauses while the player is charging a power shot (A held) or torching.
     // It still ticks while the weapon menu is open so pressure stays on.
-    if game.aim.power <= 0.0 && game.plasma_torch.is_none() {
+    if game.aim.power <= 0.0 && game.plasma_torch.is_none() && game.jackhammer.is_none() {
         game.turn.tick();
     }
 
@@ -373,6 +373,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             game.rope_retreat_ticks  = 0;
             game.tnt_placed          = false;
             game.plasma_torch        = None;
+            game.jackhammer          = None;
             game.garcia              = None;
             game.airstrike           = None;
             game.homing_missile      = None;
@@ -703,13 +704,16 @@ fn process_acting_sim(game: &mut GameState, input: &InputState, muzzle_override:
     let in_pistol    = game.pistol_shots_left > 0;
     let in_rope      = game.rope_session;
     let in_torch     = game.plasma_torch.is_some();
+    let in_jackhammer     = game.jackhammer.is_some();
     let in_garcia         = game.garcia.is_some();
     let in_airstrike      = game.airstrike.is_some();
     let in_homing_missile = game.homing_missile.as_ref().map_or(false, |hm| !hm.confirmed);
-    if !has_fired || in_revolver || in_minigun || in_uzi || in_pistol || in_rope || in_torch || in_garcia || in_airstrike || in_homing_missile {
+    if !has_fired || in_revolver || in_minigun || in_uzi || in_pistol || in_rope || in_torch || in_jackhammer || in_garcia || in_airstrike || in_homing_missile {
         if in_torch {
             process_fire(game, input, muzzle_override); // direction changes only while torching
             step_plasma_torch(game);
+        } else if in_jackhammer {
+            step_jackhammer(game, input);
         } else if in_garcia {
             step_garcia(game, input);
         } else if in_airstrike {
@@ -1076,7 +1080,8 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
     use crate::game::turn::TurnPhase;
     let acting_unfired = matches!(game.turn.phase, TurnPhase::Acting)
         && !game.active_team_ref().active_soldier().has_fired
-        && game.plasma_torch.is_none(); // menu disabled while torch is burning
+        && game.plasma_torch.is_none()  // menu disabled while torch is burning
+        && game.jackhammer.is_none();   // ...or while the jackhammer is drilling
 
     if acting_unfired {
         let ti = game.active_team();
@@ -1720,6 +1725,27 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
+    // Jackhammer: activate on A press; drills straight down each tick via step_jackhammer.
+    if weapon == WeaponKind::Jackhammer {
+        if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            if !game.teams[ti].consume_weapon() { return; }
+            game.teams[ti].prune_empty_weapons();
+            game.jackhammer = Some(crate::game::state::JackhammerState {
+                fuel_ticks: 90, // 3 s × 30 Hz
+            });
+            // Drilling sound is driven by audio::update_jackhammer() in render() from
+            // the live jackhammer state, mirroring the torch — no one-shot emit here.
+            // Do NOT call on_fired() here (same reasoning as the torch): step_jackhammer
+            // runs only from the Acting match arm, so on_fired() at deploy time would
+            // flip to Watching and stop the drill before it carves. on_fired() is called
+            // in step_jackhammer once the fuel is exhausted.
+            game.teams[ti].soldiers[si].has_fired = true;
+        }
+        return;
+    }
+
     // Garcia: auto-start targeting the moment the weapon is selected; A confirms.
     if weapon == WeaponKind::Garcia {
         if game.garcia.is_none() {
@@ -1979,6 +2005,116 @@ fn step_plasma_torch(game: &mut GameState) {
         game.turn.on_fired();
     } else {
         game.plasma_torch.as_mut().unwrap().fuel_ticks -= 1;
+    }
+}
+
+/// Jackhammer: drills straight down through terrain, sinking the soldier into a
+/// vertical shaft. Straight-down only (no aiming) — matching the WA jackhammer.
+/// Press A again to stop early; otherwise runs until fuel is exhausted.
+fn step_jackhammer(game: &mut GameState, input: &InputState) {
+    use crate::game::soldier::SoldierState;
+
+    const DRILL_SPEED:  f32 = 1.6;  // px/tick downward
+    const DRILL_RADIUS: f32 = 12.0; // bore radius; ~24px shaft
+    const TIP_DIST:     f32 = 18.0; // px below foot where carving leads
+
+    let ti = game.active_team();
+    let si = game.teams[ti].active;
+    if !game.teams[ti].soldiers[si].is_alive() {
+        game.jackhammer = None;
+        return;
+    }
+
+    let fuel = game.jackhammer.as_ref().map(|j| j.fuel_ticks).unwrap_or(0);
+
+    // Press A again → stop drilling and end the turn.
+    let stop = input.just_pressed(Button::A) && game.server_fire_grace == 0;
+
+    let sx = game.teams[ti].soldiers[si].pos.x;
+    let sy = game.teams[ti].soldiers[si].pos.y; // foot position
+    let body_cy = sy - (crate::renderer::draw_sprites::SOLDIER_H as f32 * 0.5);
+    let tip_y = sy + TIP_DIST;
+
+    // Only advance (and carve) if there's solid terrain below to dig through —
+    // otherwise the drill would propel the soldier through open air / off a ledge.
+    let check_start = TIP_DIST + DRILL_RADIUS + 2.0;
+    let has_solid = (0..=4).any(|i| {
+        let d = check_start + i as f32 * 3.0;
+        game.terrain.is_solid(sx as i32, (sy + d) as i32)
+    });
+
+    if !stop && has_solid {
+        // Overlapping circles keep the shaft fully passable from head to tip.
+        carve_torch_circle(&mut game.terrain, &mut game.crater_log, sx, body_cy, DRILL_RADIUS);
+        carve_torch_circle(&mut game.terrain, &mut game.crater_log, sx, sy, DRILL_RADIUS);
+        carve_torch_circle(&mut game.terrain, &mut game.crater_log, sx, tip_y, DRILL_RADIUS);
+
+        // Dirt chips spat back out of the bore.
+        if game.tick % 3 == 0 {
+            let d = crate::game::state::biome_dirt(game.terrain.is_cavern, game.terrain.template_id);
+            game.emit_fx(crate::renderer::fx::FxEvent::Dig {
+                x: sx, y: tip_y, dir: 0.0, col: [d.r, d.g, d.b],
+            });
+        }
+
+        // Rattling drill loop: re-trigger the ~0.8s clip so it plays continuously
+        // while drilling. Routed through emit_sound so it replicates to all modes.
+        if fuel % 24 == 0 {
+            game.emit_sound(crate::audio::Sfx::Jackhammer);
+        }
+
+        // Trigger any barrel the drill tip touches.
+        for barrel in &mut game.barrels {
+            if let crate::game::state::BarrelState::Normal = barrel.state {
+                let bdx = barrel.pos.x - sx;
+                let bdy = barrel.pos.y - tip_y;
+                if bdx * bdx + bdy * bdy < (DRILL_RADIUS + 8.0) * (DRILL_RADIUS + 8.0) {
+                    barrel.state = crate::game::state::BarrelState::Triggered { ticks: 6 };
+                }
+            }
+        }
+
+        // Continuous contact damage to enemies caught in the shaft.
+        const DAMAGE_RADIUS: f32 = 14.0;
+        const DMG_PER_TICK:  u32 = 1;
+        for eti in 0..game.teams.len() {
+            if eti == ti { continue; }
+            for esi in 0..game.teams[eti].soldiers.len() {
+                if !game.teams[eti].soldiers[esi].is_alive() { continue; }
+                let ex = game.teams[eti].soldiers[esi].pos.x;
+                let ey = game.teams[eti].soldiers[esi].pos.y - 10.0;
+                // Point-to-segment distance: segment from (sx, body_cy) to (sx, tip_y).
+                let seg_dy = tip_y - body_cy;
+                let t = ((ey - body_cy) / seg_dy).clamp(0.0, 1.0);
+                let closest_y = body_cy + t * seg_dy;
+                let dist2 = (ex - sx) * (ex - sx) + (ey - closest_y) * (ey - closest_y);
+                if dist2 < DAMAGE_RADIUS * DAMAGE_RADIUS {
+                    game.teams[eti].soldiers[esi].kill_weapon =
+                        Some(crate::physics::projectile::WeaponKind::Jackhammer);
+                    game.teams[eti].soldiers[esi].take_damage(DMG_PER_TICK);
+                    game.teams[eti].soldiers[esi].hp_display_ticks = 60;
+                }
+            }
+        }
+
+        // Sink the soldier down into the shaft, clamped above the water line.
+        let new_y = (sy + DRILL_SPEED).min(crate::world::WATER_Y as f32 - 5.0);
+        game.teams[ti].soldiers[si].pos.y = new_y;
+        // Walking state prevents gravity from flipping to Airborne mid-drill.
+        game.teams[ti].soldiers[si].walk_ticks =
+            game.teams[ti].soldiers[si].walk_ticks.wrapping_add(1);
+        game.teams[ti].soldiers[si].state =
+            SoldierState::Walking { dir: game.teams[ti].soldiers[si].facing as f32 };
+    }
+
+    // End the session: player stopped, hit open air, or ran out of fuel.
+    if stop || !has_solid || fuel == 0 {
+        game.jackhammer = None;
+        game.teams[ti].soldiers[si].has_fired = true;
+        game.teams[ti].soldiers[si].state = SoldierState::Idle;
+        game.turn.on_fired();
+    } else {
+        game.jackhammer.as_mut().unwrap().fuel_ticks -= 1;
     }
 }
 
@@ -3689,6 +3825,27 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx + 12, icon_cy - 1, 4, 3, fl_hi);
                 buf.set_pixel(icon_cx + 13, icon_cy,     fl_hi);
             }
+            WeaponKind::Jackhammer => {
+                // Pneumatic jackhammer: T-grip handles up top, motor body, chisel bit down.
+                let steel    = if selected { Bgra::new(175, 185, 200) } else { Bgra::new(105, 113, 126) };
+                let steel_hi = Bgra::new(210, 222, 236);
+                let steel_dk = Bgra::new(55,  62,  74);
+                let bit      = if selected { Bgra::new(150, 158, 170) } else { Bgra::new(95, 102, 114) };
+                let handle   = if selected { Bgra::new(230, 90, 40)   } else { Bgra::new(150, 60, 30) };
+                // T-grip handle bar across the top
+                buf.fill_rect(icon_cx - 9, icon_cy - 13, 18, 3, handle);
+                // Neck from handle down to body
+                buf.fill_rect(icon_cx - 2, icon_cy - 11, 4, 4, steel_dk);
+                // Motor body (main cylinder)
+                buf.fill_rect(icon_cx - 6, icon_cy - 7, 12, 12, steel_dk);
+                buf.fill_rect(icon_cx - 5, icon_cy - 6, 10, 10, steel);
+                buf.fill_rect(icon_cx - 5, icon_cy - 6, 10,  2, steel_hi);
+                // Chisel shaft tapering to the drill bit
+                buf.fill_rect(icon_cx - 3, icon_cy + 5, 6, 5, steel_dk);
+                buf.fill_rect(icon_cx - 2, icon_cy + 5, 4, 4, bit);
+                buf.fill_rect(icon_cx - 1, icon_cy + 9, 2, 4, bit);
+                buf.set_pixel(icon_cx, icon_cy + 13, steel_hi);
+            }
             WeaponKind::Garcia => {
                 // Lightning bolt icon — red left half, blue right half, white bolt centre
                 let red  = if selected { Bgra::new(255, 60, 60)  } else { Bgra::new(160, 40, 40)  };
@@ -4015,6 +4172,7 @@ pub fn draw_weapon_menu(
             WeaponKind::Blasthive      => "BLASTHIVE",
             WeaponKind::BlackHoleBomb  => "BLACK HOLE",
             WeaponKind::PlasmaTorch    => "TORCH",
+            WeaponKind::Jackhammer     => "JACKHAMMER",
             WeaponKind::Garcia         => "HAND OF JERRY",
             WeaponKind::AirStrike      => "AIR STRIKE",
             WeaponKind::HolyHandGrenade => "SACRED ORD.",
@@ -5325,6 +5483,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             WeaponKind::Uzi             => "MAC-10",
             WeaponKind::Pistol          => "PISTOL",
             WeaponKind::PlasmaTorch     => "TORCH",
+            WeaponKind::Jackhammer      => "JACKHAMMER",
             WeaponKind::Garcia          => "HAND OF JERRY",
             WeaponKind::AirStrike       => "AIR STRIKE",
             WeaponKind::HolyHandGrenade => "SACRED ORD.",

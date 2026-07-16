@@ -253,6 +253,12 @@ pub struct PlasmaTorchState {
     pub fuel_ticks: u32, // 6 s × 30 Hz = 180 ticks
 }
 
+/// Active jackhammer session state. Drills straight down while running.
+#[derive(Debug, Clone)]
+pub struct JackhammerState {
+    pub fuel_ticks: u32,
+}
+
 /// Airstrike targeting / active state.
 #[derive(Debug, Clone)]
 pub struct AirstrikeState {
@@ -433,6 +439,8 @@ pub struct GameState {
     pub pending_deaths: Vec<PendingDeathExplosion>,
     /// Active plasma torch tunneling session; None = not torching.
     pub plasma_torch: Option<PlasmaTorchState>,
+    /// Active jackhammer drilling session; None = not drilling.
+    pub jackhammer: Option<JackhammerState>,
     /// Garcia targeting / falling session; None = inactive.
     pub garcia: Option<GarciaState>,
     /// Autonomous walking Jumpbot session; None = inactive.
@@ -513,6 +521,7 @@ impl GameState {
             fx_text: Vec::new(),
             pending_deaths: Vec::new(),
             plasma_torch: None,
+            jackhammer: None,
             garcia: None,
             jumpbot: None,
             airstrike: None,
@@ -1236,7 +1245,7 @@ impl GameState {
 
         // Type split: 75% weapon, 25% health.
         // Tier drop chances (weapon pool):
-        //   Common     60%  — Mine, Shotgun, TNT, Grapple, Bat, Torch, Cluster  (equal within tier)
+        //   Common     60%  — Mine, Shotgun, TNT, Grapple, Bat, Torch, Cluster, Jackhammer  (equal within tier)
         //   Uncommon   24%  — Blasthive, Meteor Bomb, Air Strike
         //   Rare       14%  — Black Hole, Revolver, Minigun, Sacred Ordnance
         //   Ultra Rare  2%  — Hand of Jerry
@@ -1245,10 +1254,11 @@ impl GameState {
         } else {
             let w = kind_rng / 0.75; // rescale weapon rng to [0,1)
             let weapon = if w < 0.60 {
-                let slot = (w / 0.60 * 7.0) as usize;
+                let slot = (w / 0.60 * 8.0) as usize;
                 [WeaponKind::Landmine, WeaponKind::Shotgun, WeaponKind::Tnt,
                  WeaponKind::NinjaRope, WeaponKind::BaseballBat,
-                 WeaponKind::PlasmaTorch, WeaponKind::ClusterBomb][slot.min(6)]
+                 WeaponKind::PlasmaTorch, WeaponKind::ClusterBomb,
+                 WeaponKind::Jackhammer][slot.min(7)]
             } else if w < 0.84 {
                 let slot = ((w - 0.60) / 0.24 * 4.0) as usize;
                 [WeaponKind::Blasthive, WeaponKind::BananaBomb,

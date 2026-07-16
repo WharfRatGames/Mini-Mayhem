@@ -173,6 +173,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
             }
         },
         torch_fuel: game.plasma_torch.as_ref().map(|t| t.fuel_ticks).unwrap_or(0),
+        jackhammer_fuel: game.jackhammer.as_ref().map(|j| j.fuel_ticks).unwrap_or(0),
         paused_opponent: None,
         opponent_abandoned: false,
         team_weapons: game.teams.iter().map(|t| NetTeamWeapons {
@@ -375,13 +376,22 @@ pub fn apply_server_state(
     // so the live client draws the flame at the tip (5c in render). While the torch
     // is active, its terrain carving produces a stream of craters every tick — DON'T
     // spawn explosion flashes for those (they'd flash over the soldier/body carve).
-    use crate::game::state::{PlasmaTorchState, TorchDir};
+    use crate::game::state::{PlasmaTorchState, TorchDir, JackhammerState};
     let torch_active = state.torch_dir != 0;
     game.plasma_torch = match state.torch_dir {
         1 => Some(PlasmaTorchState { dir: TorchDir::UpForward,   fuel_ticks: state.torch_fuel }),
         2 => Some(PlasmaTorchState { dir: TorchDir::Forward,     fuel_ticks: state.torch_fuel }),
         3 => Some(PlasmaTorchState { dir: TorchDir::DownForward, fuel_ticks: state.torch_fuel }),
         _ => None,
+    };
+
+    // Jackhammer: reconstruct the active drilling session from the networked fuel.
+    // Like the torch it streams craters every tick — suppress the explosion flash.
+    let jackhammer_active = state.jackhammer_fuel != 0;
+    game.jackhammer = if jackhammer_active {
+        Some(JackhammerState { fuel_ticks: state.jackhammer_fuel })
+    } else {
+        None
     };
 
     // `state.craters` is the full match history every tick; only apply the
@@ -393,7 +403,7 @@ pub fn apply_server_state(
         use crate::world::{Crater, WorldPos};
         Crater::new(nc.cx, nc.cy, nc.radius).carve(&mut game.terrain);
         game.crater_log.push((nc.cx, nc.cy, nc.radius));
-        if !torch_active {
+        if !torch_active && !jackhammer_active {
             game.explosions.push(crate::game::state::Explosion::new(
                 WorldPos::new(nc.cx, nc.cy), nc.radius,
             ));
@@ -583,7 +593,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         fire_patches: _, black_holes: _, wind: _, aim: _, result: _, tick: _,
         crater_log: _, sounds: _, fx_events: _, graves: _, weapon_menu_open: _,
         weapon_menu_cursor: _, rope: _, messages: _, blood_splats: _,
-        plasma_torch: _, garcia: _, jumpbot: _, airstrike: _, homing_missile: _,
+        plasma_torch: _, jackhammer: _, garcia: _, jumpbot: _, airstrike: _, homing_missile: _,
         damage_focus: _, // synced: StateMsg.damage_focus — live-client camera hold on the damaged soldier
         // ── Not networked: client-only visuals / server-internal sim state ──
         // (terrain is rebuilt on the client from `crater_log`; `explosions` from craters)
@@ -798,6 +808,15 @@ fn _plasma_torch_parity_checklist(t: &crate::game::state::PlasmaTorchState) {
         // ── Synced via StateMsg.torch_dir / torch_fuel ──
         dir: _, fuel_ticks: _,
     } = t;
+}
+
+/// Adding a field to `JackhammerState` breaks this.
+#[allow(dead_code)]
+fn _jackhammer_parity_checklist(j: &crate::game::state::JackhammerState) {
+    let crate::game::state::JackhammerState {
+        // ── Synced via StateMsg.jackhammer_fuel ──
+        fuel_ticks: _,
+    } = j;
 }
 
 /// Adding a field to `GameMessage` breaks this.
