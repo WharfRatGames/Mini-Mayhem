@@ -20,7 +20,7 @@
 
 1. Download the latest build from the [releases page](http://crumbonium.duckdns.org/arty/builds/) or install via OTA update
 2. Launch **Arty** from the Miyoo home screen
-3. Pick a mode from the title menu — **HOTSEAT** for local play, **LIVE GAME** or **TAKE A TURN** for online
+3. Pick a mode from the title menu — **SINGLEPLAYER** for local play (VS CPU or HOTSEAT), **MULTIPLAYER** for everything online (live and Take-a-Turn, casual or ranked, all in one list)
 
 ---
 

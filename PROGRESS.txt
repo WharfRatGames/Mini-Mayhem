@@ -2,7 +2,22 @@ Mini Mayhem — Development Progress
 ====================================
 Current version: 0.5.4.437 (HUD streamline + 4-team game-over + debug-overflow
   fixes + screen-loop refactor + help-guide rewrite; VERSION + REQUIRED_VERSION
-  bumped, deploying 2026-07-16).
+  bumped; DEPLOYED 2026-07-16 — commit 4736819 pushed, GitHub release published,
+  Discord notes sent, Miyoo .126 hash-verified, .110 offline → OTA next launch).
+
+2026-07-19 — INFRA / ADMIN (no game code changes).
+  ---------------------------------------------------------------------------
+  - Fixed TheLounge (IRC web client) accidentally running in public mode
+    (`public: true` in /etc/thelounge/config.js on Grunkus) — no login screen
+    was being shown to anyone. Flipped to `public: false`, restarted service.
+    Note: existing browser sessions still auto-reconnect via a stored login
+    token even in private mode — only new/logged-out sessions see the login
+    form again.
+  - Added ROADMAP entry: possible migration of arty-game.service to an Oracle
+    Cloud Always Free ARM VM (aarch64 Ampere A1), to get off Grunkus's home-
+    router port-forwarding (loses forwards on router restart). Scoped as
+    game-server-only move; nginx/API/DB/Discord bot/IRC stay on the Pi.
+    Not started — no VM provisioned yet.
 
 2026-07-16 (v0.5.4.437; VERSION + REQUIRED_VERSION bumped) — HUD STREAMLINE +
   CLEANUP BATCH.

@@ -74,6 +74,12 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [x] Faster match load — landform-top texture sampling answered from the solid_runs column cache instead of a per-pixel upward scan (build_world_cache 235→102ms desktop); row-major loop order in the world/bg cache builders; background PNG + terrain tile decode prewarmed on worker threads during map generation (v0.5.4.406)
 - [x] Backflip jumps 10% higher — initial launch velocity raised -6.5→-6.82 (v0.5.4.407)
 - [x] Team color rendering
+- [x] Menu streamline — MULTIPLAYER flattened to one 8-item list (live/TAT casual+ranked, leaderboards, stats, missions, account), shared list-panel styling (`draw_list_panel`/`draw_screen_header` in `renderer/hud.rs`) across title/MY TEAMS/account/help/pause/TAT lobby, single-sourced controls text shared with Settings, parameterised update screen, shared `do_logout()`; fixed the ranked leaderboard being unreachable (both old submenus returned the casual constant) (v0.5.4.436)
+- [x] In-match HUD streamline — weapon name + `[SEL]`, 120px wind gauge, FPS, turn number and timer consolidated into the single bottom bar; team strips deleted in favour of corner avatars as the one health display (up to 4 teams, `x{alive}` counts, active-team outline); TNT fuse / shot prompts / game messages unified into one top-centre banner stack (max 3, no overlaps); legacy `draw_hud`/`draw_countdown` deleted (v0.5.4.437)
+- [x] Game-over screen generalized to N teams — `match_end_stats` returns per-team `TeamEndStat` rows (survivors + HP; the old "kills" number was never attributed, just the other team's deaths), one row per team up to 4 (v0.5.4.437)
+- [x] Debug-build overflow crashes fixed — background flicker hash (negative particle x) and molotov fire RNG seed switched to wrapping ops, bit-identical to release so sim determinism unchanged; debug matches now soak clean (v0.5.4.437)
+- [x] Screen-loop refactor — `TitleChoice` promoted to a real enum, `run_screen_loop()` helper replaced 15 copies of the menu poll/draw/blit/sleep boilerplate (v0.5.4.437)
+- [x] HOW TO PLAY rewritten — every page fits the ~15-line render window (TIPS/COSMETICS were being cut off), Jackhammer/Jumpbot/Garcia/Sacred Ordnance covered, button-controls page added up front (v0.5.4.436/.437)
 
 ---
 
@@ -207,6 +213,22 @@ A living document of what's shipped, what's in progress, and what's coming.
 - [ ] **Scrap earned on game-over screen** — show how much scrap you earned from the match before returning to title
 - [ ] **Profile screen** — view owned cosmetics, current balance, win/loss record from within the game
 - [ ] **Roster editor live preview** — see your soldier update in real time while picking cosmetics
+
+---
+
+## 💡 Infrastructure — Under Consideration
+
+- [ ] **Migrate arty-game server to an Oracle Cloud Always Free ARM VM** — moves the
+      game server off Grunkus's home-router port-forwarding (which loses forwards on
+      router restart) onto a stable public IP. Oracle's Always Free tier includes an
+      ARM Ampere A1 VM (up to 4 OCPU/24GB, `aarch64` — matches the existing
+      `cargo piserver`/`aarch64-unknown-linux-gnu` build target as-is) that stays free
+      indefinitely regardless of the optional 30-day/$300 trial credit. Recommended
+      scope: move `arty-game.service` only; leave nginx, arty-api, DB, Discord bot, and
+      IRC stack on the Pi. Needs: new DNS record or port for the game server, OCI
+      security-list + in-VM firewall rules for the game port, TLS cert on the new host.
+      A1 capacity is often exhausted in-region at signup time — may need a
+      create-instance retry loop.
 
 ---
 

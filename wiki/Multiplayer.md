@@ -6,7 +6,7 @@ Mini-Mayhem has two online multiplayer modes: **Live Game** (real-time) and **Ta
 
 ## Creating an Account
 
-From the title screen: **MY ACCOUNT → REGISTER**. Choose a username and password. Your account stores your ELO rating, match history, scrap balance, and cosmetic unlocks.
+From the title screen: **MULTIPLAYER → ACCOUNT → REGISTER**. Choose a username and password. Your account stores your ELO rating, match history, scrap balance, and cosmetic unlocks.
 
 ---
 

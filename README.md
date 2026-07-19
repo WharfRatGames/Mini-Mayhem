@@ -1,6 +1,6 @@
 # Mini Mayhem (Arty)
 
-A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus** handheld. Two teams of soldiers take turns firing an arsenal of destructive weapons across procedurally generated, fully destructible terrain.
+A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus** handheld. Teams of soldiers (up to 4 in live casual) take turns firing an arsenal of destructive weapons across procedurally generated, fully destructible terrain.
 
 ## Features
 
@@ -15,6 +15,7 @@ A Worms-style 2D artillery game written in Rust, built for the **Miyoo Mini Plus
 - Turn-based flow: Acting → Watching → Retreat → Ending
 - Wind, gravity, per-soldier HP, fall damage, and water/drowning mechanics
 - Atmospheric visuals: parallax backgrounds, drifting clouds, wind-driven debris, biome-tinted skies
+- Streamlined UI (v0.5.4.436–.437): flat multiplayer menu, single bottom-bar HUD with corner-avatar health for up to 4 teams, stacked top-centre alerts, per-team game-over stats, in-game HOW TO PLAY guide covering every weapon
 
 ### Weapons
 Bazooka, Grenade (variable fuse), Shotgun, Pistol (5-shot burst), MAC-10 (∞), TNT, Landmine, Molotov Cocktail (2 uses, 48 flames, ~2.5 min burn), Clump Bomb, Homing Missile, Plasma Torch (pauses the turn timer while tunnelling), Jackhammer (3 uses; drills straight down, sinking the soldier into a fresh vertical shaft), Ninja Rope (5 uses; momentum-carry swing with mid-air re-hook), Baseball Bat — plus crate-only weapons: Meteor Bomb, Revolver, Blasthive (homing bees), Garcia (targeted artillery), Air Strike, Black Hole Bomb, Hand of Jerry, Sacred Ordnance, Jumpbot (autonomous walking hop-bomb — hops forward, vaults obstacles, reverses at walls, 10s fuse, manual detonate; gait measured frame-by-frame from a real WA Sheep). Explosive damage/radius calibrated to the original WA weapon table (see [wiki/Weapons.md](wiki/Weapons.md#damage-reference)). Weapon/health/scrap crate drops with rarity tiers.

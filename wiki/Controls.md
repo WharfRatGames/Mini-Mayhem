@@ -44,7 +44,15 @@
 | **Up** | Torch up-forward |
 | **Right/Left** | Torch forward (facing direction) |
 | **Down** | Torch down-forward |
-| **Hold A** | Keep torching (release A to stop) |
+| **A** | Toggle torch (press to ignite, press again to stop) |
+
+## Jackhammer
+
+| Button | Action |
+|---|---|
+| **A** | Start drilling straight down; press again to stop early |
+
+> The drill runs ~6 seconds, sinking you into a fresh vertical shaft and damaging anyone caught in it. It stops automatically if it breaks into open air or runs out of fuel.
 
 ## Title Screen / Menus
 

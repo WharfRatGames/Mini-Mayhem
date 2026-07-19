@@ -26,7 +26,7 @@ Premium currency. Obtained through purchases — not earnable in-game. Used for 
 
 ## Shop
 
-Accessible from **MY ACCOUNT → STORE**. Browse and purchase cosmetics using scrap or warbonds.
+Accessible from **MULTIPLAYER → ACCOUNT → STORE**. Browse and purchase cosmetics using scrap or warbonds.
 
 ### Hats
 Per-soldier cosmetics. Worn on top of the soldier's helmet, replacing the default helmet cap.
