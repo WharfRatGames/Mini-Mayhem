@@ -645,6 +645,9 @@ fn _soldier_parity_checklist(s: &crate::game::soldier::Soldier) {
         hp_display_ticks: _,        // not synced: client-local HP-box visibility timer
         displayed_hp: _,  // not synced: client-local animation toward hp
         damage_settle: _, // not synced: server-side tally window; popup ships via fx_events
+        pending_bat_damage: _, // not synced: server-side deferred-hit bookkeeping between
+                                // swing and landing, same category as damage_settle — the
+                                // client just sees the resulting hp drop + popup once applied
     } = s;
 }
 

@@ -2967,26 +2967,19 @@ fn fire_baseball_bat(game: &mut GameState, ti: usize, si: usize) {
     }
     for (target_ti, target_si) in hits {
         let target = &mut game.teams[target_ti].soldiers[target_si];
-        // Launch first so the soldier flies before taking damage (visual read).
+        // Launch first — damage is deferred until landing (WA-style: the knockback
+        // plays out before the hit registers), applied alongside fall damage at
+        // either landing site in this file.
         let grounded = matches!(target.state, SoldierState::Idle | SoldierState::Walking { .. });
         if grounded { target.fall.begin_fall(target.pos.y); }
         target.state = SoldierState::Airborne {
             vel: Vec2::new(BAT_POWER * angle.cos() * fm, -BAT_POWER * angle.sin()),
             spinning: true,
         };
-        target.death_cause = DeathCause::Explosion;
-        target.kill_weapon = Some(crate::physics::WeaponKind::BaseballBat);
-        target.take_damage(BAT_DAMAGE);
-        // If the hit killed them, clear the airborne state so gravity doesn't
-        // skip the corpse and freeze the turn.
-        if !target.is_alive() {
-            target.state = SoldierState::Dead;
-        }
-        if target.is_alive() {
-            // Fresh air clock so the knockback spin animates in full (a stale
-            // airtime >= 20 would cancel `spinning` on the first airborne tick).
-            target.airtime = 0;
-        }
+        target.pending_bat_damage = target.pending_bat_damage.saturating_add(BAT_DAMAGE);
+        // Fresh air clock so the knockback spin animates in full (a stale
+        // airtime >= 20 would cancel `spinning` on the first airborne tick).
+        target.airtime = 0;
     }
 
     game.teams[ti].soldiers[si].has_fired = true;
@@ -6047,6 +6040,15 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                     let ati = game.active_team();
                                     if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                                 }
+                                let bat_dmg = game.teams[ti].soldiers[si].pending_bat_damage;
+                                if bat_dmg > 0 {
+                                    game.teams[ti].soldiers[si].pending_bat_damage = 0;
+                                    game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Explosion;
+                                    game.teams[ti].soldiers[si].kill_weapon = Some(crate::physics::WeaponKind::BaseballBat);
+                                    game.teams[ti].soldiers[si].take_damage(bat_dmg);
+                                    let ati = game.active_team();
+                                    if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
+                                }
                                 game.teams[ti].soldiers[si].pos.x = cx;
                                 game.teams[ti].soldiers[si].pos.y = cy.max(0.0);
                                 game.teams[ti].soldiers[si].airtime = 0;
@@ -6144,6 +6146,17 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                     if dmg > 0 {
                                         game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
                                         game.teams[ti].soldiers[si].take_damage(dmg);
+                                        let ati = game.active_team();
+                                        if ti == ati && si == game.teams[ati].active {
+                                            game.active_worm_hit = true;
+                                        }
+                                    }
+                                    let bat_dmg = game.teams[ti].soldiers[si].pending_bat_damage;
+                                    if bat_dmg > 0 {
+                                        game.teams[ti].soldiers[si].pending_bat_damage = 0;
+                                        game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Explosion;
+                                        game.teams[ti].soldiers[si].kill_weapon = Some(crate::physics::WeaponKind::BaseballBat);
+                                        game.teams[ti].soldiers[si].take_damage(bat_dmg);
                                         let ati = game.active_team();
                                         if ti == ati && si == game.teams[ati].active {
                                             game.active_worm_hit = true;

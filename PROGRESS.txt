@@ -1,9 +1,26 @@
 Mini Mayhem — Development Progress
 ====================================
-Current version: 0.5.4.437 (HUD streamline + 4-team game-over + debug-overflow
-  fixes + screen-loop refactor + help-guide rewrite; VERSION + REQUIRED_VERSION
-  bumped; DEPLOYED 2026-07-16 — commit 4736819 pushed, GitHub release published,
-  Discord notes sent, Miyoo .126 hash-verified, .110 offline → OTA next launch).
+Current version: 0.5.4.438 (Baseball Bat damage deferred to landing + HOW TO
+  PLAY numbers corrected against actual weapon constants; VERSION +
+  REQUIRED_VERSION bumped).
+
+2026-07-30 — v0.5.4.438: BAT DAMAGE ON LANDING + HELP TEXT FIXES.
+  ---------------------------------------------------------------------------
+  - Baseball Bat damage no longer applies instantly on the swing — it's held
+    in a new `Soldier.pending_bat_damage` field and applied when the knocked
+    soldier actually lands (either landing site in loop_runner.rs, alongside
+    the existing fall-damage logic), matching WA's real feel: knockback plays
+    out first, hit registers on impact. death_cause/kill_weapon are set at
+    landing time so credit/popup timing line up with the actual HP loss.
+    New field is `not synced` (server/sim-internal bookkeeping between swing
+    and landing, same category as `damage_settle` — the live client only
+    needs the resulting hp value). Parity 24/24.
+  - HOW TO PLAY / WEAPONS help pages corrected against actual code constants:
+    Bazooka blast 45px->48px, MAC-10 damage/bullet 5->2, Grenade 45 dmg/30px
+    blast -> 50 dmg/50px blast, Baseball Bat 30->26 dmg, Homing Missile
+    45->50 dmg. Everything else checked (Shotgun, TNT, Landmine, Revolver,
+    Blasthive, Black Hole, Air Strike, Sacred Ordnance, unlock-turn timers)
+    already matched and was left alone.
 
 2026-07-19 — INFRA / ADMIN (no game code changes).
   ---------------------------------------------------------------------------

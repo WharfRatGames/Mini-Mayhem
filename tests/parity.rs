@@ -250,6 +250,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
                 hp_display_ticks: _,        // not synced: client-local visibility timer
                 displayed_hp: _,    // not synced: client-local animation toward hp
                 damage_settle: _,   // not synced: server-side tally window
+                pending_bat_damage: _, // not synced: deferred-hit bookkeeping, same category
                 kill_weapon,        // → kill_weapon_u8 (255 = None)
             } = s;
             let (state_disc, airborne_vel) = match state {

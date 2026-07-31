@@ -168,8 +168,16 @@ fn handle_connection(
     // ranked match. Drain dead waiters first, then pair if someone else is
     // already waiting, otherwise add this player to the queue.
     if token == RANKED_QUEUE_TOKEN {
-        let username = read_line(&mut *stream.lock().unwrap_or_else(|e| e.into_inner()), 64)
-            .unwrap_or_else(|| "?".to_string());
+        let username = {
+            let mut guard = stream.lock().unwrap_or_else(|e| e.into_inner());
+            guard.get_ref().set_read_timeout(Some(Duration::from_secs(5))).ok();
+            let line = read_line(&mut *guard, 64);
+            guard.get_ref().set_read_timeout(None).ok();
+            match line {
+                Some(u) => u,
+                None => { info!("Ranked queue username read failed/timed out: {addr}"); return; }
+            }
+        };
         // Drain dead waiters, then either pair immediately or enqueue.
         let mut q = ranked_queue.lock().unwrap_or_else(|e| e.into_inner());
         q.retain(|(_, s)| stream_alive(s));
@@ -1383,7 +1391,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.437";
+const REQUIRED_VERSION: &str = "0.5.4.438";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

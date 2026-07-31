@@ -75,6 +75,10 @@ pub struct Soldier {
     /// Updated on every damaging hit; survives into water/fall deaths so the weapon
     /// that knocked them off the map gets the kill credit.
     pub kill_weapon: Option<crate::physics::WeaponKind>,
+    /// Baseball Bat damage held until this soldier lands (WA-style: the knockback
+    /// plays out first, hit only registers on impact). Applied at either landing
+    /// site in loop_runner.rs alongside fall damage, then cleared.
+    pub pending_bat_damage: u32,
 
     // ── Per-soldier cosmetics (0 = default for all) ──────────────────────────
     pub hat_id:           u8,
@@ -115,6 +119,7 @@ impl Soldier {
             on_fire_ticks: 0,
             death_cause: DeathCause::Generic,
             kill_weapon: None,
+            pending_bat_damage: 0,
             hat_id:           0,
             uniform_color_id: 0,
             boot_color_id:    0,
