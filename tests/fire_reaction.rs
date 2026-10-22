@@ -41,8 +41,11 @@ fn only_carving_fire_eats_terrain() {
         pos: WorldPos { x: sx as f32, y: sy as f32 }, vel: Vec2 { x: 0.0, y: 0.0 },
         landed: true, lifetime: 400, landed_ticks: 0, carves: false,
     }];
+    // server_tick increments game.tick before the fire-patch update runs, so
+    // tick only hits a BURN_CARVE_INTERVAL (32) multiple starting on the 32nd
+    // call — run past that, not just 30 ticks, or the carve window never opens.
     g.tick = 0;
-    for _ in 0..30 {
+    for _ in 0..40 {
         if g.fire_patches.is_empty() {
             g.fire_patches.push(FirePatch {
                 pos: WorldPos { x: sx as f32, y: sy as f32 }, vel: Vec2 { x: 0.0, y: 0.0 },
@@ -60,7 +63,7 @@ fn only_carving_fire_eats_terrain() {
         landed: true, lifetime: 400, landed_ticks: 0, carves: true,
     }];
     g2.tick = 0;
-    for _ in 0..30 {
+    for _ in 0..40 {
         if g2.fire_patches.is_empty() {
             g2.fire_patches.push(FirePatch {
                 pos: WorldPos { x: sx as f32, y: sy as f32 }, vel: Vec2 { x: 0.0, y: 0.0 },
