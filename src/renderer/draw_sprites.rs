@@ -611,8 +611,14 @@ pub fn draw_aim_arrow(
         let fill_px    = fill_len as i32;
 
         let cap_len = 6.0f32.min(fill_len / 2.0); // rounding distance at each end
-        for col in 0..=fill_px {
-            let d = col as f32;
+        // Sample at half-pixel steps along both the axis and the perpendicular:
+        // this is a rotated unit grid mapped onto the screen pixel grid, and at
+        // non-axis-aligned aim angles a 1px step in local space can land more than
+        // 1px away in screen space depending on rounding, leaving single-pixel gaps
+        // (dithering). Doubling the sample density in both directions closes them.
+        let steps = (fill_px * 2).max(1);
+        for col2 in 0..=steps {
+            let d = col2 as f32 * 0.5;
             let base_x = ox as f32 + ca * d;
             let base_y = oy as f32 - sa * d;
 
@@ -620,7 +626,7 @@ pub fn draw_aim_arrow(
             // rounded off at both ends by easing the half-width down over `cap_len`.
             let taper_half = 2.0 + (d / fill_len) * 6.0; // 2..8px
             let round_mul  = (d / cap_len).min((fill_len - d) / cap_len).min(1.0).max(0.0);
-            let half = (taper_half * round_mul) as i32;
+            let half = taper_half * round_mul;
 
             let color = if d > normal_len {
                 Bgra::new(255, 140, 0) // bonus overcharge band
@@ -628,9 +634,11 @@ pub fn draw_aim_arrow(
                 let t = d / normal_len;
                 Bgra::new((120.0 + 135.0 * t) as u8, (120.0 * t) as u8, 0)
             };
-            for row_off in -half..=half {
-                let px = (base_x + sa * row_off as f32).round() as i32;
-                let py = (base_y + ca * row_off as f32).round() as i32;
+            let half_steps = (half * 2.0) as i32;
+            for row_off2 in -half_steps..=half_steps {
+                let row_off = row_off2 as f32 * 0.5;
+                let px = (base_x + sa * row_off).round() as i32;
+                let py = (base_y + ca * row_off).round() as i32;
                 buf.set_pixel(px, py, color);
             }
         }
@@ -640,6 +648,61 @@ pub fn draw_aim_arrow(
 /// Draw a projectile as a small dot. Size varies by weapon kind.
 pub fn draw_projectile(buf: &mut WorldBuffer, pos: WorldPos, radius: i32, colour: Bgra) {
     buf.fill_circle(pos.x as i32, pos.y as i32, radius, colour);
+}
+
+/// Shared rocket body renderer for bazooka/homing-missile: a rotated ~17px-long,
+/// 5px-wide body plus tapered nose, supersampled at half-pixel steps along both
+/// the axis and the perpendicular. Rotated shapes plotted via `pt().round()` at
+/// unit steps (the original approach) land on a rotated unit grid that doesn't
+/// line up with the screen pixel grid at non-axis-aligned angles, leaving
+/// single-pixel gaps (the same dithering artifact fixed on the charge wedge in
+/// `draw_aim_arrow`); doubling the sample density in both directions closes them.
+fn draw_rocket_body(
+    buf: &mut WorldBuffer,
+    pos: WorldPos,
+    nx: f32, ny: f32,
+    exhaust: Bgra, body_edge: Bgra, body_side: Bgra, body_ctr: Bgra,
+    nose_col: Bgra, tip_col: Bgra,
+) {
+    let pt = |t: f32, p: f32| -> (i32, i32) {
+        ((pos.x + nx * t - ny * p).round() as i32,
+         (pos.y + ny * t + nx * p).round() as i32)
+    };
+
+    // Tail exhaust dot (-7) and bright nose tip (+7)
+    let (ex, ey) = pt(-7.0, 0.0);
+    buf.set_pixel(ex, ey, exhaust);
+    let (tx, ty) = pt(7.0, 0.0);
+    buf.set_pixel(tx, ty, tip_col);
+
+    // Body (-6..+3, half-width 2) and nose cone (+3..+6, tapering 1..0).
+    let t_steps = ((3.0 - -6.0) * 2.0) as i32;
+    for t2 in 0..=t_steps {
+        let t = -6.0 + t2 as f32 * 0.5;
+        let p_steps = 4; // half-width 2.0 at 0.5 resolution
+        for p2 in -p_steps..=p_steps {
+            let p = p2 as f32 * 0.5;
+            let color = match p.abs() {
+                d if d < 0.5 => body_ctr,
+                d if d < 1.5 => body_side,
+                _            => body_edge,
+            };
+            let (x, y) = pt(t, p);
+            buf.set_pixel(x, y, color);
+        }
+    }
+
+    let n_steps = ((6.0 - 3.0) * 2.0) as i32;
+    for t2 in 0..=n_steps {
+        let t = 3.0 + t2 as f32 * 0.5;
+        let taper_half = (1.0 - (t - 3.0) / 3.0).max(0.0); // 1.0 at base -> 0.0 at tip
+        let p_steps = (taper_half * 2.0) as i32;
+        for p2 in -p_steps..=p_steps {
+            let p = p2 as f32 * 0.5;
+            let (x, y) = pt(t, p);
+            buf.set_pixel(x, y, nose_col);
+        }
+    }
 }
 
 /// Draw a bazooka rocket — ~17 px long, 5 px wide body, rotated to face velocity.
@@ -653,49 +716,16 @@ pub fn draw_bazooka(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::world::Vec
     }
     let nx = vel.x / speed;  // forward unit
     let ny = vel.y / speed;
-    // Compute a point offset by (t) along the axis and (p) perpendicular (-ny, nx).
-    let pt = |t: f32, p: f32| -> (i32, i32) {
-        ((pos.x + nx * t - ny * p).round() as i32,
-         (pos.y + ny * t + nx * p).round() as i32)
-    };
 
-    let exhaust    = Bgra::new( 80,  25,  5);   // tail glow
-    let body_edge  = Bgra::new(120,  50,  8);   // outermost body edges (±2)
-    let body_side  = Bgra::new(160,  75, 15);   // inner body (±1)
-    let body_ctr   = Bgra::new(210, 110, 25);   // body centre
-    let nose_col   = Bgra::new(235, 150, 40);   // nose cone
-    let tip_col    = Bgra::new(255, 230, 80);   // bright nose tip
-
-    // Tail exhaust dot (-7)
-    let (ex, ey) = pt(-7.0, 0.0);
-    buf.set_pixel(ex, ey, exhaust);
-
-    // Body: 5 parallel lines from -6 to +3
-    let (b0x, b0y) = pt(-6.0,  0.0); let (b1x, b1y) = pt(3.0,  0.0);
-    buf.draw_line(b0x, b0y, b1x, b1y, body_ctr);
-
-    let (s0x, s0y) = pt(-6.0,  1.0); let (s1x, s1y) = pt(3.0,  1.0);
-    buf.draw_line(s0x, s0y, s1x, s1y, body_side);
-    let (s2x, s2y) = pt(-6.0, -1.0); let (s3x, s3y) = pt(3.0, -1.0);
-    buf.draw_line(s2x, s2y, s3x, s3y, body_side);
-
-    let (e0x, e0y) = pt(-6.0,  2.0); let (e1x, e1y) = pt(3.0,  2.0);
-    buf.draw_line(e0x, e0y, e1x, e1y, body_edge);
-    let (e2x, e2y) = pt(-6.0, -2.0); let (e3x, e3y) = pt(3.0, -2.0);
-    buf.draw_line(e2x, e2y, e3x, e3y, body_edge);
-
-    // Nose cone (+3 to +6, centre only — tapers the front)
-    let (n0x, n0y) = pt(3.0, 0.0); let (n1x, n1y) = pt(6.0, 0.0);
-    buf.draw_line(n0x, n0y, n1x, n1y, nose_col);
-    // Nose inner edges (taper from ±1 at base to tip)
-    let (ni0x, ni0y) = pt(3.0,  1.0); let (ni1x, ni1y) = pt(5.0, 0.0);
-    buf.draw_line(ni0x, ni0y, ni1x, ni1y, nose_col);
-    let (ni2x, ni2y) = pt(3.0, -1.0); let (ni3x, ni3y) = pt(5.0, 0.0);
-    buf.draw_line(ni2x, ni2y, ni3x, ni3y, nose_col);
-
-    // Bright tip pixel (+7)
-    let (tx, ty) = pt(7.0, 0.0);
-    buf.set_pixel(tx, ty, tip_col);
+    draw_rocket_body(
+        buf, pos, nx, ny,
+        Bgra::new( 80,  25,  5),   // exhaust: tail glow
+        Bgra::new(120,  50,  8),   // body_edge: outermost body edges (±2)
+        Bgra::new(160,  75, 15),   // body_side: inner body (±1)
+        Bgra::new(210, 110, 25),   // body_ctr: body centre
+        Bgra::new(235, 150, 40),   // nose_col: nose cone
+        Bgra::new(255, 230, 80),   // tip_col: bright nose tip
+    );
 }
 
 /// Draw a homing missile — same shape as bazooka but with a red tip.
@@ -709,41 +739,16 @@ pub fn draw_homing_missile(buf: &mut WorldBuffer, pos: WorldPos, vel: crate::wor
     }
     let nx = vel.x / speed;
     let ny = vel.y / speed;
-    let pt = |t: f32, p: f32| -> (i32, i32) {
-        ((pos.x + nx * t - ny * p).round() as i32,
-         (pos.y + ny * t + nx * p).round() as i32)
-    };
 
-    let exhaust   = Bgra::new( 80,  25,  5);
-    let body_edge = Bgra::new(120,  50,  8);
-    let body_side = Bgra::new(160,  75, 15);
-    let body_ctr  = Bgra::new(210, 110, 25);
-    let nose_col  = Bgra::new(200,  20,  20);  // red nose
-    let tip_col   = Bgra::new(255,  60,  60);  // bright red tip
-
-    let (ex, ey) = pt(-7.0, 0.0);
-    buf.set_pixel(ex, ey, exhaust);
-
-    let (b0x, b0y) = pt(-6.0,  0.0); let (b1x, b1y) = pt(3.0,  0.0);
-    buf.draw_line(b0x, b0y, b1x, b1y, body_ctr);
-    let (s0x, s0y) = pt(-6.0,  1.0); let (s1x, s1y) = pt(3.0,  1.0);
-    buf.draw_line(s0x, s0y, s1x, s1y, body_side);
-    let (s2x, s2y) = pt(-6.0, -1.0); let (s3x, s3y) = pt(3.0, -1.0);
-    buf.draw_line(s2x, s2y, s3x, s3y, body_side);
-    let (e0x, e0y) = pt(-6.0,  2.0); let (e1x, e1y) = pt(3.0,  2.0);
-    buf.draw_line(e0x, e0y, e1x, e1y, body_edge);
-    let (e2x, e2y) = pt(-6.0, -2.0); let (e3x, e3y) = pt(3.0, -2.0);
-    buf.draw_line(e2x, e2y, e3x, e3y, body_edge);
-
-    let (n0x, n0y) = pt(3.0, 0.0); let (n1x, n1y) = pt(6.0, 0.0);
-    buf.draw_line(n0x, n0y, n1x, n1y, nose_col);
-    let (ni0x, ni0y) = pt(3.0,  1.0); let (ni1x, ni1y) = pt(5.0, 0.0);
-    buf.draw_line(ni0x, ni0y, ni1x, ni1y, nose_col);
-    let (ni2x, ni2y) = pt(3.0, -1.0); let (ni3x, ni3y) = pt(5.0, 0.0);
-    buf.draw_line(ni2x, ni2y, ni3x, ni3y, nose_col);
-
-    let (tx, ty) = pt(7.0, 0.0);
-    buf.set_pixel(tx, ty, tip_col);
+    draw_rocket_body(
+        buf, pos, nx, ny,
+        Bgra::new( 80,  25,  5),
+        Bgra::new(120,  50,  8),
+        Bgra::new(160,  75, 15),
+        Bgra::new(210, 110, 25),
+        Bgra::new(200,  20,  20),  // nose_col: red nose
+        Bgra::new(255,  60,  60),  // tip_col: bright red tip
+    );
 }
 
 /// Draw a grenade projectile — small oval body with seam lines and pin, matching the weapon icon style.

@@ -1018,7 +1018,9 @@ fn main() {
                         if let Some(s) = team.soldiers.get(team.active) { cam.follow(s.pos); }
                     }
                 }
-            } else if let Some(p) = game.projectiles.first() {
+            } else if let Some(p) = game.projectiles.iter().find(|p| !p.is_fragment) {
+                // Skip sub-munition swarms (Meteor Bomb frags, Cluster Bomb bomblets,
+                // Blasthive bees) — mirrors update_camera()'s Watching branch.
                 cam.follow_always(p.pos);
             } else if !game.explosions.is_empty() {
                 // Track nearest explosion to current camera center (mirrors Watching branch)
@@ -2689,7 +2691,7 @@ fn run_tat_game(
                 } else if let Some(ref air) = game.airstrike {
                     if !air.active { replay_cam.follow(world::WorldPos::new(air.render_x, air.render_y)); }
                     else { replay_cam.follow(game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos); }
-                } else if let Some(p) = game.projectiles.first() {
+                } else if let Some(p) = game.projectiles.iter().find(|p| !p.is_fragment) {
                     replay_cam.follow_always(p.pos);
                 } else if let Some(ex) = game.explosions.last() {
                     replay_cam.follow_always(ex.pos);
@@ -2723,7 +2725,7 @@ fn run_tat_game(
                 } else if let Some(ref air) = game.airstrike {
                     if !air.active { replay_cam.follow(world::WorldPos::new(air.render_x, air.render_y)); }
                     else { replay_cam.follow(game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos); }
-                } else if let Some(p) = game.projectiles.first() {
+                } else if let Some(p) = game.projectiles.iter().find(|p| !p.is_fragment) {
                     replay_cam.follow_always(p.pos);
                 } else if let Some(ex) = game.explosions.last() {
                     replay_cam.follow_always(ex.pos);

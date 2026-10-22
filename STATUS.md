@@ -1,5 +1,91 @@
 # Mini Mayhem — Project Status
 
+## 2026-08-26 — `match-sim` headless batch simulator + three real engine soft-lock fixes found by it — source-only, not yet built/committed/deployed
+
+**New dev tool: `match-sim`.** Headless CPU-vs-CPU batch match runner for crash/bug testing and balance
+stats, entirely sim-only — does not touch or affect the shipped desktop VS-CPU path. `src/game/cpu.rs`
+gained `CpuState::decide_with_difficulty()` (additive, alongside the untouched `decide()`) adding
+Medium/Hard tiers: wider weapon pool, HP-based targeting, scaled-down aim inaccuracy.
+`src/game/cpu_driver.rs` (new) generalizes the turn-driving state machine to any number of CPU-
+controlled team slots. `src/bin/match_sim.rs` (new) builds matches via `Terrain::generate_tactical`/
+`Team::new`/`GameState::new`, drives them via `server_tick`, polls `GameState::result`, isolates panics
+per-match with `catch_unwind`, caps stuck matches with `--max-ticks`, and reports win-rate/match-length/
+weapon-usage stats. Must be built with `cargo build --profile server --bin match-sim` (not plain
+`--release`) — that profile's `panic = "unwind"` is what makes per-match crash isolation actually work.
+
+**Three real engine soft-locks found and fixed via match-sim batch runs (2,800+ matches each round):**
+
+1. **`hp_countdown_delay` stall (`src/game/soldier.rs::step_hp_display`).** A damage-popup flush could
+   arm the HP countdown in a tick where `displayed_hp` had already caught up to `hp`, freezing the
+   countdown forever (nothing left in that branch to decrement it) and blocking `TurnPhase::Ending`
+   indefinitely. Fixed by clearing the stale countdown when there's nothing left to animate. Cut 2-team
+   timeout rate from 3.9% → 1.0% in matched batch runs.
+2. **Idle/Airborne oscillation, two variants (`src/game/loop_runner.rs`).** (a) `unstick_embedded_soldier`'s
+   "give up gracefully" fallback (no escape spot found) sets `Idle` in place, but the `Idle` branch's own
+   `!on_ground` check didn't know about that decision and immediately relaunched the soldier back into
+   `Airborne` — which failed to unstick for the same reason, forever. (b) Two soldiers pinned together
+   (e.g. both knocked to the map's `y=0` ceiling) satisfied the Airborne arm's loose `soldier_hit` landing
+   tolerance every tick but never the strict `is_on_soldier` check, causing the same ping-pong. Fixed with
+   two new shared predicates (`is_embedded_in_terrain`, `is_resting_near_soldier`) that the `Idle` branch
+   now also respects. Combined, cut the worst-case (4-team all-Hard) timeout rate from 9.2% → 0.6%; every
+   remaining timeout in the final verification batch was a genuinely long match running to the tick cap,
+   not a stall.
+3. **General Airborne watchdog (`src/game/loop_runner.rs::apply_all_gravity`).** A catch-all safety net
+   alongside the embedded-terrain watchdog above: if a soldier's `airtime` exceeds 900 ticks (far longer
+   than any legitimate fall, world height / terminal velocity tops out at a few hundred), it's forced back
+   to `Idle` in place. Covers stuck-Airborne cases that aren't terrain-embedded — e.g. a soldier-vs-soldier
+   collision that zeroes displacement every physics sub-step — that the two more targeted fixes above
+   don't catch.
+
+All three fixes are in shared `simulate_with_muzzle` code, so they apply identically across all 5 gameplay
+paths per CLAUDE.md's shared-sim-path rule — no separate per-path work needed. `cargo test --test parity`
+24/24 throughout. Source-only — not yet built, committed, or deployed to any target.
+
+**Also retuned in the same pass: Jumpbot/sheep ground gait (`JUMPBOT_GAIT_CYCLE`, `jumpbot_gait_step`).**
+Cycle length 11 → 12 ticks, adding a "creep" phase (0.4px/tick over 2 ticks) ahead of the existing
+leap/settle/pause phases, still netting ~0.86 px/tick average to match the live-measured WA Sheep pace
+(see memory `reference-wa-movement-physics`) — just with a more granular hop rhythm.
+
+## 2026-08-06 — Rotated-sprite dithering fixed (charge wedge, bazooka/homing rocket body); camera no longer chases sub-munition fragments — source-only, not yet built/committed/deployed
+
+**Rotated-shape dithering fixed.** The aim-charge wedge (`draw_aim_arrow`) and the bazooka/homing-missile
+rocket body (`draw_bazooka`/`draw_homing_missile`, both now sharing a new `draw_rocket_body` helper) were
+built by rotating a unit-step local grid into screen space and rounding each point independently — at
+non-axis-aligned aim/flight angles that rotated grid doesn't line up with the pixel grid, leaving
+single-pixel gaps that read as a dithered/speckled shape instead of solid. Both now supersample at
+half-pixel resolution along both axes, closing the gaps. All in `src/renderer/draw_sprites.rs`.
+
+**Camera no longer targets Meteor Bomb frags / Cluster Bomb bomblets / Blasthive bees.** The
+Watching-phase "follow the first live projectile" logic picked whichever sub-munition happened to be
+first in `game.projectiles`, causing the camera to jerk toward a scattering fragment instead of holding
+steady — fixed by skipping `is_fragment` projectiles and falling through to the existing
+explosion/airborne-soldier continuity heuristics. Applied to all 4 client-side camera paths (camera is
+render-only, so the server path doesn't apply): `update_camera()` in `loop_runner.rs`, the mirrored live-
+client block in `main.rs`, and both TAT replay loops in `main.rs`.
+
+`cargo check --bins` clean, `cargo test --test parity` 24/24. Source-only — not yet built, committed, or
+deployed to any target.
+
+## 2026-07-30 — v0.5.4.438: Baseball Bat damage deferred to landing + help-text fixes
+
+**Baseball Bat damage now applies on landing, not on the swing.** A new `Soldier.pending_bat_damage`
+field holds the hit until the knocked-back soldier actually lands (either landing site in
+`loop_runner.rs`, alongside the existing fall-damage logic), so the knockback plays out before the
+damage registers — matching WA's real feel. `death_cause`/`kill_weapon` are set at landing time so
+kill credit and the damage popup line up with the actual HP loss. The field is deliberately `not
+synced` — server/sim-internal bookkeeping between swing and landing, same category as
+`damage_settle`; the live client only ever needs the resulting HP value. Parity 24/24.
+Modes-check heuristic skipped: `fire_baseball_bat` and both landing sites are called from inside
+`simulate_with_muzzle`, which all 5 paths invoke identically — automatically correct everywhere per
+CLAUDE.md's shared-sim-path rule.
+
+**HOW TO PLAY / WEAPONS help pages corrected against actual weapon constants:** Bazooka blast
+45px→48px, MAC-10 damage/bullet 5→2, Grenade 45 dmg/30px blast→50 dmg/50px blast, Baseball Bat
+30→26 dmg, Homing Missile 45→50 dmg. Everything else (Shotgun, TNT, Landmine, Revolver, Blasthive,
+Black Hole, Air Strike, Sacred Ordnance, unlock-turn timers) already matched and was left alone.
+
+`VERSION` + `REQUIRED_VERSION` bumped in lockstep.
+
 ## 2026-07-16 — v0.5.4.437: HUD streamline, 4-team game-over, debug-crash fixes, screen-loop refactor
 
 **In-match HUD condensed.** Weapon name + `[SEL]`, a 120px wind gauge, FPS, turn number and timer

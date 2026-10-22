@@ -200,6 +200,21 @@ A living document of what's shipped, what's in progress, and what's coming.
 
 ## 🚧 In Progress / Near-Term
 
+- [ ] **`match-sim` headless CPU-vs-CPU batch simulator + three engine soft-lock fixes it found —
+      source-only, not yet built/committed/deployed.** New dev-only tool (`src/bin/match_sim.rs`,
+      `src/game/cpu_driver.rs`, sim-only `decide_with_difficulty` in `cpu.rs`) for crash/balance
+      batch-testing; does not touch the shipped desktop VS-CPU path. Found and fixed three real
+      soft-locks in shared sim code (`hp_countdown_delay` stall, two Idle/Airborne oscillation
+      variants, a general `airtime > 900` Airborne watchdog) — cut worst-case match timeout rate
+      from 9.2% to 0.6% across 2,800+ verification matches. Same pass also retuned the jumpbot/
+      sheep ground gait (12-tick cycle, added a "creep" phase). See STATUS.md 2026-08-26 entry.
+- [ ] **Rotated-sprite dithering fixed (charge wedge + bazooka/homing rocket body), camera no longer
+      chases sub-munition fragments — source-only, not yet built/committed/deployed.** Both the aim-
+      charge wedge and the rocket body were plotting a rotated unit grid pixel-by-pixel with independent
+      rounding, leaving gaps at non-axis-aligned angles; now supersampled at half-pixel resolution. The
+      Watching-phase camera's "follow first projectile" logic now skips Meteor Bomb frags / Cluster Bomb
+      bomblets / Blasthive bees (`is_fragment`) across all 4 client-side camera paths. See STATUS.md
+      2026-08-06 entry.
 - [ ] **Charge meter WA overhaul + fire/wind tuning + spawn-clustering fix, on `.126`
       test device only, no version bump yet** — WA-accurate wedge-shaped charge meter
       (captured via live Wine RE), auto-fire-at-max for all charge weapons, fire damage

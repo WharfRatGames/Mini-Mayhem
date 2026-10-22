@@ -31,6 +31,10 @@ path = "src/bin/scenery_gallery.rs"
 name = "dump-terrain"
 path = "src/bin/dump_terrain.rs"
 
+[[bin]]
+name = "match-sim"
+path = "src/bin/match_sim.rs"
+
 [dependencies]
 noise          = "0.9"
 libc           = "0.2"

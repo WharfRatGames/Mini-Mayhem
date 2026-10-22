@@ -597,6 +597,21 @@ def gen_token(u=None): return secrets.token_hex(32)
 def gen_code(): return ''.join(random.choices(string.ascii_uppercase, k=6))
 def gen_game_token(): return ''.join(random.choices(string.ascii_letters + string.digits, k=24))
 
+def hash_token(t):
+    """Session tokens are bearer credentials, same as a password once issued
+    -- store only this digest so a leaked/backed-up DB file doesn't hand out
+    every logged-in user's live session. Plain SHA-256 (not PBKDF2) is fine
+    here: the token itself is already a 32-byte secrets.token_hex, not a
+    guessable password, so there's nothing for a slow KDF to defend against."""
+    return hashlib.sha256((t or "").encode()).hexdigest()
+
+def is_admin_key(k):
+    """Constant-time admin-key check. Plain != leaks timing on how many
+    leading characters matched; compare_digest doesn't. ADMIN_KEY is a
+    fixed trusted string so the length itself isn't secret, just the
+    fastest-exploitable byte-by-byte guessing path this closes."""
+    return secrets.compare_digest(str(k or ""), ADMIN_KEY)
+
 def read_req(s):
     # Read headers first
     header_buf = b''
@@ -677,7 +692,8 @@ def _handle(db, sock, peer_ip="?"):
     qs_params = dict(p.split('=', 1) for p in qs.split('&') if '=' in p)
 
     def uid(token):
-        r = db.execute("SELECT id FROM users WHERE token=?", (token,)).fetchone()
+        r = db.execute("SELECT id FROM users WHERE token=?",
+                       (hash_token(token),)).fetchone()
         return r[0] if r else None
 
     def uname(u):
@@ -713,7 +729,7 @@ def _handle(db, sock, peer_ip="?"):
         if db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (u,)).fetchone():
             send_json(sock, 409, {"error":"username taken"}); return
         try:
-            db.execute("INSERT INTO users(username,pw_hash,token,last_ip,last_seen) VALUES(?,?,?,?,?)", (u, hash_pw(p), t, peer_ip, int(time.time())))
+            db.execute("INSERT INTO users(username,pw_hash,token,last_ip,last_seen) VALUES(?,?,?,?,?)", (u, hash_pw(p), hash_token(t), peer_ip, int(time.time())))
             db.commit()
             uid2 = db.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (u,)).fetchone()[0]
             ensure_default_roster(db, uid2)
@@ -731,7 +747,7 @@ def _handle(db, sock, peer_ip="?"):
             # Transparently upgrade legacy SHA-256 hash to PBKDF2 on login
             if not row2[2].startswith('pbkdf2$'):
                 db.execute("UPDATE users SET pw_hash=? WHERE id=?", (hash_pw(p), uid2))
-            db.execute("UPDATE users SET token=?, last_ip=?, last_seen=? WHERE id=?", (t, peer_ip, int(time.time()), uid2))
+            db.execute("UPDATE users SET token=?, last_ip=?, last_seen=? WHERE id=?", (hash_token(t), peer_ip, int(time.time()), uid2))
             db.commit()
             n = 1
         else:
@@ -806,7 +822,7 @@ def _handle(db, sock, peer_ip="?"):
         send_json(sock, 200, {"ok": True, "new_scrap": row2[0] or 0, "new_warbonds": row2[1] or 0})
 
     elif method == "POST" and path == "/admin/forfeit_match":
-        if data.get("admin_key") != ADMIN_KEY:
+        if not is_admin_key(data.get("admin_key")):
             send_json(sock, 403, {"error":"forbidden"}); return
         mid = int(data.get("match_id", 0))
         row = db.execute("SELECT p0,p1,turn,done,ranked FROM matches WHERE id=?", (mid,)).fetchone()
@@ -829,7 +845,7 @@ def _handle(db, sock, peer_ip="?"):
     elif method == "POST" and path == "/admin/grant_warbonds":
         # Called by the payment backend after a successful purchase.
         # Body: {admin_key, username, warbonds, reason}
-        if data.get("admin_key") != ADMIN_KEY:
+        if not is_admin_key(data.get("admin_key")):
             send_json(sock, 403, {"error":"forbidden"}); return
         username = data.get("username","").strip()
         wb_amount = int(data.get("warbonds", 0))
@@ -847,7 +863,7 @@ def _handle(db, sock, peer_ip="?"):
         send_json(sock, 200, {"ok": True, "warbonds_granted": wb_amount, "new_warbond_total": new_wb})
 
     elif method == "POST" and path == "/admin/grant_all_cosmetics":
-        if data.get("admin_key") != ADMIN_KEY:
+        if not is_admin_key(data.get("admin_key")):
             send_json(sock, 403, {"error":"forbidden"}); return
         username = data.get("username","").strip()
         if not username: send_json(sock, 400, {"error":"missing username"}); return
@@ -873,7 +889,7 @@ def _handle(db, sock, peer_ip="?"):
         send_json(sock, 200, {"ok": True, "granted": granted, "already_owned": already_owned})
 
     elif method == "POST" and path == "/admin/reset_password":
-        if data.get("admin_key") != ADMIN_KEY:
+        if not is_admin_key(data.get("admin_key")):
             send_json(sock, 403, {"error":"forbidden"}); return
         username = data.get("username","").strip()
         if not username: send_json(sock, 400, {"error":"missing username"}); return
@@ -884,7 +900,7 @@ def _handle(db, sock, peer_ip="?"):
         send_json(sock, 200, {"ok": True})
 
     elif method == "POST" and path == "/admin/delete_account":
-        if data.get("admin_key") != ADMIN_KEY:
+        if not is_admin_key(data.get("admin_key")):
             send_json(sock, 403, {"error":"forbidden"}); return
         username = data.get("username","").strip()
         if not username: send_json(sock, 400, {"error":"missing username"}); return
@@ -1558,11 +1574,11 @@ def _handle(db, sock, peer_ip="?"):
         send_json(sock, 200, {"ok": True})
 
     elif method == "GET" and path == "/admin/status":
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         send_json(sock, 200, _status_cached or {})
 
     elif method == "GET" and path == "/admin/users":
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         rows = db.execute("""
             SELECT u.id, u.username, u.elo, u.wins, u.losses, u.scrap, u.warbonds,
                    COUNT(DISTINCT m.id) as match_count,
@@ -1579,11 +1595,11 @@ def _handle(db, sock, peer_ip="?"):
             "last_ip":r[9],"last_seen":r[10]} for r in rows])
 
     elif method == "GET" and path == "/admin/lobbies":
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         send_json(sock, 200, _lobbies_cached or {})
 
     elif method == "GET" and path == "/admin/serverlog":
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         try:
             n = int(qs_params.get("n", 100))
             lines = subprocess.check_output(
@@ -1594,7 +1610,7 @@ def _handle(db, sock, peer_ip="?"):
             send_json(sock, 500, {"error": str(e)})
 
     elif method == "GET" and path == "/admin/nginxlog":
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         try:
             n = int(qs_params.get("n", 100))
             kind = qs_params.get("kind", "error")
@@ -1609,14 +1625,14 @@ def _handle(db, sock, peer_ip="?"):
             send_json(sock, 500, {"error": str(e)})
 
     elif method == "GET" and path == "/admin/temp":
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         if _temp_cached is not None:
             send_json(sock, 200, _temp_cached)
         else:
             send_json(sock, 500, {"error": "unavailable"})
 
     elif method == "GET" and path == "/admin/procs":
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         try:
             lines = subprocess.check_output(
                 ["ps", "aux", "--sort=-%cpu"], text=True
@@ -1637,7 +1653,7 @@ def _handle(db, sock, peer_ip="?"):
             send_json(sock, 500, {"error": str(e)})
 
     elif method == "GET" and path.startswith("/admin/user/"):
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         username = path[len("/admin/user/"):]
         row = db.execute("""
             SELECT u.id, u.username, u.elo, u.wins, u.losses, u.scrap, u.warbonds,
@@ -1671,7 +1687,7 @@ def _handle(db, sock, peer_ip="?"):
         })
 
     elif method == "GET" and path == "/admin/matches":
-        if qs_params.get("key") != ADMIN_KEY: send_json(sock, 403, {"error":"forbidden"}); return
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
         limit = int(qs_params.get("limit", 50))
         rows = db.execute("""
             SELECT m.id, u0.username, u1.username, m.ranked, m.winner, m.finished_at, m.done

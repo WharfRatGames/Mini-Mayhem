@@ -168,6 +168,14 @@ impl Soldier {
             } else {
                 self.displayed_hp = self.displayed_hp.saturating_sub(1).max(self.hp);
             }
+        } else if self.hp_countdown_delay > 0 {
+            // displayed_hp already caught up to hp (e.g. a damage flush armed
+            // the countdown in the same tick displayed_hp got reconciled) —
+            // nothing left to animate, so drop the stale countdown. Otherwise
+            // it never decrements (the branch above is unreachable once
+            // displayed_hp == hp) and any_soldier_tallying() blocks
+            // TurnPhase::Ending forever, soft-locking the match.
+            self.hp_countdown_delay = 0;
         }
     }
 

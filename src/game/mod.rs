@@ -14,6 +14,7 @@ pub use team::Team;
 pub use turn::{TurnManager, TurnPhase};
 pub use state::GameState;
 pub mod cpu;
+pub mod cpu_driver;
 pub mod store;
 pub mod missions;
 pub mod settings;

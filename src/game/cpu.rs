@@ -1,6 +1,7 @@
 /// Easy CPU AI for singleplayer VS CPU mode.
 use crate::world::{WorldPos, WORLD_W, WATER_Y};
 use super::state::GameState;
+use super::team::Difficulty;
 
 pub struct CpuState {
     pub walk_dir:   i8,   // -1=walk left, 0=stand, +1=walk right
@@ -23,6 +24,23 @@ const AI_USABLE_WEAPONS: &[WeaponKind] = &[
     WeaponKind::Blasthive,
     WeaponKind::BlackHoleBomb,
     WeaponKind::MolotovCocktail,
+];
+
+/// Wider weapon pool used by Medium/Hard sim-only difficulty tiers — adds
+/// projectile-arc weapons the same ballistic grid-search can still evaluate.
+const AI_USABLE_WEAPONS_HARD: &[WeaponKind] = &[
+    WeaponKind::Bazooka,
+    WeaponKind::Grenade,
+    WeaponKind::Shotgun,
+    WeaponKind::Tnt,
+    WeaponKind::BananaBomb,
+    WeaponKind::Blasthive,
+    WeaponKind::BlackHoleBomb,
+    WeaponKind::MolotovCocktail,
+    WeaponKind::ClusterBomb,
+    WeaponKind::Revolver,
+    WeaponKind::Uzi,
+    WeaponKind::Pistol,
 ];
 
 impl CpuState {
@@ -121,6 +139,117 @@ impl CpuState {
         let final_power = (best_power + power_err).clamp(0.15, 1.0);
 
         let thinking = lcg(noise_seed + 5) % 50 + 30; // 30-79 ticks thinking
+
+        Self {
+            walk_dir, walk_ticks,
+            thinking,
+            angle: final_angle,
+            power: final_power,
+            weapon_idx,
+            decided: true,
+        }
+    }
+
+    /// Sim-only variant of `decide` with tiered strength. Used exclusively by
+    /// `match-sim` — never called from the shipped desktop VS-CPU path, which
+    /// keeps calling `decide` (fixed Easy) unchanged.
+    pub fn decide_with_difficulty(game: &GameState, cpu_team: usize, noise_seed: u32, difficulty: Difficulty) -> Self {
+        let s = &game.teams[cpu_team].soldiers[game.teams[cpu_team].active];
+        let sx = s.pos.x;
+        let sy = s.pos.y - 4.0;
+        let facing = s.facing as f32;
+
+        // Find target: nearest enemy on Easy, lowest-HP enemy on Medium/Hard.
+        let mut best_pos: Option<WorldPos> = None;
+        let mut best_score = f32::MAX;
+        for (ti, team) in game.teams.iter().enumerate() {
+            if ti == cpu_team { continue; }
+            for sol in &team.soldiers {
+                if !sol.is_alive() { continue; }
+                let d = (sol.pos.x - sx).abs() + (sol.pos.y - sy).abs();
+                let score = match difficulty {
+                    Difficulty::Easy => d,
+                    // Prefer low-HP kills, but don't ignore distance entirely.
+                    Difficulty::Medium | Difficulty::Hard => sol.hp as f32 * 4.0 + d,
+                };
+                if score < best_score { best_score = score; best_pos = Some(sol.pos); }
+            }
+        }
+        let target = match best_pos {
+            Some(p) => p,
+            None => return Self { walk_dir: 0, walk_ticks: 0, thinking: 30,
+                                   angle: std::f32::consts::FRAC_PI_4, power: 0.6, weapon_idx: 0, decided: true },
+        };
+
+        let pool: &[WeaponKind] = match difficulty {
+            Difficulty::Easy => AI_USABLE_WEAPONS,
+            Difficulty::Medium | Difficulty::Hard => AI_USABLE_WEAPONS_HARD,
+        };
+        let candidates: Vec<usize> = game.teams[cpu_team].weapons.iter().enumerate()
+            .filter(|(_, (kind, ammo))| pool.contains(kind) && ammo.map_or(true, |a| a > 0))
+            .map(|(i, _)| i)
+            .collect();
+        let weapon_idx = if candidates.is_empty() { 0 } else {
+            candidates[(lcg(noise_seed + 6) as usize) % candidates.len()]
+        };
+
+        let r1 = lcg(noise_seed)     as f32 / u32::MAX as f32;
+        let r2 = lcg(noise_seed + 1) as f32 / u32::MAX as f32;
+        let r3 = lcg(noise_seed + 2) as f32 / u32::MAX as f32;
+        let r4 = lcg(noise_seed + 3) as f32 / u32::MAX as f32;
+
+        let walk_dir;
+        let walk_ticks;
+        if r1 < 0.70 {
+            let dir = if target.x > sx { 1i8 } else { -1i8 };
+            walk_dir   = dir;
+            walk_ticks = (lcg(noise_seed + 4) % 30 + 10) as u32;
+        } else {
+            walk_dir   = 0;
+            walk_ticks = 0;
+        }
+
+        let shoot_sx = sx + walk_dir as f32 * walk_ticks as f32 * 2.0;
+        let wind = game.wind.value() * 0.05;
+
+        let mut best_angle = std::f32::consts::FRAC_PI_4;
+        let mut best_power = 0.6f32;
+        let mut best_miss  = f32::MAX;
+
+        let los_blocked = !crate::physics::line_clear(
+            shoot_sx as i32, sy as i32, target.x as i32, target.y as i32, &game.terrain,
+        );
+        let los_penalty = if los_blocked { 80.0f32 } else { 0.0 };
+
+        for ai in -75i32..=75 {
+            let angle = ai as f32 * std::f32::consts::PI / 180.0;
+            for pi in [35u32, 50, 65, 80, 95] {
+                let power_frac = pi as f32 / 100.0;
+                let power = power_frac * 20.0;
+                let (lx, ly) = simulate(shoot_sx, sy, angle, power, facing, wind, &game.terrain);
+                let mut miss = ((lx - target.x).powi(2) + (ly - target.y).powi(2)).sqrt();
+                miss += los_penalty;
+                if miss < best_miss {
+                    best_miss  = miss;
+                    best_angle = angle;
+                    best_power = power_frac;
+                }
+            }
+        }
+
+        // Inaccuracy shrinks as difficulty increases; Hard is near-perfect.
+        let (angle_scale, power_scale, chaos_chance) = match difficulty {
+            Difficulty::Easy   => (1.0, 1.0, 0.15),
+            Difficulty::Medium => (0.45, 0.45, 0.05),
+            Difficulty::Hard   => (0.10, 0.10, 0.0),
+        };
+        let angle_err = (r2 - 0.5) * 0.22 * angle_scale;
+        let power_err = (r3 - 0.5) * 0.16 * power_scale;
+        let chaos = r4 < chaos_chance;
+        let final_angle = best_angle + angle_err + if chaos { (r2 - 0.5) * 0.40 } else { 0.0 };
+        let final_power = (best_power + power_err).clamp(0.15, 1.0);
+
+        let thinking = lcg(noise_seed + 5) % 50 + 30;
 
         Self {
             walk_dir, walk_ticks,

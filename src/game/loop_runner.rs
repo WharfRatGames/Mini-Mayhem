@@ -532,7 +532,12 @@ fn update_camera(game: &GameState, cam: &mut Camera, input: &InputState, step: S
                     let ti = game.active_team();
                     let si = game.teams[ti].active;
                     cam.follow(game.teams[ti].soldiers[si].pos);
-                } else if let Some(p) = game.projectiles.first() {
+                } else if let Some(p) = game.projectiles.iter().find(|p| !p.is_fragment) {
+                    // Skip sub-munition swarms (Meteor Bomb frags, Cluster Bomb
+                    // bomblets, Blasthive bees) — following whichever one happens to
+                    // be first in the vec makes the camera jerk around erratically
+                    // as they scatter; fall through to the explosion/airborne
+                    // continuity heuristics below instead.
                     cam.follow_always(p.pos);
                 } else if !game.explosions.is_empty() {
                     // When multiple explosions are live at once, picking `.last()`
@@ -1350,6 +1355,47 @@ fn rope_unstick(game: &mut GameState, ti: usize, si: usize) {
 /// was found and applied (or the soldier wasn't embedded to begin with);
 /// false if nowhere clear was found nearby. Called as a watchdog at the top
 /// of the Airborne physics step — see call site for why this matters.
+/// Is this soldier's body silhouette overlapping solid terrain at its current
+/// position? Shared by `unstick_embedded_soldier` (which tries to escape this)
+/// and the `Idle` gravity check (which must NOT try to re-launch a soldier
+/// `unstick_embedded_soldier` already gave up on — see its doc comment).
+fn is_embedded_in_terrain(game: &GameState, ti: usize, si: usize) -> bool {
+    use crate::renderer::draw_sprites::{SOLDIER_HALF_W, SOLDIER_H};
+    let x = game.teams[ti].soldiers[si].pos.x as i32;
+    let y = game.teams[ti].soldiers[si].pos.y as i32;
+    let x_l = x - SOLDIER_HALF_W as i32;
+    let x_r = x + SOLDIER_HALF_W as i32;
+    (0..=SOLDIER_H).any(|h|
+        game.terrain.is_blocked(x_l, y - h)
+            || game.terrain.is_blocked(x, y - h)
+            || game.terrain.is_blocked(x_r, y - h))
+}
+
+/// Is this soldier within the Airborne arm's own (loose, whole-body-height)
+/// `soldier_hit` landing tolerance of another living soldier? That sweep-loop
+/// check uses `|dy| < SOLDIER_H` (any overlap of the two bodies' vertical
+/// spans), far looser than `is_on_soldier`'s strict "feet within 3px of their
+/// head" — so two soldiers pinned together (e.g. both knocked to the map's
+/// y=0 ceiling) can satisfy the Airborne arm's landing check every tick while
+/// never satisfying `is_on_soldier`, flipping Idle -> Airborne -> "landed" ->
+/// Idle forever at zero net displacement. Shared with the `Idle` gravity check
+/// so it agrees with what actually stops the Airborne arm from falling.
+fn is_resting_near_soldier(game: &GameState, ti: usize, si: usize) -> bool {
+    use crate::renderer::draw_sprites::{SOLDIER_W, SOLDIER_H};
+    let x = game.teams[ti].soldiers[si].pos.x as i32;
+    let y = game.teams[ti].soldiers[si].pos.y as i32;
+    game.teams.iter().enumerate().any(|(oti, oteam)| {
+        oteam.soldiers.iter().enumerate().any(|(osi, os)| {
+            if (oti == ti && osi == si) || !os.is_alive() { return false; }
+            let ox = os.pos.x as i32;
+            let oy = os.pos.y as i32;
+            (x - ox).abs() < SOLDIER_W as i32
+                && y >= oy - SOLDIER_H as i32
+                && y <= oy + SOLDIER_H as i32
+        })
+    })
+}
+
 fn unstick_embedded_soldier(game: &mut GameState, ti: usize, si: usize) -> bool {
     use crate::renderer::draw_sprites::{SOLDIER_HALF_W, SOLDIER_H};
     let x  = game.teams[ti].soldiers[si].pos.x as i32;
@@ -2125,17 +2171,18 @@ const JUMPBOT_FUSE_TICKS: u32 = 300; // 10s @ 30Hz total lifespan
 /// Countdown number only appears above its head for the final 5 seconds.
 const JUMPBOT_COUNTDOWN_TICKS: u32 = 150;
 /// Ground gait: a hop cadence rather than a flat walk, matching the live-measured
-/// WA Sheep (see memory reference-wa-movement-physics). Over an 11-tick cycle it
-/// leaps forward, settles, then briefly pauses — netting ~0.87 px/tick average
+/// WA Sheep (see memory reference-wa-movement-physics) — four phases per cycle:
+/// creep, leap, settle, pause. Over a 12-tick cycle it nets ~0.86 px/tick average
 /// (≈0.9 px/frame @30fps, the measured sheep pace) with a visible hopping rhythm.
-const JUMPBOT_GAIT_CYCLE: u32 = 11;
+const JUMPBOT_GAIT_CYCLE: u32 = 12;
 /// Per-tick horizontal step for a given point in the gait cycle (px, unsigned).
-/// Sums to ~9.5px over the 11-tick cycle → ~0.86 px/tick net.
+/// Sums to ~10.3px over the 12-tick cycle → ~0.86 px/tick net.
 fn jumpbot_gait_step(walk_ticks: u32) -> f32 {
     match walk_ticks % JUMPBOT_GAIT_CYCLE {
-        0..=2 => 2.5, // leap (7.5px over 3 ticks)
-        3..=4 => 1.0, // settle (2.0px over 2 ticks)
-        _     => 0.0, // pause between hops (6 ticks stationary)
+        0..=1 => 0.4, // creep (0.8px over 2 ticks)
+        2..=4 => 2.5, // leap (7.5px over 3 ticks)
+        5..=6 => 1.0, // settle (2.0px over 2 ticks)
+        _     => 0.0, // pause between hops (5 ticks stationary)
     }
 }
 /// Upward speed for the obstacle-clearing jump (not a player action — purely
@@ -5733,6 +5780,19 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         game.teams[ti].soldiers[si].airtime = 0;
                         continue;
                     }
+                    // General watchdog: some other stuck-airborne case (not
+                    // terrain-embedded — e.g. a soldier-vs-soldier collision that
+                    // zeroes displacement every sub-step) can leave `state` frozen
+                    // in Airborne indefinitely with no legitimate fall taking this
+                    // long (world height / terminal velocity is a few hundred
+                    // ticks at most). Same "give up gracefully" fallback as the
+                    // embedded-terrain case above, just on a longer fuse so it
+                    // never cuts off a real fall.
+                    if game.teams[ti].soldiers[si].airtime > 900 {
+                        game.teams[ti].soldiers[si].state = SoldierState::Idle;
+                        game.teams[ti].soldiers[si].airtime = 0;
+                        continue;
+                    }
                     // ── Rope constraint physics (active soldier only) ─────────
                     let is_active = ti == ati && si == asi;
                     if is_active {
@@ -6215,7 +6275,30 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     }
                 }
                 SoldierState::Idle => {
-                    if !on_ground {
+                    // Use the lenient ground check (no is_solid wall-guard) here, not
+                    // the strict `on_ground`: on a thin terrain ridge the soldier's own
+                    // foot pixel can itself register solid, which trips is_on_ground's
+                    // wall-guard and reports not-grounded even though the Airborne arm's
+                    // own landing sweep (is_blocked-based, no such guard) just placed the
+                    // soldier there and considers it landed.
+                    //
+                    // Also exempt soldiers `unstick_embedded_soldier` already gave up on:
+                    // that watchdog sets Idle in place when NO clear escape exists nearby
+                    // (soldier buried too deep to reposition) specifically so `all_grounded`
+                    // stops waiting on it. Without this exemption, this check immediately
+                    // re-detects "not on real ground" at that same embedded spot and
+                    // launches it back into Airborne — which fails to unstick for the exact
+                    // same reason, gives up again, and the two fallbacks ping-pong forever
+                    // at zero net displacement, softlocking the turn.
+                    //
+                    // Also exempt soldiers within the Airborne arm's own loose
+                    // `soldier_hit` landing tolerance of another soldier (see
+                    // `is_resting_near_soldier`) — otherwise two soldiers pinned
+                    // together (e.g. both knocked to the map's y=0 ceiling) satisfy
+                    // that landing check every Airborne tick but never satisfy the
+                    // strict `is_on_soldier` here, causing the same ping-pong.
+                    if !on_ground && !is_on_ground_lenient(game, ti, si)
+                        && !is_embedded_in_terrain(game, ti, si) && !is_resting_near_soldier(game, ti, si) {
                         let y0 = game.teams[ti].soldiers[si].pos.y;
                         game.teams[ti].soldiers[si].fall.begin_fall(y0);
                         game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel: crate::world::Vec2::new(0.0, 0.0), spinning: false };
