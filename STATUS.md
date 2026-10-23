@@ -1,5 +1,41 @@
 # Mini Mayhem — Project Status
 
+## 2026-10-22 — v0.5.4.439 built, tested, committed and fully deployed (native + Miyoo x2 + Pi server); API security hardening deployed; IRC dashboard removed from repo
+
+The match-sim tool and three soft-lock fixes described in the 2026-08-26 entry below sat
+source-only/uncommitted for weeks. This entry closes that out:
+
+- **Committed and pushed** (`9da05e3`): match-sim tool, the three soft-lock fixes, a rotated-sprite
+  dithering fix, a camera fix so the camera no longer jerks between sub-munition fragments (Meteor
+  Bomb/Cluster Bomb/Blasthive) when picking what to follow, and `deploy/arty_api.py` security hardening
+  (constant-time admin-key comparison via `is_admin_key()`; session tokens hashed with SHA-256 at rest
+  instead of stored plaintext in the `users.token` column — a DB leak no longer hands out live sessions).
+- **API hardening deployed and verified live**: registered a test account against the production API,
+  confirmed the stored token is the hash (not the raw value) via direct DB inspection, confirmed the
+  hashed token still authenticates, confirmed a wrong admin key is still rejected (403). Test account
+  cleaned up afterward. This does invalidate pre-existing plaintext-token sessions on deploy — expected,
+  one-time, not a bug.
+- **`fire_reaction::only_carving_fire_eats_terrain` test fixed** (`97e01e4`) — the carving logic itself
+  was correct; the test only ran the patch for 30 ticks, but `server_tick` increments `game.tick` before
+  the fire-patch update runs, so `BURN_CARVE_INTERVAL`'s (32-tick) window never actually opened inside a
+  30-tick loop. Bumped to 40.
+- **Version bumped to v0.5.4.439** and shipped everywhere: native release build, Pi server binary
+  (`arty-game.service` restarted), both Miyoo devices (10.0.0.110/.126, hash-verified), changelog +
+  version.txt pushed to the update server.
+- **Full automated test sweep run** (parity suite, fix_verification, flame_render, soldier_visibility,
+  wa_collage_check — all pass) plus ~2,000+ headless match-sim matches across 2/3/4-team configs and
+  easy/medium/hard difficulty mixes: zero panics, only legitimate AI-stalemate timeouts (CPU vs CPU
+  running out the tick cap in a lopsided 1v1 endgame, not an engine bug).
+- **IRC dashboard removed from the Arty repo and deploy pipeline** (`4319aca`) — `deploy/irc-dash.service`,
+  `deploy/irc_dash.py`, `deploy/ircdash/index.html` were a separate service (reads a different IRC bot's
+  logs, unrelated to Arty) that had been riding along in `deploy/`. Moved to its own project at
+  `~/irc-dash` with its own `deploy.sh`; live Pi service untouched. Also removed the deploy step whose
+  nginx-dedup check was broken (`grep -q 'irc/state'` against a string the inserted line never contained),
+  which had been silently appending duplicate `/irc/` location blocks to an unused nginx config file on
+  every deploy run.
+
+---
+
 ## 2026-08-26 — `match-sim` headless batch simulator + three real engine soft-lock fixes found by it — source-only, not yet built/committed/deployed
 
 **New dev tool: `match-sim`.** Headless CPU-vs-CPU batch match runner for crash/bug testing and balance
