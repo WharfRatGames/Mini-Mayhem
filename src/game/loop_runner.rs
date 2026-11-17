@@ -1875,11 +1875,18 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         // Longer charge meter for every weapon: charge can build up to MAX_CHARGE.
         // power=1.0 still maps to the same velocity as before (feel unchanged for a
         // normal full charge); the extra band 1.0..MAX_CHARGE is bonus range.
-        game.aim.power = (game.aim.power + CHARGE_RATE).min(MAX_CHARGE);
+        // The bazooka uses the reference game's exact meter: 1.5 s from empty to full
+        // (rate and cap from physics::tick), auto-firing at exactly full charge.
+        let (rate, cap) = if game.teams[game.active_team()].current_weapon() == WeaponKind::Bazooka {
+            (crate::physics::tick::BAZOOKA_CHARGE_RATE, crate::physics::tick::BAZOOKA_MAX_CHARGE)
+        } else {
+            (CHARGE_RATE, MAX_CHARGE)
+        };
+        game.aim.power = (game.aim.power + rate).min(cap);
         // WA auto-fires once the bar is full rather than waiting for release —
         // every charge-meter weapon does this now (shotgun never reaches this
         // code path; it fires instantly on press, see WeaponKind::Shotgun above).
-        if game.aim.power >= MAX_CHARGE {
+        if game.aim.power >= cap {
             fire_weapon(game);
             game.aim.power = 0.0;
         }
@@ -2671,7 +2678,12 @@ fn fire_weapon(game: &mut GameState) {
     let angle = game.aim.angle;
     // power=1.0 → 20 (unchanged); the extra 1.0..MAX_CHARGE band adds launch speed
     // (hence range) only when the player fills the extended meter.
-    let power = game.aim.power.min(MAX_CHARGE) * 20.0;
+    // Bazooka: reference launch speed (linear in charge, capped at 1.0).
+    let power = if kind == WeaponKind::Bazooka {
+        game.aim.power.min(crate::physics::tick::BAZOOKA_MAX_CHARGE) * crate::physics::tick::BAZOOKA_LAUNCH
+    } else {
+        game.aim.power.min(MAX_CHARGE) * 20.0
+    };
 
     let sy = game.teams[ti].soldiers[si].pos.y - 4.0 - angle.sin() * 12.0;
     let sx = game.teams[ti].soldiers[si].pos.x + angle.cos() * fm * 12.0;
@@ -5179,7 +5191,14 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     (angle, 0.02) // small power so reticle circle always draws
                 } else {
                     let a = if active.facing < 0 { std::f32::consts::PI - game.aim.angle } else { game.aim.angle };
-                    (a, game.aim.power)
+                    // The bazooka's meter tops out at 1.0, so stretch it to the
+                    // full bar (the shared bar is scaled to MAX_CHARGE).
+                    let p = if game.active_team_ref().current_weapon() == crate::physics::WeaponKind::Bazooka {
+                        game.aim.power * (MAX_CHARGE / crate::physics::tick::BAZOOKA_MAX_CHARGE)
+                    } else {
+                        game.aim.power
+                    };
+                    (a, p)
                 };
                 if let Some(muzzle) = active_muzzle {
                     draw_aim_arrow(buf, muzzle, display_angle, power);

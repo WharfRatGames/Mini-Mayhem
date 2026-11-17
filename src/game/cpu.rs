@@ -118,7 +118,11 @@ impl CpuState {
             for pi in [35u32, 50, 65, 80, 95] {
                 let power_frac = pi as f32 / 100.0;
                 let power = power_frac * 20.0;
-                let (lx, ly) = simulate(shoot_sx, sy, angle, power, facing, wind, &game.terrain);
+                let (lx, ly) = if game.teams[cpu_team].weapons.get(weapon_idx).map(|w| w.0) == Some(WeaponKind::Bazooka) {
+                    simulate_bazooka(shoot_sx, sy, angle, power_frac, facing, game.wind.value(), &game.terrain)
+                } else {
+                    simulate(shoot_sx, sy, angle, power, facing, wind, &game.terrain)
+                };
                 let mut miss = ((lx - target.x).powi(2) + (ly - target.y).powi(2)).sqrt();
                 // Apply LOS penalty once — all angles share the same penalty here
                 // (keeps penalty consistent across the search)
@@ -226,7 +230,11 @@ impl CpuState {
             for pi in [35u32, 50, 65, 80, 95] {
                 let power_frac = pi as f32 / 100.0;
                 let power = power_frac * 20.0;
-                let (lx, ly) = simulate(shoot_sx, sy, angle, power, facing, wind, &game.terrain);
+                let (lx, ly) = if game.teams[cpu_team].weapons.get(weapon_idx).map(|w| w.0) == Some(WeaponKind::Bazooka) {
+                    simulate_bazooka(shoot_sx, sy, angle, power_frac, facing, game.wind.value(), &game.terrain)
+                } else {
+                    simulate(shoot_sx, sy, angle, power, facing, wind, &game.terrain)
+                };
                 let mut miss = ((lx - target.x).powi(2) + (ly - target.y).powi(2)).sqrt();
                 miss += los_penalty;
                 if miss < best_miss {
@@ -271,6 +279,28 @@ fn simulate(sx: f32, sy: f32, angle: f32, power: f32, facing: f32,
     for _ in 0..300 {
         vx += wind;
         vy = (vy + 0.5).min(12.0);
+        x += vx; y += vy;
+        if x < 0.0 || x >= WORLD_W as f32 { break; }
+        if y >= WATER_Y as f32 { break; }
+        if terrain.is_solid(x as i32, y as i32) { return (x, y); }
+    }
+    (x, y)
+}
+
+/// Bazooka flight using the game's real bazooka constants (same spawn offset,
+/// launch speed, gravity and wind as `fire_weapon` + `physics::tick`), so the
+/// AI's aim search matches what the rocket will actually do.
+fn simulate_bazooka(sx: f32, sy: f32, angle: f32, power_frac: f32, facing: f32,
+                    wind: f32, terrain: &crate::world::Terrain) -> (f32, f32) {
+    use crate::physics::tick::{BAZOOKA_GRAVITY, BAZOOKA_LAUNCH, BAZOOKA_WIND_SCALE, TERMINAL_VELOCITY};
+    let mut x  = sx + angle.cos() * facing * 12.0;
+    let mut y  = sy - 4.0 - angle.sin() * 12.0;
+    let speed  = power_frac * BAZOOKA_LAUNCH;
+    let mut vx = angle.cos() * speed * facing;
+    let mut vy = -angle.sin() * speed;
+    for _ in 0..600 {
+        vy = (vy + BAZOOKA_GRAVITY).min(TERMINAL_VELOCITY);
+        vx += wind * BAZOOKA_WIND_SCALE;
         x += vx; y += vy;
         if x < 0.0 || x >= WORLD_W as f32 { break; }
         if y >= WATER_Y as f32 { break; }

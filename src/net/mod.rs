@@ -20,6 +20,16 @@ pub fn start_dns_prefetch() {
     });
 }
 
+/// Experimental-build switch. When true the client (a) never self-updates from the
+/// live release channel and (b) sends live-casual game traffic to the LAN test
+/// server below instead of the production game server. The version string also
+/// carries an `-exp` suffix, so the production server rejects this client.
+pub const EXPERIMENTAL: bool = true;
+
+/// Experimental game server (Pi on the LAN). TLS still validates the server as
+/// `crumbonium.duckdns.org` (the name is independent of the connect address).
+pub const EXP_GAME_ADDR: ([u8; 4], u16) = ([10, 0, 0, 123], 7787);
+
 /// Return the pre-resolved server address if DNS has completed.
 pub fn cached_server_addr() -> Option<SocketAddr> {
     DNS_CACHE.get().copied().flatten()

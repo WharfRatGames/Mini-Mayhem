@@ -17,12 +17,38 @@ pub const TERMINAL_VELOCITY: f32 = 18.0;
 /// Reduced 20% (was 0.08) per user request.
 pub const WIND_SCALE: f32 = 0.064;
 
-/// Bazooka-specific wind scale — stronger than the shared `WIND_SCALE` so that
-/// strong wind can visibly hook a rocket around terrain, or even reverse its
-/// horizontal direction mid-flight (a signature WA trick). Hand-tuned, not
-/// derived from a measured constant — adjust based on playtest feel.
-/// Reduced 20% (was 0.32) per user request.
-pub const BAZOOKA_WIND_SCALE: f32 = 0.256;
+// ── Bazooka: Worms Armageddon reference physics ──────────────────────────────
+// The reference game steps at 50 fps; Arty steps at 30 Hz. Same pixel space, so
+// every per-tick value below is the reference per-frame value rescaled:
+// velocity ×(50/30), acceleration ×(50/30)². Bazooka only — every other weapon
+// keeps the shared defaults above.
+
+/// Reference frames-per-second ÷ Arty ticks-per-second.
+const WA_TIME_SCALE: f32 = 50.0 / 30.0;
+
+/// Bazooka gravity. Reference: 0.24 px/frame² (measured live; thrown weapons and
+/// the rocket share it). NOT yet confirmed from static code.
+pub const BAZOOKA_GRAVITY: f32 = 0.24 * WA_TIME_SCALE * WA_TIME_SCALE;
+
+/// Bazooka wind acceleration at full meter (wind = ±1.0). Reference max is about
+/// 0.286 px/frame² (measured live). NOT yet confirmed from static code.
+pub const BAZOOKA_WIND_SCALE: f32 = 0.286 * WA_TIME_SCALE * WA_TIME_SCALE;
+
+/// Bazooka launch speed at full charge (power = 1.0), px/tick.
+/// Reference (static, from the game's fire code): launch component =
+/// unit_direction × charge × 0x18, then × 9 ÷ 25 at projectile spawn
+/// → 24 × 9 / 25 = 8.64 px/frame at full charge, linear in charge.
+pub const BAZOOKA_LAUNCH: f32 = 24.0 * 9.0 / 25.0 * WA_TIME_SCALE;
+
+/// Bazooka charge gained per tick (power runs 0.0..=1.0).
+/// Reference (static): the charge accumulator gains 0x369 per frame toward
+/// 0x10000, i.e. 873/65536 per frame — 75 frames (1.5 s) from empty to full —
+/// and the shot fires automatically at full charge. No overcharge band.
+pub const BAZOOKA_CHARGE_RATE: f32 = 873.0 / 65536.0 * WA_TIME_SCALE;
+
+/// The bazooka's meter tops out at exactly 1.0 (auto-fire), unlike the shared
+/// 1.0..MAX_CHARGE band the other charge weapons use.
+pub const BAZOOKA_MAX_CHARGE: f32 = 1.0;
 
 /// Apply one physics tick to a projectile.
 ///
@@ -39,7 +65,7 @@ pub fn tick(proj: &mut Projectile, wind: f32) {
     // ── Acceleration ──────────────────────────────────────────────────────────
     // Homing missiles maintain constant speed — no gravity or wind drift.
     if proj.kind != WeaponKind::HomingMissile {
-        proj.vel.y += GRAVITY;
+        proj.vel.y += if proj.kind == WeaponKind::Bazooka { BAZOOKA_GRAVITY } else { GRAVITY };
         if proj.kind.affected_by_wind() {
             let scale = if proj.kind == WeaponKind::Bazooka { BAZOOKA_WIND_SCALE } else { WIND_SCALE };
             proj.vel.x += wind * scale;
@@ -103,9 +129,40 @@ mod tests {
     fn gravity_increases_y_velocity_each_tick() {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
         tick(&mut p, 0.0);
-        assert!((p.vel.y - GRAVITY).abs() < 1e-5, "vy should equal GRAVITY after one tick");
+        assert!((p.vel.y - BAZOOKA_GRAVITY).abs() < 1e-5, "vy should equal BAZOOKA_GRAVITY after one tick");
         tick(&mut p, 0.0);
-        assert!((p.vel.y - GRAVITY * 2.0).abs() < 1e-5, "vy should equal 2×GRAVITY after two ticks");
+        assert!((p.vel.y - BAZOOKA_GRAVITY * 2.0).abs() < 1e-5, "vy should equal 2×BAZOOKA_GRAVITY after two ticks");
+    }
+
+    // ── Bazooka reference constants (bazooka only; other weapons unchanged) ───
+
+    #[test]
+    fn non_bazooka_keeps_shared_gravity() {
+        let mut g = grenade(100.0, 100.0, 0.0, 0.0);
+        tick(&mut g, 0.0);
+        assert!((g.vel.y - GRAVITY).abs() < 1e-5, "grenade must keep the shared gravity");
+    }
+
+    #[test]
+    fn bazooka_charge_takes_one_and_a_half_seconds() {
+        // Reference: +0x369 per 50 fps frame toward 0x10000 = 75.07 frames = 1.50 s.
+        let ticks_to_full = (BAZOOKA_MAX_CHARGE / BAZOOKA_CHARGE_RATE).ceil() as u32;
+        let secs = ticks_to_full as f32 / 30.0;
+        assert!((secs - 1.5).abs() < 0.05, "full charge should take ~1.5 s, got {secs:.3}s ({ticks_to_full} ticks)");
+        assert_eq!(BAZOOKA_MAX_CHARGE, 1.0, "bazooka meter caps at exactly full (no overcharge band)");
+    }
+
+    #[test]
+    fn bazooka_full_charge_launch_speed_matches_reference() {
+        // 24 * 9 / 25 = 8.64 px/frame at 50 fps  ->  14.4 px/tick at 30 Hz.
+        assert!((BAZOOKA_LAUNCH - 14.4).abs() < 1e-3, "launch {BAZOOKA_LAUNCH}");
+    }
+
+    #[test]
+    fn bazooka_physics_constants_match_reference_per_frame_values() {
+        let s = 50.0f32 / 30.0;
+        assert!((BAZOOKA_GRAVITY - 0.24 * s * s).abs() < 1e-5);
+        assert!((BAZOOKA_WIND_SCALE - 0.286 * s * s).abs() < 1e-5);
     }
 
     #[test]

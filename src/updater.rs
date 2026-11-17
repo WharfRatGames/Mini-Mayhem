@@ -46,6 +46,7 @@ pub fn sync_assets_bg(_version: &'static str) {}
 
 #[cfg(target_os = "windows")]
 pub fn check_for_update(current: &str) -> (bool, bool) {
+    if crate::net::EXPERIMENTAL { return (false, false); }
     let body = match http_get_body("/arty/version.txt", 3) {
         Some(b) => b,
         None => return (false, false),
@@ -166,6 +167,8 @@ pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<(bo
 /// tls_broken=true means HTTPS failed and we fell back to HTTP — force the update, no skip.
 #[cfg(not(feature = "desktop"))]
 pub fn check_for_update(current: &str) -> (bool, bool) {
+    // Experimental builds never self-update: the live release would overwrite them.
+    if crate::net::EXPERIMENTAL { return (false, false); }
     // HTTPS first; fall back to HTTP (port 80) then LAN IP for hairpin-NAT routers.
     let body =
         crate::https::https_get(UPDATE_HOST, "/arty/version.txt", 2, 2)
@@ -196,6 +199,7 @@ pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
 /// the same version. Writes a sentinel like `.sfx_0.5.4.348` when done.
 #[cfg(not(feature = "desktop"))]
 pub fn sync_assets_bg(version: &'static str) {
+    if crate::net::EXPERIMENTAL { return; }
     std::thread::spawn(move || {
         let dest = std::env::current_exe()
             .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/mini-mayhem"));

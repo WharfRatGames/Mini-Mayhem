@@ -8,7 +8,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.439";
+const VERSION: &str = "0.5.4.439-exp1";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -388,7 +388,11 @@ fn main() {
         let hs_username = live_username.clone();
         let hs_ranked = live_ranked_match;
         std::thread::spawn(move || {
-            let result = if let Some(sock) = pre_resolved {
+            let result = if net::EXPERIMENTAL && port == 7777 {
+                // Experimental build: live-casual goes to the LAN test server, never production.
+                let (ip, exp_port) = net::EXP_GAME_ADDR;
+                ServerConn::connect_addr(std::net::SocketAddr::from((ip, exp_port)), exp_port)
+            } else if let Some(sock) = pre_resolved {
                 ServerConn::connect_addr(sock, port)
             } else {
                 let addr = format!("crumbonium.duckdns.org:{}", port);
