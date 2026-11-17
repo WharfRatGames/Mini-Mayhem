@@ -6551,6 +6551,22 @@ fn update_graves(game: &mut GameState) {
 /// crate-watch input hold, and all SFX now come from the same place.
 pub fn server_tick(game: &mut GameState, input: &crate::input::InputState, muzzle: Option<(f32, f32)>, aim_angle: Option<f32>) {
     game.tick = game.tick.wrapping_add(1);
+    // Anti-cheat: the client-reported muzzle position is only a cosmetic refinement
+    // of where the barrel tip renders (animation-frame accurate hitscan origin). A
+    // malicious client could otherwise claim any muzzle position on the map, making
+    // hitscan weapons (Revolver/Shotgun) fire from an arbitrary location instead of
+    // the shooter's real position. Reject anything farther than a normal animation
+    // offset from the shooter's actual position; the sim's own fallback computation
+    // (~27px from soldier center) takes over when we drop it.
+    const MAX_MUZZLE_DIST_SQ: f32 = 60.0 * 60.0;
+    let muzzle = muzzle.filter(|&(mx, my)| {
+        let ti = game.active_team();
+        let si = game.teams[ti].active;
+        let Some(soldier) = game.teams[ti].soldiers.get(si) else { return false; };
+        let dx = mx - soldier.pos.x;
+        let dy = my - soldier.pos.y;
+        dx * dx + dy * dy <= MAX_MUZZLE_DIST_SQ
+    });
     let _ = simulate_with_muzzle(game, input, muzzle, aim_angle);
 }
 
