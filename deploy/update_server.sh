@@ -161,13 +161,13 @@ else
     echo "WARNING: zip creation failed — builds upload skipped"
 fi
 rm -rf "$STAGE"
-ls -t "$BUILD_DIR"/mini-mayhem-*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null
+ls -t "$BUILD_DIR"/mini-mayhem-[0-9]*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null
 
 # Publish zip to nginx for download
 if [ -f "$ZIP" ]; then
     ssh arty-pi "mkdir -p /var/www/html/arty/builds"
     if scp "$ZIP" "arty-pi:/var/www/html/arty/builds/mini-mayhem-$VERSION.zip"; then
-        ssh arty-pi "ls -t /var/www/html/arty/builds/mini-mayhem-*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null"
+        ssh arty-pi "ls -t /var/www/html/arty/builds/mini-mayhem-[0-9]*.zip 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null"
         echo "Download: http://crumbonium.duckdns.org/arty/builds/mini-mayhem-$VERSION.zip"
     else
         echo "WARNING: builds scp to Pi failed — nginx not updated"
