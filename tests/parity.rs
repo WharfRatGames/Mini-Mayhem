@@ -369,7 +369,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
     let rope = rope.as_ref().map(|r| {
         let arty::game::state::RopeState {
             anchor, hook, flying, length, wrap,
-            hook_vel: _, // not synced: apply_server_state resets to zero
+            hook_vel: _, chain: _, // not synced: server-side physics only
         } = r;
         RopeSnap {
             anchor: (anchor.x, anchor.y), hook: (hook.x, hook.y),
@@ -578,6 +578,7 @@ fn round_trip_preserves_synced_state() {
         length:   60.0,
         hook_vel: Vec2::new(1.0, -2.0),
         wrap:     vec![WorldPos::new(510.0, 90.0), WorldPos::new(505.0, 95.0)],
+        chain:    None,
     });
 
     // Plasma torch

@@ -178,14 +178,16 @@ fn atlas_sample(terrain: &Terrain, x: i32, y: i32) -> Option<(u8, u8, u8)> {
     let tx = mirror_index(x, tile.w);
     let body_h = tile.h.saturating_sub(SURFACE_BAND);
 
-    // First `tile.h` px of depth show the tile top-to-bottom once (surface
-    // treatment included); below that, mirror-repeat only the body band so the
-    // vertical repeat has no horizontal seam line either.
+    // Only the thin surface band (grass / edge treatment) is keyed to depth below the
+    // landform top. Everything deeper is anchored to WORLD coordinates (mirror-tiled),
+    // as the reference game fills land with the theme bitmap in place. Keying the body
+    // to depth-from-top shears the texture along every slope of the thick reference
+    // landmasses, which showed up as warped / streaky ("laminated") ground.
     let pick = |d: usize| -> [u8; 4] {
-        let ty = if d < tile.h {
+        let ty = if d < SURFACE_BAND.min(tile.h) {
             d
         } else if body_h > 0 {
-            SURFACE_BAND + mirror_index((d - tile.h) as i32, body_h)
+            SURFACE_BAND + mirror_index(y, body_h)
         } else {
             d % tile.h
         };

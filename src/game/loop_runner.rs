@@ -411,8 +411,9 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             game.turn.advance(&alive);
             game.active_team_mut().advance_active();
             {
-                let rv = game.turn.turn_number.wrapping_mul(2654435761) as f32 / u32::MAX as f32;
-                game.wind = crate::physics::Wind::next_turn(rv);
+                // WA wind roll: whole units -10..=10, re-rolled when too close to last turn's.
+                game.wind = crate::physics::Wind::next_turn_wa(
+                    game.wind, game.turn.turn_number, game.map_seed as u32);
             }
             // Crate drop — chance starting after turn 3
             if game.turn.turn_number >= 3 {
@@ -1308,6 +1309,26 @@ pub fn process_aim(game: &mut GameState, input: &InputState, aim_angle_override:
 }
 
 /// True if the segment a→b is free of solid terrain (endpoints excluded), sampled every 3px.
+/// Terrain/body queries for the reference rope model.
+struct RopeEnv<'a>(&'a crate::world::Terrain);
+impl crate::physics::wa_rope::Env for RopeEnv<'_> {
+    fn solid_px(&self, x: i32, y: i32) -> bool { self.0.is_solid(x, y) }
+    fn blocked(&self, x16: i32, y16: i32) -> bool {
+        let (x, y) = (x16 >> 16, y16 >> 16);
+        (0..=crate::renderer::draw_sprites::SOLDIER_H).any(|h| self.0.is_solid(x, y - h))
+    }
+}
+
+/// Write a stepped chain back into the rope state (mirrors length / wrap pivots for sync + drawing).
+fn rope_store_chain(game: &mut GameState, chain: crate::physics::wa_rope::Chain) {
+    if let Some(ref mut rm) = game.rope {
+        let (_, piv) = chain.pivots();
+        rm.length = chain.len as f32 / 65536.0;
+        rm.wrap = piv.iter().map(|&(x, y)| crate::world::WorldPos::new(x as f32 / 65536.0, y as f32 / 65536.0)).collect();
+        rm.chain = Some(chain);
+    }
+}
+
 fn rope_seg_clear(terrain: &crate::world::Terrain, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
     let dx = bx - ax; let dy = by - ay;
     let dist = (dx * dx + dy * dy).sqrt().max(0.1);
@@ -1468,6 +1489,7 @@ fn fire_rope_hook(game: &mut GameState, ti: usize, si: usize) {
         hook:     muzzle,
         hook_vel: Vec2::new(hvx, hvy),
         wrap:     Vec::new(),
+        chain:    None,
     });
     // Soldier stays on the ground while hook is flying — becomes Airborne when hook attaches.
 }
@@ -1517,27 +1539,31 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         // old/new length at reel time, full vector, unclamped — the reference
         // does this inside the reel handler itself (FUN_00513f00 → FUN_00500d00),
         // so reel-in accelerates and paying out damps.
-        let mut reel_scale: Option<f32> = None;
-        if let Some(ref mut rope) = game.rope {
-            if !rope.flying {
-                let old_len = rope.length;
-                if input.held(Button::Up) {
-                    rope.length = (rope.length - ROPE_RETRACT).max(ROPE_MIN_LEN);
-                }
-                if input.held(Button::Down) {
-                    rope.length = (rope.length + ROPE_RETRACT).min(ROPE_MAX_LEN);
-                }
-                if (rope.length - old_len).abs() > f32::EPSILON {
-                    reel_scale = Some(old_len / rope.length);
-                }
-            }
-        }
-        if let Some(scale) = reel_scale {
+        let dir = input.held(Button::Down) as i32 - input.held(Button::Up) as i32;
+        if dir != 0 {
             let ti = game.active_team();
             let si = game.teams[ti].active;
-            if let SoldierState::Airborne { ref mut vel, .. } = game.teams[ti].soldiers[si].state {
-                vel.x *= scale;
-                vel.y *= scale;
+            let chain0 = game.rope.as_ref().filter(|r| !r.flying).and_then(|r| r.chain.clone());
+            if let Some(mut c) = chain0 {
+                let sp = game.teams[ti].soldiers[si].pos;
+                let mut out: Option<((i32, i32), (i32, i32))> = None;
+                if let SoldierState::Airborne { ref vel, .. } = game.teams[ti].soldiers[si].state {
+                    let env = RopeEnv(&game.terrain);
+                    let mut pos = ((sp.x * 65536.0) as i32, (sp.y * 65536.0) as i32);
+                    let mut v = ((vel.x * 65536.0) as i32, (vel.y * 65536.0) as i32);
+                    if c.set_length(c.len + dir * crate::physics::wa_rope::TICK_REEL, &mut pos, &mut v, &env) {
+                        out = Some((pos, v));
+                    }
+                }
+                if let Some((pos, v)) = out {
+                    game.teams[ti].soldiers[si].pos.x = pos.0 as f32 / 65536.0;
+                    game.teams[ti].soldiers[si].pos.y = pos.1 as f32 / 65536.0;
+                    if let SoldierState::Airborne { ref mut vel, .. } = game.teams[ti].soldiers[si].state {
+                        vel.x = v.0 as f32 / 65536.0;
+                        vel.y = v.1 as f32 / 65536.0;
+                    }
+                    rope_store_chain(game, c);
+                }
             }
         }
         return;
@@ -5621,28 +5647,41 @@ fn draw_hud_world(
     let fps_str = format!("{} FPS", fps);
     draw_str(buf, &fps_str, turn_x - str_width(&fps_str) - 10, hud_y + 6, Bgra::new(140, 140, 160));
 
-    // Wind meter — centre-anchored deflection gauge
-    let bar_w = 120i32;
-    let bar_h = 8u32;
+    // Wind meter — WA style: 180 px bar, centre line, one arrow per wind unit
+    // (left = blue, right = red), each arrow ~7.4 px wide, up to 10 arrows.
+    let bar_w = 180i32;
+    let bar_h = 10u32;
     let bar_x = ox + sw / 2 - bar_w / 2;
-    let bar_y = hud_y + 6;
+    let bar_y = hud_y + 5;
     let centre_x = bar_x + bar_w / 2;
-    let wcolour = if wind.value() >= 0.0 { Bgra::new(80, 180, 255) } else { Bgra::new(255, 140, 60) };
-    // Background + quarter-marks
-    buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h, Bgra::new(40, 40, 60));
-    buf.fill_rect(bar_x + bar_w/4 - 1, bar_y, 1, bar_h, Bgra::new(70, 70, 100));
-    buf.fill_rect(bar_x + 3*bar_w/4,   bar_y, 1, bar_h, Bgra::new(70, 70, 100));
-    // Fill from centre outward toward wind direction
-    let fill = (wind.value().abs() * (bar_w / 2) as f32) as u32;
-    if fill > 0 {
-        if wind.value() >= 0.0 {
-            buf.fill_rect(centre_x, bar_y, fill, bar_h, wcolour);
-        } else {
-            buf.fill_rect(centre_x - fill as i32, bar_y, fill, bar_h, wcolour);
+    let units = wind.units();
+    let rightward = units >= 0;
+    let (base, light) = if rightward {
+        (Bgra::new(240, 96, 64), Bgra::new(248, 128, 104))
+    } else {
+        (Bgra::new(72, 88, 192), Bgra::new(136, 136, 248))
+    };
+    buf.fill_rect(bar_x - 1, bar_y - 1, (bar_w + 2) as u32, bar_h + 2, Bgra::new(230, 230, 230));
+    buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h, Bgra::new(0, 0, 0));
+    const UNIT_PX: f32 = 7.4;
+    let n = units.unsigned_abs() as i32;
+    for i in 0..n {
+        let x0 = (i as f32 * UNIT_PX).round() as i32;
+        let x1 = (((i + 1) as f32) * UNIT_PX).round() as i32;
+        for dx in x0..x1 {
+            // distance from the arrow's tip edge, used to draw a ">" / "<" chevron
+            let from_tail = dx - x0;
+            for row in 0..bar_h as i32 {
+                let off = (row - bar_h as i32 / 2).abs();
+                let on_chevron = (from_tail - (bar_h as i32 / 2 - off).max(0)).abs() <= 1;
+                let c = if on_chevron { light } else { base };
+                let px = if rightward { centre_x + dx } else { centre_x - dx - 1 };
+                buf.fill_rect(px, bar_y + row, 1, 1, c);
+            }
         }
     }
-    // Centre tick — zero-wind reference point
-    buf.fill_rect(centre_x - 1, bar_y, 2, bar_h, Bgra::new(140, 140, 180));
+    // Centre line
+    buf.fill_rect(centre_x, bar_y, 1, bar_h, Bgra::new(230, 230, 230));
 }
 
 /// Re-stamp the object mask each tick from current barrel and armed-mine positions.
@@ -5721,31 +5760,33 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     let dy = tdy;
                     let dist = (dx * dx + dy * dy).sqrt().max(1.0).min(ROPE_MAX_LEN);
                     let anchor = crate::world::WorldPos::new(hx, hy);
+                    // Reference (FUN_005008d0): a hit closer than 10 px does not attach.
+                    let a16 = ((hx * 65536.0) as i32, (hy * 65536.0) as i32);
+                    let theta = crate::physics::wa_rope::Chain::angle_of(-(tdx * 65536.0) as i32, -(tdy * 65536.0) as i32);
+                    let chain = if dist >= ROPE_MIN_LEN {
+                        crate::physics::wa_rope::Chain::attach(a16.0, a16.1, (dist * 65536.0) as i32, theta)
+                    } else { None };
+                    if chain.is_none() {
+                        game.rope = None;
+                        attached = true;
+                        break;
+                    }
                     if let Some(ref mut r) = game.rope {
                         r.flying = false;
                         r.anchor = anchor;
                         r.hook   = anchor;
                         r.length = dist;
+                        r.chain  = chain;
                     }
-                    // Lift soldier into Airborne with an angle-aware nudge.
-                    // The upward component is proportional to how much above the soldier the anchor is,
-                    // so a steep rope gives a strong upward kick and a low rope gives mostly horizontal.
-                    let fm = game.teams[ati].soldiers[asi].facing as f32;
+                    // Reference: attaching gives no velocity kick; the worm just starts
+                    // swinging from wherever it is (state 0x7b leaves velocity alone).
                     if matches!(game.teams[ati].soldiers[asi].state, SoldierState::Idle | SoldierState::Walking { .. }) {
                         let spos = game.teams[ati].soldiers[asi].pos;
-                        let rdx  = anchor.x - spos.x;
-                        let rdy  = anchor.y - spos.y; // negative when anchor is above
-                        let rdist = (rdx*rdx + rdy*rdy).sqrt().max(1.0);
-                        let up_frac = (-rdy / rdist).max(0.0); // 0 when horizontal, 1 when vertical
-                        let vel_up    = up_frac * 6.0;         // strong upward kick scaled by angle
-                        let vel_horiz = fm * (1.0 - up_frac * 0.5).max(0.5) * 3.0; // less horiz when more vertical
                         game.teams[ati].soldiers[asi].fall.begin_fall(spos.y);
                         game.teams[ati].soldiers[asi].state = SoldierState::Airborne {
-                            vel: crate::world::Vec2::new(vel_horiz, -vel_up),
+                            vel: crate::world::Vec2::new(0.0, 0.0),
                             spinning: false,
                         };
-                        // Lift clear of the ground so a low/horizontal attach doesn't
-                        // start the soldier embedded (which would immediately stick).
                         rope_unstick(game, ati, asi);
                     }
                     attached = true;
@@ -5833,147 +5874,38 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                         if game.rope.as_ref().map_or(false, |r| !r.flying) {
                             rope_unstick(game, ti, si);
                         }
-                        if let Some(rope) = game.rope.as_ref().filter(|r| !r.flying) {
-                            let mut anchor = rope.anchor;
-                            // Target length BEFORE any corner-wrap this tick. The
-                            // momentum-conservation step below compares the post-wrap
-                            // length against this so a wrap-shortening feeds a
-                            // "slingshot around the corner" speed boost (WA feel).
-                            let length0 = rope.length;
-
-                            // Position is the swing pivot for all the tangent math below.
+                        if let Some(mut chain) = game.rope.as_ref().filter(|r| !r.flying).and_then(|r| r.chain.clone()) {
+                            use crate::physics::wa_rope as wr;
                             let cx = game.teams[ti].soldiers[si].pos.x;
                             let cy = game.teams[ti].soldiers[si].pos.y;
-
-                            // ── Corner wrap (multi-segment chain) ─────────────────────
-                            // The rope bends over every terrain corner between the fixed
-                            // anchor and the soldier, storing each pivot in `wrap`. It
-                            // wraps forward when the free segment catches a new corner and
-                            // unwraps in reverse when the soldier swings back and a pivot
-                            // straightens out — the reference game's multi-corner rope.
-                            // `free_len` (= rope.length) is the swing radius around the last
-                            // pivot; fixed segments carry the rest of the rope.
-                            {
-                                // Snapshot chain state (releases the game.rope borrow before
-                                // we sample game.terrain, then write results back).
-                                let (anchor0, mut chain, mut free_len) = {
-                                    let r = game.rope.as_ref().unwrap();
-                                    (r.anchor, r.wrap.clone(), r.length)
-                                };
-                                // Unwrap: peel any trailing pivots the soldier has straightened
-                                // past (direct line from the prior pivot is clear again).
-                                while let Some(&last) = chain.last() {
-                                    let prev = if chain.len() >= 2 { chain[chain.len() - 2] } else { anchor0 };
-                                    if rope_seg_clear(&game.terrain, prev.x, prev.y, cx, cy) {
-                                        free_len += ((last.x - prev.x).powi(2) + (last.y - prev.y).powi(2)).sqrt();
-                                        chain.pop();
-                                    } else { break; }
-                                }
-                                // Wrap: catch a new corner between the current pivot and soldier.
-                                let pivot = chain.last().copied().unwrap_or(anchor0);
-                                if let Some(cd) = rope_find_corner(&game.terrain, pivot.x, pivot.y, cx, cy) {
-                                    if cd >= 2.0 {
-                                        let dx = cx - pivot.x; let dy = cy - pivot.y;
-                                        let d = (dx * dx + dy * dy).sqrt().max(0.1);
-                                        chain.push(crate::world::WorldPos::new(pivot.x + dx / d * cd, pivot.y + dy / d * cd));
-                                        free_len = (free_len - cd).max(1.0);
-                                    }
-                                }
-                                anchor = chain.last().copied().unwrap_or(anchor0);
-                                if let Some(ref mut rm) = game.rope { rm.wrap = chain; rm.length = free_len; }
+                            let mut pos16 = ((cx * 65536.0) as i32, (cy * 65536.0) as i32);
+                            let mut v16 = ((vel.x * 65536.0) as i32, (vel.y * 65536.0) as i32);
+                            // Reference per-frame order: swing impulse (vx and +vy), world
+                            // gravity, then damping + tangential arc motion inside step().
+                            let sdir = input.held(Button::Right) as i32 - input.held(Button::Left) as i32;
+                            if sdir != 0 {
+                                v16.0 += sdir * wr::TICK_SWING;
+                                v16.1 += wr::TICK_SWING;
                             }
-                            // Post-wrap target length and rope direction from the
-                            // (possibly moved) anchor.
-                            let length = game.rope.as_ref().map(|r| r.length).unwrap_or(length0);
-                            let rdx = cx - anchor.x;
-                            let rdy = cy - anchor.y;
-                            let rdist = (rdx * rdx + rdy * rdy).sqrt().max(0.1);
-                            let dir_x = rdx / rdist;
-                            let dir_y = rdy / rdist;
-                            let effective_len = length;
-
-                            // 1. Pendulum gravity
-                            vel.y = (vel.y + ROPE_GRAVITY).min(ROPE_MAX_SPEED);
-                            // 2. Swing force from Left/Right input — a plain HORIZONTAL
-                            //    impulse on vx, exactly as the reference does it
-                            //    (FUN_00513f00: (right−left)×0x1999 straight onto vx, no
-                            //    rotation). Pumping therefore gains most at the bottom of
-                            //    the arc and nothing at the sides — the WA pumping phase.
-                            //    The constraint below strips whatever lands radial.
-                            if input.held(Button::Right) { vel.x += ROPE_SWING_FORCE; }
-                            if input.held(Button::Left)  { vel.x -= ROPE_SWING_FORCE; }
-                            // 3. Momentum scaling on rope-length change — exactly the
-                            //    reference formula (FUN_00500d00 tail): the FULL velocity
-                            //    vector is multiplied by old_len/new_len, unclamped, in
-                            //    BOTH directions — shortening (reel-in / corner-wrap)
-                            //    speeds you up, paying out damps you. This is the
-                            //    slingshot. ROPE_MAX_SPEED below is the only guard.
-                            if let Some(ref rope_m) = game.rope {
-                                let new_len = rope_m.length;
-                                if new_len > 0.1 && (new_len - length0).abs() > f32::EPSILON {
-                                    let scale = length0 / new_len;
-                                    vel.x *= scale;
-                                    vel.y *= scale;
-                                }
+                            v16.1 += wr::TICK_GRAVITY;
+                            let outcome = {
+                                let env = RopeEnv(&game.terrain);
+                                chain.step(&mut pos16, &mut v16, ROPE_MAX_SPEED as i32 * 65536, &env)
+                            };
+                            vel.x = v16.0 as f32 / 65536.0;
+                            vel.y = v16.1 as f32 / 65536.0;
+                            if outcome == wr::Outcome::Released {
+                                // Anchor / pivot terrain destroyed: the rope drops.
+                                game.rope = None;
+                                game.teams[ti].soldiers[si].airtime += 1;
+                                game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel, spinning };
+                                continue;
                             }
-                            // 4. Project velocity onto tangent plane (remove outward radial).
-                            //    Safe to do unconditionally now: step 7 is a hard positional
-                            //    constraint that re-snaps the soldier onto the rope-length
-                            //    circle every tick (matching WA's FUN_005009c0), so the rope
-                            //    is always taut by construction — reel-out moves the soldier
-                            //    by directly growing the circle, not by gravity filling slack.
-                            let radial = vel.x * dir_x + vel.y * dir_y;
-                            if radial > 0.0 {
-                                vel.x -= dir_x * radial;
-                                vel.y -= dir_y * radial;
-                            }
-                            // 5. Cap speed to prevent tunnelling
-                            let spd = (vel.x * vel.x + vel.y * vel.y).sqrt();
-                            if spd > ROPE_MAX_SPEED {
-                                let s = ROPE_MAX_SPEED / spd;
-                                vel.x *= s;
-                                vel.y *= s;
-                            }
-                            // 6. Step with tangential velocity
-                            let mut nx = cx + vel.x;
-                            let mut ny = cy + vel.y;
-                            // 7. Hard positional constraint (WA-style): re-snap onto the
-                            //    circle of the CURRENT rope length every tick, not just when
-                            //    exceeding it. This is what makes reel-out actually move the
-                            //    soldier — growing `effective_len` immediately pushes them
-                            //    outward along the current rope direction, deterministically,
-                            //    instead of waiting on gravity to fall into new slack.
-                            let dx = nx - anchor.x;
-                            let dy = ny - anchor.y;
-                            let dist = (dx * dx + dy * dy).sqrt().max(0.1);
-                            nx = anchor.x + dx / dist * effective_len;
-                            ny = anchor.y + dy / dist * effective_len;
-                            // 5. Terrain collision — swept check along the full movement
-                            // path so angled/horizontal swings can't phase through walls.
-                            // Threshold is low (0.5) so the slow WA-speed pendulum still
-                            // collides: with gentle gravity the descent is well under the
-                            // old 3px/tick guard, which let the soldier sink straight through
-                            // the ground. Hitting terrain only rests the soldier at the last
-                            // clear point (still attached), so running it at low speed is safe.
-                            let move_len = ((nx - cx).abs() + (ny - cy).abs()).ceil() as i32 + 1;
-                            let mut last_clear_x = cx;
-                            let mut last_clear_y = cy;
-                            let mut hit = false;
-                            if (vel.x * vel.x + vel.y * vel.y).sqrt() > 0.5 {
-                                for s in 1..=move_len {
-                                    let t = s as f32 / move_len as f32;
-                                    let sx = cx + (nx - cx) * t;
-                                    let sy = cy + (ny - cy) * t;
-                                    if (0..=crate::renderer::draw_sprites::SOLDIER_H)
-                                        .any(|h| game.terrain.is_solid(sx as i32, sy as i32 - h))
-                                    {
-                                        hit = true;
-                                        break;
-                                    }
-                                    last_clear_x = sx;
-                                    last_clear_y = sy;
-                                }
-                            }
+                            let nx = pos16.0 as f32 / 65536.0;
+                            let ny = pos16.1 as f32 / 65536.0;
+                            rope_store_chain(game, chain);
+                            let (last_clear_x, last_clear_y) = (cx, cy);
+                            let hit = false;
                             if hit {
                                 // Swinging into a wall — stop at the last clear point but stay
                                 // attached to the rope (no sticking/landing); gravity + rope

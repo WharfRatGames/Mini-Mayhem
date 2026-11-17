@@ -155,15 +155,34 @@ impl rustls::client::danger::ServerCertVerifier for TimelessVerifier {
         intermediates: &[rustls::pki_types::CertificateDer<'_>],
         server_name: &rustls::pki_types::ServerName<'_>,
         ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
+        _system_now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        // Use a fixed time well within our cert's validity window instead of the system clock.
-        // Cert valid: Jun 22 2026 – Sep 20 2026. Pick Aug 1 2026 (1785542400).
-        // UPDATE THIS when the cert renews (~Sep 20 2026) — pick a date mid-window.
-        let now = rustls::pki_types::UnixTime::since_unix_epoch(
-            std::time::Duration::from_secs(1785542400)
-        );
-        self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+        // The device clock is NOT consulted at all (Miyoos have no RTC and drift). Start
+        // from a fixed reference; if a certificate is reported "not yet valid"/"expired"
+        // retry at a moment inside the offending certificate's own validity window.
+        // Chain, signature and host-name checks are fully performed on the retry — only
+        // the validity-period check is effectively waived. A fixed date used to live here and broke bug reports + the updater
+        // when the cert renewed (invalid peer certificate: NotValidYet).
+        use rustls::{CertificateError as CE, Error as E};
+        use rustls::pki_types::UnixTime;
+        const DAY: u64 = 86_400;
+        let mut at = UnixTime::since_unix_epoch(Duration::from_secs(1_700_000_000));
+        let mut last = None;
+        for _ in 0..4 {
+            match self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, at) {
+                Ok(v) => return Ok(v),
+                Err(E::InvalidCertificate(CE::NotValidYetContext { not_before, .. })) => {
+                    at = UnixTime::since_unix_epoch(Duration::from_secs(not_before.as_secs() + DAY));
+                    last = Some(E::InvalidCertificate(CE::NotValidYetContext { time: at, not_before }));
+                }
+                Err(E::InvalidCertificate(CE::ExpiredContext { not_after, .. })) => {
+                    at = UnixTime::since_unix_epoch(Duration::from_secs(not_after.as_secs().saturating_sub(DAY)));
+                    last = Some(E::InvalidCertificate(CE::ExpiredContext { time: at, not_after }));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last.unwrap_or(E::General("certificate validity retry exhausted".into())))
     }
     fn verify_tls12_signature(&self, msg: &[u8], cert: &rustls::pki_types::CertificateDer<'_>, sig: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         self.0.verify_tls12_signature(msg, cert, sig)
@@ -296,4 +315,33 @@ pub fn https_post(host: &str, path: &str, body: &str, connect_timeout: u64, read
     );
     let bytes = tls_roundtrip(host, req.as_bytes(), connect_timeout, read_timeout)?;
     String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustls::client::danger::ServerCertVerifier;
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+
+    /// Needs the live certificate chain as DER files (CHAIN_EE, CHAIN_INT); skipped otherwise.
+    #[test]
+    fn verifier_adapts_to_bogus_clock_and_stale_dates() {
+        let (Ok(ee), Ok(int)) = (std::env::var("CHAIN_EE"), std::env::var("CHAIN_INT")) else { return };
+        let ee = CertificateDer::from(std::fs::read(ee).unwrap());
+        let int = CertificateDer::from(std::fs::read(int).unwrap());
+        let mut roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+        let _ = roots.add(CertificateDer::from(ISRG_ROOT_YR_DER));
+        let inner = rustls::client::WebPkiServerVerifier::builder(Arc::new(roots)).build().unwrap();
+        let v = TimelessVerifier(inner);
+        let name = ServerName::try_from("crumbonium.duckdns.org").unwrap();
+        // 1971 (RTC-less Miyoo), a far-future clock, and a correct one must all verify.
+        for secs in [60 * 60 * 24 * 365, 4_000_000_000u64, 1_794_000_000] {
+            let now = UnixTime::since_unix_epoch(Duration::from_secs(secs));
+            v.verify_server_cert(&ee, &[int.clone()], &name, &[], now).unwrap_or_else(|e| panic!("clock {secs}: {e:?}"));
+        }
+        // A wrong host name must still be rejected (the retry must not weaken checks).
+        let bad = ServerName::try_from("example.com").unwrap();
+        let now = UnixTime::since_unix_epoch(Duration::from_secs(1_794_000_000));
+        assert!(v.verify_server_cert(&ee, &[int.clone()], &bad, &[], now).is_err());
+    }
 }

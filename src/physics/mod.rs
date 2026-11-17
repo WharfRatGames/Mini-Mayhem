@@ -6,6 +6,7 @@ pub mod outcome;
 pub mod fall;
 pub mod step;
 pub mod wind;
+pub mod wa_rope;
 
 pub use projectile::{Projectile, WeaponKind, FuseState};
 pub use tick::{tick, tick_n, GRAVITY, TERMINAL_VELOCITY, WIND_SCALE};

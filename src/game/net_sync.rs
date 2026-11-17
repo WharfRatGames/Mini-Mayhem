@@ -482,6 +482,7 @@ pub fn apply_server_state(
             length:   nr.length,
             hook_vel: crate::world::Vec2::new(0.0, 0.0),
             wrap:     nr.wrap.iter().map(|&(x, y)| WorldPos::new(x, y)).collect(),
+            chain:    None,
         });
     }
 
@@ -758,6 +759,7 @@ fn _rope_parity_checklist(r: &crate::game::state::RopeState) {
         // ── Synced via NetRope ──
         anchor: _, length: _, flying: _, hook: _, wrap: _,
         // ── Not networked ──
+        chain: _, // not synced: server-side physics only
         hook_vel: _, // not synced: server-side physics; client draws from positions
     } = r;
 }

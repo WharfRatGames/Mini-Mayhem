@@ -121,6 +121,8 @@ pub struct RopeState {
     /// rope catches a corner, shrinks when it swings back and straightens out —
     /// the reference game's multi-segment wrap/unwrap.
     pub wrap:     Vec<WorldPos>,
+    /// Reference-model rope chain (server-side physics only; not networked).
+    pub chain:    Option<crate::physics::wa_rope::Chain>,
 }
 
 /// A permanent grave marker left at the position a soldier died.

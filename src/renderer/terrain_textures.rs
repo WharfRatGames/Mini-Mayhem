@@ -38,8 +38,22 @@ static TILES: OnceLock<Vec<Tile>> = OnceLock::new();
 /// if both atlases failed to decode.
 pub fn tile(id: u8) -> Option<&'static Tile> {
     let t = tiles();
-    if t.is_empty() { None } else { Some(&t[id as usize % t.len()]) }
+    if t.is_empty() { return None; }
+    // Skip swatches whose source art is row-smeared (edge pixels stretched
+    // horizontally to pad the swatch; measured by examples/tile_scores.rs, score
+    // >= 0.06). Such tiles render as streaky "garbled" land. Remap to the next clean
+    // tile so every other seed keeps its existing texture.
+    let n = t.len();
+    let mut i = id as usize % n;
+    for _ in 0..n {
+        if !SMEARED.contains(&i) { break; }
+        i = (i + 1) % n;
+    }
+    Some(&t[i])
 }
+
+/// Pooled-tile indices with horizontally smeared source art (see `tile`).
+const SMEARED: [usize; 19] = [27, 57, 65, 68, 69, 74, 76, 77, 78, 83, 84, 90, 91, 94, 95, 98, 101, 102, 103];
 
 fn tiles() -> &'static Vec<Tile> {
     TILES.get_or_init(|| {

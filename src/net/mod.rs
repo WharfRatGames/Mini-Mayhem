@@ -82,12 +82,9 @@ pub struct ServerConn {
     disconnected: Arc<AtomicBool>,
 }
 
+/// Same clock-independent verifier as the HTTPS helper (Miyoos have no reliable RTC).
 fn make_tls_config() -> Arc<rustls::ClientConfig> {
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    Arc::new(rustls::ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth())
+    crate::https::make_tls_config()
 }
 
 impl ServerConn {

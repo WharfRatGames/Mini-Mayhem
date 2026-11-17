@@ -7,6 +7,9 @@ use crate::world::Vec2;
 /// Wind is fully re-randomised each turn — no memory of previous value.
 /// Any value in [-1.0, 1.0] is equally likely.
 
+/// WA's wind range in whole units; wind acceleration = units / 35 px/frame^2 (50 fps).
+pub const WA_WIND_UNITS: i32 = 10;
+
 /// Maximum wind strength. 1.0 = full scale.
 pub const WIND_MAX: f32 = 1.0;
 
@@ -47,6 +50,38 @@ impl Wind {
         // Map [0, 1) → [-1.0, 1.0]
         let value = rng_val * 2.0 - 1.0;
         Self { value: value.clamp(-WIND_MAX, WIND_MAX) }
+    }
+
+    /// Wind in whole WA "wind units" (-10..=10); the stored value is units / 10.
+    pub fn units(self) -> i32 {
+        (self.value * WA_WIND_UNITS as f32).round() as i32
+    }
+
+    /// Build wind from whole WA units, clamped to -10..=10.
+    pub fn from_units(w: i32) -> Self {
+        let w = w.clamp(-WA_WIND_UNITS, WA_WIND_UNITS);
+        Self { value: w as f32 / WA_WIND_UNITS as f32 }
+    }
+
+    /// WA's per-turn wind roll (decompiled 0x55bc80): an integer in -10..=10
+    /// (`rng % 21 - 10`), re-rolled (up to 10 tries, keeping the last) while the new
+    /// wind is within 0xccc (0.05 px/frame^2, i.e. one unit) of the previous wind.
+    /// The scheme's centre-bias term is 0 here. `turn` and `seed` make the roll
+    /// deterministic so server and clients agree.
+    pub fn next_turn_wa(prev: Wind, turn: u32, seed: u32) -> Self {
+        let per_unit = |w: i32| (w << 16) / 35; // 16.16 px/frame^2, C-style truncation
+        let prev_v = per_unit(prev.units());
+        let mut state = turn.wrapping_mul(2654435761).wrapping_add(seed);
+        let mut w = 0i32;
+        let mut tries = 10;
+        loop {
+            state = state.wrapping_mul(0x0019_660d).wrapping_add(0x3c6e_f35f);
+            let byte = (state >> 16) & 0xff;
+            w = ((byte % 21) as i32 - 10).clamp(-WA_WIND_UNITS, WA_WIND_UNITS);
+            tries -= 1;
+            if tries == 0 || (per_unit(w) - prev_v).abs() >= 0xccc { break; }
+        }
+        Self::from_units(w)
     }
 
     /// Returns true if wind is effectively calm.
@@ -299,5 +334,30 @@ mod tests {
             p_right.pos.x > p_left.pos.x,
             "rightward wind should push projectile further right than leftward wind"
         );
+    }
+
+    #[test]
+    fn wa_wind_is_whole_units_in_range_and_rerolls_near_previous() {
+        let mut prev = Wind::calm();
+        for turn in 0..500u32 {
+            let next = Wind::next_turn_wa(prev, turn, 12345);
+            let u = next.units();
+            assert!((-10..=10).contains(&u), "units {u}");
+            assert!((next.value() * 10.0 - u as f32).abs() < 1e-5, "not whole units");
+            prev = next;
+        }
+    }
+
+    #[test]
+    fn wa_wind_rarely_repeats_within_one_unit() {
+        let mut prev = Wind::calm();
+        let mut near = 0;
+        for turn in 0..1000u32 {
+            let next = Wind::next_turn_wa(prev, turn, 777);
+            if (next.units() - prev.units()).abs() <= 1 { near += 1; }
+            prev = next;
+        }
+        // 10 re-rolls make a "within one unit" result very unlikely (~(3/21)^10 per turn).
+        assert!(near < 5, "too many near-repeat winds: {near}");
     }
 }

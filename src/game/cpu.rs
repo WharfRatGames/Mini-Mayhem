@@ -292,14 +292,14 @@ fn simulate(sx: f32, sy: f32, angle: f32, power: f32, facing: f32,
 /// AI's aim search matches what the rocket will actually do.
 fn simulate_bazooka(sx: f32, sy: f32, angle: f32, power_frac: f32, facing: f32,
                     wind: f32, terrain: &crate::world::Terrain) -> (f32, f32) {
-    use crate::physics::tick::{BAZOOKA_GRAVITY, BAZOOKA_LAUNCH, BAZOOKA_WIND_SCALE, TERMINAL_VELOCITY};
+    use crate::physics::tick::{BAZOOKA_GRAVITY, BAZOOKA_LAUNCH, BAZOOKA_WIND_SCALE};
     let mut x  = sx + angle.cos() * facing * 12.0;
     let mut y  = sy - 4.0 - angle.sin() * 12.0;
     let speed  = power_frac * BAZOOKA_LAUNCH;
     let mut vx = angle.cos() * speed * facing;
     let mut vy = -angle.sin() * speed;
     for _ in 0..600 {
-        vy = (vy + BAZOOKA_GRAVITY).min(TERMINAL_VELOCITY);
+        vy += BAZOOKA_GRAVITY;
         vx += wind * BAZOOKA_WIND_SCALE;
         x += vx; y += vy;
         if x < 0.0 || x >= WORLD_W as f32 { break; }

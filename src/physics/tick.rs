@@ -32,13 +32,14 @@ pub const BAZOOKA_GRAVITY: f32 = 0.24 * WA_TIME_SCALE * WA_TIME_SCALE;
 
 /// Bazooka wind acceleration at full meter (wind = ±1.0). Reference max is about
 /// 0.286 px/frame² (measured live). NOT yet confirmed from static code.
-pub const BAZOOKA_WIND_SCALE: f32 = 0.286 * WA_TIME_SCALE * WA_TIME_SCALE;
+pub const BAZOOKA_WIND_SCALE: f32 = (10.0 / 35.0) * WA_TIME_SCALE * WA_TIME_SCALE;
 
 /// Bazooka launch speed at full charge (power = 1.0), px/tick.
 /// Reference (static, from the game's fire code): launch component =
-/// unit_direction × charge × 0x18, then × 9 ÷ 25 at projectile spawn
-/// → 24 × 9 / 25 = 8.64 px/frame at full charge, linear in charge.
-pub const BAZOOKA_LAUNCH: f32 = 24.0 * 9.0 / 25.0 * WA_TIME_SCALE;
+/// unit_direction × charge × 0x18 (24 px/frame at full charge, linear in charge).
+/// The spawn function passes this vector to the rocket unscaled (the /0x19 there
+/// applies to a different field), so launch = 24 px/frame = 40 px/tick at 30 Hz.
+pub const BAZOOKA_LAUNCH: f32 = 24.0 * WA_TIME_SCALE;
 
 /// Bazooka charge gained per tick (power runs 0.0..=1.0).
 /// Reference (static): the charge accumulator gains 0x369 per frame toward
@@ -73,7 +74,7 @@ pub fn tick(proj: &mut Projectile, wind: f32) {
     }
 
     // ── Terminal velocity (Y only) ────────────────────────────────────────────
-    if proj.vel.y > TERMINAL_VELOCITY {
+    if proj.kind != WeaponKind::Bazooka && proj.vel.y > TERMINAL_VELOCITY {
         proj.vel.y = TERMINAL_VELOCITY;
     }
 
@@ -154,15 +155,15 @@ mod tests {
 
     #[test]
     fn bazooka_full_charge_launch_speed_matches_reference() {
-        // 24 * 9 / 25 = 8.64 px/frame at 50 fps  ->  14.4 px/tick at 30 Hz.
-        assert!((BAZOOKA_LAUNCH - 14.4).abs() < 1e-3, "launch {BAZOOKA_LAUNCH}");
+        // 24 px/frame at 50 fps  ->  40 px/tick at 30 Hz.
+        assert!((BAZOOKA_LAUNCH - 40.0).abs() < 1e-3, "launch {BAZOOKA_LAUNCH}");
     }
 
     #[test]
     fn bazooka_physics_constants_match_reference_per_frame_values() {
         let s = 50.0f32 / 30.0;
         assert!((BAZOOKA_GRAVITY - 0.24 * s * s).abs() < 1e-5);
-        assert!((BAZOOKA_WIND_SCALE - 0.286 * s * s).abs() < 1e-5);
+        assert!((BAZOOKA_WIND_SCALE - (10.0 / 35.0) * s * s).abs() < 1e-5);
     }
 
     #[test]
@@ -226,7 +227,7 @@ mod tests {
 
     #[test]
     fn y_velocity_capped_at_terminal_velocity() {
-        let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
+        let mut p = grenade(100.0, 100.0, 0.0, 0.0);
         // Run enough ticks that gravity would exceed terminal velocity
         tick_n(&mut p, 0.0, 200);
         assert!(

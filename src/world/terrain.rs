@@ -56,6 +56,9 @@ pub struct Terrain {
     /// Solid: stamped into the object mask each tick (see `stamp_objects`), so
     /// soldiers can stand on them and projectiles collide with them.
     pub scenery: Vec<SceneryObject>,
+    /// WA 31-bit map seed this terrain was generated from (0 for legacy/empty);
+    /// seeds WA's worm-placement stream.
+    pub wa_seed: u32,
 }
 
 /// Cosmetic biome theme for a map (sky gradient, debris, dirt tint, scenery
@@ -202,6 +205,7 @@ impl Terrain {
             surface_texture: 0,
             template_id: 0,
             is_cavern: false,
+            wa_seed: 0,
             scenery: Vec::new(),
         }
     }
@@ -447,7 +451,140 @@ impl Terrain {
     /// — segments spliced/warped/crossfaded per seed). Cavern maps (~20% of seeds)
     /// carve chambers from the same collage, inverted. Phases 6 & 7 (smoothing +
     /// spawn guarantee) are always applied.
+    /// Seed-deterministic scenery placement + silhouette bake (shared by the WA
+    /// generator and the legacy generator).
+    fn place_scenery(terrain: &mut Terrain, seed: u64) {
+        fn lcg_unused() {}
+        // ── Scenery object placement ─────────────────────────────────────────
+        // Derived entirely from seed — same on client and server, no StateMsg needed.
+        {
+            // Sprite-variant count must match the theme scenery.rs::draw_scenery
+            // will pick for this map (same Theme::of dispatch): draw_underground /
+            // draw_pastoral / draw_rugged — 15 / 16 / 15 sprites respectively.
+            let count: u8 = match Theme::of(terrain.is_cavern, terrain.template_id) {
+                Theme::Underground => 15,
+                Theme::Pastoral => 16,
+                Theme::Rugged => 15,
+            };
+            let mut srng = seed ^ 0xDECA_FBAB_E000_1234u64;
+            let margin = (WORLD_W as f64 * 0.05) as u32;
+            let usable_w = WORLD_W - 2 * margin;
+            const NUM_OBJECTS: u32 = 28;
+            const MIN_SPACING: u32 = 110;
+            let mut placed: Vec<SceneryObject> = Vec::with_capacity(NUM_OBJECTS as usize);
+            for _ in 0..NUM_OBJECTS * 14 {
+                srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let col = margin + (srng >> 33) as u32 % usable_w;
+                // Cavern maps: the "surface" is the sealed rock cap, so scenery
+                // (crystals, bones, torches...) goes on standable cave floors.
+                let surface_y = if terrain.is_cavern {
+                    match terrain.standable_cave_foot_simple(col as i32) {
+                        Some(y) => y as u32,
+                        None => continue,
+                    }
+                } else {
+                    // Skip columns with no real ground (sky_limit == WATER_Y means bare water column)
+                    if terrain.sky_limit[col as usize] >= WATER_Y { continue; }
+                    terrain.spawn_y[col as usize]
+                };
+                if surface_y >= WATER_Y { continue; }
+                // Enforce minimum horizontal spacing
+                if placed.iter().any(|o| o.x.abs_diff(col) < MIN_SPACING) { continue; }
+                srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let sprite = (srng >> 33) as u8 % count;
+                let obj = SceneryObject { x: col, y: surface_y, sprite };
+                let (half_w, height) = obj.footprint(Theme::of(terrain.is_cavern, terrain.template_id));
+                let base = surface_y as i32;
+                // Objects sit ON the terrain surface, never inside it — but real
+                // ground is bumpy, so the bottom EMBED_TOL rows may overlap a
+                // slope (the object sinks in a little, which reads as natural).
+                // Above that, the central ¾ of the footprint box must be air:
+                // rejects spots against hillsides/cliffs and under low overhangs
+                // while tolerating a slope grazing the outer edge.
+                const EMBED_TOL: i32 = 5;
+                let cw = (half_w * 3 / 4).max(1);
+                let clear = (EMBED_TOL + 1..=height).all(|dy| {
+                    (-cw..=cw).all(|dx| !terrain.is_solid(col as i32 + dx, base - dy))
+                });
+                if !clear { continue; }
+                // Grounded: the central half of the footprint must have solid
+                // ground within a few px below the base row — no floating props
+                // on ledge lips or chasm edges. (Outer edges may overhang a
+                // slope slightly; the visual bulk stays connected to ground.)
+                let grounded = (-half_w / 2..=half_w / 2).all(|dx| {
+                    (1..=EMBED_TOL).any(|dy| terrain.is_solid(col as i32 + dx, base + dy))
+                });
+                if !grounded { continue; }
+                placed.push(obj);
+                if placed.len() == NUM_OBJECTS as usize { break; }
+            }
+            terrain.scenery = placed;
+
+            // Bake each object's exact drawn silhouette into the solid
+            // bitmap — scenery is real terrain now (WA-style), not a
+            // decorative overlay: soldiers walk into it, explosions/torch
+            // carve it the same way they carve dirt, and there's no separate
+            // collision system to keep in sync with the renderer.
+            let theme = Theme::of(terrain.is_cavern, terrain.template_id);
+            for obj in terrain.scenery.clone() {
+                let scale = obj.scale(theme);
+                for (px, py) in crate::renderer::scenery::scenery_pixels(theme, obj.sprite, scale, obj.x as i32, obj.y as i32) {
+                    terrain.set_solid(px, py, true);
+                }
+            }
+
+            // Baked sprite silhouettes aren't guaranteed pixel-perfect flush
+            // against the ground (the placement check above only requires a
+            // solid pixel within EMBED_TOL below *some* columns of the
+            // footprint, not full-width contact) — an object can bake in as
+            // its own tiny disconnected component below the Phase 6b size
+            // floor, invisible to the fragment filter because it didn't exist
+            // yet when that pass ran. Re-running the same cleanup here (after
+            // scenery, before it's too late to fix) catches these; a
+            // disconnected sub-min_frag blob is debris same as pre-scenery
+            // noise, and any object that's genuinely grounded stays part of
+            // the connected landmass and is untouched.
+            let is_cavern = terrain.is_cavern;
+            Self::cleanup_solid_fragments(terrain, is_cavern);
+        }
+
+    }
+
+    /// WA-exact terrain: Worms Armageddon's own landgen (see `wa_mapgen`), placed
+    /// bottom-aligned on Arty's water line. `seed` folds to WA's 31-bit map seed
+    /// (identity for seeds below 2^31, so a seed printed by WA's landgen.svg
+    /// reproduces that exact shape). Style (island/cavern 0..=3) is derived from
+    /// the seed as WA's UI picks it independently of the seed.
     pub fn generate_tactical(seed: u64) -> Self {
+        use super::wa_mapgen;
+        let wa_seed = ((seed ^ (seed >> 32)) as u32) & 0x7fff_ffff;
+        let pick = wa_mapgen::lcg(wa_mapgen::lcg(wa_seed) ^ 0xA5A5_A5A5) >> 13;
+        let k = (pick % 8) as usize;
+        let (is_cavern, style) = (k >= 4, k % 4);
+        let land = wa_mapgen::generate(wa_seed, is_cavern, style);
+        let mut terrain = Self::empty();
+        terrain.is_cavern = is_cavern;
+        terrain.wa_seed = wa_seed;
+        terrain.template_id = style as u8;
+        terrain.surface_texture = (wa_mapgen::lcg(wa_seed ^ 0x5EED) >> 16) as u8;
+        let dy = WATER_Y as i32 - land.h as i32;
+        for y in 0..land.h {
+            let wy = y as i32 + dy;
+            if wy < 0 || wy >= WATER_Y as i32 { continue; }
+            for x in 0..land.w.min(WORLD_W as usize) {
+                if land.land[y * land.w + x] {
+                    terrain.set_solid(x as i32, wy, true);
+                }
+            }
+        }
+        Self::recompute_spawn_derived(&mut terrain);
+        terrain.texture = Some(Self::generate_dirt_texture(seed));
+        Self::place_scenery(&mut terrain, seed);
+        Self::recompute_spawn_derived(&mut terrain);
+        terrain
+    }
+
+    pub fn generate_tactical_legacy(seed: u64) -> Self {
         fn lcg(s: &mut u64) -> u64 {
             *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             *s >> 33
@@ -1288,98 +1425,7 @@ impl Terrain {
 
         terrain.texture = Some(Self::generate_dirt_texture(seed));
 
-        // ── Scenery object placement ─────────────────────────────────────────
-        // Derived entirely from seed — same on client and server, no StateMsg needed.
-        {
-            // Sprite-variant count must match the theme scenery.rs::draw_scenery
-            // will pick for this map (same Theme::of dispatch): draw_underground /
-            // draw_pastoral / draw_rugged — 15 / 16 / 15 sprites respectively.
-            let count: u8 = match Theme::of(terrain.is_cavern, terrain.template_id) {
-                Theme::Underground => 15,
-                Theme::Pastoral => 16,
-                Theme::Rugged => 15,
-            };
-            let mut srng = seed ^ 0xDECA_FBAB_E000_1234u64;
-            let margin = (WORLD_W as f64 * 0.05) as u32;
-            let usable_w = WORLD_W - 2 * margin;
-            const NUM_OBJECTS: u32 = 28;
-            const MIN_SPACING: u32 = 110;
-            let mut placed: Vec<SceneryObject> = Vec::with_capacity(NUM_OBJECTS as usize);
-            for _ in 0..NUM_OBJECTS * 14 {
-                srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-                let col = margin + (srng >> 33) as u32 % usable_w;
-                // Cavern maps: the "surface" is the sealed rock cap, so scenery
-                // (crystals, bones, torches...) goes on standable cave floors.
-                let surface_y = if terrain.is_cavern {
-                    match terrain.standable_cave_foot_simple(col as i32) {
-                        Some(y) => y as u32,
-                        None => continue,
-                    }
-                } else {
-                    // Skip columns with no real ground (sky_limit == WATER_Y means bare water column)
-                    if terrain.sky_limit[col as usize] >= WATER_Y { continue; }
-                    terrain.spawn_y[col as usize]
-                };
-                if surface_y >= WATER_Y { continue; }
-                // Enforce minimum horizontal spacing
-                if placed.iter().any(|o| o.x.abs_diff(col) < MIN_SPACING) { continue; }
-                srng = srng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-                let sprite = (srng >> 33) as u8 % count;
-                let obj = SceneryObject { x: col, y: surface_y, sprite };
-                let (half_w, height) = obj.footprint(Theme::of(terrain.is_cavern, terrain.template_id));
-                let base = surface_y as i32;
-                // Objects sit ON the terrain surface, never inside it — but real
-                // ground is bumpy, so the bottom EMBED_TOL rows may overlap a
-                // slope (the object sinks in a little, which reads as natural).
-                // Above that, the central ¾ of the footprint box must be air:
-                // rejects spots against hillsides/cliffs and under low overhangs
-                // while tolerating a slope grazing the outer edge.
-                const EMBED_TOL: i32 = 5;
-                let cw = (half_w * 3 / 4).max(1);
-                let clear = (EMBED_TOL + 1..=height).all(|dy| {
-                    (-cw..=cw).all(|dx| !terrain.is_solid(col as i32 + dx, base - dy))
-                });
-                if !clear { continue; }
-                // Grounded: the central half of the footprint must have solid
-                // ground within a few px below the base row — no floating props
-                // on ledge lips or chasm edges. (Outer edges may overhang a
-                // slope slightly; the visual bulk stays connected to ground.)
-                let grounded = (-half_w / 2..=half_w / 2).all(|dx| {
-                    (1..=EMBED_TOL).any(|dy| terrain.is_solid(col as i32 + dx, base + dy))
-                });
-                if !grounded { continue; }
-                placed.push(obj);
-                if placed.len() == NUM_OBJECTS as usize { break; }
-            }
-            terrain.scenery = placed;
-
-            // Bake each object's exact drawn silhouette into the solid
-            // bitmap — scenery is real terrain now (WA-style), not a
-            // decorative overlay: soldiers walk into it, explosions/torch
-            // carve it the same way they carve dirt, and there's no separate
-            // collision system to keep in sync with the renderer.
-            let theme = Theme::of(terrain.is_cavern, terrain.template_id);
-            for obj in terrain.scenery.clone() {
-                let scale = obj.scale(theme);
-                for (px, py) in crate::renderer::scenery::scenery_pixels(theme, obj.sprite, scale, obj.x as i32, obj.y as i32) {
-                    terrain.set_solid(px, py, true);
-                }
-            }
-
-            // Baked sprite silhouettes aren't guaranteed pixel-perfect flush
-            // against the ground (the placement check above only requires a
-            // solid pixel within EMBED_TOL below *some* columns of the
-            // footprint, not full-width contact) — an object can bake in as
-            // its own tiny disconnected component below the Phase 6b size
-            // floor, invisible to the fragment filter because it didn't exist
-            // yet when that pass ran. Re-running the same cleanup here (after
-            // scenery, before it's too late to fix) catches these; a
-            // disconnected sub-min_frag blob is debris same as pre-scenery
-            // noise, and any object that's genuinely grounded stays part of
-            // the connected landmass and is untouched.
-            let is_cavern = terrain.is_cavern;
-            Self::cleanup_solid_fragments(&mut terrain, is_cavern);
-        }
+        Self::place_scenery(&mut terrain, seed);
 
         // spawn_y/sky_limit/solid_runs were derived before scenery existed
         // (and before the post-scenery fragment cleanup above); a tall baked
@@ -1520,6 +1566,18 @@ impl Terrain {
     /// range; on very sparse terrain separation constraints relax rather than
     /// stamping artificial platforms.
     pub fn find_team_spawns(&mut self, x_lo: u32, x_hi: u32, count: usize) -> Vec<WorldPos> {
+        if self.wa_seed != 0 {
+            let dy = WATER_Y as i32 - 696;
+            let found = {
+                let me: &Terrain = self;
+                super::wa_mapgen::spawn_positions(
+                    &|x, y| me.is_solid(x, y + dy), self.wa_seed, x_lo as i32, x_hi as i32, count,
+                )
+            };
+            if found.len() >= count {
+                return found.iter().map(|&(x, y)| WorldPos::new(x as f32, (y + dy) as f32)).collect();
+            }
+        }
         // Loosened from an earlier 140/120: dynamic analysis of real WA (Deathmatch
         // under Wine) showed it does NOT enforce meaningful separation between a
         // team's worms — e.g. "Prince Charles"/"Prince Andrew" spawned ~20-30px
@@ -2329,8 +2387,8 @@ mod spawn_tests {
                 let x = sp.x as i32;
                 let y = sp.y as i32;
                 assert!(
-                    x >= SPAWN_EDGE_MARGIN as i32
-                        && x <= (WORLD_W - SPAWN_EDGE_MARGIN) as i32,
+                    // WA's own placement rule (FUN_005780b0): x in [20, W-60).
+                    x >= 20 && x <= (WORLD_W - 40) as i32,
                     "seed {seed}: spawn x={x} not in interior band"
                 );
                 assert!(
@@ -2352,7 +2410,7 @@ mod spawn_tests {
         let roofed = |t: &Terrain, x: i32, y: i32| -> bool {
             t.is_solid(x, y + 1)
                 && !t.is_solid(x, y)
-                && ((y - 220).max(0)..=(y - 26).max(0)).any(|cy| t.is_solid(x, cy))
+                && ((y - 420).max(0)..=(y - 26).max(0)).any(|cy| t.is_solid(x, cy))
         };
         let mut saw_caverns = false;
         let mut saw_underground = false;
