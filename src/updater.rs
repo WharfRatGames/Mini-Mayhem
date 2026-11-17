@@ -270,7 +270,8 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
     let mut tcp = tcp;
     let mut stream = rustls::Stream::new(&mut conn, &mut tcp);
 
-    stream.write_all(req.as_bytes()).ok()?;
+    // TLS handshake/cert failure → fall back to plain HTTP (old clients had no fallback here).
+    if stream.write_all(req.as_bytes()).is_err() { return stream_binary_http(on_progress); }
 
     // Read headers byte-by-byte until \r\n\r\n
     let mut header_buf: Vec<u8> = Vec::new();
