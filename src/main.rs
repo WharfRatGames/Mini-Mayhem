@@ -1,3 +1,4 @@
+mod dlog;
 mod world;
 mod physics;
 mod renderer;
@@ -43,6 +44,7 @@ impl Drop for MenuGuard {
 fn menu_guard() -> MenuGuard { let _ = std::fs::write("/tmp/disable_menu_button", b""); MenuGuard }
 
 fn main() {
+    dlog::init(VERSION);
     // Release any audio/device fds inherited from the Onion launcher so that
     // aplay can open the ALSA device cleanly for sound effects.
     #[cfg(not(feature = "desktop"))]
@@ -398,6 +400,7 @@ fn main() {
                 let addr = format!("crumbonium.duckdns.org:{}", port);
                 ServerConn::connect(&addr)
             };
+            crate::dlog!("net", "connect port={} ok={}", port, result.is_ok());
             let outcome = match result {
                 Ok(mut c) => {
                     c.send_raw(b"MMAY");
@@ -411,6 +414,7 @@ fn main() {
                     }
                     // Read server response: "OK\n" or "REJECTED:VERSION\n"
                     let resp = c.read_line_blocking();
+                    crate::dlog!("net", "handshake response={:?}", resp.trim());
                     if resp.trim() == "REJECTED:VERSION" {
                         ConnectOutcome::VersionRejected
                     } else {
@@ -1274,6 +1278,7 @@ fn build_default_game_n(seed: u64, team_count: usize) -> GameState {
     let n = team_count.clamp(2, 4);
     if n == 2 { return build_default_game(seed); }
     renderer::bg_image::prewarm_for_seed(seed); // overlap BG decode with terrain gen
+    crate::dlog!("match", "generate map seed={:016x}", seed);
     let mut terrain = Terrain::generate_tactical(seed);
     let all_spawns = terrain.find_team_spawns(0, WORLD_W, n * 4);
     let mut teams = Vec::with_capacity(n);
@@ -1516,6 +1521,7 @@ fn draw_casual_lobby(
 
 fn build_default_game_opts(seed: u64, with_mines: bool, with_barrels: bool) -> GameState {
     renderer::bg_image::prewarm_for_seed(seed); // overlap BG decode with terrain gen
+    crate::dlog!("match", "generate map seed={:016x}", seed);
     let mut terrain = Terrain::generate_tactical(seed);
     // Same for the terrain texture tile — known once the terrain exists.
     let st = terrain.surface_texture;

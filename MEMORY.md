@@ -144,3 +144,6 @@
 - arty-api.service: systemd auto-start
 - Game server: manual — fuser -k 7777/tcp 2>/dev/null; sleep 1; RUST_LOG=info ~/mayhem-server/server
 - nginx: /api/ proxies to :7778, /arty/ serves from /var/www/html
+
+## Decompilation notes
+- WA.exe research + ports (landgen, rope, physics, collision): `/home/dusty/worms_decomp/findings/README.md`. Map archetypes no longer exist on `experimental` — `archetype` above means the cosmetic `Theme` (derived from WA landgen style).

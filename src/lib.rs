@@ -1,3 +1,4 @@
+pub mod dlog;
 pub mod world;
 pub mod physics;
 pub mod renderer;

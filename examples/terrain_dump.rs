@@ -1,4 +1,4 @@
-//! Dev verification: dump generated terrain to PNGs so the map archetypes can be
+//! Dev verification: dump generated terrain to PNGs so the map styles can be
 //! eyeballed (caves, overhangs, sky islands) without a device.
 //!
 //!   cargo run --example terrain_dump            # seeds 0..30 -> /tmp/arty_terrain
@@ -14,17 +14,11 @@ use arty::world::{Terrain, WORLD_W, WORLD_H};
 use arty::renderer::buffer::WorldBuffer;
 use arty::renderer::draw_terrain::draw_terrain;
 
-fn archetype_of(seed: u64) -> u64 {
-    // Mirror generate_tactical's first lcg draw: archetype = lcg(seed) % 5.
-    let s = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    (s >> 33) % 5
+/// WA landgen style chosen for a seed (mirrors `Terrain::generate_tactical`).
+fn style_of(seed: u64) -> String {
+    let t = Terrain::generate_tactical(seed);
+    format!("{}{}", if t.is_cavern { "cavern" } else { "island" }, t.template_id)
 }
-
-const NAMES: [&str; 5] = [
-    "hills", "cliffs", "islands", "caverns", "canyon",
-];
 
 fn main() {
     let out_dir = "/tmp/arty_terrain";
@@ -46,7 +40,7 @@ fn main() {
         let h = WORLD_H as usize;
         let mut img = vec![0u8; w * h * 3];
 
-        // Render through the real game renderer (dirt texture, archetype sky,
+        // Render through the real game renderer (dirt texture, themed sky,
         // edge shading, wet zone) so the preview matches in-game appearance.
         let mut buf = WorldBuffer::new();
         draw_terrain(&mut buf, &terrain);
@@ -77,8 +71,8 @@ fn main() {
             }
         }
 
-        let arch = archetype_of(seed);
-        let path = format!("{out_dir}/seed{seed:03}_{}.png", NAMES[arch as usize]);
+        let arch = style_of(seed);
+        let path = format!("{out_dir}/seed{seed:03}_{}.png", arch);
         let file = File::create(&path).expect("create png");
         let mut enc = png::Encoder::new(BufWriter::new(file), WORLD_W, WORLD_H);
         enc.set_color(png::ColorType::Rgb);
@@ -86,7 +80,7 @@ fn main() {
         enc.write_header().unwrap().write_image_data(&img).unwrap();
         println!(
             "seed {seed:>3} -> {:8} solid={:>7} (team0 {}, team1 {}) {path}",
-            NAMES[arch as usize], terrain.solid_count(), team0.len(), team1.len()
+            arch, terrain.solid_count(), team0.len(), team1.len()
         );
     }
 }

@@ -1,5 +1,22 @@
 # Mini Mayhem — Project Status
 
+> **Decompilation research** (WA.exe → Arty): see `/home/dusty/worms_decomp/findings/README.md`
+> (index of `mapgen.md`, `rope.md`, `physics.md`, `terrain_collision.md`, weapon tables) and the
+> Unicorn oracle in `/home/dusty/worms_decomp/emu/`. The entries below that mention archetypes,
+> collages, `wa_templates.rs` or `wa_masks/` describe the old generator and are history only.
+
+## 2026-11-17 — experimental: map archetypes / collage generator removed; WA landgen only (-exp6+)
+
+- `Terrain::generate_tactical` = WA's landgen port (seed→31-bit WA seed, style from seed hash,
+  1920×696 bitmap bottom-aligned on the water line) + WA spawn algorithm. Deleted
+  `generate_tactical_legacy` (~850 lines), `src/world/wa_templates.rs`, `src/world/wa_masks/`
+  (7.5 MB) and `tools/extract_wa_mask.py`. `tests/wa_collage_check.rs` → `tests/terrain_sanity.rs`
+  (rewritten for WA maps; the stale collage-era bands/cap assertions failed even before).
+- Same session: WA ninja-rope port (oracle-verified), clock-independent TLS verification,
+  texture fixes (world-anchored body texture; 19 row-smeared atlas tiles skipped), `dlog`
+  diagnostic log (`exp-deploy/miyoo_log.sh`), Miyoo screen viewer (`exp-deploy/miyoo_view.py`).
+- Gates: parity 24/24; terrain_sanity 7/7; lib 15 pre-existing failures unchanged.
+
 ## 2026-10-22 — v0.5.4.439 built, tested, committed and fully deployed (native + Miyoo x2 + Pi server); API security hardening deployed; IRC dashboard removed from repo
 
 The match-sim tool and three soft-lock fixes described in the 2026-08-26 entry below sat

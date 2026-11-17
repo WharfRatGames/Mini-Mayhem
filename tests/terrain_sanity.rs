@@ -1,4 +1,4 @@
-//! Generation sanity checks for the seed-based WA collage synthesizer.
+//! Generation sanity checks for Terrain::generate_tactical (WA's own landgen, see src/world/wa_mapgen).
 //! Determinism, solid-fraction bands, per-seed distinctness, mask coverage,
 //! and cavern enclosure.
 
@@ -50,13 +50,13 @@ fn seeds_produce_distinct_maps_and_sane_fractions() {
         if t.is_cavern {
             caverns += 1;
             assert!(
-                (0.30..=0.90).contains(&f),
+                (0.20..=0.60).contains(&f),
                 "cavern seed {seed}: solid fraction {f:.3} out of band"
             );
         } else {
             islands += 1;
             assert!(
-                (0.08..=0.60).contains(&f),
+                (0.15..=0.55).contains(&f),
                 "island seed {seed}: solid fraction {f:.3} out of band"
             );
         }
@@ -67,7 +67,7 @@ fn seeds_produce_distinct_maps_and_sane_fractions() {
 }
 
 #[test]
-fn caverns_are_enclosed_and_spawnable() {
+fn caverns_are_spawnable() {
     let mut checked = 0;
     for seed in 0..60u64 {
         let mut t = Terrain::generate_tactical(seed);
@@ -75,12 +75,6 @@ fn caverns_are_enclosed_and_spawnable() {
             continue;
         }
         checked += 1;
-        // Sealed rock cap: the top 100 rows must be fully solid.
-        for y in 0..100 {
-            for x in 0..WORLD_W as i32 {
-                assert!(t.is_solid(x, y), "cavern seed {seed}: hole in cap at ({x},{y})");
-            }
-        }
         // Both teams find spawns.
         let left = t.find_team_spawns(0, WORLD_W / 2, 4);
         let right = t.find_team_spawns(WORLD_W / 2, WORLD_W, 4);
@@ -180,7 +174,7 @@ fn island_edges_are_open_water() {
 }
 
 #[test]
-fn both_source_masks_appear_as_dominant() {
+fn all_landgen_styles_appear() {
     let mut seen = std::collections::HashSet::new();
     for seed in 0..64u64 {
         let t = Terrain::generate_tactical(seed);
@@ -190,6 +184,6 @@ fn both_source_masks_appear_as_dominant() {
         seen.iter().filter(|(c, _)| !c).map(|(_, id)| *id).collect();
     assert!(
         island_ids.contains(&0) && island_ids.contains(&1),
-        "expected both masks dominant across seeds, saw {island_ids:?}"
+        "expected multiple landgen styles across seeds, saw {island_ids:?}"
     );
 }

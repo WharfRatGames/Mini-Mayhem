@@ -111,29 +111,36 @@ here. Run `cargo test --test parity` when changing the weapon menu or pre-simula
 `src/lib.rs`. Both the `arty` client and the `server` bin use it
 (`use arty::net::{msg::*, encode}`). Do **not** re-create a server-side copy.
 
+## Decompilation notes (WA.exe) — read these before touching physics/terrain
+
+The `experimental` branch ports Worms Armageddon's real algorithms. The research lives
+**outside this repo** in `/home/dusty/worms_decomp/findings/` — start at
+`/home/dusty/worms_decomp/findings/README.md` (index): `mapgen.md` (landgen, spawns, oracle
+workflow), `rope.md` (ninja rope), `physics.md` (bazooka/wind/gravity), `terrain_collision.md`
+(land-bitmap collision), weapon tables (`weapon_table*.csv/json`). Ports are verified against
+WA's own machine code run in a Unicorn emulator (`/home/dusty/worms_decomp/emu/`). Ghidra
+pseudocode: `/home/dusty/worms_decomp/out/functions/functions/0x<addr>.c`.
+
 ## Terrain generation
 
 `Terrain::generate_tactical(seed)` in `src/world/terrain.rs` is the **only** generator
-reachable in-game (called from `src/main.rs` and `src/server/main.rs`). It is purely
-seed-derived and **never transmitted** — the map `seed` rides in `StateMsg` and both sides
-rebuild the bitmap locally, so generation MUST stay deterministic (fixed-order f64/integer
-math, no time/RNG/HashMap-order nondeterminism) and client+server MUST run identical code
-(bump `VERSION`/`REQUIRED_VERSION` together for any change). Every seed composes a novel
-silhouette as a collage of real WA terrain art (`src/world/wa_templates.rs`:
-`collage_params`/`collage_density` — per-seed segments spliced, domain-warped and
-crossfaded from baked 1-bpp masks in `src/world/wa_masks/`); cavern maps (~20% of seeds)
-carve chambers from the same collage, inverted. Both branches box-blur the continuous
-density field before thresholding. The mask library (20 island + 8 cavern as of
-v0.5.4.428) is sourced from WA MapGen.exe run headless under Wine with a settings file
-(`objects 0` — near-sprite-free silhouettes; see `tools/gen_mapgen_corpus.py`); bake masks
-with `tools/extract_wa_mask.py` (land.dat, or a PNG with `--nonblack --clean-sprites`).
-Generator constants are calibrated against a measured MapGEN reference corpus —
-rerun `tools/terrain_stats.py` (with the `dump-terrain` bin) before retuning them.
-Non-cavern maps must keep open water at BOTH side edges. Scenery footprints/variant
-counts also feed seed-derived placement — changing them is a determinism change too.
-Sanity tests live in `tests/wa_collage_check.rs`. `from_heightmap` is a
-`#[cfg(test)]`-only fixture, not a live generator; the old `generate_worms` has been
-removed.
+reachable in-game (called from `src/main.rs` and `src/server/main.rs`). On this branch it
+**is Worms Armageddon's own landgen** (`src/world/wa_mapgen/`, bit-exact vs 41/41 captured WA
+maps — see `findings/mapgen.md`). There are **no Arty-specific map archetypes, mask
+collages or noise generators any more** (the legacy generator, `wa_templates.rs` and
+`wa_masks/` were deleted). The seed folds to WA's 31-bit map seed (identity below 2^31);
+the style (island/cavern, 0..=3 — WA's UI picks it independently of the seed) is derived from
+the seed by a hash; the 1920×696 land bitmap is placed bottom-aligned on Arty's water line.
+`Terrain.is_cavern`/`template_id` just carry that style and drive the cosmetic `Theme`
+(sky/debris/scenery). Worm spawns use WA's placement algorithm (`wa_mapgen::spawn_positions`).
+Scenery placement is still Arty's own (`place_scenery`) — WA's is not ported.
+Generation is purely seed-derived and **never transmitted** — the map `seed` rides in
+`StateMsg` and both sides rebuild the bitmap locally, so it MUST stay deterministic and
+client+server MUST run identical code (bump `VERSION`/`REQUIRED_VERSION` together for any
+change). Scenery footprints/variant counts also feed seed-derived placement — changing them is
+a determinism change too. Sanity tests: `tests/terrain_sanity.rs` and the oracle test
+`matches_real_wa_maps` (`src/world/wa_mapgen`). `from_heightmap` is a `#[cfg(test)]`-only
+fixture, not a live generator. (Production `main` still uses the old collage generator.)
 
 ## Build / test
 

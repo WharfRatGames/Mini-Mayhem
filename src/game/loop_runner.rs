@@ -1494,7 +1494,10 @@ fn fire_rope_hook(game: &mut GameState, ti: usize, si: usize) {
     // Soldier stays on the ground while hook is flying — becomes Airborne when hook attaches.
 }
 
+#[inline] fn nx_dbg(v: i32) -> f32 { v as f32 / 65536.0 }
+
 fn release_rope(game: &mut GameState) {
+    if game.rope.is_some() { crate::dlog!("rope", "tick={} released by player", game.tick); }
     game.rope = None; // rope_session stays true — player can re-rope mid-air
 }
 
@@ -5766,6 +5769,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     let chain = if dist >= ROPE_MIN_LEN {
                         crate::physics::wa_rope::Chain::attach(a16.0, a16.1, (dist * 65536.0) as i32, theta)
                     } else { None };
+                    crate::dlog!("rope", "tick={} hook hit ({:.0},{:.0}) len={:.0} attached={}", game.tick, hx, hy, dist, chain.is_some());
                     if chain.is_none() {
                         game.rope = None;
                         attached = true;
@@ -5896,6 +5900,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             vel.y = v16.1 as f32 / 65536.0;
                             if outcome == wr::Outcome::Released {
                                 // Anchor / pivot terrain destroyed: the rope drops.
+                                crate::dlog!("rope", "tick={} released (anchor/pivot terrain gone) at ({:.0},{:.0})", game.tick, nx_dbg(pos16.0), nx_dbg(pos16.1));
                                 game.rope = None;
                                 game.teams[ti].soldiers[si].airtime += 1;
                                 game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel, spinning };

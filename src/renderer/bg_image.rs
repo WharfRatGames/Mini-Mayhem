@@ -2,7 +2,7 @@
 //! everything else: clouds, landform, debris, terrain). A pool of background
 //! PNGs (sliced from `assets/BG/BG2.png`) embedded at build time; one is chosen
 //! per map from the map seed, so the background varies match-to-match across all
-//! archetypes rather than being fixed per archetype. If a PNG is missing or a
+//! themes rather than being fixed per theme. If a PNG is missing or a
 //! 1x1 placeholder, nothing is drawn and the procedural backdrop shows through.
 //!
 //! To refresh the art: re-slice the source sheet into

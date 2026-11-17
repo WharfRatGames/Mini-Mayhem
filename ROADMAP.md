@@ -7,6 +7,7 @@ A living document of what's shipped, what's in progress, and what's coming.
 ## ✅ Phase 1 — Terrain & Physics
 *Core engine foundation*
 
+- [x] **Map archetypes and the WA-art collage generator removed (experimental)** — maps now come from a bit-exact port of WA.exe's own landgen (41/41 captured maps), WA's worm-spawn algorithm, and WA's RNG; `generate_tactical_legacy`, `wa_templates.rs` and the 7.5 MB of `wa_masks/` deleted. Notes: `/home/dusty/worms_decomp/findings/mapgen.md` (index: `/home/dusty/worms_decomp/findings/README.md`). Older collage/archetype entries below are history.
 - [x] Terrain generated from real Worms Armageddon map art — 2 masks extracted from the original game's land.dat, baked as Rust constants, seed picks mask/shift/mirror (v0.5.4.392)
 - [x] Seed-based WA collage generation — every seed splices/warps/crossfades segments of real WA art into a novel silhouette; caverns carve chambers from the same art inverted; extraction tool `tools/extract_wa_mask.py` (land.dat/PNG → mask.bin) (v0.5.4.396)
 - [x] Collage generation fast path — domain warp on a precomputed bilinear grid; caverns generate faster than the old procedural generator (v0.5.4.397)

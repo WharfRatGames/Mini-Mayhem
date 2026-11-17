@@ -17,16 +17,9 @@ use arty::world::{Terrain, WORLD_W, WORLD_H};
 use arty::renderer::WorldBuffer;
 use arty::renderer::draw_terrain::build_world_cache;
 
-/// Mirror generate_tactical's first two lcg draws to recover the selected tile.
-/// archetype = lcg(seed); surface_texture = lcg(again) as u8.
+/// The tile a seed selects (read from the generated terrain).
 fn surface_texture(seed: u64) -> u8 {
-    let mut s = seed;
-    let mut lcg = |s: &mut u64| {
-        *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        *s >> 33
-    };
-    let _arch = lcg(&mut s);
-    lcg(&mut s) as u8
+    Terrain::generate_tactical(seed).surface_texture
 }
 
 fn parse_seed(a: &str) -> Option<u64> {

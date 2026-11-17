@@ -143,7 +143,7 @@ impl<C: Canvas> Scaled<'_, C> {
     }
 }
 
-// ── Archetype 0: Pastoral (hills) ─────────────────────────────────────────────
+// ── Theme variant 0: Pastoral (hills) ─────────────────────────────────────────────
 
 fn draw_pastoral<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
@@ -288,7 +288,7 @@ fn draw_bush<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     buf.fill_rect(cx - 10, by - 12, 5, 3, light);
 }
 
-// ── Archetype 1: Rugged (cliffs) ──────────────────────────────────────────────
+// ── Theme variant 1: Rugged (cliffs) ──────────────────────────────────────────────
 
 fn draw_rugged<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
@@ -438,7 +438,7 @@ fn draw_dead_stump<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     buf.fill_rect(cx + 9,  by - 3,  3, 2, dark);
 }
 
-// ── Archetype 2: Tropical (islands) ───────────────────────────────────────────
+// ── Theme variant 2: Tropical (islands) ───────────────────────────────────────────
 
 fn draw_tropical<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
@@ -559,7 +559,7 @@ fn draw_anchor<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     buf.fill_rect(cx - 2, by - 7, 5, 2, rust);
 }
 
-// ── Archetype 3: Underground (caverns) ────────────────────────────────────────
+// ── Theme variant 3: Underground (caverns) ────────────────────────────────────────
 
 fn draw_underground<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
@@ -703,7 +703,7 @@ fn draw_skull<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32) {
     buf.fill_rect(cx - 5, by - 12, 4, 3, bhi);
 }
 
-// ── Archetype 4: Arid (canyon/mesa) ──────────────────────────────────────────
+// ── Theme variant 4: Arid (canyon/mesa) ──────────────────────────────────────────
 
 fn draw_arid<C: Canvas>(buf: &mut Scaled<C>, cx: i32, by: i32, sprite: u8) {
     match sprite {
