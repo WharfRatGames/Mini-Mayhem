@@ -153,7 +153,8 @@ fn burning_soldiers_separate_from_a_clump() {
     }
 
     let gap = (game.teams[0].soldiers[0].pos.x - game.teams[0].soldiers[1].pos.x).abs();
-    assert!(gap > start_gap + 8.0,
+    // Body is 9 px wide (WA worm shape): separated means at least one body width apart.
+    assert!(gap >= arty::renderer::draw_sprites::BODY_W as f32,
         "clumped burning soldiers did not separate (gap {start_gap} -> {gap})");
 }
 

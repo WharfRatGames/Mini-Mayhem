@@ -5,6 +5,15 @@
 > Unicorn oracle in `/home/dusty/worms_decomp/emu/`. The entries below that mention archetypes,
 > collages, `wa_templates.rs` or `wa_masks/` describe the old generator and are history only.
 
+## 2026-11-17 (late) — experimental: bazooka shell on WA's engine (-exp7 deployed, -exp8 built)
+
+- WA's collision solved and ported: land is an object with a 1-bpp bitmap; bodies are 1-bpp masks; overlap test + swept mover (`src/physics/wa_collide.rs`, `wa_body.rs`) verified bit-exact (312 live WA tests; 4000 Unicorn mover scenarios).
+- Bazooka shell uses it (`wa_missile.rs`, `tick::tick_bazooka`, `step_projectile`): 16.16 fixed point at 50 fps inside the 30 Hz tick (frames per tick from the shell's age), wind16 = units*65535/35. Replays a real WA flight bit-exactly. Same code in hotseat, vs CPU, live server, TAT replay/fast-forward; live client predicts collision-free.
+- CPU aim search now steps the real `step_projectile` with shared `muzzle_spawn`/`launch_speed` (it previously used its own simulator).
+- -exp8 adds dlog events (`FIRE`, `fly`, `impact`, `blast`, `turn`); built, not yet pushed.
+- Next: worm movement (landing, walking, jumping, fall damage) and replacing the float soldier state machine — see `/home/dusty/worms_decomp/resume.md`.
+- Gates: parity 24/24; terrain_sanity 7/7; new oracle tests pass; lib 15 pre-existing failures unchanged.
+
 ## 2026-11-17 — experimental: map archetypes / collage generator removed; WA landgen only (-exp6+)
 
 - `Terrain::generate_tactical` = WA's landgen port (seed→31-bit WA seed, style from seed hash,
@@ -15,6 +24,9 @@
 - Same session: WA ninja-rope port (oracle-verified), clock-independent TLS verification,
   texture fixes (world-anchored body texture; 19 row-smeared atlas tiles skipped), `dlog`
   diagnostic log (`exp-deploy/miyoo_log.sh`), Miyoo screen viewer (`exp-deploy/miyoo_view.py`).
+- Deploy/publish: experimental zips (with Ports README) now go to `https://crumbonium.duckdns.org/arty/builds/` automatically via
+  `exp-deploy/push_miyoo_exp_ports.sh`; last 3 of each build kind are kept. Details: `/home/dusty/worms_decomp/findings/tooling.md`.
+- Production v0.5.4.440 (main) carries the TLS fix; installed `.439` clients cannot self-update outside the LAN (updater lacked an HTTP fallback) and need the zip manually.
 - Gates: parity 24/24; terrain_sanity 7/7; lib 15 pre-existing failures unchanged.
 
 ## 2026-10-22 — v0.5.4.439 built, tested, committed and fully deployed (native + Miyoo x2 + Pi server); API security hardening deployed; IRC dashboard removed from repo

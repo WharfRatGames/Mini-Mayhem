@@ -95,7 +95,7 @@ impl Heightmap {
             .collect();
 
         // Gap-fill pass: ensure no narrow pits where soldiers get stuck.
-        // Soldiers are ~16px wide (SOLDIER_W). Any local dip narrower than that
+        // Soldiers are ~16px wide (BODY_W). Any local dip narrower than that
         // radius gets raised to match its neighbours.
         let gap_radius: usize = 10; // half-width — fills gaps up to ~20px wide
         let orig = surface_y.clone();

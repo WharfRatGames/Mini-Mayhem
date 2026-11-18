@@ -24,7 +24,7 @@ pub const WIND_SCALE: f32 = 0.064;
 // keeps the shared defaults above.
 
 /// Reference frames-per-second ÷ Arty ticks-per-second.
-const WA_TIME_SCALE: f32 = 50.0 / 30.0;
+const WA_TIME_SCALE: f32 = crate::physics::wa_missile::TIME_SCALE;
 
 /// Bazooka gravity. Reference: 0.24 px/frame² (measured live; thrown weapons and
 /// the rocket share it). NOT yet confirmed from static code.
@@ -51,6 +51,22 @@ pub const BAZOOKA_CHARGE_RATE: f32 = 873.0 / 65536.0 * WA_TIME_SCALE;
 /// 1.0..MAX_CHARGE band the other charge weapons use.
 pub const BAZOOKA_MAX_CHARGE: f32 = 1.0;
 
+/// Shared launch rules, used by `fire_weapon` AND the CPU's aim search so they can never disagree.
+/// Muzzle position: 12 px out along the aim direction, 4 px above the soldier's origin.
+pub fn muzzle_spawn(x: f32, y: f32, angle: f32, facing: f32) -> crate::world::WorldPos {
+    crate::world::WorldPos::new(x + angle.cos() * facing * 12.0, y - 4.0 - angle.sin() * 12.0)
+}
+
+/// Launch speed (px/tick) for a weapon at a given charge fraction (bazooka: WA reference curve, capped at
+/// 1.0; everything else: 20 px/tick at full charge, extended meter up to `MAX_CHARGE`).
+pub fn launch_speed(kind: WeaponKind, charge: f32) -> f32 {
+    if kind == WeaponKind::Bazooka {
+        charge.min(BAZOOKA_MAX_CHARGE) * BAZOOKA_LAUNCH
+    } else {
+        charge.min(crate::game::loop_runner::MAX_CHARGE) * 20.0
+    }
+}
+
 /// Apply one physics tick to a projectile.
 ///
 /// Updates velocity and position using Euler integration:
@@ -62,7 +78,33 @@ pub const BAZOOKA_MAX_CHARGE: f32 = 1.0;
 /// Terminal velocity is clamped on the Y axis only.
 ///
 /// `wind` is in [-1.0, 1.0]. Positive = rightward, negative = leftward.
+/// Bazooka shell on the WA engine (see wa_missile.rs). `terrain = None` is the collision-free prediction used by
+/// live clients between server states; with a terrain it returns the hit position (16.16 -> px).
+pub fn tick_bazooka(proj: &mut Projectile, wind: f32, terrain: Option<&crate::world::Terrain>) -> Option<crate::world::WorldPos> {
+    use crate::physics::wa_missile::{wind16, WaMissile};
+    let units = (wind * crate::physics::wind::WA_WIND_UNITS as f32).round() as i32;
+    let w16 = if proj.kind.affected_by_wind() { wind16(units) } else { 0 };
+    let mut m = proj.wa.unwrap_or_else(|| WaMissile::from_float(proj.pos, proj.vel));
+    let mut hit = None;
+    for _ in 0..WaMissile::frames_for_age(proj.age_ticks) {
+        if let Some((hx, hy)) = m.step_frame(w16, if hit.is_none() { terrain } else { None }) {
+            hit = Some(crate::world::WorldPos::new(hx as f32 / 65536.0, hy as f32 / 65536.0));
+            break;
+        }
+    }
+    proj.pos = m.pos();
+    proj.vel = m.vel();
+    proj.wa = Some(m);
+    proj.age_ticks += 1;
+    proj.fuse = proj.fuse.tick();
+    hit
+}
+
 pub fn tick(proj: &mut Projectile, wind: f32) {
+    if proj.kind == WeaponKind::Bazooka {
+        tick_bazooka(proj, wind, None);
+        return;
+    }
     // ── Acceleration ──────────────────────────────────────────────────────────
     // Homing missiles maintain constant speed — no gravity or wind drift.
     if proj.kind != WeaponKind::HomingMissile {
@@ -129,10 +171,11 @@ mod tests {
     #[test]
     fn gravity_increases_y_velocity_each_tick() {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
-        tick(&mut p, 0.0);
-        assert!((p.vel.y - BAZOOKA_GRAVITY).abs() < 1e-5, "vy should equal BAZOOKA_GRAVITY after one tick");
-        tick(&mut p, 0.0);
-        assert!((p.vel.y - BAZOOKA_GRAVITY * 2.0).abs() < 1e-5, "vy should equal 2×BAZOOKA_GRAVITY after two ticks");
+        // The shell runs WA frames (5 per 3 Arty ticks): compare over whole 3-tick cycles.
+        tick_n(&mut p, 0.0, 3);
+        assert!((p.vel.y - BAZOOKA_GRAVITY * 3.0).abs() < 1e-3, "vy should equal 3×BAZOOKA_GRAVITY after 3 ticks (5 WA frames)");
+        tick_n(&mut p, 0.0, 3);
+        assert!((p.vel.y - BAZOOKA_GRAVITY * 6.0).abs() < 1e-3, "vy should equal 6×BAZOOKA_GRAVITY after 6 ticks");
     }
 
     // ── Bazooka reference constants (bazooka only; other weapons unchanged) ───
@@ -186,25 +229,25 @@ mod tests {
     #[test]
     fn positive_wind_pushes_bazooka_rightward() {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
-        tick(&mut p, 1.0);
+        tick_n(&mut p, 1.0, 3);
         assert!(p.vel.x > 0.0, "positive wind should push projectile right");
-        assert!((p.vel.x - BAZOOKA_WIND_SCALE).abs() < 1e-5);
+        assert!((p.vel.x - BAZOOKA_WIND_SCALE * 3.0).abs() < 2e-3);
     }
 
     #[test]
     fn negative_wind_pushes_bazooka_leftward() {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
-        tick(&mut p, -1.0);
+        tick_n(&mut p, -1.0, 3);
         assert!(p.vel.x < 0.0, "negative wind should push projectile left");
-        assert!((p.vel.x + BAZOOKA_WIND_SCALE).abs() < 1e-5);
+        assert!((p.vel.x + BAZOOKA_WIND_SCALE * 3.0).abs() < 2e-3);
     }
 
     #[test]
     fn wind_accumulates_over_ticks() {
         let mut p = bazooka(100.0, 100.0, 0.0, 0.0);
-        tick_n(&mut p, 1.0, 5);
-        assert!((p.vel.x - BAZOOKA_WIND_SCALE * 5.0).abs() < 1e-4,
-            "wind should accumulate over 5 ticks");
+        tick_n(&mut p, 1.0, 6);
+        assert!((p.vel.x - BAZOOKA_WIND_SCALE * 6.0).abs() < 4e-3,
+            "wind should accumulate over 6 ticks");
     }
 
     #[test]

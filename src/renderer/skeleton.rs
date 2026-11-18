@@ -478,7 +478,13 @@ fn draw_held_weapon(buf: &mut WorldBuffer, x: i32, y: i32, weapon: WeaponKind, t
 /// Extra pixels to lift name/HP above a hatted soldier so the gap above the hat
 /// matches the gap above a bare head. Formula: anchor - head_r + h/2 - dy
 /// where h = base_h * scale, anchor=16, head_r=8 (V2).
-pub fn hat_name_lift(hat_id: u8) -> i32 {
+pub fn hat_name_lift(_hat_id: u8) -> i32 {
+    // The pixel-art hats all fit inside the 24x32 sprite, so the name/HP plate needs no extra lift.
+    0
+}
+
+#[allow(dead_code)]
+fn hat_name_lift_legacy(hat_id: u8) -> i32 {
     if hat_id == 0 { return 0; }
     let (base_h, anchor, head_r) = if SOLDIER_STYLE_V2 { (63.0f32, 16.0f32, 8.0f32) } else { (36.0, 9.0, 5.0) };
     let scale: f32 = match hat_id {
@@ -552,6 +558,9 @@ pub fn draw_soldier_skeletal(
     tick:             u32,
     on_fire_ticks:    u32,
 ) -> Option<(f32, f32)> {
+    // Per-soldier look lives in the high bits of the uniform id (0 = Rifleman, the default).
+    let look = ((uniform_color_id >> 5) as usize) % super::soldier_looks::N_LOOKS;
+    let uniform_color_id = uniform_color_id & 0x1f;
     let team_col = if hp == 0 { TEAM_COLOURS_DEAD[team.min(3)] } else { TEAM_COLOURS[team.min(3)] };
     // body_col: uniform override for torso/arms/legs; helmet cap always keeps team_col
     let body_col = if uniform_color_id == 0 { team_col } else { uniform_color(uniform_color_id) };
@@ -671,7 +680,9 @@ pub fn draw_soldier_skeletal(
 
     let fwd_arm = if f >= 0.0 { arm_r_vis } else { arm_l_vis };
 
-    let (btx, bty) = if SOLDIER_STYLE_V2 {
+    let look_result = draw_look_body(buf, pos, look, facing, hp, anim, aim_angle, hat_id, gun_style_id, held_weapon, wind, tick,
+        body_col, root_angle, on_fire_ticks, boot_color_id);
+    let (btx, bty) = if true { look_result.unwrap_or((pos.x, pos.y)) } else if SOLDIER_STYLE_V2 {
         // ── V2: cartoony style ────────────────────────────────────────────────
         let hilit    = Bgra::new(body_col.r.saturating_add(40), body_col.g.saturating_add(30), body_col.b.saturating_add(20));
         let shadow   = Bgra::new(body_col.r.saturating_sub(40), body_col.g.saturating_sub(35), body_col.b.saturating_sub(25));
@@ -842,8 +853,166 @@ pub fn draw_soldier_skeletal(
 
     // ── HP number ─────────────────────────────────────────────────────────────
     if hp > 0 && show_hp {
-        draw_hp_number_lifted(buf, pos.x as i32, pos.y as i32, hp, team, hat_name_lift(hat_id));
+        // Text stays crisp: draw it unscaled, at the position the scaled sprite's head ends up.
+        let k = buf.scale_state().map(|t| t.2).unwrap_or(1.0);
+        let saved = buf.scale_state();
+        buf.end_scale();
+        let base = super::draw_sprites::SOLDIER_H + 28;
+        let lift = ((base + hat_name_lift(hat_id)) as f32 * k) as i32 - base;
+        draw_hp_number_lifted(buf, pos.x as i32, pos.y as i32, hp, team, lift);
+        if let Some((ax, ay, sc)) = saved { buf.begin_scale(ax, ay, sc); }
     }
 
     if aim_angle.is_some() && hp > 0 { Some((btx, bty)) } else { None }
+}
+
+
+/// Palette for the pixel-art soldiers: team/uniform body tones plus the shop boot colour (default dark boots for id 0).
+pub fn look_palette(body: Bgra, boot_id: u8) -> [Bgra; 256] {
+    use super::soldier_looks as L;
+    let shade = |c: Bgra, d: i16| Bgra::new(
+        (c.r as i16 + d).clamp(0, 255) as u8, (c.g as i16 + d).clamp(0, 255) as u8, (c.b as i16 + d).clamp(0, 255) as u8);
+    let mut pal = [Bgra::new(0, 0, 0); 256];
+    for (i, &(r, g, b)) in L::PAL.iter().enumerate() { pal[i] = Bgra::new(r, g, b); }
+    pal[L::TEAM_MID as usize] = body;
+    pal[L::TEAM_DARK as usize] = shade(body, -40);
+    pal[L::TEAM_LIGHT as usize] = shade(body, 40);
+    let ((r, g, b), (r2, g2, b2)) = if (1..=5).contains(&boot_id) { L::BOOT_COLORS[boot_id as usize] } else { ((45, 42, 38), (71, 66, 59)) };
+    pal[L::BOOT_IDX as usize] = Bgra::new(r, g, b);
+    pal[L::BOOT_L_IDX as usize] = Bgra::new(r2, g2, b2);
+    pal
+}
+
+/// Pixel-art soldier looks (see soldier_looks.rs). Drawn 1:1 even when the caller has a scale transform active
+/// (a 0.6x downscale would wreck the pixel art); returns the muzzle/hand point in the caller's pre-scale coordinates.
+fn draw_look_body(
+    buf: &mut WorldBuffer, pos: WorldPos, look: usize, facing: i8, hp: u8, anim: &SoldierAnim,
+    aim_angle: Option<f32>, hat_id: u8, gun_style_id: u8, held_weapon: Option<WeaponKind>, wind: f32, tick: u32,
+    body_col: Bgra, root_angle: f32, on_fire_ticks: u32, boot_color_id: u8,
+) -> Option<(f32, f32)> {
+    use super::soldier_looks as L;
+    let saved = buf.scale_state();
+    buf.end_scale();
+    let k = saved.map(|t| t.2).unwrap_or(1.0);
+    let f = if facing >= 0 { 1.0f32 } else { -1.0 };
+    let mut jx = 0.0; let mut jy = 0.0;
+    if on_fire_ticks > 0 {
+        let seed = tick.wrapping_add((pos.x as u32).wrapping_mul(17));
+        jx = ((seed % 5) as f32 - 2.0) * 0.8;
+        jy = (((seed / 5) % 3) as f32 - 1.0) * 0.8;
+    }
+    let (pose, angle, cy_off) = match anim {
+        SoldierAnim::Idle => (0usize, 0.0f32, 11.0f32),
+        SoldierAnim::Walking { tick } => (1 + ((*tick as usize * 5 / 3) % 8), 0.0, 11.0),
+        SoldierAnim::Airborne { spinning: true, .. } | SoldierAnim::RopeSwing { .. } => (9, root_angle, 11.0),
+        SoldierAnim::Airborne { .. } => (9, 0.0, 11.0),
+        SoldierAnim::Dead => (0, -f * std::f32::consts::FRAC_PI_2, 7.0),
+    };
+    let alive = hp > 0;
+    let upright = angle == 0.0;
+    let hat = if (hat_id as usize) < L::N_HATS && hat_id > 0 { hat_id as usize } else { 0 };
+    let cgun = if (gun_style_id as usize) < L::N_GUNS && gun_style_id > 0 { gun_style_id as usize } else { 0 };
+    let held = alive && upright && held_weapon.is_some();
+    let aiming = alive && upright && !held && aim_angle.is_some();
+    // Cosmetic gun layer is part of the body composite unless it is being aimed (then it is drawn rotated below).
+    let gun_in_body = cgun != 0 && !aiming && !held;
+    // The look's baked gun shows only when there is no cosmetic gun and nothing is aimed/held.
+    let baked_gun = cgun == 0 && !aiming && !held;
+    let variant = (if hat != 0 { 2 } else { 0 }) + (if baked_gun { 0 } else { 1 });
+    let sheet = &L::DATA[look][variant][pose];
+    let bob = L::POSE_BOB[pose];
+    let gun_shift = bob + if pose == 9 { L::JUMP_GUN_UP } else { 0 };
+    let pal = look_palette(body_col, boot_color_id);
+    let (cx, cy) = (pos.x + jx, pos.y - cy_off + jy);
+    let (sa, ca) = (angle.sin(), angle.cos());
+    let blank = [0u8; 0];
+    let _ = blank;
+    for dy in -26..=26i32 {
+        for dx in -26..=26i32 {
+            let rx = (pos.x as i32 + dx) as f32 + 0.5 - cx;
+            let ry = (pos.y as i32 + dy) as f32 + 0.5 - cy;
+            // inverse rotation by `angle` (matches rot(): x' = x cos - y sin, y' = x sin + y cos)
+            let ux =  rx * ca + ry * sa;
+            let uy = -rx * sa + ry * ca;
+            let sx = (ux * f + L::PIV_X).floor() as i32;
+            let sy = (uy + L::PIV_Y).floor() as i32;
+            if sx < 0 || sy < 0 || sx >= L::W as i32 || sy >= L::H as i32 { continue; }
+            let i = sy as usize * L::W + sx as usize;
+            let mut c = sheet[i];
+            let body = c;
+            if hat != 0 {
+                let hy = sy - bob;
+                if hy >= 0 && (hy as usize) < L::H {
+                    let h = L::HATS[hat][hy as usize * L::W + sx as usize];
+                    if h != 0 && !(h == L::OUT_IDX && body != 0) { c = h; }
+                }
+            }
+            if gun_in_body {
+                let gy = sy - gun_shift;
+                if gy >= 0 && (gy as usize) < L::H {
+                    let g = L::GUNS[cgun][gy as usize * L::W + sx as usize];
+                    if g != 0 && !(g == L::OUT_IDX && body != 0) { c = g; }
+                }
+            }
+            if c != 0 { buf.set_pixel(pos.x as i32 + dx, pos.y as i32 + dy, pal[c as usize]); }
+        }
+    }
+    // Propeller Hat: blades spin with the wind (direction and speed), same stepping as the old art.
+    if hat == 2 {
+        let dir = if wind >= 0.0 { 1.0 } else { -1.0 };
+        let speed = 1.0 + wind.abs() * 5.0;
+        let a = (tick as f32 / 4.0).floor() * dir * speed * std::f32::consts::FRAC_PI_4;
+        let half = 4.5 * a.cos().abs();
+        let by = 1 + bob;
+        let wy = (cy + (by as f32 + 0.5 - L::PIV_Y)).floor() as i32;
+        let n = (half * 2.0).round() as i32;
+        for j in 0..=n.max(1) {
+            let sxf = 12.5 - half + j as f32 * (2.0 * half) / n.max(1) as f32;
+            let wx = (cx + f * (sxf - L::PIV_X)).floor() as i32;
+            let col = if sxf < 12.5 { Bgra::new(200, 58, 58) } else { Bgra::new(224, 180, 58) };
+            buf.set_pixel(wx, wy, col);
+        }
+        let hubx = (cx + f * (12.5 - L::PIV_X)).floor() as i32;
+        buf.set_pixel(hubx, wy, Bgra::new(42, 38, 48));
+    }
+    let mut result = None;
+    if held {
+        let origin = (pos.x + f * 2.0 + jx, pos.y - 14.5 + jy);
+        draw_held_weapon(buf, origin.0 as i32, origin.1 as i32, held_weapon.unwrap(), tick);
+        result = Some(origin);
+    } else if aiming {
+        let aim = aim_angle.unwrap();
+        let origin = (pos.x + f * 2.0 + jx, pos.y - 14.5 + jy);
+        if cgun != 0 {
+            // Rotate the gun layer about the grip; muzzle = rotated tip.
+            let (gx, gy) = (14.5f32, 16.5f32);
+            let (sn, cs) = (aim.sin(), aim.cos());
+            let gcx = pos.x + f * (gx - L::PIV_X) + jx;
+            let gcy = cy + (gy - L::PIV_Y);
+            let g_shift = gun_shift;
+            for dy in -26..=26i32 {
+                for dx in -26..=26i32 {
+                    let wx = (pos.x as i32 + dx) as f32 + 0.5 - gcx;
+                    let wy = (pos.y as i32 + dy) as f32 + 0.5 - gcy;
+                    let lx = wx * f;
+                    let ux = lx * cs - wy * sn;
+                    let uy = lx * sn + wy * cs;
+                    let sx = (ux + gx).floor() as i32;
+                    let sy = (uy + gy).floor() as i32 - g_shift;
+                    if sx < 0 || sy < 0 || sx >= L::W as i32 || sy >= L::H as i32 { continue; }
+                    let c = L::GUNS[cgun][sy as usize * L::W + sx as usize];
+                    if c != 0 { buf.set_pixel(pos.x as i32 + dx, pos.y as i32 + dy, pal[c as usize]); }
+                }
+            }
+            let (tx, ty) = L::GUN_TIPS[cgun];
+            let (rx, ry) = (tx as f32 + 0.5 - gx, ty as f32 + 0.5 - gy);
+            result = Some((gcx + f * (rx * cs + ry * sn), gcy + (-rx * sn + ry * cs)));
+        } else {
+            let disp = if f >= 0.0 { aim } else { std::f32::consts::PI - aim };
+            result = Some(draw_gun_style_len(buf, origin, disp, 0, 18.0));
+        }
+    }
+    if let Some((ax, ay, sc)) = saved { buf.begin_scale(ax, ay, sc); }
+    // Back to the caller's pre-scale coordinates (the caller maps muzzle points through the scale about `pos`).
+    result.map(|(mx, my)| (pos.x + (mx - pos.x) / k, pos.y + (my - pos.y) / k))
 }

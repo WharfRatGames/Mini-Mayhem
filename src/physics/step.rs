@@ -1,7 +1,7 @@
 use crate::world::{Terrain, WorldPos};
 use super::projectile::{Projectile, FuseState, WeaponKind};
 use super::tick::tick;
-use super::collision::swept_collision;
+use super::collision::{swept_collision, CollisionResult};
 use super::outcome::{resolve, Outcome};
 
 /// The result of stepping one projectile forward by one physics tick.
@@ -64,8 +64,15 @@ pub fn step_projectile(
     let pos_before  = proj.pos;
     let fuse_before = proj.fuse;
 
-    // Apply physics (updates pos, vel, age, fuse)
-    tick(proj, wind);
+    // Apply physics (updates pos, vel, age, fuse). The bazooka runs WA's engine incl. its pixel collision.
+    let first_tick = proj.age_ticks == 0;
+    let wa_hit = if proj.kind == WeaponKind::Bazooka {
+        // The muzzle can sit next to terrain at steep aims: the first tick flies free (as before).
+        crate::physics::tick::tick_bazooka(proj, wind, if first_tick { None } else { Some(terrain) })
+    } else {
+        tick(proj, wind);
+        None
+    };
 
     // Check if fuse just expired this tick
     if proj.fuse.is_expired() {
@@ -96,7 +103,15 @@ pub fn step_projectile(
     if proj.age_ticks < 2 {
         return StepResult::Flying;
     }
-    let collision = swept_collision(pos_before, proj.pos, terrain);
+    let collision = if proj.kind == WeaponKind::Bazooka {
+        match wa_hit {
+            Some(h) => CollisionResult::Terrain(h),
+            // Edges only (water / walls); land is WA's pixel test above.
+            None => match swept_collision(pos_before, proj.pos, terrain) { CollisionResult::Terrain(_) => CollisionResult::None, o => o },
+        }
+    } else {
+        swept_collision(pos_before, proj.pos, terrain)
+    };
 
     // Resolve what happens
     let step = match resolve(proj, &collision, terrain) {

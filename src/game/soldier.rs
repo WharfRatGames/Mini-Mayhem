@@ -24,6 +24,18 @@ pub enum DeathCause {
     Water,
 }
 
+/// WA worm actions that take fixed time (50 fps frames; Arty ticks run 5 frames per 3 ticks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaAct {
+    /// Crouch before takeoff (state 0x77, 20 frames); `backflip` selects the impulse.
+    /// `tilt` = WA's 2nd-press tweak of a backflip: 0 straight up (90 deg), 1 Backspace twice (86.4 deg), 2 Enter twice (80 deg).
+    Windup { backflip: bool, tilt: u8, age: u32 },
+    /// Landing recovery (state 0x7a, 12 frames).
+    Recover { age: u32 },
+}
+pub const WA_WINDUP_FRAMES: u32 = 20;
+pub const WA_RECOVER_FRAMES: u32 = 12;
+
 /// One soldier in the game.
 #[derive(Debug, Clone)]
 pub struct Soldier {
@@ -44,6 +56,15 @@ pub struct Soldier {
     /// True if this soldier has moved this turn.
     pub has_moved:    bool,
     pub airtime:      u32,
+    /// Fixed-point WA worm body while airborne (+ the f32 vel it was last synced with). None = (re)initialise from pos/vel.
+    pub wa: Option<(crate::physics::wa_worm::WormBody, crate::world::Vec2)>,
+    /// WA walk-cycle state (anchor/phase) while a walk is in progress.
+    pub wa_walk: Option<crate::physics::wa_worm::WalkState>,
+    /// WA jump windup / landing recovery in progress (input locked for walking and jumping meanwhile).
+    pub wa_act: Option<WaAct>,
+    /// Display smoothing for WA's 50 fps motion on the 30 Hz tick: `(prev_x, prev_y, frac)` = foot position one WA frame
+    /// back and how far towards `pos` to draw. Set by the walk/flight steppers, cleared at the start of every tick. Visual only.
+    pub wa_vis: Option<(f32, f32, f32)>,
     /// Accumulated ticks spent walking this frame (used for walk cycle animation).
     pub walk_ticks:   u32,
     /// True if this soldier has fired this turn.
@@ -106,6 +127,10 @@ impl Soldier {
             fall: FallTracker::new(),
             has_moved:    false,
             airtime:      0,
+            wa: None,
+            wa_walk: None,
+            wa_act: None,
+            wa_vis: None,
             walk_ticks:   0,
             name: format!("Soldier {}", index + 1),
             has_fired: false,

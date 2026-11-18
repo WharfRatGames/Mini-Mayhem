@@ -339,6 +339,8 @@ pub struct JumpbotState {
     /// instead of jumping again (matches WA's Sheep: one jump attempt per
     /// obstacle, then turn around).
     pub just_jumped: bool,
+    /// WA Sheep fixed-point body (physics::wa_sheep). Server/sim only — not networked; created lazily from x/y.
+    pub wa:         Option<crate::physics::wa_sheep::SheepBody>,
 }
 
 /// The complete mutable game state.
@@ -640,6 +642,7 @@ impl GameState {
 
         let radius  = kind.blast_radius() * radius_scale;
         let max_dmg = (kind.max_damage() as f32 * dmg_scale) as u32;
+        crate::dlog!("blast", "tick={} {:?} at ({:.2},{:.2}) r={:.1} max_dmg={} force={:.2}", self.tick, kind, pos.x, pos.y, radius, max_dmg, force);
 
         // The Molotov leaves NO upfront blast crater — a dug-out pit combined with
         // the fire pool becomes an inescapable death trap. WA's petrol bomb barely
@@ -695,6 +698,7 @@ impl GameState {
                 // so max_damage() is the true ceiling regardless of distance.
                 let dmg = (max_dmg as f32 * falloff) as u32;
                 if dmg > 0 {
+                    crate::dlog!("blast", "  hit soldier at ({:.1},{:.1}) dist={:.1} dmg={} hp_before={}", soldier.pos.x, soldier.pos.y, dist, dmg, soldier.hp);
                     soldier.death_cause = super::soldier::DeathCause::Explosion;
                     soldier.kill_weapon = Some(kind);
                     soldier.take_damage(dmg);
@@ -964,6 +968,9 @@ impl GameState {
                     true
                 }
                 StepResult::Flying | StepResult::Bounced => {
+                    if kind == WeaponKind::Bazooka && proj.age_ticks % 6 == 1 {
+                        crate::dlog!("shot", "tick={} fly age={} pos=({:.2},{:.2}) vel=({:.3},{:.3})", self.tick, proj.age_ticks, proj.pos.x, proj.pos.y, proj.vel.x, proj.vel.y);
+                    }
                     let mut hit_soldier = false;
                     // Main hive passes through soldiers; only bees sting
                     let is_main_hive = kind == WeaponKind::Blasthive && !proj.is_fragment;
@@ -1062,6 +1069,9 @@ impl GameState {
                     !hit_soldier
                 }
                 StepResult::Explode(pos) | StepResult::FuseExplode(pos) => {
+                    crate::dlog!("shot", "tick={} {:?} impact ({:.2},{:.2}) age={} vel=({:.2},{:.2}) wind_u={} fuse_exp={}",
+                        self.tick, kind, pos.x, pos.y, proj.age_ticks, proj.vel.x, proj.vel.y,
+                        crate::physics::Wind::new(wind_val).units(), matches!(proj.fuse, crate::physics::projectile::FuseState::Expired));
                     // Main meteor bomb: intercept to spawn fragments instead of a normal blast
                     if kind == WeaponKind::MolotovCocktail {
                         molotov_impacts.push(pos);
@@ -1082,6 +1092,7 @@ impl GameState {
                     false
                 }
                 StepResult::Drowned => {
+                    crate::dlog!("shot", "tick={} {:?} drowned at ({:.1},{:.1}) age={}", self.tick, kind, proj.pos.x, proj.pos.y, proj.age_ticks);
                     // Fused weapons (grenades) explode even in water — fuse was burning
                     // Armed HHG also explodes on water contact
                     if kind.has_fuse() {
@@ -1091,6 +1102,7 @@ impl GameState {
                     false
                 }
                 StepResult::Expired => {
+                    crate::dlog!("shot", "tick={} {:?} expired at ({:.1},{:.1}) age={}", self.tick, kind, proj.pos.x, proj.pos.y, proj.age_ticks);
                     resolved = true;
                     false
                 }

@@ -44,6 +44,8 @@ pub fn preload() {
     imp_desktop::preload();
 }
 
+pub fn is_muted() -> bool { MUTED.load(std::sync::atomic::Ordering::Relaxed) }
+
 pub fn play_explosion()         { _play_once("bazooka_explosion.wav"); }
 pub fn play_tnt()               { _play_once("tnt.wav"); }
 pub fn play_grenade()           { _play("grenade.wav"); }

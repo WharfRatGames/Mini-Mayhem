@@ -351,27 +351,15 @@ impl StoreScreen {
                 let icon_cy = cy + cell_h / 2;
                 let icon_w  = cell_w / 2 - 8;
                 let icon_h  = cell_h - 10;
+                // Hats/guns/uniforms/boots are shown worn by a Rifleman, so the icon matches what appears in game.
+                let wz = if icon_h >= 68 { 2 } else { 1 };
+                let wfoot = icon_cy + 16 * wz;
+                let team_blue = Bgra::new(74, 122, 232);
                 match item.cosm_type {
-                    "hat" => {
-                        let (iw, ih) = if item.cosm_id == 26 {
-                            (icon_w / 3, icon_h / 3)
-                        } else {
-                            (icon_w, icon_h)
-                        };
-                        cosmetic_sprites::draw_hat(buf, item.cosm_id, icon_cx, icon_cy, iw, ih, false);
-                    }
-                    "gun_style" => {
-                        cosmetic_sprites::draw_gun(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h);
-                    }
-                    "uniform" => {
-                        let col = uniform_swatch(item.cosm_id);
-                        let sw2 = icon_w * 3 / 4;
-                        let sh2 = icon_h / 2;
-                        buf.fill_rect(icon_cx - sw2/2, icon_cy - sh2/2, sw2 as u32, sh2 as u32, col);
-                    }
-                    "boots" => {
-                        cosmetic_sprites::draw_boot(buf, item.cosm_id, icon_cx, icon_cy, icon_w, icon_h, false);
-                    }
+                    "hat" => crate::game::account::draw_worn_icon_z(buf, 0, icon_cx, wfoot, team_blue, item.cosm_id, 0, 0, wz),
+                    "gun_style" => crate::game::account::draw_worn_icon_z(buf, 0, icon_cx, wfoot, team_blue, 0, 0, item.cosm_id, wz),
+                    "uniform" => crate::game::account::draw_worn_icon_z(buf, 0, icon_cx, wfoot, uniform_swatch(item.cosm_id), 0, 0, 0, wz),
+                    "boots" => crate::game::account::draw_worn_icon_z(buf, 0, icon_cx, wfoot, team_blue, 0, item.cosm_id, 0, wz),
                     "package" => {
                         // WB coin icon placeholder
                         let c = Bgra::new(255, 200, 40);

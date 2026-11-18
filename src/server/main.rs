@@ -67,6 +67,8 @@ const RANKED_QUEUE_TOKEN: &str = "RANKED";
 type RankedQueue = Arc<Mutex<Vec<(String, ArcStream)>>>;
 
 fn main() {
+    // Internal diagnostics only: logs sim events (e.g. refused walk steps) when ARTY_LOG names a file.
+    if std::env::var("ARTY_LOG").is_ok() { arty::dlog::init(REQUIRED_VERSION); }
     // Log to a text file (in addition to terminal/journal when run attached).
     // ARTY_LOG_PATH overrides the default location.
     let log_path = std::env::var("ARTY_LOG_PATH")
@@ -1391,7 +1393,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.439-exp6";
+const REQUIRED_VERSION: &str = "0.5.4.439-exp20";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

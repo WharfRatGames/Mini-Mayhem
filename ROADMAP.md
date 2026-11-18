@@ -2,11 +2,20 @@
 
 A living document of what's shipped, what's in progress, and what's coming.
 
+> Open ideas/issues: `/home/dusty/worms_decomp/findings/open_issues.md`.
+
 ---
 
 ## ✅ Phase 1 — Terrain & Physics
 *Core engine foundation*
 
+- [x] **WA ninja rope ported (experimental)** — 8px-lattice rope with wrap/unwrap, tangent pendulum, WA damping/gravity/swing/reel constants; bit-exact vs WA machine code in the Unicorn oracle (`src/physics/wa_rope.rs`, notes in `/home/dusty/worms_decomp/findings/rope.md`)
+- [x] **TLS verification independent of device clock** — fixes "invalid peer certificate" after the cert renewal (production v0.5.4.440; experimental -exp6)
+- [x] **Texture fixes (experimental)** — body texture anchored to world coordinates (no slope shear); 19 row-smeared atlas tiles skipped
+- [x] **Playtest tooling (experimental)** — `dlog` diagnostic log, Miyoo screen viewer, experimental zip published to the builds page with Ports install README
+- [x] **Bazooka shell on WA's engine (experimental, -exp7)** — WA pixel collision (shape masks, swept mover, both bit-exact vs WA), 50 fps fixed point inside the 30 Hz tick, all modes + CPU aim (`src/physics/wa_{collide,body,missile}.rs`, `/home/dusty/worms_decomp/findings/terrain_collision.md`)
+- [ ] **NEXT: WA worm movement** — (3) port worm landing/walking/jumping/fall-damage handlers, (4) replace the float soldier state machine with WA's 50 fps fixed-point one in all five paths — see `/home/dusty/worms_decomp/resume.md`
+- [ ] Rope hook oracle test, WA scenery placement — see `/home/dusty/worms_decomp/findings/terrain_collision.md`
 - [x] **Map archetypes and the WA-art collage generator removed (experimental)** — maps now come from a bit-exact port of WA.exe's own landgen (41/41 captured maps), WA's worm-spawn algorithm, and WA's RNG; `generate_tactical_legacy`, `wa_templates.rs` and the 7.5 MB of `wa_masks/` deleted. Notes: `/home/dusty/worms_decomp/findings/mapgen.md` (index: `/home/dusty/worms_decomp/findings/README.md`). Older collage/archetype entries below are history.
 - [x] Terrain generated from real Worms Armageddon map art — 2 masks extracted from the original game's land.dat, baked as Rust constants, seed picks mask/shift/mirror (v0.5.4.392)
 - [x] Seed-based WA collage generation — every seed splices/warps/crossfades segments of real WA art into a novel silhouette; caverns carve chambers from the same art inverted; extraction tool `tools/extract_wa_mask.py` (land.dat/PNG → mask.bin) (v0.5.4.396)

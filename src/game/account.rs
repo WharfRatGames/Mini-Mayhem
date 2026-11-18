@@ -1213,7 +1213,7 @@ impl CosmeticsScreen {
             if input.just_pressed(Button::Up)    { self.soldier = self.soldier.saturating_sub(1); }
             if input.just_pressed(Button::Down)  { if self.soldier < 3 { self.soldier += 1; } }
             if input.just_pressed(Button::Left)  { self.col = self.col.saturating_sub(1); }
-            if input.just_pressed(Button::Right) { if self.col < 3 { self.col += 1; } }
+            if input.just_pressed(Button::Right) { if self.col < 4 { self.col += 1; } }
             if input.just_pressed(Button::A) {
                 let col = self.col;
                 self.cycle_backup = self.current_id(col, self.soldier);
@@ -1239,9 +1239,10 @@ impl CosmeticsScreen {
     fn current_id(&self, col: usize, si: usize) -> u8 {
         match col {
             0 => self.roster.hat_ids[si],
-            1 => self.roster.uniform_color_ids[si],
+            1 => self.roster.uniform_color_ids[si] & 0x1f,
             2 => self.roster.boot_color_ids[si],
             3 => self.roster.gun_style_ids[si],
+            4 => self.roster.uniform_color_ids[si] >> 5,
             _ => 0,
         }
     }
@@ -1249,21 +1250,33 @@ impl CosmeticsScreen {
     fn set_id(&mut self, col: usize, si: usize, id: u8) {
         match col {
             0 => self.roster.hat_ids[si] = id,
-            1 => self.roster.uniform_color_ids[si] = id,
+            1 => self.roster.uniform_color_ids[si] = (self.roster.uniform_color_ids[si] & 0xe0) | (id & 0x1f),
             2 => self.roster.boot_color_ids[si] = id,
             3 => self.roster.gun_style_ids[si] = id,
+            4 => self.roster.uniform_color_ids[si] = (self.roster.uniform_color_ids[si] & 0x1f) | ((id % crate::renderer::soldier_looks::N_LOOKS as u8) << 5),
             _ => {}
         }
     }
 
     fn cycle_all(&mut self, dir: i32, si: usize) {
         let col = self.col;
+        if col == 4 {
+            let n = crate::renderer::soldier_looks::N_LOOKS as i32;
+            let cur = self.current_id(4, si) as i32;
+            self.set_id(4, si, (cur + dir).rem_euclid(n) as u8);
+            return;
+        }
         let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
         // Options: 0 (none) + all catalog ids for this category
         let mut opts = vec![0u8];
         for &(ct, cid, _, _) in crate::game::store::CATALOG {
             if ct == col_type { opts.push(cid); }
         }
+        // Owned items outside the scrap catalog (Ben's Birthday Hat, warbond hats, ...) must be equippable too.
+        let mut extra: Vec<u8> = self.owned_for_col(col).iter().copied().filter(|id| *id != 0 && !opts.contains(id)).collect();
+        extra.sort_unstable();
+        extra.dedup();
+        opts.extend(extra);
         let cur = self.current_id(col, si);
         let pos = opts.iter().position(|&x| x == cur).unwrap_or(0);
         let next = ((pos as i32 + dir).rem_euclid(opts.len() as i32)) as usize;
@@ -1335,8 +1348,8 @@ impl CosmeticsScreen {
         let tw = str_width_scaled(title, 2);
         draw_str_scaled(buf, title, sw/2 - tw/2, 6, Bgra::new(255, 210, 50), 2);
 
-        let col_labels = ["HAT", "UNIFORM", "BOOTS", "GUN"];
-        let col_w = sw / 4;
+        let col_labels = ["HAT", "UNIFORM", "BOOTS", "GUN", "LOOK"];
+        let col_w = sw / 5;
 
         // Column headers
         for (c, lbl) in col_labels.iter().enumerate() {
@@ -1367,7 +1380,7 @@ impl CosmeticsScreen {
             draw_str(buf, name, 6, ry + 4, if selected { Bgra::new(255, 220, 60) } else { Bgra::new(160, 160, 200) });
 
             // Cosmetic cells
-            for c in 0..4usize {
+            for c in 0..5usize {
                 let cx = c as i32 * col_w;
                 let cell_selected = selected && c == self.col;
                 if cell_selected {
@@ -1385,28 +1398,19 @@ impl CosmeticsScreen {
                 let icon_w = col_w - 12;
                 let icon_h = row_h - 10;
 
-                // Cosmetic icon (sprite for hat/boots/gun, swatch for uniform)
-                match c {
-                    0 => if id > 0 {
-                        // Fixed aspect ratio matching in-game (40×36 ≈ 1.1:1); don't stretch to fill cell
-                        let hat_icon_h = row_h - 4;  // use nearly full cell height
-                        let hat_icon_w = hat_icon_h * 40 / 36;
-                        cosmetic_sprites::draw_hat(buf, id, center_x, icon_cy, hat_icon_w, hat_icon_h, false);
-                    },
-                    1 => if id > 0 {
-                        let col = uniform_swatch_color(id);
-                        let sw = (icon_w / 2) as u32;
-                        let sh = (icon_h / 2) as u32;
-                        buf.fill_rect(center_x - sw as i32 / 2, icon_cy - sh as i32 / 2, sw, sh, col);
-                    },
-                    2 => cosmetic_sprites::draw_boot(buf, id, center_x, icon_cy, icon_w / 2, icon_h / 2, false),
-                    3 => cosmetic_sprites::draw_gun(buf, id, center_x, icon_cy, icon_w, icon_h),
-                    _ => {}
-                }
-                if id == 0 && (c == 0 || c == 1) {
-                    let dash = "--";
-                    let dw = str_width(dash) as i32;
-                    draw_str(buf, dash, center_x - dw/2, icon_cy - 3, Bgra::new(60, 65, 90));
+                // Cosmetic icon: this soldier's look wearing the item (so the icon matches what shows in game).
+                {
+                    let team_col = crate::renderer::draw_sprites::TEAM_COLOURS[si.min(3)];
+                    let look = (self.roster.uniform_color_ids[si] >> 5) as usize;
+                    let uni = if c == 1 { id } else { 0 };
+                    let body = if uni == 0 { team_col } else { uniform_swatch_color(uni) };
+                    let (hat, boot, gun) = (if c == 0 { id } else { 0 }, if c == 2 { id } else { 0 }, if c == 3 { id } else { 0 });
+                    draw_worn_icon(buf, if c == 4 { id as usize } else { look }, center_x, ry + row_h - 18, body, hat, boot, gun);
+                    if id == 0 && (c == 0 || c == 1) {
+                        let dash = "--";
+                        let dw = str_width(dash) as i32;
+                        draw_str(buf, dash, center_x + 26 - dw/2, icon_cy - 3, Bgra::new(60, 65, 90));
+                    }
                 }
 
                 let text_y = ry + row_h - 12;
@@ -1414,7 +1418,9 @@ impl CosmeticsScreen {
                 // Cosmetic name label under the icon
                 {
                     let cosm_type = match c { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
-                    let label = if id == 0 {
+                    let label = if c == 4 {
+                        crate::renderer::soldier_looks::NAMES[(id as usize).min(4)]
+                    } else if id == 0 {
                         if c == 0 { "NONE" } else { "" }
                     } else {
                         crate::game::store::catalog_name(cosm_type, id).unwrap_or("")
@@ -1428,7 +1434,7 @@ impl CosmeticsScreen {
 
                 // Cycle arrows on selected cell when in cycling mode
                 let cycling_this = cell_selected && self.cycling;
-                if cycling_this && !owned.is_empty() {
+                if cycling_this && (c == 4 || !owned.is_empty()) {
                     let arrow_col = Bgra::new(255, 220, 50);
                     draw_str(buf, "<", cx + 3, text_y, arrow_col);
                     draw_str(buf, ">", cx + col_w - 10, text_y, arrow_col);
@@ -1445,7 +1451,7 @@ impl CosmeticsScreen {
 
         // Scrap balance (always visible)
         let scrap_str = format!("SCRAP: {}", self.scrap);
-        draw_str(buf, &scrap_str, sw - str_width(&scrap_str) as i32 - 6, 34, Bgra::new(220, 200, 80));
+        draw_str(buf, &scrap_str, sw - str_width(&scrap_str) as i32 - 6, 10, Bgra::new(220, 200, 80));
 
         // Hint bar
         buf.fill_rect(0, sh - 22, SCREEN_W, 22, Bgra::new(12, 14, 35));
@@ -1504,5 +1510,36 @@ fn uniform_swatch_color(id: u8) -> Bgra {
         6 => Bgra::new(200, 120, 160), // Pink Camo
         7 => Bgra::new(200, 165,  40), // Gold Plate
         _ => Bgra::new(120, 120, 120),
+    }
+}
+
+/// Cosmetics-grid icon: the look drawn at 2x (feet at (cx, foot_y)) wearing the given hat / boots / gun style.
+pub fn draw_worn_icon(buf: &mut WorldBuffer, look: usize, cx: i32, foot_y: i32, body: Bgra, hat: u8, boot: u8, gun: u8) {
+    draw_worn_icon_z(buf, look, cx, foot_y, body, hat, boot, gun, 2);
+}
+
+/// Same at an integer zoom (1 = native 24x32).
+pub fn draw_worn_icon_z(buf: &mut WorldBuffer, look: usize, cx: i32, foot_y: i32, body: Bgra, hat: u8, boot: u8, gun: u8, z: i32) {
+    use crate::renderer::soldier_looks as L;
+    let hat = if (hat as usize) < L::N_HATS { hat as usize } else { 0 };
+    let gun = if (gun as usize) < L::N_GUNS { gun as usize } else { 0 };
+    let variant = (if hat != 0 { 2 } else { 0 }) + (if gun != 0 { 1 } else { 0 });
+    let sheet = &L::DATA[look.min(L::N_LOOKS - 1)][variant][0];
+    let pal = crate::renderer::skeleton::look_palette(body, boot);
+    for y in 0..L::H {
+        for x in 0..L::W {
+            let i = y * L::W + x;
+            let b = sheet[i];
+            let mut c = b;
+            if hat != 0 { let h = L::HATS[hat][i]; if h != 0 && !(h == L::OUT_IDX && b != 0) { c = h; } }
+            if gun != 0 { let g = L::GUNS[gun][i]; if g != 0 && !(g == L::OUT_IDX && b != 0) { c = g; } }
+            if c == 0 { continue; }
+            let col = pal[c as usize];
+            for oy in 0..z {
+                for ox in 0..z {
+                    buf.set_pixel(cx - z * L::W as i32 / 2 + z * x as i32 + ox, foot_y - z * (L::H as i32 - 1) + z * y as i32 + oy, col);
+                }
+            }
+        }
     }
 }

@@ -117,9 +117,21 @@ The `experimental` branch ports Worms Armageddon's real algorithms. The research
 **outside this repo** in `/home/dusty/worms_decomp/findings/` — start at
 `/home/dusty/worms_decomp/findings/README.md` (index): `mapgen.md` (landgen, spawns, oracle
 workflow), `rope.md` (ninja rope), `physics.md` (bazooka/wind/gravity), `terrain_collision.md`
-(land-bitmap collision), weapon tables (`weapon_table*.csv/json`). Ports are verified against
+(land/body collision — solved; bazooka shell on WA's engine; worm movement is the next port), weapon tables (`weapon_table*.csv/json`). Ports are verified against
 WA's own machine code run in a Unicorn emulator (`/home/dusty/worms_decomp/emu/`). Ghidra
 pseudocode: `/home/dusty/worms_decomp/out/functions/functions/0x<addr>.c`.
+
+## Experimental workflow (branch `experimental`)
+
+Build: `cargo miyoo`, `cargo piserver --bin server`. Install on a Miyoo + publish the zip:
+`/home/dusty/worms_decomp/exp-deploy/push_miyoo_exp_ports.sh <bin> <sfx-dir> <host>`. Watch a playtest:
+`exp-deploy/miyoo_view.py shot` (screenshot) and `exp-deploy/miyoo_log.sh` (device log from `src/dlog.rs`; add events with
+`crate::dlog!("tag", ...)`). Full notes: `/home/dusty/worms_decomp/findings/tooling.md`. Pushing to GitHub needs
+`gh auth switch --user WharfRatGames`.
+
+## Open ideas / issues
+
+Open ideas/issues: `/home/dusty/worms_decomp/findings/open_issues.md`. Add new ones there.
 
 ## Terrain generation
 

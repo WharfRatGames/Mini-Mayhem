@@ -405,6 +405,8 @@ pub struct Projectile {
     /// Set once the projectile has been outside the owner's hit box; from then
     /// on the owner is a valid target like any other soldier.
     pub cleared_owner: bool,
+    /// Bazooka only: the shell's WA fixed-point state (wa_missile.rs). Derived data: rebuilt from `pos`/`vel` when absent.
+    pub wa: Option<crate::physics::wa_missile::WaMissile>,
 }
 
 impl Projectile {
@@ -424,6 +426,7 @@ impl Projectile {
             homing_target: None,
             owner: None,
             cleared_owner: false,
+            wa: None,
         }
     }
 
@@ -439,6 +442,7 @@ impl Projectile {
             homing_target: None,
             owner: None,
             cleared_owner: false,
+            wa: None,
         }
     }
 
@@ -454,6 +458,7 @@ impl Projectile {
             homing_target: None,
             owner: None,
             cleared_owner: false,
+            wa: None,
         }
     }
 
@@ -469,6 +474,7 @@ impl Projectile {
             homing_target: None,
             owner: None,
             cleared_owner: false,
+            wa: None,
         }
     }
 
@@ -484,6 +490,7 @@ impl Projectile {
             homing_target: None,
             owner: None,
             cleared_owner: false,
+            wa: None,
         }
     }
 

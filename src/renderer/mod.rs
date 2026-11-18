@@ -26,6 +26,7 @@ pub mod background;
 pub mod bg_image;
 pub mod fx;
 pub mod draw_sprites;
+pub mod soldier_looks;
 pub mod font;
 pub mod hud;
 pub mod keyboard;

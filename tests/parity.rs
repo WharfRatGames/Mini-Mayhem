@@ -244,6 +244,8 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
                 // ── Not networked ──
                 team: _, index: _,  // structural identity, fixed at game setup
                 fall: _,            // not synced: server-side fall-damage tracker
+                wa: _,              // not synced: fixed-point flight body, re-derived from pos/vel
+                wa_walk: _, wa_act: _, wa_vis: _, // not synced: walk phase / windup timers, sim-local
                 has_moved: _,       // not synced: server-internal turn bookkeeping
                 has_grave: _,       // not synced: graves ship separately
                 death_explosion_pending: _, // not synced: server-side death timer
@@ -291,6 +293,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
             pos, vel, kind, age_ticks, fuse, is_fragment, homing_target,
             owner: _,         // not synced: server-side self-hit grace
             cleared_owner: _, // not synced: server-side self-hit grace
+            wa: _,            // not synced: derived fixed-point shadow of pos/vel, rebuilt from them
         } = p;
         let fuse = match fuse {
             FuseState::None           => 0u64,
@@ -391,7 +394,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
 
     // ── jumpbot ─────────────────────────────────────────────────────────────────
     let jumpbot = jumpbot.as_ref().map(|r| {
-        let JumpbotState { x, y, vel_y, vel_x, facing, fuse_ticks, grounded, walk_ticks, owner_team, just_jumped } = r;
+        let JumpbotState { x, y, vel_y, vel_x, facing, fuse_ticks, grounded, walk_ticks, owner_team, just_jumped, wa: _ } = r;
         JumpbotSn {
             pos: (*x, *y), vel_y: *vel_y, vel_x: *vel_x, facing: *facing,
             fuse_ticks: *fuse_ticks, grounded: *grounded, walk_ticks: *walk_ticks,
@@ -596,7 +599,7 @@ fn round_trip_preserves_synced_state() {
     // Jumpbot (walking)
     server.jumpbot = Some(JumpbotState {
         x: 600.0, y: 250.0, vel_y: 0.0, vel_x: 0.0, facing: -1,
-        fuse_ticks: 90, grounded: true, walk_ticks: 12, owner_team: 0, just_jumped: false,
+        fuse_ticks: 90, grounded: true, walk_ticks: 12, owner_team: 0, just_jumped: false, wa: None,
     });
 
     // AirStrike (active, plane in flight)
@@ -707,7 +710,7 @@ fn jumpbot_state_parity() {
     let mut server = build_game(9);
     server.jumpbot = Some(arty::game::state::JumpbotState {
         x: 300.0, y: 200.0, vel_y: 0.0, vel_x: 0.0, facing: 1,
-        fuse_ticks: 120, grounded: true, walk_ticks: 5, owner_team: 1, just_jumped: false,
+        fuse_ticks: 120, grounded: true, walk_ticks: 5, owner_team: 1, just_jumped: false, wa: None,
     });
     assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
 

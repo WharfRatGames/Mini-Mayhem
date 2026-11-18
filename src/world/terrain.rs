@@ -741,7 +741,7 @@ impl Terrain {
         // overlap, so two objects placed ~20-30px apart could still leave a
         // technically-"clear" sliver between them that satisfied each object's
         // individual check while being far too cramped to play in. Widening the
-        // per-object margin to footprint+24 (~SOLDIER_W + 10px of breathing
+        // per-object margin to footprint+24 (~BODY_W + 10px of breathing
         // room) makes each object's exclusion zone wide enough that two objects
         // closer than ~48px together have their zones merge and swallow the
         // whole gap — so no candidate column exists there at all, same
@@ -1134,10 +1134,10 @@ impl Terrain {
     /// px above (matching movement collision), and a walkable escape column on at
     /// least one side over the same height.
     fn foot_ok(&self, x: i32, foot_y: i32, sky_h: i32) -> bool {
-        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+        use crate::renderer::draw_sprites::BODY_HALF_W;
         const CLEAR_H: i32 = 24; // soldier body + clearance
-        let x_l = x - SOLDIER_HALF_W as i32;
-        let x_r = x + SOLDIER_HALF_W as i32;
+        let x_l = x - BODY_HALF_W as i32;
+        let x_r = x + BODY_HALF_W as i32;
         // Body must fit in-world; high islands are fine (their open sky is
         // verified by the all-air scan below, not by a hard Y floor).
         if foot_y < CLEAR_H || foot_y >= WATER_Y as i32 { return false; }
@@ -1153,7 +1153,7 @@ impl Terrain {
         });
         if !body_clear { return false; }
         // Escape room: the exact footprint can be clear yet still be exactly
-        // SOLDIER_W wide with solid walls flush against both edges — a soldier
+        // BODY_W wide with solid walls flush against both edges — a soldier
         // there could stand but never take a single step (try_move_horizontal
         // requires the column just beyond the footprint edge to be open too).
         // Require at least one direction to have room to walk out.
@@ -1194,12 +1194,12 @@ impl Terrain {
     /// Like standable_cave_foot_y but skips the escape-connectivity check.
     /// Used for is_cavern spawns where vertical shafts guarantee reachability.
     pub fn standable_cave_foot_simple(&self, x: i32) -> Option<i32> {
-        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+        use crate::renderer::draw_sprites::BODY_HALF_W;
         const HEAD_H: i32 = 26;
         const CEIL_MAX: i32 = 220;
         if x < 0 || x >= WORLD_W as i32 { return None; }
-        let x_l = x - SOLDIER_HALF_W as i32;
-        let x_r = x + SOLDIER_HALF_W as i32;
+        let x_l = x - BODY_HALF_W as i32;
+        let x_r = x + BODY_HALF_W as i32;
         let ok = |foot_y: i32| -> bool {
             if foot_y < HEAD_H || foot_y >= WATER_Y as i32 { return false; }
             if !self.is_solid(x, foot_y + 1) { return false; }
@@ -1213,7 +1213,7 @@ impl Terrain {
             if !((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y)) {
                 return false;
             }
-            // Escape room: reject spots exactly SOLDIER_W wide with solid walls
+            // Escape room: reject spots exactly BODY_W wide with solid walls
             // flush against both footprint edges — standable but unwalkable.
             let clear_col = |cx: i32| (foot_y - HEAD_H + 1 ..= foot_y)
                 .all(|y| !self.is_solid(cx, y.max(0)));
@@ -1224,12 +1224,12 @@ impl Terrain {
     }
 
     pub fn standable_cave_foot_y(&self, x: i32) -> Option<i32> {
-        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+        use crate::renderer::draw_sprites::BODY_HALF_W;
         const HEAD_H: i32 = 26;   // body + small clearance above the foot
         const CEIL_MAX: i32 = 220; // a ceiling must sit within this height to count as a cave
         if x < 0 || x >= WORLD_W as i32 { return None; }
-        let x_l = x - SOLDIER_HALF_W as i32;
-        let x_r = x + SOLDIER_HALF_W as i32;
+        let x_l = x - BODY_HALF_W as i32;
+        let x_r = x + BODY_HALF_W as i32;
         let ok = |foot_y: i32| -> bool {
             if foot_y < HEAD_H || foot_y >= WATER_Y as i32 { return false; }
             if !self.is_solid(x, foot_y + 1) { return false; }
@@ -1244,7 +1244,7 @@ impl Terrain {
             if !((foot_y - CEIL_MAX).max(0) ..= foot_y - HEAD_H).any(|y| self.is_solid(x, y)) {
                 return false;
             }
-            // Escape room: reject spots exactly SOLDIER_W wide with solid walls
+            // Escape room: reject spots exactly BODY_W wide with solid walls
             // flush against both footprint edges — standable but unwalkable.
             let clear_col = |cx: i32| (foot_y - HEAD_H + 1 ..= foot_y)
                 .all(|y| !self.is_solid(cx, y.max(0)));
@@ -1264,7 +1264,7 @@ impl Terrain {
     /// containing `(x, foot_y)` actually connects to a way out, rather than
     /// just having one somewhere nearby with walls in between.
     fn cave_has_escape(&self, x: i32, foot_y: i32) -> bool {
-        use crate::renderer::draw_sprites::SOLDIER_HALF_W;
+        use crate::renderer::draw_sprites::BODY_HALF_W;
         use std::collections::{HashSet, VecDeque};
 
         const STEP:       i32 = 8;   // grid step for the flood fill (px)
@@ -1275,7 +1275,7 @@ impl Terrain {
         const OPEN_CLEAR: i32 = 220; // clear space above a floor = "open to sky"
         const MAX_VISITED: usize = 300;
 
-        let half = SOLDIER_HALF_W as i32;
+        let half = BODY_HALF_W as i32;
         let clear_col = |cx: i32, y0: i32, y1: i32| -> bool {
             let (lo, hi) = (y0.min(y1), y0.max(y1));
             (lo..=hi).all(|y| !self.is_solid(cx, y.max(0)))

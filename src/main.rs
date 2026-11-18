@@ -9,7 +9,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.439-exp6";
+const VERSION: &str = "0.5.4.439-exp20";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -44,11 +44,12 @@ impl Drop for MenuGuard {
 fn menu_guard() -> MenuGuard { let _ = std::fs::write("/tmp/disable_menu_button", b""); MenuGuard }
 
 fn main() {
-    dlog::init(VERSION);
     // Release any audio/device fds inherited from the Onion launcher so that
     // aplay can open the ALSA device cleanly for sound effects.
     #[cfg(not(feature = "desktop"))]
     unsafe { for fd in 3i32..=255 { libc::close(fd); } }
+    // Must come AFTER the fd sweep above, which would otherwise close the log file's descriptor and silently kill all logging.
+    dlog::init(VERSION);
 
     // ── Open hardware ─────────────────────────────────────────────────────────
     let mut fb = Framebuffer::open()
@@ -704,8 +705,12 @@ fn main() {
     // ~1-2ms Linux sleep overshoot compound into ~35-36ms frames (~28fps).
     // Advancing a fixed deadline instead absorbs overshoot in the next frame.
     let mut next_deadline = Instant::now() + TICK_DURATION;
+    let mut perf = dlog::PerfWin::new();
+    let mut perf_states: usize = 0;
     loop {
         let frame_start = Instant::now();
+        perf_states = 0;
+        let mut ph_t = [Instant::now(); 4];
         input.poll();
 
         // MENU button opens the bug reporter (keymon disabled at startup)
@@ -822,6 +827,7 @@ fn main() {
             let mut pending_sounds: Vec<u8> = Vec::new();
             let mut pending_fx: Vec<crate::renderer::fx::FxEvent> = Vec::new();
             while let Some(state) = conn.try_recv::<net::msg::StateMsg>() {
+                perf_states += 1;
                 if state.tick != last_sound_tick {
                     pending_sounds.extend_from_slice(&state.sounds);
                     pending_fx.extend_from_slice(&state.fx_events);
@@ -835,6 +841,9 @@ fn main() {
             // Play the server's recorded SFX + spawn its recorded FX (skip while
             // the game-over overlay is up). Mirrors the sounds channel so effects
             // spawned in the sim appear on the live client without bespoke replay.
+            if !pending_sounds.is_empty() {
+                crate::dlog!("sfx", "my_team={} server_tick={} ids={:?} muted={} game_over={}", my_team, last_sound_tick, pending_sounds, crate::audio::is_muted(), final_result.is_some());
+            }
             if final_result.is_none() {
                 for id in &pending_sounds {
                     if let Some(s) = crate::audio::Sfx::from_u8(*id) { crate::audio::play(s); }
@@ -1007,6 +1016,9 @@ fn main() {
                         if let Some(s) = team.soldiers.get(team.active) { cam.follow(s.pos); }
                     }
                 }
+            } else if let Some(r) = game.jumpbot.as_ref() {
+                // Jumpbot/Sheep: follow it (mirrors update_camera()).
+                cam.follow_always(world::WorldPos::new(r.x, r.y));
             } else if let Some(g) = game.garcia.as_ref() {
                 // Hand of Jerry: track the falling sprite, else the targeting cursor
                 // (mirrors update_camera() so live matches local).
@@ -1064,6 +1076,7 @@ fn main() {
                     .map(|s| s.pos);
                 if let Some(pos) = airborne.or(active_pos) { cam.follow(pos); }
             }
+            ph_t[0] = Instant::now();
             if input.just_released(input::Button::R1) { cam.release_pan(); }
             game::loop_runner::update_visuals(&mut game);
             {
@@ -1072,7 +1085,9 @@ fn main() {
                 background::update_debris(&mut lstate.bg_debris, &game.terrain, gw, lstate.tick);
             }
             cam.tick();
+            ph_t[1] = Instant::now();
             game::loop_runner::render_live(&game, &mut buf, &mut cam, &mut lstate, my_team);
+            ph_t[2] = Instant::now();
             // draw_weapon_menu_overlay uses game.weapon_menu_open — same source as tick()
             game::loop_runner::draw_weapon_menu_overlay(&game, &mut buf, cam.left_edge() as i32, cam.top_edge() as i32);
             if let Some(secs) = paused_secs {
@@ -1233,9 +1248,15 @@ fn main() {
             }
         };
 
+        ph_t[3] = Instant::now();
         let blit_start = Instant::now();
         buf.blit_to_fb(&mut fb, cam.left_edge(), cam.top_edge());
         lstate.blit_us = blit_start.elapsed().as_micros() as u64;
+        {
+            let ax = game.teams.get(game.turn.current_team()).and_then(|t| t.soldiers.get(t.active)).map(|so| so.pos.x);
+            if is_live { let m = |a: Instant, b: Instant| b.duration_since(a).as_secs_f64()*1000.0; perf.phases([m(frame_start, ph_t[0]), m(ph_t[0], ph_t[1]), m(ph_t[1], ph_t[2]), m(ph_t[2], ph_t[3])]); }
+            perf.frame(frame_start.elapsed().as_secs_f64() * 1000.0, lstate.blit_us as f64 / 1000.0, perf_states, ax, lstate.ping_ms);
+        }
 
         // Measure actual inter-blit interval so the counter reflects real display
         // cadence rather than loop iterations (sleep overshoot can make the two diverge).
@@ -2695,6 +2716,8 @@ fn run_tat_game(
                 replay_tick += 1;
                 if let Some(ref hm) = game.homing_missile {
                     replay_cam.follow(world::WorldPos::new(if hm.confirmed { game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.x } else { hm.render_x }, hm.render_y));
+                } else if let Some(ref r) = game.jumpbot {
+                    replay_cam.follow_always(world::WorldPos::new(r.x, r.y));
                 } else if let Some(ref g) = game.garcia {
                     if g.falling { replay_cam.follow_always(world::WorldPos::new(g.render_x, g.fall_y.max(0.0))); }
                     else { replay_cam.follow(world::WorldPos::new(g.render_x, g.render_y)); }
@@ -2729,6 +2752,8 @@ fn run_tat_game(
                 game::loop_runner::retain_non_pickup_messages(&mut game);
                 if let Some(ref hm) = game.homing_missile {
                     replay_cam.follow(world::WorldPos::new(if hm.confirmed { game.teams[opp_slot].soldiers[game.teams[opp_slot].active].pos.x } else { hm.render_x }, hm.render_y));
+                } else if let Some(ref r) = game.jumpbot {
+                    replay_cam.follow_always(world::WorldPos::new(r.x, r.y));
                 } else if let Some(ref g) = game.garcia {
                     if g.falling { replay_cam.follow_always(world::WorldPos::new(g.render_x, g.fall_y.max(0.0))); }
                     else { replay_cam.follow(world::WorldPos::new(g.render_x, g.render_y)); }

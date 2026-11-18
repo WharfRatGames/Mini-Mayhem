@@ -133,6 +133,15 @@ pub const SOLDIER_H: i32 = 28;
 /// Half-width for centering.
 pub const SOLDIER_HALF_W: i32 = SOLDIER_W / 2;
 
+// ── Collision body (WA worm shape 3: 9x16 mask) ─────────────────────────────
+// Physics, terrain probes and soldier-vs-soldier tests use WA's body size; the sprite constants above are visual only.
+/// Worm sprites are drawn this much smaller than their authored size so they read at WA's scale
+/// against the terrain on the small screen (physics body is 9x16).
+pub const WORM_SPRITE_SCALE: f32 = 0.6;
+pub const BODY_W: i32 = 9;
+pub const BODY_H: i32 = 16;
+pub const BODY_HALF_W: i32 = BODY_W / 2;
+
 // ── HP number ─────────────────────────────────────────────────────────────────
 
 // ── Aim arrow ────────────────────────────────────────────────────────────────

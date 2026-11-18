@@ -512,7 +512,7 @@ pub fn apply_server_state(
         game.jumpbot = state.jumpbot.as_ref().map(|nr| JumpbotState {
             x: nr.x, y: nr.y, vel_y: nr.vel_y, vel_x: nr.vel_x, facing: nr.facing,
             fuse_ticks: nr.fuse_ticks, grounded: nr.grounded, walk_ticks: nr.walk_ticks,
-            owner_team: nr.owner_team, just_jumped: nr.just_jumped,
+            owner_team: nr.owner_team, just_jumped: nr.just_jumped, wa: None,
         });
     }
     // Sync Homing Missile targeting cursor
@@ -640,6 +640,10 @@ fn _soldier_parity_checklist(s: &crate::game::soldier::Soldier) {
         // ── Not networked ──
         team: _,          // not synced: structural identity, fixed at game setup
         fall: _,          // not synced: server-side fall-damage tracker
+        wa: _,            // not synced: fixed-point flight body, re-derived from pos/vel by whoever simulates
+        wa_walk: _,       // not synced: walk-cycle phase, server/sim-local
+        wa_vis: _,        // display-only smoothing
+        wa_act: _,        // not synced: windup/recovery timers, server/sim-local (clients see Idle then Airborne)
         has_moved: _,     // not synced: server-internal turn bookkeeping
         has_grave: _,     // not synced: graves ship separately via NetGrave
         death_explosion_pending: _, // not synced: server-side death timer
@@ -683,6 +687,7 @@ fn _projectile_parity_checklist(p: &crate::physics::projectile::Projectile) {
         // ── Not networked ──
         owner: _,         // not synced: server-side self-hit grace bookkeeping
         cleared_owner: _, // not synced: server-side self-hit grace bookkeeping
+        wa: _,            // not synced: derived fixed-point shadow of pos/vel (bazooka), rebuilt from them
     } = p;
 }
 
@@ -781,6 +786,8 @@ fn _jumpbot_parity_checklist(r: &crate::game::state::JumpbotState) {
         // ── Synced via NetJumpbot ──
         x: _, y: _, vel_y: _, vel_x: _, facing: _, fuse_ticks: _, grounded: _, walk_ticks: _,
         owner_team: _, just_jumped: _,
+        // ── Sim-only, not synced ──
+        wa: _,
     } = r;
 }
 

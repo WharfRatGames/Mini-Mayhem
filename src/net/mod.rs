@@ -77,7 +77,9 @@ impl Write for Inner {
 
 pub struct ServerConn {
     stream:       Arc<Mutex<Inner>>,
-    latest:       Arc<Mutex<Option<Vec<u8>>>>,
+    /// Frames received but not yet consumed, oldest first. A queue (not a single "latest" slot): states carry one-tick
+    /// events (sounds, fx) that are lost forever if a newer state overwrites an unread one.
+    latest:       Arc<Mutex<std::collections::VecDeque<Vec<u8>>>>,
     welcome:      Arc<Mutex<Option<Vec<u8>>>>,
     disconnected: Arc<AtomicBool>,
 }
@@ -106,7 +108,7 @@ impl ServerConn {
         };
         inner.set_read_timeout(Some(Duration::from_secs(10)))?;
         let stream = Arc::new(Mutex::new(inner));
-        Ok(Self { stream, latest: Arc::new(Mutex::new(None)), welcome: Arc::new(Mutex::new(None)), disconnected: Arc::new(AtomicBool::new(false)) })
+        Ok(Self { stream, latest: Arc::new(Mutex::new(std::collections::VecDeque::new())), welcome: Arc::new(Mutex::new(None)), disconnected: Arc::new(AtomicBool::new(false)) })
     }
 
     pub fn connect(addr: &str) -> io::Result<Self> {
@@ -134,7 +136,7 @@ impl ServerConn {
         let stream = Arc::new(Mutex::new(inner));
         Ok(Self {
             stream,
-            latest:       Arc::new(Mutex::new(None)),
+            latest:       Arc::new(Mutex::new(std::collections::VecDeque::new())),
             welcome:      Arc::new(Mutex::new(None)),
             disconnected: Arc::new(AtomicBool::new(false)),
         })
@@ -159,7 +161,9 @@ impl ServerConn {
                         if bincode::deserialize::<crate::net::msg::WelcomeMsg>(&buf).is_ok() {
                             *welcome2.lock().unwrap() = Some(buf);
                         } else {
-                            *latest2.lock().unwrap() = Some(buf);
+                            let mut q = latest2.lock().unwrap();
+                            q.push_back(buf);
+                            while q.len() > 90 { q.pop_front(); } // ~3 s of backlog at most
                         }
                         thread::sleep(Duration::from_millis(1));
                     }
@@ -205,8 +209,10 @@ impl ServerConn {
     }
 
     pub fn try_recv<T: serde::de::DeserializeOwned>(&mut self) -> Option<T> {
-        let buf = self.latest.lock().unwrap().take()?;
-        bincode::deserialize(&buf).ok()
+        loop {
+            let buf = self.latest.lock().unwrap().pop_front()?;
+            if let Ok(m) = bincode::deserialize(&buf) { return Some(m); }
+        }
     }
 
     pub fn set_read_timeout(&self, dur: Option<Duration>) {

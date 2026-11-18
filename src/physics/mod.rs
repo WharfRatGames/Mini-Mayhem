@@ -7,6 +7,11 @@ pub mod fall;
 pub mod step;
 pub mod wind;
 pub mod wa_rope;
+pub mod wa_collide;
+pub mod wa_body;
+pub mod wa_missile;
+pub mod wa_worm;
+pub mod wa_sheep;
 
 pub use projectile::{Projectile, WeaponKind, FuseState};
 pub use tick::{tick, tick_n, GRAVITY, TERMINAL_VELOCITY, WIND_SCALE};

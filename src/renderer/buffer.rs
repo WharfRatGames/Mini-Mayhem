@@ -16,6 +16,10 @@ pub struct WorldBuffer {
     /// Used by the render loop's per-section profiling overlay (TEST mode) —
     /// not read/reset anywhere in normal play.
     pub pixel_writes: u64,
+    /// Active sprite-scale transform `(anchor_x, anchor_y, scale)`. While set, `set_pixel`,
+    /// `fill_rect`, `fill_circle` and `draw_line` shrink their coordinates towards the anchor,
+    /// so a sprite drawn at full size comes out `scale` times smaller, standing on the same point.
+    xform: Option<(i32, i32, i32)>, // (anchor_x, anchor_y, scale in 1/256ths) — integer math, this runs per pixel
 }
 
 impl WorldBuffer {
@@ -24,12 +28,26 @@ impl WorldBuffer {
         Self {
             data: vec![0u8; (WORLD_W * WORLD_H * 4) as usize],
             pixel_writes: 0,
+            xform: None,
         }
     }
+
+    /// Start drawing scaled about `(ax, ay)` (usually a worm's feet). Pair with `end_scale`.
+    pub fn begin_scale(&mut self, ax: f32, ay: f32, scale: f32) { self.xform = Some((ax.round() as i32, ay.round() as i32, (scale * 256.0).round() as i32)); }
+    /// Current scale transform, if any.
+    pub fn scale_state(&self) -> Option<(f32, f32, f32)> { self.xform.map(|(x, y, k)| (x as f32, y as f32, k as f32 / 256.0)) }
+    /// Stop scaling.
+    pub fn end_scale(&mut self) { self.xform = None; }
+
+    #[inline]
+    fn sx(t: (i32, i32, i32), x: i32) -> i32 { t.0 + (((x - t.0) * t.2 + 128) >> 8) }
+    #[inline]
+    fn sy(t: (i32, i32, i32), y: i32) -> i32 { t.1 + (((y - t.1) * t.2 + 128) >> 8) }
 
     /// Write a single BGRA pixel. Silently clips out-of-bounds.
     #[inline(always)]
     pub fn set_pixel(&mut self, x: i32, y: i32, colour: Bgra) {
+        let (x, y) = match self.xform { Some(t) => (Self::sx(t, x), Self::sy(t, y)), None => (x, y) };
         if x < 0 || y < 0 || x >= WORLD_W as i32 || y >= WORLD_H as i32 {
             return;
         }
@@ -77,6 +95,14 @@ impl WorldBuffer {
     /// Clamps once, then writes each row as a contiguous span (no per-pixel
     /// bounds check) — far cheaper than `set_pixel` per cell.
     pub fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, colour: Bgra) {
+        let (x, y, w, h) = match self.xform {
+            Some(t) => {
+                let (x0, x1) = (Self::sx(t, x), Self::sx(t, x + w as i32));
+                let (y0, y1) = (Self::sy(t, y), Self::sy(t, y + h as i32));
+                (x0, y0, (x1 - x0).max(1) as u32, (y1 - y0).max(1) as u32)
+            }
+            None => (x, y, w, h),
+        };
         let x0 = x.max(0);
         let y0 = y.max(0);
         let x1 = (x + w as i32).min(WORLD_W as i32);
@@ -108,6 +134,10 @@ impl WorldBuffer {
     /// run (clamped to world bounds), avoiding a per-pixel bounds check.
     pub fn fill_circle(&mut self, cx: i32, cy: i32, radius: i32, colour: Bgra) {
         if radius < 0 { return; }
+        let (cx, cy, radius) = match self.xform {
+            Some(t) => (Self::sx(t, cx), Self::sy(t, cy), (radius * t.2 + 128) >> 8),
+            None => (cx, cy, radius),
+        };
         let r2 = radius * radius;
         let px = [colour.b, colour.g, colour.r, 0xFF];
         for dy in -radius..=radius {
@@ -128,6 +158,17 @@ impl WorldBuffer {
 
     /// Draw a line using Bresenham's algorithm.
     pub fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, colour: Bgra) {
+        let (x0, y0, x1, y1) = match self.xform {
+            Some(t) => (Self::sx(t, x0), Self::sy(t, y0), Self::sx(t, x1), Self::sy(t, y1)),
+            None => (x0, y0, x1, y1),
+        };
+        // `set_pixel` below must not scale a second time.
+        let saved = self.xform.take();
+        self.draw_line_unscaled(x0, y0, x1, y1, colour);
+        self.xform = saved;
+    }
+
+    fn draw_line_unscaled(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, colour: Bgra) {
         let (mut x, mut y) = (x0, y0);
         let dx =  (x1 - x0).abs();
         let dy = -(y1 - y0).abs();
