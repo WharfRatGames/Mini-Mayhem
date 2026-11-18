@@ -116,14 +116,14 @@
   </table>
 
   <div class="section-title">
-    Game Server Log
+    Live Multiplayer &amp; TAT Log
     <span style="display:flex;align-items:center;gap:8px">
       <span id="log-live-dot" style="width:8px;height:8px;border-radius:50%;background:#4ec94e;display:inline-block"></span>
       <span style="color:#444;font-size:10px">LIVE</span>
       <span class="close-btn" onclick="toggleLog()">↕</span>
     </span>
   </div>
-  <div id="server-log" style="display:none;background:#080a10;border:1px solid #1e2235;border-radius:4px;padding:12px;font-size:11px;max-height:320px;overflow-y:auto;font-family:monospace"></div>
+  <div id="server-log" style="display:block;background:#080a10;border:1px solid #1e2235;border-radius:4px;padding:12px;font-size:11px;max-height:320px;overflow-y:auto;font-family:monospace"></div>
 
   <div class="section-title">
     Nginx Log
@@ -137,7 +137,7 @@
       <span class="close-btn" onclick="toggleNginxLog()">↕</span>
     </span>
   </div>
-  <div id="nginx-log" style="display:none;background:#080a10;border:1px solid #1e2235;border-radius:4px;padding:12px;font-size:11px;max-height:320px;overflow-y:auto;font-family:monospace"></div>
+  <div id="nginx-log" style="display:block;background:#080a10;border:1px solid #1e2235;border-radius:4px;padding:12px;font-size:11px;max-height:320px;overflow-y:auto;font-family:monospace"></div>
 
   <div class="meta">
     <button class="refresh-btn" onclick="load()">↻ REFRESH</button>
@@ -173,6 +173,43 @@ function bar(pct, cls='') {
 
 function apiUrl(path) {
   return '/api' + path + (path.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(adminKey);
+}
+
+// nginx limits /api/ to 10 req/min per IP, so every live panel reads one shared snapshot (/admin/live)
+// that is fetched at most every LIVE_MS, instead of each panel polling on its own.
+const LIVE_MS = 7000;
+let liveSnap = null, liveAt = 0, liveInflight = null;
+async function getLive() {
+  const kindEl = document.getElementById('nginx-log-kind');
+  const kind = kindEl ? kindEl.value : 'error';
+  if (liveSnap && liveSnap.kind === kind && Date.now() - liveAt < LIVE_MS) return liveSnap;
+  if (liveInflight) return liveInflight;
+  liveInflight = (async () => {
+    try {
+      const r = await fetch(apiUrl('/admin/live?n=100&kind=' + kind));
+      if (r.status === 403) return {forbidden: true, kind};
+      if (!r.ok) return liveSnap || {failed: true, kind};
+      liveSnap = Object.assign(await r.json(), {kind});
+      liveAt = Date.now();
+      return liveSnap;
+    } catch (e) { return liveSnap || {failed: true, kind}; }
+    finally { liveInflight = null; }
+  })();
+  return liveInflight;
+}
+// Drop-in for fetch(apiUrl(path)) on the polled endpoints: answers from the shared snapshot.
+async function liveFetch(path) {
+  const d = await getLive();
+  if (d.forbidden) return new Response('{}', {status: 403});
+  if (d.failed) return new Response('{}', {status: 503});
+  let body;
+  if (path === '/admin/status') body = d.status;
+  else if (path === '/admin/temp') { if (!d.temp) return new Response('{}', {status: 500}); body = d.temp; }
+  else if (path === '/admin/lobbies') body = d.lobbies;
+  else if (path === '/admin/serverlog') body = d.logs.game;
+  else if (path === '/admin/nginxlog') body = d.logs.nginx;
+  else return fetch(apiUrl(path));
+  return new Response(JSON.stringify(body), {status: 200});
 }
 
 async function showDetail(type) {
@@ -253,7 +290,7 @@ async function renderDetail(type) {
         </table>
       </div>`;
   } else if (type === 'tat') {
-    const res = await fetch(apiUrl('/admin/lobbies'));
+    const res = await liveFetch('/admin/lobbies');
     const d = await res.json();
     const now = Date.now() / 1000;
     panel.innerHTML = `
@@ -326,7 +363,7 @@ async function grantWarbonds(username) {
 
 async function load() {
   try {
-    const res = await fetch(apiUrl('/admin/status'));
+    const res = await liveFetch('/admin/status');
     if (res.status === 403) {
       document.getElementById('auth-error').textContent = 'Invalid admin key.';
       return;
@@ -539,7 +576,7 @@ async function deleteAccount(username) {
 }
 
 setInterval(() => { if (adminKey) load(); }, 5000);
-setInterval(() => { if (adminKey) loadSysStats(); }, 2000);
+setInterval(() => { if (adminKey) loadSysStats(); }, 3500);
 setInterval(() => { if (adminKey) loadLobbies(); }, 5000);
 
 function playerLink(username) {
@@ -548,7 +585,7 @@ function playerLink(username) {
 
 async function loadLobbies() {
   try {
-    const res = await fetch(apiUrl('/admin/lobbies'));
+    const res = await liveFetch('/admin/lobbies');
     if (!res.ok) return;
     const d = await res.json();
     const total = d.live_games.length + d.live_waiting.length + d.tat_active.length + (d.tat_ranked_waiting||[]).length;
@@ -637,7 +674,7 @@ async function loadLobbies() {
   } catch(e) {}
 }
 
-let logOpen = false;
+let logOpen = true;
 let logFirstOpen = true;
 function toggleLog() {
   logOpen = !logOpen;
@@ -648,7 +685,7 @@ setInterval(() => { if (adminKey && logOpen) loadLog(); }, 5000);
 
 async function loadLog() {
   try {
-    const res = await fetch(apiUrl('/admin/serverlog?n=100'));
+    const res = await liveFetch('/admin/serverlog');
     const lines = await res.json();
     const el = document.getElementById('server-log');
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
@@ -664,7 +701,7 @@ async function loadLog() {
   } catch(e) {}
 }
 
-let nginxLogOpen = false;
+let nginxLogOpen = true;
 function toggleNginxLog() {
   nginxLogOpen = !nginxLogOpen;
   document.getElementById('nginx-log').style.display = nginxLogOpen ? 'block' : 'none';
@@ -675,7 +712,7 @@ setInterval(() => { if (adminKey && nginxLogOpen) loadNginxLog(); }, 5000);
 async function loadNginxLog() {
   try {
     const kind = document.getElementById('nginx-log-kind').value;
-    const res = await fetch(apiUrl(`/admin/nginxlog?n=100&kind=${kind}`));
+    const res = await liveFetch('/admin/nginxlog');
     const lines = await res.json();
     const el = document.getElementById('nginx-log');
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
@@ -696,8 +733,8 @@ let activeSysCard = null;
 async function loadSysStats() {
   try {
     const [res, tempRes] = await Promise.all([
-      fetch(apiUrl('/admin/status')),
-      fetch(apiUrl('/admin/temp')),
+      liveFetch('/admin/status'),
+      liveFetch('/admin/temp'),
     ]);
     if (!res.ok) return;
     const d = await res.json();

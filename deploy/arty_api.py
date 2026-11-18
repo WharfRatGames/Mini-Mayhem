@@ -78,6 +78,10 @@ def _status_refresh_loop():
             pass
         time.sleep(4.5)  # 5s total including the 0.5s CPU sample
 
+import re as _re
+# Game-server log lines that are actual game events (live multiplayer + TAT), not port-scanner rejects / panics / bind errors.
+_GAME_EVENT_RE = _re.compile(r"Player \d|Lobby|Both connected|Waiting for \d|TEAM \d+ HP|KILLED|Client disconnected|Game over|[Mm]atch|TAT|[Ff]orfeit|[Tt]urn|[Ww]inner|[Ww]on\b")
+
 def _temp_refresh_loop():
     global _temp_cached
     while True:
@@ -1623,6 +1627,40 @@ def _handle(db, sock, peer_ip="?"):
             send_json(sock, 200, list(reversed(lines)))
         except Exception as e:
             send_json(sock, 500, {"error": str(e)})
+
+    elif method == "GET" and path == "/admin/live":
+        # One request for everything the dashboard polls (status, temp, lobbies, live logs). nginx rate-limits
+        # /api/ to 10 req/min per IP, so the dashboard shares this single snapshot instead of ~50 req/min.
+        if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
+        try:
+            n = max(1, min(int(qs_params.get("n", 100)), 300))
+        except ValueError:
+            n = 100
+        kind = qs_params.get("kind", "error")
+        if kind not in ("error", "access"): kind = "error"
+        def _tail(path_, noise=(), only=None):
+            try:
+                # Scan a deep window when filtering so quiet game events aren't buried under scanner noise.
+                scan = 4000 if only else n
+                ls = subprocess.run(["tail", f"-{scan}", os.path.expanduser(path_)], capture_output=True, text=True,
+                                    errors="replace", timeout=3).stdout.splitlines()
+                ls = [l for l in ls if not any(x in l for x in noise)]
+                if only: ls = [l for l in ls if only.search(l)][-n:]
+                return list(reversed(ls))
+            except Exception as e:
+                return [f"(unavailable: {e})"]
+        noise = ("Jellyfin", "/Sessions/", "wp-includes", "xmlrpc.php", "wlwmanifest",
+                 "favicon.ico", "/Users/", "/Shows/", "/Items/", "/web/", "/System/",
+                 "/Playback", "/Videos/", "crumboniumjelly", "/zan/")
+        send_json(sock, 200, {
+            "status":  _status_cached or {},
+            "temp":    _temp_cached,
+            "lobbies": _lobbies_cached or {},
+            "logs": {
+                "game":  _tail("~/mayhem-server/arty-server.log", only=_GAME_EVENT_RE),
+                "nginx": _tail(f"/var/log/nginx/{kind}.log", noise),
+            },
+        })
 
     elif method == "GET" and path == "/admin/temp":
         if not is_admin_key(qs_params.get("key")): send_json(sock, 403, {"error":"forbidden"}); return
