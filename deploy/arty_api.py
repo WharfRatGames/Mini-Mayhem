@@ -315,6 +315,16 @@ def init_db(c):
     ]:
         try: c.execute(f"ALTER TABLE rosters ADD COLUMN {col} {defn}")
         except: pass
+    # One-time migration: session tokens used to be stored as plain text; lookups now compare SHA-256 digests (hash_token), so every
+    # session issued before that change was rejected ("invalid token", scrap shown as 0). Hash the old rows once. Rows touched at/after
+    # the hashing deploy (last_seen >= cutoff) already hold digests and are skipped. The flag keeps this from ever running twice
+    # (hashing a digest again would lock everybody out).
+    c.execute("CREATE TABLE IF NOT EXISTS schema_flags (name TEXT PRIMARY KEY)")
+    if not c.execute("SELECT 1 FROM schema_flags WHERE name='tokens_hashed'").fetchone():
+        for _id, _tok in c.execute("SELECT id, token FROM users WHERE token IS NOT NULL AND token != '' "
+                                   "AND (last_seen IS NULL OR last_seen < 1792635300)").fetchall():
+            c.execute("UPDATE users SET token=? WHERE id=?", (hash_token(_tok), _id))
+        c.execute("INSERT INTO schema_flags(name) VALUES('tokens_hashed')")
     # One-time migration: copy gun_color_ids → gun_style_ids
     c.execute("UPDATE rosters SET gun_style_ids=gun_color_ids WHERE gun_color_ids!='[0,0,0,0]' AND gun_style_ids='[0,0,0,0]'")
     c.executescript("""

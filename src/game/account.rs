@@ -753,8 +753,17 @@ fn parse_roster_obj(obj: &str) -> Option<Roster> {
 pub fn fetch_profile(token: &str) -> Option<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, u32)> {
     let path = format!("/api/profile?token={}", token);
     let resp = http_get(&path).ok()?;
-    let scrap:    u32 = json_field(&resp, "scrap").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let warbonds: u32 = json_field(&resp, "warbonds").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let result = parse_profile(&resp)?;
+    save_cached_profile(&result);
+    Some(result)
+}
+
+/// Parse a `/profile` response. `None` for anything that is not a real profile (an error body such as `{"error": "invalid token"}`,
+/// an HTML 502/503 page, empty): callers then keep the cached values. This used to default scrap to 0 and cache that, so a rejected
+/// token or a rate-limited request showed "0 scrap" and overwrote the good cache.
+pub fn parse_profile(resp: &str) -> Option<ProfileData> {
+    let scrap: u32 = json_field(resp, "scrap")?.parse().ok()?;
+    let warbonds: u32 = json_field(resp, "warbonds").and_then(|s| s.parse().ok()).unwrap_or(0);
 
     fn parse_id_arr(json: &str, key: &str) -> Vec<u8> {
         let search = format!("\"{}\":", key);
@@ -767,13 +776,32 @@ pub fn fetch_profile(token: &str) -> Option<(u32, Vec<u8>, Vec<u8>, Vec<u8>, Vec
             .collect()
     }
 
-    let hats      = parse_id_arr(&resp, "unlocked_hats");
-    let guns      = parse_id_arr(&resp, "unlocked_gun_styles");
-    let uniforms  = parse_id_arr(&resp, "unlocked_uniforms");
-    let boots     = parse_id_arr(&resp, "unlocked_boots");
-    let result = (scrap, hats, guns, uniforms, boots, warbonds);
-    save_cached_profile(&result);
-    Some(result)
+    let hats      = parse_id_arr(resp, "unlocked_hats");
+    let guns      = parse_id_arr(resp, "unlocked_gun_styles");
+    let uniforms  = parse_id_arr(resp, "unlocked_uniforms");
+    let boots     = parse_id_arr(resp, "unlocked_boots");
+    Some((scrap, hats, guns, uniforms, boots, warbonds))
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::parse_profile;
+
+    #[test]
+    fn real_profile_parses() {
+        let j = r#"{"elo": 915, "scrap": 915, "warbonds": 7, "unlocked_hats": [1,2], "unlocked_gun_styles": [0], "unlocked_uniforms": [], "unlocked_boots": [3]}"#;
+        let p = parse_profile(j).unwrap();
+        assert_eq!((p.0, p.5), (915, 7));
+        assert_eq!((p.1, p.2, p.3, p.4), (vec![1, 2], vec![0], vec![], vec![3]));
+    }
+
+    #[test]
+    fn error_bodies_are_not_profiles() {
+        // rejected token, rate limit page, empty: must NOT become "0 scrap"
+        assert!(parse_profile(r#"{"error": "invalid token"}"#).is_none());
+        assert!(parse_profile("<html><body>503 Service Temporarily Unavailable</body></html>").is_none());
+        assert!(parse_profile("").is_none());
+    }
 }
 
 /// POST to `/shop/buy`. Returns Ok(new_scrap_balance) or Err(message).
