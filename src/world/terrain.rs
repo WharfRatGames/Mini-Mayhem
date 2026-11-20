@@ -212,6 +212,25 @@ impl Terrain {
         }
     }
 
+    /// A mine/oil-drum resting spot near `(x, y)`: air at and above the point, ground right under it (>=5 of 9 px), and no scenery or
+    /// girder within 8 px. Searches outward up to 40 px; None if the area is unusable.
+    fn settle_object(&self, x: i32, y: i32) -> Option<WorldPos> {
+        let ok = |px: i32, py: i32| -> bool {
+            if px < 12 || px >= WORLD_W as i32 - 12 || py < 12 || py >= WATER_Y as i32 - 4 { return false; }
+            if self.is_solid(px, py) || self.is_solid(px, py - 4) || !self.is_solid(px, py + 1) { return false; }
+            true
+        };
+        if ok(x, y) { return Some(WorldPos::new(x as f32, y as f32)); }
+        for d in 1..=40i32 {
+            for px in [x - d, x + d] {
+                for py in (y - 40..=y + 40).filter(|v| (v - y).abs() <= d + 8) {
+                    if ok(px, py) { return Some(WorldPos::new(px as f32, py as f32)); }
+                }
+            }
+        }
+        None
+    }
+
     /// The spawn `(x, foot_y)` if a soldier can legally stand there, else the nearest standing spot within 40 px (None if there is none).
     fn nudge_spawn(&self, x: i32, foot_y: i32) -> Option<WorldPos> {
         let ok = |px: i32, fy: i32| self.foot_ok(px, fy, 0);
@@ -224,17 +243,6 @@ impl Terrain {
             }
         }
         None
-    }
-
-    /// True if any scenery/girder pixel lies within 20 px of a standing soldier's feet/body box at (x, foot_y).
-    pub fn deco_near(&self, x: i32, foot_y: i32) -> bool {
-        let (x0, x1) = ((x - 20).max(0), (x + 20).min(WORLD_W as i32 - 1));
-        let (y0, y1) = ((foot_y - 44).max(0), (foot_y + 6).min(WORLD_H as i32 - 1));
-        for y in y0..=y1 {
-            let row = y as usize * WORLD_W as usize;
-            if self.deco[row + x0 as usize..=row + x1 as usize].iter().any(|&c| c != 0) { return true; }
-        }
-        false
     }
 
     /// Set the object colour index of a pixel (ignored out of bounds).
@@ -763,7 +771,8 @@ impl Terrain {
                 let conv = |p: &(i32, i32)| WorldPos::new(p.0 as f32, (p.1 + dy) as f32);
                 let mut w: Vec<(i32, i32)> = ordered[..worms].to_vec();
                 w.sort_by_key(|p| p.0);
-                let o: Vec<WorldPos> = ordered[worms..].iter().map(conv).collect();
+                // Objects (mines/drums) are dropped to a real resting spot like WA's gravity settle; no spot -> skipped (as WA skips).
+                let o: Vec<WorldPos> = ordered[worms..].iter().filter_map(|p| self.settle_object(p.0, p.1 + dy)).collect();
                 return (w.iter().map(conv).collect(), o);
             }
         }
@@ -781,8 +790,8 @@ impl Terrain {
             };
             if found.len() >= count {
                 // WA drops a worm onto the ground after placing it (its probe sits 13 px below the free square, so a girder deck can
-                // end up inside the body). Arty doesn't settle spawns, so snap each to a real standing spot: body clear, ground below,
-                // no scenery/girder within reach. Unfixable spawn -> use Arty's own spawner below.
+                // end up inside the body). Arty doesn't settle spawns, so snap each to a real standing spot: body clear, ground below.
+                // Unfixable spawn -> use Arty's own spawner below.
                 let mut fixed = Vec::with_capacity(found.len());
                 for &(x, y) in &found {
                     match self.nudge_spawn(x, y + dy) { Some(p) => fixed.push(p), None => { fixed.clear(); break; } }
@@ -1216,9 +1225,6 @@ impl Terrain {
         // verified by the all-air scan below, not by a hard Y floor).
         if foot_y < CLEAR_H || foot_y >= WATER_Y as i32 { return false; }
         if !self.is_solid(x, foot_y + 1) { return false; }
-        // Never spawn on / beside a WA scenery object or girder (wedged against a sprite or between stacked decks the worm
-        // could not walk out): keep 20 px of plain land around the feet and body.
-        if self.deco_near(x, foot_y) { return false; }
         let platform = (-4..=4).filter(|&dx| self.is_solid(x + dx, foot_y + 1)).count() >= 7;
         if !platform { return false; }
         // Full body footprint must be clear, matching the tightened movement

@@ -46,6 +46,14 @@ fn main() {
     let vp = g.teams[vt].soldiers[vs].pos;
     match name.as_str() {
         "hp" => g.teams[vt].soldiers[vs].take_damage(damage),
+        "bazooka" if a.iter().any(|x| x == "--at") => {
+            // --at X,Y puts the victim's feet there; --ex X,Y is the blast centre.
+            let pair = |k: &str| -> (f32, f32) { let v: Vec<f32> = a[a.iter().position(|x| x == k).unwrap() + 1].split(',').map(|x| x.parse().unwrap()).collect(); (v[0], v[1]) };
+            let (ax, ay) = pair("--at"); let (ex, ey) = pair("--ex");
+            g.teams[vt].soldiers[vs].pos = WorldPos::new(ax, ay);
+            g.apply_explosion(WorldPos::new(ex, ey), WeaponKind::Bazooka); g.turn.phase = arty::game::turn::TurnPhase::Watching;
+            if let arty::game::soldier::SoldierState::Airborne { vel, .. } = &g.teams[vt].soldiers[vs].state { println!("LAUNCH vel ({:.3},{:.3}) px/tick = ({:.3},{:.3}) px/WA-frame", vel.x, vel.y, vel.x * 0.6, vel.y * 0.6); }
+        }
         "bazooka" => { g.apply_explosion(WorldPos::new(vp.x + 18.0, vp.y), WeaponKind::Bazooka); g.turn.phase = arty::game::turn::TurnPhase::Watching; }
         "banana" => {
             let mut p = Projectile::new(WorldPos::new(vp.x - 60.0, vp.y - 40.0), Vec2::new(14.0, -6.0), WeaponKind::BananaBomb);

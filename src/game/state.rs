@@ -2468,6 +2468,14 @@ mod wa_blast_tests {
     }
 
     #[test]
+    fn bazooka_24px_launch_matches_the_rig() {
+        // wa_rig bz_kb24: blast 24.0 px from a worm on flat floor -> A = 38, worm left at exactly (-7.600, 0) px/frame (= 38/5).
+        let a = wa_blast_amount(50, 24.0);
+        assert_eq!(a, 38);
+        assert!((a as f32 / 5.0 * wa_blast_force(WeaponKind::Bazooka) - 7.6).abs() < 1e-4);
+    }
+
+    #[test]
     fn holy_hand_grenade_knockback_is_125_percent() {
         // A=19 at d=165.6: WA launched the worm at (2.879, -3.80) px/frame = 19/5 * 1.25 * unit(0.604,-0.797) = (2.869, -3.786).
         let a = wa_blast_amount(100, 165.0) as f32;
