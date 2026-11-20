@@ -547,6 +547,8 @@ impl Terrain {
     /// reproduces that exact shape). Style (island/cavern 0..=3) is derived from
     /// the seed as WA's UI picks it independently of the seed.
     pub fn generate_tactical(seed: u64) -> Self {
+        /// true: terrain == WA landgen exactly (no scenery baked into the solid bitmap).
+        const WA_PURE_MAPS: bool = true;
         use super::wa_mapgen;
         let wa_seed = ((seed ^ (seed >> 32)) as u32) & 0x7fff_ffff;
         let pick = wa_mapgen::lcg(wa_mapgen::lcg(wa_seed) ^ 0xA5A5_A5A5) >> 13;
@@ -570,8 +572,12 @@ impl Terrain {
         }
         Self::recompute_spawn_derived(&mut terrain);
         terrain.texture = Some(Self::generate_dirt_texture(seed));
-        Self::place_scenery(&mut terrain, seed);
-        Self::recompute_spawn_derived(&mut terrain);
+        // Maps must be ones WA can generate: the land is WA's landgen output and nothing else. The old scenery pass baked ~7800 solid
+        // px (trees, crystals...) into every map, which WA's generated maps do not have. Kept behind a flag only for old experiments.
+        if !WA_PURE_MAPS {
+            Self::place_scenery(&mut terrain, seed);
+            Self::recompute_spawn_derived(&mut terrain);
+        }
         terrain
     }
 
