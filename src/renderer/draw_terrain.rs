@@ -81,6 +81,14 @@ fn terrain_pixel(terrain: &Terrain, x: i32, y: i32) -> Bgra {
     if !terrain.is_solid(x, y) {
         return sky_colour(x, y, terrain.is_cavern, terrain.template_id);
     }
+    // Objects drawn into the land (WA scenery / girder bridges) keep their own colours while the pixel is still solid.
+    if x >= 0 && y >= 0 && x < WORLD_W as i32 {
+        let d = terrain.deco[y as usize * WORLD_W as usize + x as usize];
+        if d != 0 {
+            let [r, g, b] = crate::world::wa_scenery::PAL[d as usize];
+            return Bgra::new(r, g, b);
+        }
+    }
     let air_above = !terrain.is_solid(x, y - 1);
     let air_below = !terrain.is_solid(x, y + 1);
     let air_left  = !terrain.is_solid(x - 1, y);

@@ -55,6 +55,9 @@ pub struct Terrain {
     /// Solid: stamped into the object mask each tick (see `stamp_objects`), so
     /// soldiers can stand on them and projectiles collide with them.
     pub scenery: Vec<SceneryObject>,
+    /// Colour layer for objects drawn INTO the land (WA scenery + girder bridges, `wa_scenery`): palette index per pixel
+    /// (0 = plain land), see `wa_scenery::PAL`. A pixel only shows it while it is still solid, so craters erase objects like dirt.
+    pub deco: Vec<u8>,
     /// WA 31-bit map seed this terrain was generated from (0 for legacy/empty);
     /// seeds WA's worm-placement stream.
     pub wa_seed: u32,
@@ -205,7 +208,14 @@ impl Terrain {
             is_cavern: false,
             wa_seed: 0,
             scenery: Vec::new(),
+            deco: vec![0u8; WORLD_PIXELS],
         }
+    }
+
+    /// Set the object colour index of a pixel (ignored out of bounds).
+    pub fn set_deco(&mut self, x: i32, y: i32, c: u8) {
+        if x < 0 || y < 0 || x >= WORLD_W as i32 || y >= WORLD_H as i32 { return; }
+        self.deco[world_index(x as u32, y as u32)] = c;
     }
 
     /// Returns true if the pixel at (x, y) is solid ground.
@@ -578,6 +588,9 @@ impl Terrain {
             Self::place_scenery(&mut terrain, seed);
             Self::recompute_spawn_derived(&mut terrain);
         }
+        // WA's own object stage: 21 girder-bridge tries + 5 scenery objects drawn into the land (solid, destructible).
+        super::wa_scenery::apply(&mut terrain, wa_seed);
+        Self::recompute_spawn_derived(&mut terrain);
         terrain
     }
 

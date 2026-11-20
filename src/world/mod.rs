@@ -6,6 +6,7 @@ pub mod heightmap;
 pub mod water;
 pub mod crater;
 pub mod wa_mapgen;
+pub mod wa_scenery;
 
 pub use constants::*;
 pub use coords::*;
