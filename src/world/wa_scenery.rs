@@ -5,7 +5,7 @@
 //!  * bridges  = FUN_00578c00 (21 tries by default), gap test FUN_00578a80/00578980, draw FUN_00578810.
 //! Deviations: WA's RNG state at this stage is not reproducible (it depends on the whole generator's stream), so this uses its own
 //! LCG (same constants) seeded from the map seed; the sprite art is Arty's own (placeholders at WA's real sizes, not WA's pixels);
-//! bridge wedge test FUN_005789e0 is not ported (trivially true for one of the two sweep directions).
+//! (the V-shaped clearance test FUN_005789e0 IS ported).
 
 use super::constants::{WATER_Y, WORLD_W};
 use super::terrain::{Terrain, Theme};
@@ -369,6 +369,17 @@ fn blit(t: &mut Terrain, s: &Sprite, ox: i32, oy: i32) {
 
 // ---------------------------------------------------------------------------------------------------- bridges (FUN_00578c00 / 00578a80)
 /// Left abutment (3 full blocks at x, y+3..5), then n>=4 clear 8x7 block segments, then a full abutment 15 blocks beyond segment n.
+/// FUN_005789e0: a V-shaped empty region under the span (width n*8, depth growing to n*4 block rows at mid-span).
+/// This is what keeps WA's bridges to deep gaps and stops them stacking tightly.
+fn v_clear(g: &Grid, x: i32, y: i32, n: i32) -> bool {
+    let w = n * 8;
+    for i in 0..w {
+        let h = if i < w / 2 { i } else { w - i };
+        for j in 0..h { if g.get(x + i + 8, y + j) != 0 { return false; } }
+    }
+    true
+}
+
 fn bridge_span(g: &Grid, x: i32, y: i32) -> Option<i32> {
     if !(g.get(x, y + 3) == 2 && g.get(x, y + 4) == 2 && g.get(x, y + 5) == 2) || x >= GW { return None; }
     let mut n = 0;
@@ -377,7 +388,9 @@ fn bridge_span(g: &Grid, x: i32, y: i32) -> Option<i32> {
         let sx = x + n * 8;
         for i in 0..8 { for j in -3..4 { if g.get(sx + i, y + j) != 0 { return None; } } }
         let ax = x + n * 8 + 15;
-        if g.get(ax, y + 3) == 2 && g.get(ax, y + 4) == 2 && g.get(ax, y + 5) == 2 { return if n >= 4 { Some(n) } else { None }; }
+        if g.get(ax, y + 3) == 2 && g.get(ax, y + 4) == 2 && g.get(ax, y + 5) == 2 {
+            return if n >= 4 && v_clear(g, x, y, n) { Some(n) } else { None };
+        }
         if x + n * 8 >= GW { return None; }
     }
 }

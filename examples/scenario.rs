@@ -123,6 +123,13 @@ fn main() {
             arty::game::loop_runner::fire_bot(&mut g, ti, si, a.iter().any(|x| x == "--super"));
             g.turn.phase = arty::game::turn::TurnPhase::Watching;
         }
+        "blackhole" => {
+            // Black hole on the victim (--damage leaves him low so the collapse kills him); then watch what holds the turn open.
+            g.teams[vt].soldiers[vs].take_damage(damage);
+            let hdy = a.iter().position(|x| x == "--holedy").and_then(|i| a.get(i + 1)).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+            g.black_holes.push(arty::game::state::BlackHole { pos: WorldPos::new(vp.x, vp.y + hdy), lifetime: 150 });
+            g.turn.phase = arty::game::turn::TurnPhase::Watching;
+        }
         "plates" => {}
         _ => { eprintln!("unknown scenario {name}"); std::process::exit(2); }
     }
@@ -163,6 +170,10 @@ fn main() {
                 let d = buf.raw_data(); crop.extend_from_slice(&[d[o + 2], d[o + 1], d[o]]);
             }}
             frames.push((t, crop));
+        }
+        if name == "blackhole" && t % 25 == 0 {
+            let air: Vec<_> = g.teams.iter().enumerate().flat_map(|(ti, tm)| tm.soldiers.iter().enumerate().filter(|(_, s)| matches!(s.state, arty::game::soldier::SoldierState::Airborne { .. })).map(move |(si, s)| (ti, si, s.pos.x as i32, s.pos.y as i32))).collect();
+            println!("      phase {:?} holes {} pend_deaths {} expl {} proj {} airborne {:?}", g.turn.phase, g.black_holes.len(), g.pending_deaths.len(), g.explosions.len(), g.projectiles.len(), air);
         }
         let inp = scripted_input(&a, t);
         server_tick(&mut g, &inp, None, None);

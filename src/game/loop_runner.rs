@@ -321,6 +321,14 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
             // unrelated team's turn just because someone else's Jumpbot is still
             // alive elsewhere on the map.
             let jumpbot_blocking = game.jumpbot.as_ref().map_or(false, |r| r.owner_team == game.active_team());
+            // Diagnostics: a Watching phase that drags on says WHY every 4 s (internal log only).
+            if game.tick % 120 == 0 && !(game.projectiles.is_empty() && game.explosions.is_empty() && game.pending_deaths.is_empty() && game.black_holes.is_empty() && game.garcia.is_none() && game.airstrike.is_none() && !jumpbot_blocking && all_grounded) {
+                let air: Vec<(usize, usize, i32, i32)> = game.teams.iter().enumerate().flat_map(|(ti, t)| t.soldiers.iter().enumerate()
+                    .filter(|(_, s)| matches!(s.state, SoldierState::Airborne { .. })).map(move |(si, s)| (ti, si, s.pos.x as i32, s.pos.y as i32))).collect();
+                crate::dlog!("watch", "tick={} holding: proj={} expl={} pend_deaths={} holes={} garcia={} airstrike={} jumpbot={} airborne={:?}",
+                    game.tick, game.projectiles.len(), game.explosions.len(), game.pending_deaths.len(), game.black_holes.len(),
+                    game.garcia.is_some(), game.airstrike.is_some(), jumpbot_blocking, air);
+            }
             if game.projectiles.is_empty() && game.explosions.is_empty() && game.pending_deaths.is_empty() && game.black_holes.is_empty() && game.garcia.is_none() && game.airstrike.is_none() && !jumpbot_blocking && all_grounded {
                 let hit = game.active_worm_hit;
                 game.active_worm_hit = false;

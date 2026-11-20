@@ -212,6 +212,31 @@ impl Terrain {
         }
     }
 
+    /// The spawn `(x, foot_y)` if a soldier can legally stand there, else the nearest standing spot within 40 px (None if there is none).
+    fn nudge_spawn(&self, x: i32, foot_y: i32) -> Option<WorldPos> {
+        let ok = |px: i32, fy: i32| self.foot_ok(px, fy, 0);
+        if ok(x, foot_y) { return Some(WorldPos::new(x as f32, foot_y as f32)); }
+        for d in 1..=40i32 {
+            for px in [x - d, x + d] {
+                for fy in (foot_y - 40..=foot_y + 40).filter(|f| (f - foot_y).abs() <= d + 8) {
+                    if ok(px, fy) { return Some(WorldPos::new(px as f32, fy as f32)); }
+                }
+            }
+        }
+        None
+    }
+
+    /// True if any scenery/girder pixel lies within 20 px of a standing soldier's feet/body box at (x, foot_y).
+    pub fn deco_near(&self, x: i32, foot_y: i32) -> bool {
+        let (x0, x1) = ((x - 20).max(0), (x + 20).min(WORLD_W as i32 - 1));
+        let (y0, y1) = ((foot_y - 44).max(0), (foot_y + 6).min(WORLD_H as i32 - 1));
+        for y in y0..=y1 {
+            let row = y as usize * WORLD_W as usize;
+            if self.deco[row + x0 as usize..=row + x1 as usize].iter().any(|&c| c != 0) { return true; }
+        }
+        false
+    }
+
     /// Set the object colour index of a pixel (ignored out of bounds).
     pub fn set_deco(&mut self, x: i32, y: i32, c: u8) {
         if x < 0 || y < 0 || x >= WORLD_W as i32 || y >= WORLD_H as i32 { return; }
@@ -755,7 +780,14 @@ impl Terrain {
                 )
             };
             if found.len() >= count {
-                return found.iter().map(|&(x, y)| WorldPos::new(x as f32, (y + dy) as f32)).collect();
+                // WA drops a worm onto the ground after placing it (its probe sits 13 px below the free square, so a girder deck can
+                // end up inside the body). Arty doesn't settle spawns, so snap each to a real standing spot: body clear, ground below,
+                // no scenery/girder within reach. Unfixable spawn -> use Arty's own spawner below.
+                let mut fixed = Vec::with_capacity(found.len());
+                for &(x, y) in &found {
+                    match self.nudge_spawn(x, y + dy) { Some(p) => fixed.push(p), None => { fixed.clear(); break; } }
+                }
+                if fixed.len() == found.len() { return fixed; }
             }
         }
         // Loosened from an earlier 140/120: dynamic analysis of real WA (Deathmatch
@@ -1184,6 +1216,9 @@ impl Terrain {
         // verified by the all-air scan below, not by a hard Y floor).
         if foot_y < CLEAR_H || foot_y >= WATER_Y as i32 { return false; }
         if !self.is_solid(x, foot_y + 1) { return false; }
+        // Never spawn on / beside a WA scenery object or girder (wedged against a sprite or between stacked decks the worm
+        // could not walk out): keep 20 px of plain land around the feet and body.
+        if self.deco_near(x, foot_y) { return false; }
         let platform = (-4..=4).filter(|&dx| self.is_solid(x + dx, foot_y + 1)).count() >= 7;
         if !platform { return false; }
         // Full body footprint must be clear, matching the tightened movement
