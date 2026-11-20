@@ -2679,7 +2679,7 @@ pub fn step_jumpbot(game: &mut GameState, input: &InputState) {
         let (mut x, mut y, mut h, age) = { let r = game.jumpbot.as_ref().unwrap(); (r.x, r.y, r.heading, r.walk_ticks) };
         let world_w = crate::world::WORLD_W as i32;
         let terrain = &game.terrain;
-        let solid = |px: i32, py: i32| px < 0 || px >= world_w || (py >= 0 && terrain.is_blocked(px, py));
+        let solid = |px: i32, py: i32| py >= 0 && terrain.is_blocked(px, py); // WA: land outside the canvas is empty
         let mut hit = false;
         for _ in 0..WaMissile::frames_for_age(age) {
             h += steer;
@@ -2692,7 +2692,7 @@ pub fn step_jumpbot(game: &mut GameState, input: &InputState) {
         let r = game.jumpbot.as_mut().unwrap();
         r.x = x; r.y = y; r.heading = h.rem_euclid(360.0); r.grounded = false; r.walk_ticks = r.walk_ticks.wrapping_add(1);
         if h.to_radians().sin().abs() > 0.05 { r.facing = if h.to_radians().sin() > 0.0 { 1 } else { -1 }; }
-        if hit || y < -400.0 { boom(game); }
+        if hit || y < -400.0 || x < -(WA_EDGE_FALL_MARGIN as f32) || x >= (world_w + WA_EDGE_FALL_MARGIN) as f32 { boom(game); }
         return;
     }
 
@@ -2708,7 +2708,7 @@ pub fn step_jumpbot(game: &mut GameState, input: &InputState) {
         };
         let world_w = crate::world::WORLD_W as i32;
         let terrain = &game.terrain;
-        let solid = |x: i32, y: i32| x < 0 || x >= world_w || (y >= 0 && terrain.is_blocked(x, y));
+        let solid = |x: i32, y: i32| y >= 0 && terrain.is_blocked(x, y); // WA: land outside the canvas is empty
         let mut sound = false;
         let mut landed = false;
         for _ in 0..WaMissile::frames_for_age(age) {
@@ -6024,6 +6024,9 @@ fn stamp_objects(game: &mut GameState) {
     }
 }
 
+/// How far past a side edge a falling worm may drift before it is declared drowned (WA: no limit, it just falls).
+const WA_EDGE_FALL_MARGIN: i32 = 1500;
+
 /// One 30 Hz tick of WA's airborne worm physics for a non-rope airborne soldier (see `physics::wa_worm`).
 /// 5 WA frames per 3 ticks. Landing/fall damage/drowning/edge death reuse Arty's existing rules.
 fn wa_air_tick(game: &mut GameState, ti: usize, si: usize, vel: crate::world::Vec2, mut spinning: bool) {
@@ -6070,7 +6073,7 @@ fn wa_air_tick(game: &mut GameState, ti: usize, si: usize, vel: crate::world::Ve
         let f = body.step_air_with(&solid, others);
         if let Some((i, vy)) = f.launched { launches.push((other_ids[i], vy)); }
         if f.landed { landed = true; break; }
-        if body.x < 0 || (body.x >> 16) >= crate::world::WORLD_W as i32 { break; }
+        if (body.x >> 16) < -WA_EDGE_FALL_MARGIN || (body.x >> 16) >= crate::world::WORLD_W as i32 + WA_EDGE_FALL_MARGIN { break; }
     }
     // The stop rule can fire in a sweep and leave the body a pixel or two clear of whatever it hit (a flank bounce off another
     // worm, say). WA then simply finds nothing under it next frame and keeps falling. Only count the landing if the body really is
@@ -6089,9 +6092,12 @@ fn wa_air_tick(game: &mut GameState, ti: usize, si: usize, vel: crate::world::Ve
     let (fx, fy) = ww::foot_of(&body);
     let ati = game.active_team();
     let is_act = ti == ati && si == game.teams[ati].active;
-    if fx < 0.0 || fx >= crate::world::WORLD_W as f32 || ww::drowned(&body, crate::world::WATER_Y as i32) {
+    // WA has no side walls (rig 2026-11-20, findings/physics.md "Walk-off"): a worm past the map edge is over empty land, keeps
+    // falling under gravity and drowns at the water line. Only a worm flung absurdly far out is cut off early (same fate).
+    if fx < -(WA_EDGE_FALL_MARGIN as f32) || fx >= (crate::world::WORLD_W as i32 + WA_EDGE_FALL_MARGIN) as f32
+        || ww::drowned(&body, crate::world::WATER_Y as i32) {
         let s = &mut game.teams[ti].soldiers[si];
-        s.pos.x = fx.clamp(0.0, crate::world::WORLD_W as f32 - 1.0);
+        s.pos.x = fx.clamp(0.0, crate::world::WORLD_W as f32 - 1.0); // splash/grave drawn inside the map
         s.pos.y = fy.max(0.0);
         s.death_cause = crate::game::soldier::DeathCause::Water;
         s.take_damage(999);
@@ -6352,8 +6358,8 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
                                 game.rope = None;
                                 game.rope_session = false;
-                            } else if nx < 0.0 || nx >= crate::world::WORLD_W as f32 {
-                                // Soldier swung off the map edge — drown/die
+                            } else if nx < -(WA_EDGE_FALL_MARGIN as f32) || nx >= (crate::world::WORLD_W as i32 + WA_EDGE_FALL_MARGIN) as f32 {
+                                // Swung absurdly far past a side edge (WA has no side walls: the swing just continues over empty land) — drown/die
                                 game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Water;
                                 game.teams[ti].soldiers[si].take_damage(999);
                                 let ati = game.active_team();
@@ -6640,8 +6646,8 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             }
                             break;
                         }
-                        // Flew off the map edge — instant kill
-                        if cx < 0.0 || cx >= crate::world::WORLD_W as f32 {
+                        // Flew far past a side edge (WA: no wall, it keeps falling and drowns) — cut off only beyond the margin
+                        if cx < -(WA_EDGE_FALL_MARGIN as f32) || cx >= (crate::world::WORLD_W as i32 + WA_EDGE_FALL_MARGIN) as f32 {
                             game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Water;
                             game.teams[ti].soldiers[si].take_damage(999);
                             let ati = game.active_team();

@@ -42,7 +42,7 @@ fn main() {
     let damage = arg("--damage", 43) as u32;
     let mut g = arty::replay::new_game(seed, &[0, 1]);
     // Victim = team 1 soldier 0, observer-friendly: everyone else is left alone.
-    let (vt, vs) = (1usize, 0usize);
+    let (mut vt, mut vs) = (1usize, 0usize);
     let vp = g.teams[vt].soldiers[vs].pos;
     match name.as_str() {
         "hp" => g.teams[vt].soldiers[vs].take_damage(damage),
@@ -108,6 +108,19 @@ fn main() {
             // Bot placed by team 0's active soldier. --keys "1:A,10-30:R,60:A,80:A" scripts the buttons (A press, L/R held over a tick range).
             let ti = g.active_team(); let si = g.teams[ti].active;
             arty::game::loop_runner::fire_bot(&mut g, ti, si, name == "superbot");
+            g.turn.phase = arty::game::turn::TurnPhase::Watching;
+        }
+        "edgewalk" => {
+            // Active worm on the floor 30 px from the left map edge (seed 0x18e9b0d64c24edd2 has an open cavern edge); hold Left with --keys "1-400:L".
+            vt = g.active_team(); vs = g.teams[vt].active;
+            g.teams[vt].soldiers[vs].pos = WorldPos::new(30.0, 796.0);
+        }
+        "edgebot" => {
+            // Sheep dropped at the open left edge (seed 0x18e9b0d64c24edd2), facing left: it should walk off the map and drown, not turn around.
+            let ti = g.active_team(); let si = g.teams[ti].active;
+            g.teams[ti].soldiers[si].pos = WorldPos::new(30.0, 796.0);
+            g.teams[ti].soldiers[si].facing = -1;
+            arty::game::loop_runner::fire_bot(&mut g, ti, si, a.iter().any(|x| x == "--super"));
             g.turn.phase = arty::game::turn::TurnPhase::Watching;
         }
         "plates" => {}
