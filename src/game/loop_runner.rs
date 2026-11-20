@@ -10,7 +10,7 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{
     WorldBuffer, Bgra,
-    draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_headstone, draw_explosion, draw_garcia_sprite, draw_jumpbot_sprite},
+    draw_sprites::{draw_soldier, draw_soldier_v3, draw_projectile, draw_grenade_projectile, draw_aim_arrow, draw_headstone, draw_explosion, draw_garcia_sprite, draw_jumpbot_sprite, draw_jetpack},
     skeleton::{draw_soldier_skeletal, SoldierAnim},
     draw_terrain,
     hud::{draw_game_over, draw_pause_menu, TeamEndStat},
@@ -691,7 +691,9 @@ pub fn tick(
         if let Some(ref mut air) = game.airstrike {
             if !air.active { air.spawn_cam_left = cam.left_edge_f32(); }
         }
+        let sim_t = std::time::Instant::now();
         let step = simulate_with_muzzle(game, input, lstate.last_muzzle, None);
+        crate::dlog::note_sim(sim_t.elapsed().as_micros() as u64);
         lstate.prev_turn_number = game.turn.turn_number;
         update_camera(game, cam, input, step, prev_turn);
         render(game, buf, cam, lstate);
@@ -792,8 +794,10 @@ fn process_movement(game: &mut GameState, input: &InputState) {
     if input.just_pressed(Button::Select) {
         // lstate not available in process_movement — weapon menu handled in tick()
     }
-    let on_ground = is_on_ground(game, ti, si) || is_on_soldier(game, ti, si);
-    use crate::game::soldier::{WaAct, WA_RECOVER_FRAMES, WA_WINDUP_FRAMES};
+    // One classification for the whole tick (see `support`): walking, jumping and backflipping all ask the same question the
+    // fall logic asks, so a soldier the fall logic leaves standing can always act.
+    let on_ground = support(game, ti, si).can_act();
+    use crate::game::soldier::{WaAct, WA_RECOVER_FRAMES, WA_TURN_FRAMES, WA_WINDUP_FRAMES};
 
     // ── Jump windup / landing recovery: fixed-length WA states during which the worm ignores movement input ──
     if let Some(act) = game.teams[ti].soldiers[si].wa_act {
@@ -811,6 +815,9 @@ fn process_movement(game: &mut GameState, input: &InputState) {
                     if matches!(sol.state, SoldierState::Walking { .. }) { sol.state = SoldierState::Idle; }
                 }
             }
+            WaAct::Turn { age } => {
+                sol.wa_act = if frames(age + 1) >= WA_TURN_FRAMES { None } else { Some(WaAct::Turn { age: age + 1 }) };
+            }
             WaAct::Recover { age } => {
                 sol.wa_act = if frames(age + 1) >= WA_RECOVER_FRAMES { None } else { Some(WaAct::Recover { age: age + 1 }) };
             }
@@ -827,9 +834,16 @@ fn process_movement(game: &mut GameState, input: &InputState) {
     }
     if want != 0 && on_ground {
         if game.teams[ti].soldiers[si].facing as i32 != want {
-            // WA: the first press only turns the worm.
-            game.teams[ti].soldiers[si].facing = want as i8;
-            game.teams[ti].soldiers[si].wa_walk = None;
+            // WA: the first press only turns the worm: a 0.5 px nudge in the new direction, then 14 frames of turn animation
+            // before the walk starts (wa_rig walk_right vs walk_slope).
+            let s = &mut game.teams[ti].soldiers[si];
+            s.facing = want as i8;
+            s.wa_walk = None;
+            s.wa_act = Some(WaAct::Turn { age: 0 });
+            let nx = s.pos.x + 0.5 * want as f32;
+            if !game.terrain.is_blocked(nx as i32, game.teams[ti].soldiers[si].pos.y as i32 - 4) {
+                game.teams[ti].soldiers[si].pos.x = nx;
+            }
         } else {
             walked = true;
             wa_walk_tick(game, ti, si, want);
@@ -857,12 +871,11 @@ fn process_movement(game: &mut GameState, input: &InputState) {
     }
     let is_idle = matches!(game.teams[ti].soldiers[si].state,
         SoldierState::Idle | SoldierState::Walking { .. });
-    let on_ground_lenient = on_ground || is_on_ground_lenient(game, ti, si);
-    // WA: pressing jump starts a 20-frame crouch (state 0x77); the takeoff impulse follows.
+    // WA: pressing jump starts a crouch (state 0x77) and the takeoff impulse follows (`WA_WINDUP_FRAMES`, animated as `SoldierAnim::Crouch`).
     if input.just_pressed(Button::B) && on_ground && is_idle {
         game.teams[ti].soldiers[si].wa_act = Some(WaAct::Windup { backflip: false, tilt: 0, age: 0 });
         game.teams[ti].soldiers[si].state = SoldierState::Idle;
-    } else if input.just_pressed(Button::Y) && on_ground_lenient && is_idle {
+    } else if input.just_pressed(Button::Y) && on_ground && is_idle {
         game.teams[ti].soldiers[si].wa_act = Some(WaAct::Windup { backflip: true, tilt: 2, age: 0 });
         game.teams[ti].soldiers[si].state = SoldierState::Idle;
     }
@@ -875,9 +888,10 @@ fn start_wa_jump(game: &mut GameState, ti: usize, si: usize, backflip: bool, til
     let (vx16, vy16) = if backflip {
         match tilt { 1 => (-f * ww::JUMP_BACKFLIP2_BACKSPACE.0, ww::JUMP_BACKFLIP2_BACKSPACE.1), 2 => (-f * ww::JUMP_BACKFLIP2_ENTER.0, ww::JUMP_BACKFLIP2_ENTER.1), _ => (ww::JUMP_BACKFLIP_VX, ww::JUMP_BACKFLIP_VY) }
     } else { (f * ww::JUMP_FWD_VX, ww::JUMP_FWD_VY) };
-    // Jumps are drawn to scale with the 0.6x worm sprites: scaling BOTH takeoff velocities by sqrt(0.6) at WA's gravity shrinks the
-    // whole arc (range and apex) to 0.6x (flight time x sqrt(0.6)). Deliberate deviation from WA's real jump distance.
-    let k = (crate::renderer::draw_sprites::WORM_SPRITE_SCALE as f64).sqrt();
+    // Jump arc scale vs WA. It was sqrt(0.6) (arc shrunk to 0.6x) when the soldiers were drawn ~23 px tall; the pixel-art soldiers are
+    // now ~46 px tall, so that made backflips far too low to clear anything. 1.0 = WA's real takeoff velocities (backflip apex ~41 px).
+    // Scaling BOTH velocities by k at WA's gravity scales the whole arc (range and apex) by k^2.
+    let k = JUMP_SCALE;
     let (vx16, vy16) = ((vx16 as f64 * k).round() as i32, (vy16 as f64 * k).round() as i32);
     let v = crate::world::Vec2::new(ww::vel_from_16(vx16), ww::vel_from_16(vy16));
     let p = game.teams[ti].soldiers[si].pos;
@@ -889,7 +903,43 @@ fn start_wa_jump(game: &mut GameState, ti: usize, si: usize, backflip: bool, til
     s.fall.begin_fall(p.y);
 }
 
-/// One 30 Hz tick of WA walking: 5 frames per 3 ticks of the fixed-point walk cycle (`wa_worm::walk_frame`).
+/// Scale on WA's jump takeoff velocities. Scaling both components by k scales the whole arc (range and apex) by k^2. Was
+/// sqrt(0.6) while soldiers were drawn ~23 px tall; 1.0 = WA's real arc now that they are ~46 px. See `tests/scale_contract.rs`.
+pub const JUMP_SCALE: f64 = 1.0;
+
+/// Walk speed. WA walks at 50 Hz frames; Arty ticks at 30 Hz, so a straight conversion is 5 frames per 3 ticks. That felt slow with
+/// the ~2x taller pixel-art soldiers (the same px/s reads as half the speed), so the walk cycle runs 1.5x: 5 frames per 2 ticks.
+/// Deliberate deviation from WA's walking pace; jumps and falls stay at WA's real speed. Integer ratio, so the 2-3-2-3 frame
+/// pattern is exact and deterministic (a pure function of `walk_ticks`).
+pub const WALK_FRAMES_PER_TICK_NUM: u32 = 5;
+pub const WALK_FRAMES_PER_TICK_DEN: u32 = 2;
+
+/// WA walk frames to run on the tick with this `walk_ticks` age (2 or 3; averages 2.5).
+pub fn walk_frames_for_age(age_ticks: u32) -> u32 {
+    (WALK_FRAMES_PER_TICK_NUM * (age_ticks + 1)) / WALK_FRAMES_PER_TICK_DEN - (WALK_FRAMES_PER_TICK_NUM * age_ticks) / WALK_FRAMES_PER_TICK_DEN
+}
+
+/// Free height a walking soldier needs above his feet, in px. The collision body is WA's 9x16, but the soldier is drawn ~46 px tall, so
+/// with WA's rules alone he walks through gaps that are far smaller than he looks. Walking refuses to enter a spot with less headroom than
+/// this (unless it is no worse than where he already stands, so he can never be trapped). Deliberate deviation; jumps/falls stay WA's.
+pub const HEAD_CLEAR: i32 = 36;
+
+/// Free pixel rows above a standing foot point at column `x`, up to `limit`. Centre column only: on a steep slope the uphill
+/// side column is the hillside itself, which read as a zero-height ceiling and refused every step down a slope.
+pub fn headroom(terrain: &crate::world::Terrain, x: i32, foot_y: i32, limit: i32) -> i32 {
+    for d in 1..=limit {
+        if terrain.is_blocked(x, foot_y - d) { return d - 1; }
+    }
+    limit
+}
+
+/// May a walking soldier step from `(ox, oy)` to `(nx, ny)` under the headroom rule?
+pub fn walk_headroom_ok(terrain: &crate::world::Terrain, ox: i32, oy: i32, nx: i32, ny: i32) -> bool {
+    let new = headroom(terrain, nx, ny, HEAD_CLEAR);
+    new >= HEAD_CLEAR || new >= headroom(terrain, ox, oy, HEAD_CLEAR)
+}
+
+/// One 30 Hz tick of WA walking at `WALK_FRAMES_PER_TICK` of the fixed-point walk cycle (`wa_worm::walk_frame`).
 fn wa_walk_tick(game: &mut GameState, ti: usize, si: usize, dir: i32) {
     use crate::physics::wa_missile::WaMissile;
     use crate::physics::wa_worm as ww;
@@ -905,13 +955,28 @@ fn wa_walk_tick(game: &mut GameState, ti: usize, si: usize, dir: i32) {
     let solid = |x: i32, y: i32| terrain.is_blocked(x, y);
     let mut fell = false;
     let mut prev_foot = ww::foot_of(&body);
-    for _ in 0..WaMissile::frames_for_age(age) {
+    for _ in 0..walk_frames_for_age(age) {
         prev_foot = ww::foot_of(&body);
-        if body.walk_frame(&mut ws, &solid) == -1 { fell = true; break; }
+        match body.walk_frame(&mut ws, &solid) {
+            -1 => { fell = true; break; }
+            // WA (FUN_005140e0, wa_rig walk_slope: bit-exact over 201 frames): a blocked step drops the worm to state 0x65 (standing);
+            // with the key still held the walk restarts at the current x (fresh start-up animation), which makes it creep 0.5 px at a time.
+            0 => ws = ww::WalkState::start(body.x, dir),
+            _ => {}
+        }
     }
-    let vis_frac = (5 * (age + 1) % 3) as f32 / 3.0;
+    let vis_frac = (WALK_FRAMES_PER_TICK_NUM * (age + 1) % WALK_FRAMES_PER_TICK_DEN) as f32 / WALK_FRAMES_PER_TICK_DEN as f32;
     // Other soldiers block the step (WA: worms are solid to a walking worm).
     let (nx, ny) = ww::foot_of(&body);
+    if !walk_headroom_ok(&game.terrain, px as i32, py as i32, nx as i32, ny as i32) {
+        // Gap too low for his drawn size: stay put (restart the walk cycle from where he really stands next tick).
+        if age % 15 == 0 {
+            crate::dlog!("walk", "REFUSED headroom dir={} team={} s={} pos=({:.2},{:.2}) -> ({:.2},{:.2}) head_new={} head_old={} fell={}", dir, ti, si, px, py, nx, ny,
+                headroom(&game.terrain, nx as i32, ny as i32, HEAD_CLEAR), headroom(&game.terrain, px as i32, py as i32, HEAD_CLEAR), fell);
+        }
+        game.teams[ti].soldiers[si].wa_walk = None;
+        return;
+    }
     let blocked_by_soldier = game.teams.iter().enumerate().any(|(oti, t)| t.soldiers.iter().enumerate().any(|(osi, o)| {
         !(oti == ti && osi == si) && o.is_alive() && !matches!(o.state, SoldierState::Airborne { .. })
             // Standing on top of that worm (their body is mostly below our feet)? It can't block a sideways step: walk off its head.
@@ -924,7 +989,9 @@ fn wa_walk_tick(game: &mut GameState, ti: usize, si: usize, dir: i32) {
     let s = &mut game.teams[ti].soldiers[si];
     if blocked_by_soldier {
         if age % 15 == 0 { crate::dlog!("walk", "REFUSED blocked-by-soldier team={} s={} pos=({:.2},{:.2}) -> ({:.2},{:.2})", ti, si, px, py, nx, ny); }
-        s.wa_walk = Some(ws);
+        // Do NOT keep the advanced walk state: it ran ahead of the soldier's real position every refused tick, so after ~20 ticks it was
+        // already past the blocker and the next step landed on the far side (soldiers "teleported" through each other).
+        s.wa_walk = None;
         return;
     }
     if age % 15 == 0 && (nx - px).abs() < 0.01 && (ny - py).abs() < 0.01 && !fell {
@@ -1056,6 +1123,80 @@ pub fn snap_to_surface(game: &mut GameState, ti: usize, si: usize) {
             return;
         }
     }
+}
+
+/// How (if at all) a soldier is currently held up. This is the single answer to "is he standing?": movement gating and the
+/// Idle/Airborne handoff both use it, so they cannot disagree (they used to - a strict check for walking, a lenient one for
+/// falling - which left soldiers standing but unable to walk or jump). Variants are ordered strongest first; classification
+/// stops at the first that applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Support {
+    /// A column under the feet with a clear foot row and terrain within 3 px below (`is_on_ground`).
+    Firm,
+    /// Feet on another living soldier's head (`is_on_soldier`).
+    OnSoldier,
+    /// Terrain within 5 px below one of three sample columns, but the strict check fails: foot pixel itself solid on a thin
+    /// ridge, barrel edge or slope (`is_on_ground_lenient`).
+    Ridge,
+    /// Body overlaps terrain and nothing escapes it: left alone rather than relaunched (`is_embedded_in_terrain`).
+    Embedded,
+    /// Within the airborne landing tolerance of another soldier (`is_resting_near_soldier`).
+    NearSoldier,
+    /// Nothing holds him up: he falls.
+    None,
+}
+
+impl Support {
+    /// May walk, jump or backflip.
+    pub fn can_act(self) -> bool { matches!(self, Support::Firm | Support::OnSoldier | Support::Ridge) }
+    /// Counts as landed for an airborne soldier.
+    pub fn is_firm(self) -> bool { matches!(self, Support::Firm | Support::OnSoldier) }
+    /// An Idle soldier stays Idle (does not start falling).
+    pub fn holds(self) -> bool { self != Support::None }
+}
+
+pub fn support(game: &GameState, ti: usize, si: usize) -> Support {
+    if is_on_ground(game, ti, si) { Support::Firm }
+    else if is_on_soldier(game, ti, si) || is_resting_on_worm(game, ti, si) { Support::OnSoldier }
+    else if is_on_ground_lenient(game, ti, si) { Support::Ridge }
+    else if is_embedded_in_terrain(game, ti, si) { Support::Embedded }
+    else if is_resting_near_soldier(game, ti, si) { Support::NearSoldier }
+    else { Support::None }
+}
+
+/// Nudge soldier `(ti, si)` 1 px horizontally away from the nearest living soldier that satisfies `is_resting_near_soldier`'s loose
+/// overlap test, if the destination column is free of terrain. Returns whether it moved.
+fn separate_from_neighbour(game: &mut GameState, ti: usize, si: usize) -> bool {
+    use crate::renderer::draw_sprites::{BODY_W, BODY_H, BODY_HALF_W};
+    let (x, y) = { let p = game.teams[ti].soldiers[si].pos; (p.x, p.y) };
+    let mut best: Option<f32> = None; // signed dx to the nearest overlapping neighbour
+    for (oti, t) in game.teams.iter().enumerate() {
+        for (osi, o) in t.soldiers.iter().enumerate() {
+            if (oti == ti && osi == si) || !o.is_alive() { continue; }
+            let dx = x - o.pos.x;
+            if (x as i32 - o.pos.x as i32).abs() < BODY_W && (y as i32) >= o.pos.y as i32 - BODY_H && (y as i32) <= o.pos.y as i32 + BODY_H
+                && best.map_or(true, |b| dx.abs() < b.abs()) { best = Some(dx); }
+        }
+    }
+    let Some(dx) = best else { return false };
+    let nx = x + if dx >= 0.0 { 1.0 } else { -1.0 };
+    let (ix, iy) = (nx as i32, y as i32);
+    let clear = (0..=BODY_H).all(|h| !game.terrain.is_blocked(ix - BODY_HALF_W, iy - h) && !game.terrain.is_blocked(ix, iy - h) && !game.terrain.is_blocked(ix + BODY_HALF_W, iy - h));
+    if clear { game.teams[ti].soldiers[si].pos.x = nx; }
+    clear
+}
+
+/// Resting on another worm by the real WA mask shapes (the airborne solver's own notion of landing on a worm), as opposed to
+/// `is_on_soldier`'s rectangle. A worm that lands on a shoulder settles lower than "feet 3 px from the head", so the rectangle
+/// alone left him standing, not falling and unable to act.
+fn is_resting_on_worm(game: &GameState, ti: usize, si: usize) -> bool {
+    use crate::physics::wa_worm as ww;
+    let s = &game.teams[ti].soldiers[si];
+    if s.on_fire_ticks > 0 { return false; }
+    let others: Vec<(i32, i32)> = game.teams.iter().enumerate().flat_map(|(oti, t)| t.soldiers.iter().enumerate().filter_map(move |(osi, o)| {
+        if (oti == ti && osi == si) || !o.is_alive() || o.on_fire_ticks > 0 { None } else { Some((o.pos.x as i32, o.pos.y as i32 - ww::FOOT_OFFSET)) }
+    })).collect();
+    ww::body_from_foot(s.pos.x, s.pos.y, 0, 0).resting_on_worm(&others)
 }
 
 pub fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
@@ -1259,7 +1400,7 @@ pub fn process_weapon_menu(game: &mut GameState, input: &InputState) -> bool {
             {
                 use crate::physics::projectile::WeaponKind;
                 let ck = game.teams[ti].weapons[game.weapon_menu_cursor].0;
-                if ck == WeaponKind::Grenade {
+                if ck == WeaponKind::Grenade || ck == WeaponKind::BananaBomb {
                     if input.just_pressed(Button::L1) { game.aim.fuse_ticks = game.aim.fuse_ticks.saturating_sub(30).max(30); }
                     if input.just_pressed(Button::R1) { game.aim.fuse_ticks = (game.aim.fuse_ticks + 30).min(150); }
                 }
@@ -1397,7 +1538,7 @@ pub fn process_aim(game: &mut GameState, input: &InputState, aim_angle_override:
     }
 
     // Grenade / Cluster Bomb fuse: L1 = shorter, R1 = longer (1-5 s in 1-s steps at 30 Hz)
-    if ck == WeaponKind::Grenade || ck == WeaponKind::ClusterBomb {
+    if ck == WeaponKind::Grenade || ck == WeaponKind::ClusterBomb || ck == WeaponKind::BananaBomb {
         if input.just_pressed(Button::L1) { game.aim.fuse_ticks = game.aim.fuse_ticks.saturating_sub(30).max(30); }
         if input.just_pressed(Button::R1) { game.aim.fuse_ticks = (game.aim.fuse_ticks + 30).min(150); }
     }
@@ -1757,6 +1898,16 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         return;
     }
 
+    // Super Bot (WA Super Sheep): placed like the Jumpbot, A again flies it.
+    if weapon == WeaponKind::SuperSheep {
+        if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
+            let ti = game.active_team();
+            let si = game.teams[ti].active;
+            fire_bot(game, ti, si, true);
+        }
+        return;
+    }
+
     // Baseball bat: melee swing.
     if weapon == WeaponKind::BaseballBat {
         if input.just_pressed(Button::A) && game.server_fire_grace == 0 {
@@ -1932,6 +2083,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
                 fall_y:      -200.0,
                 vel_y:       8.0,
                 bounce_count: 0,
+                vel_x: 0.0,
             });
         }
         return;
@@ -2001,7 +2153,7 @@ fn process_fire(game: &mut GameState, input: &InputState, muzzle_override: Optio
         // normal full charge); the extra band 1.0..MAX_CHARGE is bonus range.
         // The bazooka uses the reference game's exact meter: 1.5 s from empty to full
         // (rate and cap from physics::tick), auto-firing at exactly full charge.
-        let (rate, cap) = if game.teams[game.active_team()].current_weapon() == WeaponKind::Bazooka {
+        let (rate, cap) = if crate::physics::tick::uses_wa_charge(game.teams[game.active_team()].current_weapon()) {
             (crate::physics::tick::BAZOOKA_CHARGE_RATE, crate::physics::tick::BAZOOKA_MAX_CHARGE)
         } else {
             (CHARGE_RATE, MAX_CHARGE)
@@ -2298,7 +2450,7 @@ fn step_jackhammer(game: &mut GameState, input: &InputState) {
 const JUMPBOT_W: i32 = 10;
 const JUMPBOT_H: i32 = 14;
 const JUMPBOT_HALF_W: i32 = 5;
-const JUMPBOT_FUSE_TICKS: u32 = 300; // 10s @ 30Hz total lifespan
+const JUMPBOT_FUSE_TICKS: u32 = 600; // 20s @ 30Hz: WA sheep fuse rec+0x8c = 20000 ms, obj[0xdf] -= 20 per 50 Hz frame
 /// Countdown number only appears above its head for the final 5 seconds.
 const JUMPBOT_COUNTDOWN_TICKS: u32 = 150;
 /// Ground gait: a hop cadence rather than a flat walk, matching the live-measured
@@ -2328,7 +2480,9 @@ const JUMPBOT_JUMP_VX: f32 = 3.8;
 /// Place a Jumpbot at the active soldier's feet — instant placement like TNT,
 /// no aim/charge. It then walks/climbs/falls autonomously (see `step_jumpbot`)
 /// until its fuse expires, it touches water, or it's caught in another blast.
-pub fn fire_jumpbot(game: &mut GameState, ti: usize, si: usize) {
+pub fn fire_jumpbot(game: &mut GameState, ti: usize, si: usize) { fire_bot(game, ti, si, false) }
+
+pub fn fire_bot(game: &mut GameState, ti: usize, si: usize, super_bot: bool) {
     use crate::game::state::JumpbotState;
     if !game.teams[ti].consume_weapon() { return; }
     game.teams[ti].prune_empty_weapons();
@@ -2339,6 +2493,7 @@ pub fn fire_jumpbot(game: &mut GameState, ti: usize, si: usize) {
         x: sx, y: sy, vel_y: 0.0, vel_x: 0.0, facing,
         fuse_ticks: JUMPBOT_FUSE_TICKS, grounded: false, walk_ticks: 0,
         owner_team: ti, just_jumped: false, wa: None,
+        super_bot, flying: false, heading: 0.0, fly_phase: 0,
     });
     game.teams[ti].soldiers[si].has_fired = true;
     game.turn.on_fired();
@@ -2478,36 +2633,66 @@ pub fn step_jumpbot(game: &mut GameState, input: &InputState) {
     use crate::physics::WeaponKind;
     use crate::world::WorldPos;
 
-    let manual_detonate = game.jumpbot.as_ref().map_or(false, |r| {
+    let kind = if game.jumpbot.as_ref().map_or(false, |r| r.super_bot) { WeaponKind::SuperSheep } else { WeaponKind::Jumpbot };
+    let a_press = game.jumpbot.as_ref().map_or(false, |r| {
         r.owner_team == game.active_team() && input.just_pressed(Button::A)
     });
-    if manual_detonate {
+    let mut detonate = false;
+    if a_press {
+        let r = game.jumpbot.as_mut().unwrap();
+        if !r.super_bot { detonate = true; }
+        else {
+            // WA Super Sheep: A starts flight (heading up), A again walks, a further A detonates.
+            match r.fly_phase {
+                0 => { r.fly_phase = 1; r.flying = true; r.heading = 0.0; r.wa = None; }
+                1 => { r.fly_phase = 2; r.flying = false; r.wa = None; }
+                _ => detonate = true,
+            }
+        }
+    }
+    let boom = |game: &mut GameState| {
         let (x, y) = { let r = game.jumpbot.as_ref().unwrap(); (r.x, r.y) };
         game.jumpbot = None;
-        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Jumpbot, 1.0);
+        game.apply_explosion_force(WorldPos::new(x, y), kind, 1.0);
         game.emit_sound(crate::audio::Sfx::Jumpbot);
-        return;
-    }
+    };
+    if detonate { boom(game); return; }
 
     let expired = {
         let r = match game.jumpbot.as_mut() { Some(r) => r, None => return };
         r.fuse_ticks = r.fuse_ticks.saturating_sub(1);
         r.fuse_ticks == 0
     };
-    if expired {
-        let (x, y) = { let r = game.jumpbot.as_ref().unwrap(); (r.x, r.y) };
-        game.jumpbot = None;
-        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Jumpbot, 1.0);
-        game.emit_sound(crate::audio::Sfx::Jumpbot);
-        return;
-    }
+    if expired { boom(game); return; }
 
+    let flying = game.jumpbot.as_ref().map_or(false, |r| r.flying);
     let in_water = game.jumpbot.as_ref().map_or(false, |r| r.y >= crate::world::WATER_Y as f32);
-    if in_water {
-        let (x, y) = { let r = game.jumpbot.as_ref().unwrap(); (r.x, r.y) };
-        game.jumpbot = None;
-        game.apply_explosion_force(WorldPos::new(x, y), WeaponKind::Jumpbot, 1.0);
-        game.emit_sound(crate::audio::Sfx::Jumpbot);
+    if in_water && !flying { boom(game); return; }
+
+    if flying {
+        // WA Super Sheep flight (decompile 0x50ac60): 0x5b0/65536 turn per 50 Hz frame while Left/Right is held,
+        // 8 px/frame above the waterline and 4 below; explodes when its footprint touches land.
+        use crate::physics::wa_missile::WaMissile;
+        use crate::physics::wa_collide::overlaps_land;
+        let steer = (input.held(Button::Right) as i32 - input.held(Button::Left) as i32) as f32
+            * (0x5b0 as f32 / 65536.0 * 360.0);
+        let (mut x, mut y, mut h, age) = { let r = game.jumpbot.as_ref().unwrap(); (r.x, r.y, r.heading, r.walk_ticks) };
+        let world_w = crate::world::WORLD_W as i32;
+        let terrain = &game.terrain;
+        let solid = |px: i32, py: i32| px < 0 || px >= world_w || (py >= 0 && terrain.is_blocked(px, py));
+        let mut hit = false;
+        for _ in 0..WaMissile::frames_for_age(age) {
+            h += steer;
+            let speed = if y >= crate::world::WATER_Y as f32 { 4.0 } else { 8.0 };
+            let rad = h.to_radians();
+            x += speed * rad.sin();
+            y -= speed * rad.cos();
+            if overlaps_land(&solid, crate::physics::wa_sheep::SHAPE, x as i32, (y as i32) - crate::physics::wa_sheep::HALF_H) { hit = true; break; }
+        }
+        let r = game.jumpbot.as_mut().unwrap();
+        r.x = x; r.y = y; r.heading = h.rem_euclid(360.0); r.grounded = false; r.walk_ticks = r.walk_ticks.wrapping_add(1);
+        if h.to_radians().sin().abs() > 0.05 { r.facing = if h.to_radians().sin() > 0.0 { 1 } else { -1 }; }
+        if hit || y < -400.0 { boom(game); }
         return;
     }
 
@@ -2555,19 +2740,20 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
     let g = match game.garcia.as_mut() { Some(g) => g, None => return };
 
     if g.falling {
-        // Gravity accelerates fall; positive vel_y = downward
-        g.vel_y = (g.vel_y + 1.2).min(20.0);
+        // WA Concrete Donkey (rec 46, decompile 2026-11-20): a one-bomb strike whose bomb is a bazooka-class projectile spawned at
+        // (target x, y = -208 in WA's level frame) with v = 0, standard gravity 0.24 px/frame^2 (no speed cap), wind 70 %, that explodes
+        // ONCE on first contact: damage 100, radius 71, force 100 %. No bounce, no side blasts, no tunnelling.
+        const GRAVITY_TICK: f32 = 0.24 * (5.0 / 3.0) * (5.0 / 3.0);
+        g.vel_y += GRAVITY_TICK;
+        g.vel_x += game.wind.value() * crate::physics::tick::BAZOOKA_WIND_SCALE * 0.7;
         g.fall_y += g.vel_y;
+        g.cursor_x = (g.cursor_x + g.vel_x).clamp(0.0, WORLD_W as f32 - 1.0);
 
         let fx = g.cursor_x as i32;
         let fy = g.fall_y as i32;
 
-        // Collision: find the actual terrain surface below the sprite center.
-        // Use surface_y_at so we always detect terrain even after explosion craters.
-        // Fall back to the water line (not WORLD_H) when the column has no solid
-        // terrain — otherwise a hand dropped over open water free-falls far past
-        // the visible surface before "hitting ground", so the smash/splash never
-        // plays anywhere near the actual water line.
+        // Collision: the actual terrain surface below the sprite centre (surface_y_at keeps working after craters). With no solid
+        // terrain in the column fall back to the water line so a donkey over water splashes where it can be seen.
         let surface_y = if fx >= 0 && fx < crate::world::WORLD_W as i32 {
             game.terrain.surface_y_at(fx as u32)
                 .map(|y| y as i32)
@@ -2576,45 +2762,17 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
             crate::world::WATER_Y as i32
         };
 
-        // Hit when the sprite center reaches the terrain surface (accounting for half-height)
+        // Hit when the sprite's lowest point reaches the terrain surface.
         let hit_ground = g.vel_y > 0.0 && fy + 54 >= surface_y;
-
-        // Extract what we need before potentially dropping the borrow
-        let cursor_x   = g.cursor_x;
-        let bounce_count = g.bounce_count;
-        let do_carve   = fy >= 0 && g.vel_y > 0.0 && !hit_ground;
-        let carve_pos  = (g.cursor_x, g.fall_y);
+        let cursor_x = g.cursor_x;
         drop(g);
-
-        if do_carve {
-            let crater = crate::world::Crater::new(carve_pos.0, carve_pos.1, 24.0);
-            crater.carve(&mut game.terrain);
-            game.crater_log.push((carve_pos.0, carve_pos.1, 24.0));
-        }
 
         if hit_ground {
             let land_y = surface_y as f32;
-            let at_water = land_y >= crate::world::WATER_Y as f32;
-
-            if let Some(g) = game.garcia.as_mut() { g.fall_y = land_y - 54.0; }
             let hit_pos = crate::world::WorldPos::new(cursor_x, land_y);
-
-            // Shrink explosion force slightly each bounce so later hits feel lighter
-            let force_scale = (1.0f32 - bounce_count as f32 * 0.1).max(0.4);
-            game.apply_explosion_force(hit_pos, WeaponKind::Garcia, force_scale);
-            let left  = crate::world::WorldPos::new(hit_pos.x - 18.0, hit_pos.y);
-            let right = crate::world::WorldPos::new(hit_pos.x + 18.0, hit_pos.y);
-            game.apply_explosion_scaled(left,  WeaponKind::Garcia, force_scale * 0.7, 0.8, 0.4);
-            game.apply_explosion_scaled(right, WeaponKind::Garcia, force_scale * 0.7, 0.8, 0.4);
-
+            game.apply_explosion(hit_pos, WeaponKind::Garcia);
             game.emit_sound(crate::audio::Sfx::Smash);
-
-            if at_water {
-                game.garcia = None;
-            } else if let Some(g) = game.garcia.as_mut() {
-                g.bounce_count += 1;
-                g.vel_y = -12.0;
-            }
+            game.garcia = None;
         }
         return;
     }
@@ -2651,8 +2809,9 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
         game.turn.on_fired();
         if let Some(g) = game.garcia.as_mut() {
             g.falling      = true;
-            g.fall_y       = g.cursor_y - 200.0;
-            g.vel_y        = 8.0;
+            g.fall_y       = crate::world::WATER_Y as f32 - 696.0 - 208.0; // WA: y = -208 in the level frame, whatever the cursor height
+            g.vel_y        = 0.0;
+            g.vel_x        = 0.0;
             g.bounce_count = 0;
         }
         game.emit_sound(crate::audio::Sfx::Garcia);
@@ -2667,18 +2826,29 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
     use crate::world::{Vec2, WorldPos, WORLD_W, SCREEN_W};
 
     const BOMB_COUNT:   u32 = 5;
-    const BOMB_SPACING: f32 = 20.0;
-    const PLANE_SPEED:  f32 = 9.0;
+    const BOMB_SPACING: f32 = 32.0; // WA rec 27 +0x40
+    // WA strike object (0x5553c0 / 0x555a20 / 0x555800, rec 27): the plane starts 1024 px before the target and flies 32 px per 50 Hz
+    // frame (= BOMB_SPACING: one bomb per frame), a bomb leaves the plane at y = -208 (WA level frame) with vy 0 and vx = 4 px/frame
+    // in the flight direction (rec+0x44 = 100 -> 100*65536/25), gravity 0.24 px/frame^2, no wind. The first bomb is released once
+    // |plane - target| <= R = (4 px * frames the bomb needs to fall to the target y) + count*spacing/2.
+    const PLANE_SPEED:  f32 = 32.0 * 5.0 / 3.0; // px per 30 Hz tick
+    const APPROACH:     f32 = 1024.0;
+    const BOMB_VX:      f32 = 4.0 * 5.0 / 3.0;
+    /// Frame index (0-based, 32 px per frame from the start) of the first drop for a target at `ty`.
+    fn first_drop_frame(ty: f32) -> u32 {
+        let spawn_y = crate::world::WATER_Y as f32 - 696.0 - 208.0;
+        let (mut y, mut vy, mut lead) = (spawn_y, 0.0f32, 0.0f32);
+        if ty > spawn_y {
+            loop { vy += 0.24; lead += 4.0; y += vy; if y >= ty { break; } }
+        }
+        let r = (lead + BOMB_COUNT as f32 * BOMB_SPACING / 2.0).max(BOMB_SPACING * 4.0 / 3.0).min(APPROACH);
+        ((APPROACH - r) / BOMB_SPACING).ceil().max(0.0) as u32
+    }
     const CURSOR_SPEED: f32 = 14.0;
 
-    // Returns the world X where bomb index `i` (0..5, left-to-right) should drop.
-    fn bomb_x(cursor_x: f32, i: u32) -> f32 {
-        let half = (BOMB_COUNT as f32 - 1.0) / 2.0;
-        (cursor_x + (i as f32 - half) * BOMB_SPACING).clamp(0.0, WORLD_W as f32 - 1.0)
-    }
-    // Next undroped bomb index in drop order (left-to-right for right-flying plane).
-    fn next_drop_idx(dropped: u32, dir_right: bool) -> u32 {
-        if dir_right { dropped } else { BOMB_COUNT - 1 - dropped }
+    // World X where the plane releases its `k`-th bomb (k = 0..5) for a plane flying `dir` (+1/-1) at a target (tx, ty).
+    fn drop_x(tx: f32, ty: f32, dir: f32, k: u32) -> f32 {
+        tx - dir * APPROACH + dir * BOMB_SPACING * (first_drop_frame(ty) + k) as f32
     }
 
     let s = match game.airstrike.as_mut() { Some(s) => s, None => return };
@@ -2705,7 +2875,7 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
             game.turn.on_fired();
             let s = game.airstrike.as_mut().unwrap();
             s.active        = true;
-            s.plane_x       = if dir_right { s.spawn_cam_left } else { s.spawn_cam_left + SCREEN_W as f32 };
+            s.plane_x       = if dir_right { s.cursor_x - APPROACH } else { s.cursor_x + APPROACH };
             s.plane_vx      = if dir_right { PLANE_SPEED } else { -PLANE_SPEED };
             s.bombs_dropped = 0;
         } else if input.just_pressed(Button::B) {
@@ -2718,21 +2888,22 @@ fn step_airstrike(game: &mut GameState, input: &InputState) {
     let s = game.airstrike.as_mut().unwrap();
     s.plane_x += s.plane_vx;
 
-    if s.bombs_dropped < BOMB_COUNT {
-        let cursor_x  = s.cursor_x;
-        let dropped   = s.bombs_dropped;
+    // The plane covers up to two bomb spacings per tick, so release every bomb it has passed.
+    loop {
+        let s = game.airstrike.as_ref().unwrap();
+        if s.bombs_dropped >= BOMB_COUNT { break; }
+        let (cursor_x, cursor_y) = (s.cursor_x, s.cursor_y);
         let dir_right = s.direction_right;
-        let idx       = next_drop_idx(dropped, dir_right);
-        let bx        = bomb_x(cursor_x, idx);
+        let dir       = if dir_right { 1.0 } else { -1.0 };
+        let bx        = drop_x(cursor_x, cursor_y, dir, s.bombs_dropped);
         let passed    = if dir_right { s.plane_x >= bx } else { s.plane_x <= bx };
-        if passed {
-            game.projectiles.push(Projectile::new(
-                WorldPos::new(bx, 10.0),
-                Vec2::new(0.0, 3.0),
-                WeaponKind::AirStrike,
-            ));
-            game.airstrike.as_mut().unwrap().bombs_dropped += 1;
-        }
+        if !passed { break; }
+        game.projectiles.push(Projectile::new(
+            WorldPos::new(bx, crate::world::WATER_Y as f32 - 696.0 - 208.0),
+            Vec2::new(dir * BOMB_VX, 0.0),
+            WeaponKind::AirStrike,
+        ));
+        game.airstrike.as_mut().unwrap().bombs_dropped += 1;
     }
 
     let s = game.airstrike.as_ref().unwrap();
@@ -2801,7 +2972,7 @@ fn fire_weapon(game: &mut GameState) {
 
     let mut proj = Projectile::new(spawn, vel, kind);
     proj.owner = Some((ti, si));
-    if kind == WeaponKind::Grenade || kind == WeaponKind::ClusterBomb {
+    if kind == WeaponKind::Grenade || kind == WeaponKind::ClusterBomb || kind == WeaponKind::BananaBomb {
         proj.fuse = FuseState::Burning(game.aim.fuse_ticks);
     }
     if kind == WeaponKind::HomingMissile {
@@ -4042,6 +4213,23 @@ pub fn draw_weapon_menu(
                 buf.fill_rect(icon_cx - 1, icon_cy - 14, 2, 6, steel_dk);
                 buf.fill_circle(icon_cx, icon_cy - 15, 2, eye);
             }
+            WeaponKind::SuperSheep => {
+                // Jumpbot head with a red jetpack and flame behind it.
+                let steel    = if selected { Bgra::new(170, 180, 195) } else { Bgra::new(100, 108, 120) };
+                let steel_dk = Bgra::new(50, 56, 65);
+                let eye      = if selected { Bgra::new(80, 220, 255) } else { Bgra::new(40, 130, 160) };
+                let red      = if selected { Bgra::new(230, 70, 47) } else { Bgra::new(150, 50, 36) };
+                let fl       = if selected { Bgra::new(255, 200, 60) } else { Bgra::new(170, 130, 40) };
+                buf.fill_rect(icon_cx - 17, icon_cy - 8, 6, 12, steel_dk);
+                buf.fill_rect(icon_cx - 16, icon_cy - 7, 4, 10, red);
+                buf.fill_rect(icon_cx - 16, icon_cy + 4, 4, 5, fl);
+                buf.fill_rect(icon_cx - 9, icon_cy - 8, 18, 16, steel_dk);
+                buf.fill_rect(icon_cx - 8, icon_cy - 7, 16, 14, steel);
+                buf.fill_rect(icon_cx - 5, icon_cy - 2, 4, 4, eye);
+                buf.fill_rect(icon_cx + 1, icon_cy - 2, 4, 4, eye);
+                buf.fill_rect(icon_cx - 1, icon_cy - 14, 2, 6, steel_dk);
+                buf.fill_circle(icon_cx, icon_cy - 15, 2, red);
+            }
             WeaponKind::AirStrike => {
                 // Side-view plane: fuselage, cockpit, wings, tail
                 let steel = if selected { Bgra::new(180, 195, 215) } else { Bgra::new(110, 120, 135) };
@@ -4331,7 +4519,7 @@ pub fn draw_weapon_menu(
             WeaponKind::ClusterBomb => "CLUMP BOMB",
             WeaponKind::Landmine    => "MINE",
             WeaponKind::Tnt         => "TNT",
-            WeaponKind::BananaBomb  => "METEOR BOMB",
+            WeaponKind::BananaBomb  => "BANANA BOMB",
             WeaponKind::Revolver    => "REVOLVER",
             WeaponKind::NinjaRope    => "GRAPPLE",
             WeaponKind::BaseballBat  => "BAT",
@@ -4348,6 +4536,7 @@ pub fn draw_weapon_menu(
             WeaponKind::HomingMissile   => "HOMING MSL.",
             WeaponKind::Pistol          => "PISTOL",
             WeaponKind::Jumpbot           => "JUMPBOT",
+            WeaponKind::SuperSheep        => "SUPER BOT",
             _                          => "WEAPON",
         };
         let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(150, 150, 180) };
@@ -4356,7 +4545,7 @@ pub fn draw_weapon_menu(
             draw_str(buf, name, cx + cell_w/2 - str_width(name)/2, cy + cell_h - 26, nc);
             let fuse_col = if selected { Bgra::new(255, 210, 40) } else { Bgra::new(140, 120, 40) };
             draw_str(buf, "3s FIXED", cx + cell_w/2 - str_width("3s FIXED")/2, cy + cell_h - 15, fuse_col);
-        } else if *kind == WeaponKind::Grenade {
+        } else if *kind == WeaponKind::Grenade || *kind == WeaponKind::BananaBomb {
             // Fuse weapons: name + fuse selector at bottom
             draw_str(buf, name, cx + cell_w/2 - str_width(name)/2, cy + cell_h - 26, nc);
             let fuse_secs = fuse_ticks / 30;
@@ -4550,54 +4739,39 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             let hi_col   = Bgra::new(200, 60, 50);
             let dark_col = Bgra::new(80, 10, 8);
             let band_col = Bgra::new(200, 180, 50); // yellow warning band
-            // Shadow (sits at terrain surface — pos.y is first air pixel above terrain)
-            buf.fill_rect(wx - 7, wy,      14, 3, Bgra::new(0, 0, 0));
-            // Body — shifted up 10px so bottom sits at terrain surface
-            buf.fill_rect(wx - 7, wy - 23, 14, 23, dark_col);
-            buf.fill_rect(wx - 6, wy - 22, 12, 21, body_col);
-            buf.fill_rect(wx - 6, wy - 22,  2, 21, hi_col);  // left highlight
-            // Warning band
-            buf.fill_rect(wx - 7, wy - 14, 14, 3, band_col);
-            // Barrel lid top
-            buf.fill_rect(wx - 7, wy - 24, 14, 2, dark_col);
+            // Drawn at WA's oil-drum size (24x36 px) scaled like the soldiers (OBJECT_ART_SCALE); collision stays WA-sized.
+            let mut r = |x: i32, y: i32, w: i32, h: i32, c: Bgra| obj_rect(buf, wx, wy, x, y, w, h, c);
+            r(-8, 0, 16, 3, Bgra::new(0, 0, 0));        // shadow at the terrain surface
+            r(-8, -36, 16, 36, dark_col);               // body outline (16 px wide: WA's 24 px frame includes padding, read as too wide)
+            r(-7, -34, 14, 32, body_col);
+            r(-7, -34, 3, 32, hi_col);                  // left highlight
+            r(-8, -22, 16, 5, band_col);                // warning band
+            r(-8, -38, 16, 3, dark_col);                // lid
         }
     }
 
-    // 4d. Mines — flat disc with blinking red LED
+    // 4d. Mines — flat disc with blinking red LED, drawn at WA's mine size (16x8 px) scaled like the soldiers
     for mine in &game.mines {
         let wx = mine.pos.x as i32;
         let wy = mine.pos.y as i32;
         if mine.pos.x < vx0 - 16.0 || mine.pos.x >= vx1 + 16.0 { continue; }
         if wy < cam_y as i32 - 20 || wy >= cam_y as i32 + sh { continue; }
-        let dk  = Bgra::new(15,  50, 15);   // dark outline
-        let mid = Bgra::new(40, 100, 30);   // body
-        let hi  = Bgra::new(60, 135, 45);   // top highlight
-        let rim = Bgra::new(30,  75, 22);   // rim edge
-        // Shadow
-        buf.fill_rect(wx - 6, wy + 3, 13, 2, Bgra::new(0, 0, 0));
-        // Disc body — wide flat cylinder (15px wide, 6px tall)
-        buf.fill_rect(wx - 5, wy + 2,  11, 1, dk);   // bottom edge
-        buf.fill_rect(wx - 7, wy,      15, 2, mid);   // lower body
-        buf.fill_rect(wx - 7, wy - 2,  15, 2, mid);   // upper body
-        buf.fill_rect(wx - 6, wy - 3,  13, 1, rim);   // top rim
-        buf.fill_rect(wx - 5, wy - 4,  11, 1, dk);    // top dark edge
-        // Left/right curved ends
-        buf.set_pixel(wx - 7, wy + 1, rim);
-        buf.set_pixel(wx + 7, wy + 1, rim);
-        // Top face highlight strip
-        buf.fill_rect(wx - 4, wy - 3, 9, 1, hi);
-        // Red LED nub on top centre
+        let dk  = Bgra::new(15,  50, 15);
+        let mid = Bgra::new(40, 100, 30);
+        let hi  = Bgra::new(60, 135, 45);
+        let rim = Bgra::new(30,  75, 22);
+        let mut r = |x: i32, y: i32, w: i32, h: i32, c: Bgra| obj_rect(buf, wx, wy, x, y, w, h, c);
+        r(-6, 0, 12, 2, Bgra::new(0, 0, 0));     // shadow
+        r(-5, -2, 10, 3, dk);                    // bottom edge
+        r(-6, -5, 12, 4, mid);                   // body
+        r(-5, -7, 10, 2, rim);                   // top rim
+        r(-3, -7, 6, 1, hi);                     // highlight strip
         let led_on = match mine.state {
             super::state::MineState::Arming    => (game.tick / 15) % 2 == 0,
             super::state::MineState::Armed     => (game.tick / 5)  % 2 == 0,
             super::state::MineState::Triggered => (game.tick / 3)  % 2 == 0,
         };
-        if led_on {
-            buf.fill_rect(wx - 1, wy - 5, 3, 2, Bgra::new(220, 25, 25));
-            buf.set_pixel(wx, wy - 5, Bgra::new(255, 110, 110));
-        } else {
-            buf.fill_rect(wx - 1, wy - 5, 3, 2, Bgra::new(80, 10, 10));
-        }
+        r(-1, -9, 3, 2, if led_on { Bgra::new(220, 25, 25) } else { Bgra::new(80, 10, 10) });
     }
 
     mark!("objects");
@@ -4639,8 +4813,11 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                         SoldierAnim::Walking { tick: soldier.walk_ticks },
                     SoldierState::Dead =>
                         SoldierAnim::Dead,
-                    SoldierState::Idle =>
-                        SoldierAnim::Idle,
+                    SoldierState::Idle => match soldier.wa_act {
+                        Some(crate::game::soldier::WaAct::Windup { age, .. }) =>
+                            SoldierAnim::Crouch { depth: crate::renderer::skeleton::crouch_depth(age) },
+                        _ => SoldierAnim::Idle,
+                    },
                 };
                 let (gun_style, held_weapon) = if ti == active_ti && si == active_si && game.turn.is_acting() {
                     match game.active_team_ref().current_weapon() {
@@ -4671,43 +4848,38 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     }
                 };
                 let dpos = crate::world::WorldPos { x: vx_.round(), y: vy_.round() };
+                // The pixel-art soldiers are drawn at the sub-pixel position: at 0.83 px/tick a rounded position advances
+                // 1,1,1,1,1,0 px and visibly hitches.
+                let fpos = crate::world::WorldPos { x: vx_, y: vy_ };
                 buf.begin_scale(dpos.x, dpos.y, crate::renderer::draw_sprites::WORM_SPRITE_SCALE);
-                let muzzle = draw_soldier_skeletal(buf, dpos, team.color_id as usize, soldier.facing, soldier.displayed_hp, &anim, aim_angle, soldier.hp > 0,
+                let muzzle = draw_soldier_skeletal(buf, fpos, team.color_id as usize, soldier.facing, soldier.displayed_hp, &anim, aim_angle, false, // plates are drawn below
                     soldier.hat_id, soldier.uniform_color_id, soldier.boot_color_id, gun_style, held_weapon,
                     game.wind.value(), game.tick, soldier.on_fire_ticks);
                 buf.end_scale();
                 let muzzle = muzzle.map(|(mx, my)| {
                     let k = crate::renderer::draw_sprites::WORM_SPRITE_SCALE;
-                    (dpos.x + (mx - dpos.x) * k, dpos.y + (my - dpos.y) * k)
+                    (fpos.x + (mx - fpos.x) * k, fpos.y + (my - fpos.y) * k)
                 });
                 if ti == active_ti && si == active_si {
                     active_muzzle = muzzle;
                     if let Some(m) = muzzle { lstate.last_muzzle = Some(m); }
                 }
 
-                // Soldier name — bold 8px (drawn twice offset by 1px) with shadow
-                {
-                    use crate::renderer::font::{draw_str, str_width};
-                    use crate::renderer::draw_sprites::{BODY_H, TEAM_COLOURS};
-                    let col  = TEAM_COLOURS[team.color_id as usize];
-                    let dark = Bgra::new(0, 0, 0);
-                    let nw   = str_width(&soldier.name) + 1; // +1 for bold shift
-                    let nx   = dpos.x as i32 - nw / 2;
-                    let hat_lift = crate::renderer::skeleton::hat_name_lift(soldier.hat_id);
-                    let hp_top = (((crate::renderer::draw_sprites::SOLDIER_H + 28 + hat_lift) as f32) * crate::renderer::draw_sprites::WORM_SPRITE_SCALE) as i32;
-                    let ny   = dpos.y as i32 - hp_top - 12; // name sits 12px above the HP box (as before the shrink)
-                    // Shadow pass + single bold pass (was 2 shadow + 2 bold;
-                    // halved to cut per-frame glyph draw calls).
-                    draw_str(buf, &soldier.name, nx + 1, ny + 1, dark);
-                    draw_str(buf, &soldier.name, nx,     ny,     col);
+                // WA plates: name over HP (the HP value is the counting-down `displayed_hp`).
+                // WA hides the active worm's plates once he has fired (seen on the rig).
+                let hide_plates = ti == active_ti && si == active_si && soldier.has_fired;
+                if (soldier.hp > 0 || soldier.displayed_hp > 0) && !hide_plates {
+                    crate::renderer::draw_sprites::draw_worm_plates(buf, dpos.x as i32, dpos.y as i32, &soldier.name,
+                        soldier.displayed_hp, team.color_id as usize, ti == active_ti && si == active_si);
                 }
 
                 // Active-soldier marker: downward triangle, raised above name
                 if ti == active_ti && si == active_si && game.turn.is_acting() {
                     let cx  = dpos.x as i32;
                     let hat_lift = crate::renderer::skeleton::hat_name_lift(soldier.hat_id);
-                    let hp_top = (((crate::renderer::draw_sprites::SOLDIER_H + 28 + hat_lift) as f32) * crate::renderer::draw_sprites::WORM_SPRITE_SCALE) as i32;
-                    let ty  = dpos.y as i32 - hp_top - 24;
+                    let _ = hat_lift;
+                    let hp_top = crate::renderer::draw_sprites::plate_top();
+                    let ty  = dpos.y as i32 - hp_top - 32;
                     let col = crate::renderer::draw_sprites::TEAM_COLOURS[team.color_id as usize];
                     buf.fill_rect(cx - 6, ty,     13, 2, col);
                     buf.fill_rect(cx - 5, ty + 2, 11, 2, col);
@@ -4818,6 +4990,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     // 5d-2. Jumpbot: walking clockwork sprite + final-5s countdown over its head
     if let Some(ref jumpbot) = game.jumpbot {
         draw_jumpbot_sprite(buf, jumpbot.x as i32, jumpbot.y as i32, jumpbot.facing, 16, 16, jumpbot.walk_ticks, jumpbot.grounded);
+        if jumpbot.super_bot { draw_jetpack(buf, jumpbot.x as i32, jumpbot.y as i32, jumpbot.facing, jumpbot.flying, jumpbot.heading, jumpbot.walk_ticks); }
         if jumpbot.fuse_ticks <= JUMPBOT_COUNTDOWN_TICKS {
             use crate::renderer::font::{draw_str, str_width};
             let secs = (jumpbot.fuse_ticks / 30) + 1; // ceil, so it reads 5..1 not 4..0
@@ -5327,7 +5500,7 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
                     let a = if active.facing < 0 { std::f32::consts::PI - game.aim.angle } else { game.aim.angle };
                     // The bazooka's meter tops out at 1.0, so stretch it to the
                     // full bar (the shared bar is scaled to MAX_CHARGE).
-                    let p = if game.active_team_ref().current_weapon() == crate::physics::WeaponKind::Bazooka {
+                    let p = if crate::physics::tick::uses_wa_charge(game.active_team_ref().current_weapon()) {
                         game.aim.power * (MAX_CHARGE / crate::physics::tick::BAZOOKA_MAX_CHARGE)
                     } else {
                         game.aim.power
@@ -5653,7 +5826,7 @@ pub fn weapon_name(weapon: crate::physics::projectile::WeaponKind) -> &'static s
         WeaponKind::ClusterBomb     => "CLUMP BOMB",
         WeaponKind::Tnt             => "TNT",
         WeaponKind::Landmine        => "MINE",
-        WeaponKind::BananaBomb      => "METEOR BOMB",
+        WeaponKind::BananaBomb      => "BANANA BOMB",
         WeaponKind::Revolver        => "REVOLVER",
         WeaponKind::NinjaRope       => "GRAPPLE",
         WeaponKind::BaseballBat     => "BAT",
@@ -5670,6 +5843,7 @@ pub fn weapon_name(weapon: crate::physics::projectile::WeaponKind) -> &'static s
         WeaponKind::MolotovCocktail => "MOLOTOV",
         WeaponKind::HomingMissile   => "HOMING MSL.",
         WeaponKind::Jumpbot         => "JUMPBOT",
+        WeaponKind::SuperSheep      => "SUPER BOT",
         _ => "WEAPON",
     }
 }
@@ -5795,6 +5969,25 @@ fn draw_hud_world(
 /// Re-stamp the object mask each tick from current barrel and armed-mine positions.
 /// Must be called before any collision checks so soldiers and projectiles treat
 /// barrels and armed mines as solid obstacles (Worms-style object mask).
+/// Map-object art scale: soldiers are drawn at `drawn_soldier_height()` px for a 27 px WA worm (extracted from Gfx.dir:
+/// wwalk 18x27, mine 16x8, oil drum 24x36), so mines and drums use the same factor to stay in WA's proportions. Art only:
+/// collision footprints (see `stamp_objects`) keep WA's real size.
+pub fn object_art_scale() -> f32 { crate::renderer::draw_sprites::drawn_soldier_height() / 27.0 * OBJECT_ART_TRIM }
+
+/// Tuned on device: the full soldier ratio (~1.7x) read as giant next to the soldiers (their art carries padding that WA's tight
+/// 27 px worm does not), so objects use 70% of it (~1.2x): a drum is about as tall as a soldier, a mine about half his width.
+pub const OBJECT_ART_TRIM: f32 = 0.7;
+
+/// Fill a rect given in WA pixels relative to an object's foot point (`fx`,`fy`), scaled by `object_art_scale`.
+fn obj_rect(buf: &mut crate::renderer::buffer::WorldBuffer, fx: i32, fy: i32, x: i32, y: i32, w: i32, h: i32, c: Bgra) {
+    let k = object_art_scale();
+    let x0 = fx + (x as f32 * k).round() as i32;
+    let y0 = fy + (y as f32 * k).round() as i32;
+    let x1 = fx + ((x + w) as f32 * k).round() as i32;
+    let y1 = fy + ((y + h) as f32 * k).round() as i32;
+    buf.fill_rect(x0, y0, (x1 - x0).max(1) as u32, (y1 - y0).max(1) as u32, c);
+}
+
 fn stamp_objects(game: &mut GameState) {
     use crate::game::state::MineState;
     game.terrain.clear_objects();
@@ -5879,6 +6072,11 @@ fn wa_air_tick(game: &mut GameState, ti: usize, si: usize, vel: crate::world::Ve
         if f.landed { landed = true; break; }
         if body.x < 0 || (body.x >> 16) >= crate::world::WORLD_W as i32 { break; }
     }
+    // The stop rule can fire in a sweep and leave the body a pixel or two clear of whatever it hit (a flank bounce off another
+    // worm, say). WA then simply finds nothing under it next frame and keeps falling. Only count the landing if the body really is
+    // supported where it ended up; otherwise it carries on airborne with the (zeroed) velocity and falls under gravity next tick,
+    // instead of being declared Idle in mid-air beside the other soldier.
+    if landed && !body.supported_with(&solid, others) { landed = false; }
     for ((oti, osi), vy16) in launches {
         let o = &mut game.teams[oti].soldiers[osi];
         let v = crate::world::Vec2::new(0.0, ww::vel_from_16(vy16));
@@ -5915,6 +6113,10 @@ fn wa_air_tick(game: &mut GameState, ti: usize, si: usize, vel: crate::world::Ve
     // Landed.
     let _ = game.teams[ti].soldiers[si].fall.land(fy);
     let dmg = ww::fall_damage(impact_vy) as u32; // WA: from impact speed (FUN_0050dc00), not fall distance
+    if dmg > 0 {
+        crate::dlog!("fall", "tick={} team={} s={} dmg={} impact_vy={:.2}px/frame airtime={} rope_session={} rope={} foot=({:.1},{:.1})",
+            game.tick, ti, si, dmg, impact_vy as f64 / 65536.0, airtime, game.rope_session, game.rope.is_some(), fx, fy);
+    }
     if dmg > 0 {
         game.teams[ti].soldiers[si].death_cause = crate::game::soldier::DeathCause::Fall;
         game.teams[ti].soldiers[si].take_damage(dmg);
@@ -6044,7 +6246,8 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                 });
                 if pinned { continue; }
             }
-            let on_ground = is_on_ground(game, ti, si) || is_on_soldier(game, ti, si);
+            let support_now = support(game, ti, si);
+            let on_ground = support_now.is_firm();
             let state = game.teams[ti].soldiers[si].state.clone();
             match state {
                 SoldierState::Airborne { mut vel, mut spinning } => {
@@ -6318,6 +6521,15 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 if !still { break; }
                             }
                             cx = tx.clamp(1.0, crate::world::WORLD_W as f32 - 1.0);
+                            // Slid clear of the other soldier with no surface within 10 px below: he is beside the flank in open air,
+                            // not landing. `land_on_surface` returns the current height when it finds nothing, which used to "land"
+                            // him Idle in mid-air, pinned beside the other soldier and unable to act. Keep falling instead.
+                            {
+                                let hw = crate::renderer::draw_sprites::BODY_HALF_W as i32;
+                                let (fx, fy) = (cx as i32, cy as i32);
+                                let ground_below = (1..=10).any(|d| game.terrain.is_blocked(fx - hw, fy + d) || game.terrain.is_blocked(fx, fy + d) || game.terrain.is_blocked(fx + hw, fy + d));
+                                if !ground_below { vel.x = 0.0; continue; }
+                            }
                             cy = land_on_surface(&game.terrain, cx, cy) as f32;
                             let dmg = game.teams[ti].soldiers[si].fall.land(cy);
                             if dmg > 0 {
@@ -6476,11 +6688,41 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                     // together (e.g. both knocked to the map's y=0 ceiling) satisfy
                     // that landing check every Airborne tick but never satisfy the
                     // strict `is_on_soldier` here, causing the same ping-pong.
-                    if !on_ground && !is_on_ground_lenient(game, ti, si)
-                        && !is_embedded_in_terrain(game, ti, si) && !is_resting_near_soldier(game, ti, si) {
+                    if !support_now.holds() {
                         let y0 = game.teams[ti].soldiers[si].pos.y;
                         game.teams[ti].soldiers[si].fall.begin_fall(y0);
                         game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel: crate::world::Vec2::new(0.0, 0.0), spinning: false };
+                    } else if support_now == Support::NearSoldier {
+                        // Overlapping another soldier's body with nothing under him (neither on terrain nor resting on him by
+                        // WA's mask shapes): exempt from falling only so a pinned pair cannot ping-pong Idle<->Airborne. Left
+                        // exempt it is a soldier hanging beside a neighbour in open air for the rest of the match, so separate
+                        // the pair 1 px a tick instead; once clear he is no longer near anyone, `holds()` goes false and he falls.
+                        separate_from_neighbour(game, ti, si);
+                    } else if support_now == Support::Embedded {
+                        // Embedded means: body overlaps terrain, yet nothing solid within 5 px under the feet (otherwise it would
+                        // be Firm/Ridge). So it is a head or flank caught in an overhang or against a wall, with open air below
+                        // - e.g. a rising worm that "landed" on a ceiling, which the old exemption left hanging in mid-air,
+                        // unable to walk, jump or fall, until the turn timer ran out. Leaving him alone avoids relaunching a
+                        // soldier the watchdog gave up on (the ping-pong described above), so instead let him sink a few px a tick:
+                        // that moves the overlap off the ceiling, after which `holds()` is false and he falls normally, or he
+                        // reaches support. Bounded: every tick either frees him or moves him towards the ground.
+                        // (Tried `unstick_embedded_soldier` + Airborne here instead: it picks the nearest clear spot, which can be
+                        // ABOVE (a 1 px bump on the body edge is 17 px of fall away but 6 px up), so he is teleported up, falls back
+                        // onto the bump and repeats forever - worse than the hover, as the turn never settles. Sinking cannot loop.)
+                        // Sink 3 px a tick (a fast drop, not a crawl). Nothing solid is within 5 px under his feet, so this is safe.
+                        let sy = game.teams[ti].soldiers[si].pos.y;
+                        if sy + 3.0 < crate::world::WATER_Y as f32 {
+                            game.teams[ti].soldiers[si].pos.y = sy + 3.0;
+                        } else {
+                            // Down at the waterline: the world rules say anything at or below WATER_Y drowns.
+                            let ati = game.active_team();
+                            let s = &mut game.teams[ti].soldiers[si];
+                            s.death_cause = crate::game::soldier::DeathCause::Water;
+                            s.take_damage(999);
+                            s.state = SoldierState::Dead;
+                            s.wa = None;
+                            if ti == ati && si == game.teams[ati].active { game.active_worm_hit = true; }
+                        }
                     }
                 }
                 SoldierState::Dead | SoldierState::Walking { .. } => {}

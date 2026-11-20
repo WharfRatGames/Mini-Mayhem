@@ -103,7 +103,7 @@ mod tests {
         assert!(!WorldPos::new(-1.0, 0.0).in_bounds());
         assert!(!WorldPos::new(0.0, -1.0).in_bounds());
         assert!(!WorldPos::new(3200.0, 0.0).in_bounds());
-        assert!(!WorldPos::new(0.0, 480.0).in_bounds());
+        assert!(!WorldPos::new(0.0, WORLD_H as f32).in_bounds());
     }
 
     #[test]
@@ -134,14 +134,14 @@ mod tests {
         assert_eq!(WorldPos::new(0.0, 1.0).to_index(), Some(WORLD_W as usize));
         // Out of bounds
         assert_eq!(WorldPos::new(-1.0, 0.0).to_index(), None);
-        assert_eq!(WorldPos::new(0.0, 480.0).to_index(), None);
+        assert_eq!(WorldPos::new(0.0, WORLD_H as f32).to_index(), None);
     }
 
     #[test]
     fn world_pos_clamp() {
-        let clamped = WorldPos::new(-50.0, 600.0).clamped();
+        let clamped = WorldPos::new(-50.0, WORLD_H as f32 + 100.0).clamped();
         assert_eq!(clamped.x, 0.0);
-        assert_eq!(clamped.y, 479.0);
+        assert_eq!(clamped.y, (WORLD_H - 1) as f32);
     }
 
     #[test]

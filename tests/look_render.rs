@@ -13,21 +13,21 @@ fn render_looks_sheet() {
     let mut buf = WorldBuffer::new();
     // row 0: propeller hat, wind -0.8 / 0 / +0.8 at a few ticks
     for (i, (w, t)) in [(-0.8f32, 0u32), (-0.8, 4), (0.0, 0), (0.0, 4), (0.8, 0), (0.8, 4), (0.8, 8)].iter().enumerate() {
-        draw(&mut buf, 30.0 + i as f32 * 40.0, 40.0, 0, 1, 100, &SoldierAnim::Idle, None, 2, 0, 0, *w, *t);
+        draw(&mut buf, 30.0 + i as f32 * 42.0, 70.0, 0, 1, 100, &SoldierAnim::Idle, None, 2, 0, 0, *w, *t);
     }
     // row 1: aiming with plasma gun at several angles, right then left
     for (i, a) in [-0.6f32, -0.2, 0.0, 0.4, 0.9].iter().enumerate() {
-        draw(&mut buf, 30.0 + i as f32 * 40.0, 90.0, 2, 1, 100, &SoldierAnim::Idle, Some(*a), 4, 3, 6, 0.0, 0);
+        draw(&mut buf, 30.0 + i as f32 * 42.0, 125.0, 2, 1, 100, &SoldierAnim::Idle, Some(*a), 4, 3, 6, 0.0, 0);
     }
-    draw(&mut buf, 240.0, 90.0, 2, -1, 100, &SoldierAnim::Idle, Some(0.5), 4, 3, 6, 0.0, 0);
+    draw(&mut buf, 240.0, 125.0, 2, -1, 100, &SoldierAnim::Idle, Some(0.5), 4, 3, 6, 0.0, 0);
     // row 2: walking Viking + shotgun, spin with top hat, dead with halo, rope with samurai
-    draw(&mut buf, 30.0, 140.0, 1, 1, 100, &SoldierAnim::Walking { tick: 3 }, None, 15, 2, 2, 0.0, 0);
-    draw(&mut buf, 70.0, 140.0, 3, 1, 100, &SoldierAnim::Walking { tick: 6 }, None, 31, 5, 10, 0.0, 0);
-    draw(&mut buf, 110.0, 140.0, 4, 1, 100, &SoldierAnim::Airborne { vel_x: 1.0, vel_y: 0.0, airtime: 5, spinning: true }, None, 1, 0, 1, 0.0, 0);
-    draw(&mut buf, 150.0, 140.0, 0, 1, 0, &SoldierAnim::Dead, None, 8, 0, 0, 0.0, 0);
-    draw(&mut buf, 190.0, 140.0, 2, -1, 100, &SoldierAnim::Idle, None, 36, 4, 17, 0.0, 0);
-    draw(&mut buf, 230.0, 140.0, 1, 1, 100, &SoldierAnim::Idle, None, 28, 1, 0, 0.0, 0);
-    let (w, h) = (300usize, 170usize);
+    draw(&mut buf, 30.0, 185.0, 1, 1, 100, &SoldierAnim::Walking { tick: 3 }, None, 15, 2, 2, 0.0, 0);
+    draw(&mut buf, 70.0, 185.0, 3, 1, 100, &SoldierAnim::Walking { tick: 6 }, None, 31, 5, 10, 0.0, 0);
+    draw(&mut buf, 110.0, 185.0, 4, 1, 100, &SoldierAnim::Airborne { vel_x: 1.0, vel_y: 0.0, airtime: 5, spinning: true }, None, 1, 0, 1, 0.0, 0);
+    draw(&mut buf, 150.0, 185.0, 0, 1, 0, &SoldierAnim::Dead, None, 8, 0, 0, 0.0, 0);
+    draw(&mut buf, 190.0, 185.0, 2, -1, 100, &SoldierAnim::Idle, None, 36, 4, 17, 0.0, 0);
+    draw(&mut buf, 230.0, 185.0, 1, 1, 100, &SoldierAnim::Idle, None, 28, 1, 0, 0.0, 0);
+    let (w, h) = (300usize, 200usize);
     let mut ppm = format!("P6\n{} {}\n255\n", w, h).into_bytes();
     for y in 0..h { for x in 0..w {
         let o = (y * WORLD_W as usize + x) * 4;

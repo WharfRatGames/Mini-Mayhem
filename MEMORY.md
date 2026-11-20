@@ -1,5 +1,8 @@
 # Arty Developer Memory
 
+> **RULE (user, 2026-11-19): ALWAYS use `tools/wa_rig` FIRST to measure/verify any WA value or behaviour (HP, damage, speeds, timings, spawns, offsets) before decompile-guessing or hand-writing gdb. Add a scenario + probes/fields there if one is missing. Arty-side checks: `cargo run --release --example scenario -- <hp|bazooka|banana|direct>` in /home/dusty/arty-experimental.**
+> Resume file: /home/dusty/worms_decomp/resume.md (section START HERE).
+
 ## CRITICAL RULES (never violate)
 1. NEVER heredocs for Rust code — use the Edit tool for all .rs edits (heredocs corrupt)
 2. Always cp src/net/msg.rs src/server/msg.rs after msg changes (STRUCTS ONLY — server's

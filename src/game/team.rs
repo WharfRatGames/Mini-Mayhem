@@ -268,13 +268,16 @@ mod tests {
     #[test]
     fn default_loadout_matches_team_loadout() {
         let t = team();
-        assert_eq!(t.weapons[0], (WeaponKind::Bazooka, None));   // infinite
-        assert_eq!(t.weapons[1], (WeaponKind::Grenade, None));   // infinite
-        assert_eq!(t.weapons[2], (WeaponKind::Shotgun, None));   // infinite
-        assert_eq!(t.weapons[5], (WeaponKind::NinjaRope, Some(5))); // 5 uses
-        assert_eq!(t.weapons[8], (WeaponKind::Uzi, Some(2)));           // MAC-10 x2
-        assert_eq!(t.weapons[9], (WeaponKind::MolotovCocktail, None));  // infinite
-        assert_eq!(t.weapons.len(), 11);
+        // Slots follow `menu_sort_key`, so look weapons up by kind instead of by index.
+        let get = |k: WeaponKind| t.weapons.iter().find(|w| w.0 == k).copied();
+        assert_eq!(get(WeaponKind::Bazooka), Some((WeaponKind::Bazooka, None)));     // infinite
+        assert_eq!(get(WeaponKind::Pistol), Some((WeaponKind::Pistol, None)));       // infinite
+        assert_eq!(get(WeaponKind::Grenade), Some((WeaponKind::Grenade, None)));     // infinite
+        assert_eq!(get(WeaponKind::Shotgun), Some((WeaponKind::Shotgun, None)));     // infinite
+        assert_eq!(get(WeaponKind::NinjaRope), Some((WeaponKind::NinjaRope, Some(5)))); // 5 uses
+        assert_eq!(get(WeaponKind::Uzi), Some((WeaponKind::Uzi, None)));             // MAC-10 infinite
+        assert_eq!(get(WeaponKind::MolotovCocktail), Some((WeaponKind::MolotovCocktail, Some(2))));
+        assert_eq!(t.weapons.len(), 14);
         assert_eq!(t.selected_weapon, 0);
         assert_eq!(t.current_weapon(), WeaponKind::Bazooka);
     }
@@ -289,11 +292,12 @@ mod tests {
     #[test]
     fn consume_limited_weapon_decrements_then_fails() {
         let mut t = team();
-        t.selected_weapon = 8; // Uzi (MAC-10) x2
+        let i = t.weapons.iter().position(|w| w.0 == WeaponKind::MolotovCocktail).unwrap(); // x2
+        t.selected_weapon = i;
         assert!(t.consume_weapon());
-        assert_eq!(t.weapons[8].1, Some(1));
+        assert_eq!(t.weapons[i].1, Some(1));
         assert!(t.consume_weapon());
-        assert_eq!(t.weapons[8].1, Some(0));
+        assert_eq!(t.weapons[i].1, Some(0));
         assert!(!t.consume_weapon()); // out of ammo
     }
 
@@ -308,21 +312,23 @@ mod tests {
     #[test]
     fn add_weapon_existing_tops_up_ammo() {
         let mut t = team();
-        t.add_weapon(WeaponKind::Uzi, Some(3)); // starts at 2
-        assert_eq!(t.weapons[8].1, Some(5));
+        t.add_weapon(WeaponKind::MolotovCocktail, Some(3)); // starts at 2
+        let i = t.weapons.iter().position(|w| w.0 == WeaponKind::MolotovCocktail).unwrap();
+        assert_eq!(t.weapons[i].1, Some(5));
     }
 
     #[test]
     fn add_weapon_upgrades_to_infinite() {
         let mut t = team();
-        t.add_weapon(WeaponKind::Uzi, None);
-        assert_eq!(t.weapons[8].1, None);
+        t.add_weapon(WeaponKind::MolotovCocktail, None);
+        let i = t.weapons.iter().position(|w| w.0 == WeaponKind::MolotovCocktail).unwrap();
+        assert_eq!(t.weapons[i].1, None);
     }
 
     #[test]
     fn prune_empty_weapons_drops_zero_ammo() {
         let mut t = team();
-        t.selected_weapon = 8; // Uzi (MAC-10) x2
+        t.selected_weapon = t.weapons.iter().position(|w| w.0 == WeaponKind::MolotovCocktail).unwrap(); // x2
         t.consume_weapon();
         t.consume_weapon(); // now Some(0)
         let before = t.weapons.len();

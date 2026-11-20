@@ -53,7 +53,7 @@ impl WeaponKind {
             Self::Landmine       => 55.0,
             Self::Tnt            => 78.0,   // 2.5× grenade
             Self::HolyHandGrenade => 56.0,
-            Self::AirStrike      => 45.0,
+            Self::AirStrike      => 60.0,   // WA rec 27 bomb: radius 60
             Self::Minigun        => 8.0,
             Self::Uzi            => 6.0,
             Self::BaseballBat    => 0.0,    // knockback only, no blast
@@ -64,17 +64,17 @@ impl WeaponKind {
             Self::MineLayer      => 25.0,
             Self::ConcreteDonkey => 40.0,
             Self::DeathExplosion => 50.0,
-            Self::BananaBomb     => 14.0,   // fragment blast radius
-            Self::SuperSheep     => 55.0,
+            Self::BananaBomb     => 51.0,   // WA banana (rec 8) and its pieces (rec 42): radius 51
+            Self::SuperSheep     => 78.0,   // WA rec 23/24 sheep: radius 78, damage 75, force 100
             Self::NinjaRope      => 0.0,
             Self::Revolver       => 0.0,    // hitscan, no blast
             Self::Blasthive        => 15.0,   // per bee sting (wider for reliable hits)
             Self::BlackHoleBomb    => 0.0,    // no crater; gravity well handles range
             Self::PlasmaTorch      => 0.0,    // tunnels terrain; no blast
-            Self::Garcia           => 55.0,
+            Self::Garcia           => 71.0,   // WA rec 46 (Concrete Donkey) radius 71
             Self::MolotovCocktail  => 55.0,   // small shattering blast; fire does the work
             Self::Pistol           => 0.0,    // hitscan, no blast
-            Self::Jumpbot            => 55.0,
+            Self::Jumpbot            => 78.0,   // WA sheep rec 23
         }
     }
 
@@ -88,7 +88,7 @@ impl WeaponKind {
             Self::Landmine       => 50,
             Self::Tnt            => 75,
             Self::HolyHandGrenade => 100,
-            Self::AirStrike      => 50,
+            Self::AirStrike      => 30,     // WA rec 27 bomb: damage 30
             Self::Minigun        => 12,   // per bullet
             Self::Uzi            => 5,    // per bullet (40% cut from 8)
             Self::BaseballBat    => 30,
@@ -98,15 +98,15 @@ impl WeaponKind {
             Self::HomingMissile  => 50,
             Self::MineLayer      => 50,
             Self::ConcreteDonkey => 100,
-            Self::DeathExplosion => 40,
-            Self::BananaBomb     => 18,   // fragment damage (direct hit max 38 — can't one-shot)
+            Self::DeathExplosion => 30,   // WA worm death explosion, Intermediate (rig death_expl: p2=30, force 100)
+            Self::BananaBomb     => 75,   // WA rec 8 / 42 damage
             Self::SuperSheep     => 75,
             Self::NinjaRope      => 0,
             Self::Revolver       => 15,
             Self::Blasthive        => 5,     // per bee sting
             Self::BlackHoleBomb    => 35,    // collapse burst damage
             Self::PlasmaTorch      => 0,     // no explosion
-            Self::Garcia           => 45,
+            Self::Garcia           => 100,    // WA rec 46 damage 100
             Self::MolotovCocktail  => 15,    // direct-impact damage; fire patches do the rest
             Self::Pistol           => 5,     // per bullet
             Self::Jumpbot            => 75,
@@ -150,13 +150,14 @@ impl WeaponKind {
                 | Self::ClusterBomb
                 | Self::Tnt
                 | Self::HolyHandGrenade
+                | Self::BananaBomb
         )
     }
 
     /// Returns true if the player can adjust the fuse before throwing (L1/R1).
     /// HHG has a fixed 3-second fuse; only Grenade/ClusterBomb/Tnt are adjustable.
     pub fn has_adjustable_fuse(self) -> bool {
-        matches!(self, Self::Grenade | Self::ClusterBomb | Self::Tnt)
+        matches!(self, Self::Grenade | Self::ClusterBomb | Self::Tnt | Self::BananaBomb)
     }
 
     /// Default fuse duration in physics ticks (30 ticks = 1 second).
@@ -167,7 +168,7 @@ impl WeaponKind {
             Self::ClusterBomb     => Some(60),  // 3 s
             Self::Tnt             => None,      // fuse is random 4-5 s, set on spawn
             Self::HolyHandGrenade => Some(90),  // 3 s at 30 Hz
-            Self::BananaBomb      => None,       // no fuse — explodes on terrain contact
+            Self::BananaBomb      => Some(90),   // player-set like the grenade (L1/R1); pieces get 3 s
             Self::BlackHoleBomb   => None,
             _                     => None,
         }
@@ -218,7 +219,7 @@ impl WeaponKind {
             Self::Landmine       => "MINE",
             Self::Tnt            => "TNT",
             Self::HolyHandGrenade => "SACRED ORDNANCE",
-            Self::BananaBomb     => "METEOR BOMB",
+            Self::BananaBomb     => "BANANA BOMB",
             Self::AirStrike      => "AIR STRIKE",
             Self::HomingMissile  => "HOMING MISSILE",
             Self::Revolver       => "REVOLVER",
@@ -407,6 +408,8 @@ pub struct Projectile {
     pub cleared_owner: bool,
     /// Bazooka only: the shell's WA fixed-point state (wa_missile.rs). Derived data: rebuilt from `pos`/`vel` when absent.
     pub wa: Option<crate::physics::wa_missile::WaMissile>,
+    /// Grenade only: WA fixed-point thrown-weapon state (wa_thrown.rs). Derived data like `wa`.
+    pub thrown: Option<crate::physics::wa_thrown::Thrown>,
 }
 
 impl Projectile {
@@ -427,22 +430,24 @@ impl Projectile {
             owner: None,
             cleared_owner: false,
             wa: None,
+            thrown: None,
         }
     }
 
-    /// Create a Meteor Bomb fragment (BananaBomb sub-munition) — explodes on terrain contact.
+    /// Create a Banana Bomb piece (WA rec 42): bounces at 60% and explodes when its 3 s fuse runs out.
     pub fn new_meteor_fragment(pos: WorldPos, vel: Vec2) -> Self {
         Self {
             pos,
             vel,
             kind: WeaponKind::BananaBomb,
             age_ticks: 0,
-            fuse: FuseState::None,
+            fuse: FuseState::Burning(90), // WA rec 42: 3 s
             is_fragment: true,
             homing_target: None,
             owner: None,
             cleared_owner: false,
             wa: None,
+            thrown: None,
         }
     }
 
@@ -453,12 +458,13 @@ impl Projectile {
             vel,
             kind: WeaponKind::ClusterBomb,
             age_ticks: 0,
-            fuse: FuseState::Burning(30), // ~1 s to bounce before exploding
+            fuse: FuseState::Burning(90), // WA rec 7 pieces: 3000 ms fuse (wa_rig)
             is_fragment: true,
             homing_target: None,
             owner: None,
             cleared_owner: false,
             wa: None,
+            thrown: None,
         }
     }
 
@@ -475,6 +481,7 @@ impl Projectile {
             owner: None,
             cleared_owner: false,
             wa: None,
+            thrown: None,
         }
     }
 
@@ -491,6 +498,7 @@ impl Projectile {
             owner: None,
             cleared_owner: false,
             wa: None,
+            thrown: None,
         }
     }
 
@@ -518,10 +526,8 @@ mod tests {
         let grenade = WeaponKind::Grenade.blast_radius();
         let tnt     = WeaponKind::Tnt.blast_radius();
         let ratio = tnt / grenade;
-        assert!(
-            (ratio - 2.5).abs() < 0.01,
-            "TNT blast radius should be 2.5x grenade, got {ratio:.2}x"
-        );
+        // WA values: dynamite 78 px vs grenade 50 px.
+        assert!(ratio > 1.4 && ratio < 1.7, "TNT blast radius should be ~1.55x grenade, got {ratio:.2}x");
     }
 
     #[test]
@@ -530,8 +536,8 @@ mod tests {
         let tnt     = WeaponKind::Tnt.max_damage() as f32;
         let ratio = tnt / grenade;
         assert!(
-            ratio >= 2.4 && ratio <= 2.6,
-            "TNT damage should be ~2.5x grenade, got {ratio:.2}x"
+            ratio >= 1.4 && ratio <= 1.6,
+            "TNT damage should be ~1.5x grenade (75 vs 50), got {ratio:.2}x"
         );
     }
 
@@ -551,7 +557,7 @@ mod tests {
         assert!(WeaponKind::Tnt.has_fuse());
         assert!(WeaponKind::HolyHandGrenade.has_fuse());
         assert!(WeaponKind::ClusterBomb.has_fuse());
-        // BananaBomb (Meteor) no longer has a fuse — it explodes on terrain contact.
+        assert!(WeaponKind::BananaBomb.has_fuse()); // WA banana: bouncing fuse weapon
     }
 
     #[test]

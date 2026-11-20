@@ -78,7 +78,7 @@ fn walk_swing_r(tick: u32) -> f32 {
 fn apply_anim(bones: &mut [Bone; N_BONES], anim: &SoldierAnim, f: f32) {
     use std::f32::consts::PI;
     match anim {
-        SoldierAnim::Idle => {
+        SoldierAnim::Idle | SoldierAnim::Crouch { .. } => {
             bones[ARM_R].angle =  1.3;
             bones[ARM_L].angle = -1.3;
             bones[LEG_R].angle = PI - 0.05;

@@ -32,9 +32,14 @@ pub enum WaAct {
     Windup { backflip: bool, tilt: u8, age: u32 },
     /// Landing recovery (state 0x7a, 12 frames).
     Recover { age: u32 },
+    /// Turn-around before a walk in the new direction (wa_rig walk_right vs walk_slope: first step lands 14 frames after the +0.5 px nudge).
+    Turn { age: u32 },
 }
-pub const WA_WINDUP_FRAMES: u32 = 20;
+/// Crouch before a jump/backflip, in 50 Hz frames. WA's is 20 (0.4 s); Arty shortens it to 8 (0.16 s) now that the crouch is animated
+/// (`SoldierAnim::Crouch`): long enough to read as a wind-up, short enough not to feel like input lag. Deliberate deviation.
+pub const WA_WINDUP_FRAMES: u32 = 8;
 pub const WA_RECOVER_FRAMES: u32 = 12;
+pub const WA_TURN_FRAMES: u32 = 14;
 
 /// One soldier in the game.
 #[derive(Debug, Clone)]
@@ -79,6 +84,8 @@ pub struct Soldier {
     pub hp_display_ticks: u32,
     /// Displayed HP — animates toward actual hp at 3/tick. Visual-only.
     pub displayed_hp: u8,
+    /// Sub-HP shadow of `displayed_hp` for WA's exponential countdown. Visual-only.
+    pub displayed_hp_f: f32,
     /// Damage taken but not yet shown as a popup — tallies hits landing close
     /// together (e.g. 5 pistol shots) into one number. Flushed by the sim once
     /// `damage_settle` runs out.
@@ -112,7 +119,12 @@ pub struct Soldier {
 pub const DAMAGE_SETTLE_TICKS: u32 = 20;
 /// Popup-to-countdown pause: the HP box holds its old value ~2 s after the
 /// damage number appears, then ticks down.
-pub const HP_COUNTDOWN_DELAY_TICKS: u32 = 60;
+/// WA (wa_rig, 2 runs): the real HP (worm +0x17c) only changes ~148-151 frames (~3 s, the post-shot retreat timer) after
+/// the shot is fired, i.e. ~142-147 frames after the explosion; the displayed HP (+0x178) starts easing that same frame.
+/// Arty: 20-tick tally pause + this hold = ~86 ticks (~144 frames) after the explosion.
+pub const HP_COUNTDOWN_DELAY_TICKS: u32 = 66;
+/// WA closes 10% of the gap per 50 Hz frame; one 30 Hz tick = 5/3 frames.
+const HP_EASE_PER_TICK: f32 = 0.16093; // 1 - 0.9^(5/3)
 
 impl Soldier {
     /// Create a new soldier at a world position.
@@ -138,6 +150,7 @@ impl Soldier {
             death_explosion_pending: false,
             hp_display_ticks: 0,
             displayed_hp: 100,
+            displayed_hp_f: 100.0,
             pending_damage: 0,
             damage_settle: 0,
             hp_countdown_delay: 0,
@@ -181,8 +194,12 @@ impl Soldier {
     /// (crate-watch, main sim, live-client update_visuals).
     pub fn step_hp_display(&mut self) {
         if self.hp_display_ticks > 0 { self.hp_display_ticks -= 1; }
+        if self.displayed_hp_f.floor() as u8 != self.displayed_hp {
+            self.displayed_hp_f = self.displayed_hp as f32; // set externally
+        }
         if self.displayed_hp < self.hp {
             self.displayed_hp = self.hp;
+            self.displayed_hp_f = self.hp as f32;
         } else if self.displayed_hp > self.hp {
             // Keep the box on screen while a countdown is pending or running.
             self.hp_display_ticks = self.hp_display_ticks.max(30);
@@ -191,7 +208,12 @@ impl Soldier {
             } else if self.hp_countdown_delay > 0 {
                 self.hp_countdown_delay -= 1;
             } else {
-                self.displayed_hp = self.displayed_hp.saturating_sub(1).max(self.hp);
+                let gap = self.displayed_hp_f - self.hp as f32;
+                self.displayed_hp_f = if gap <= 1.0 { self.hp as f32 }
+                    else { self.displayed_hp_f - gap * HP_EASE_PER_TICK };
+                self.displayed_hp = (self.displayed_hp_f.floor() as u8).max(self.hp);
+                // The integer box has caught up: land the float exactly on the real HP (WA's shown HP ends on it).
+                if self.displayed_hp == self.hp { self.displayed_hp_f = self.hp as f32; }
             }
         } else if self.hp_countdown_delay > 0 {
             // displayed_hp already caught up to hp (e.g. a damage flush armed

@@ -519,6 +519,22 @@ pub fn spawn_positions(
     x_hi: i32,
     max: usize,
 ) -> Vec<(i32, i32)> {
+    let mut out = spawn_positions_ordered(solid, wa_seed, x_lo, x_hi, max);
+    out.sort_by_key(|p| p.0);
+    out
+}
+
+/// As `spawn_positions` but in WA's acceptance order (before the final x-sort). Because placement is sequential and
+/// deterministic, the first `n` entries are exactly what `spawn_positions(.., n)` returns (before sorting), so a caller can ask for
+/// worms + mines + oil drums in ONE pass: worms keep their positions and the objects continue from where the worms stopped, each
+/// excluded from the others' 107 px squares, as in WA, where every worm, mine and drum is placed by the same algorithm.
+pub fn spawn_positions_ordered(
+    solid: &dyn Fn(i32, i32) -> bool,
+    wa_seed: u32,
+    x_lo: i32,
+    x_hi: i32,
+    max: usize,
+) -> Vec<(i32, i32)> {
     let (w, h) = (M_W as i32, M_H as i32);
     let (gw, gh) = ((w / 8) as usize, (h / 8) as usize);
     let mut grid = vec![0u8; gw * gh];
@@ -604,6 +620,5 @@ pub fn spawn_positions(
         }
         out.push((col, gy - 1));
     }
-    out.sort_by_key(|p| p.0);
     out
 }

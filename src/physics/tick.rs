@@ -1,4 +1,4 @@
-use super::projectile::{Projectile, WeaponKind};
+use super::projectile::{FuseState, Projectile, WeaponKind};
 use crate::world::Vec2;
 
 /// Physics constants.
@@ -57,10 +57,16 @@ pub fn muzzle_spawn(x: f32, y: f32, angle: f32, facing: f32) -> crate::world::Wo
     crate::world::WorldPos::new(x + angle.cos() * facing * 12.0, y - 4.0 - angle.sin() * 12.0)
 }
 
+/// Weapons on WA's own charge meter (+873/frame, full = 24 px/frame): same curve for bazooka and grenade.
+pub fn uses_wa_charge(kind: WeaponKind) -> bool { matches!(kind, WeaponKind::Bazooka) || uses_wa_thrown(kind) }
+
+/// Bouncing fuse weapons on `wa_thrown` (WA records 6 grenade, 7 cluster, 43 holy hand grenade: one engine, 30% floor bounce, no wind).
+pub fn uses_wa_thrown(kind: WeaponKind) -> bool { matches!(kind, WeaponKind::Grenade | WeaponKind::ClusterBomb | WeaponKind::HolyHandGrenade | WeaponKind::BananaBomb) }
+
 /// Launch speed (px/tick) for a weapon at a given charge fraction (bazooka: WA reference curve, capped at
 /// 1.0; everything else: 20 px/tick at full charge, extended meter up to `MAX_CHARGE`).
 pub fn launch_speed(kind: WeaponKind, charge: f32) -> f32 {
-    if kind == WeaponKind::Bazooka {
+    if uses_wa_charge(kind) {
         charge.min(BAZOOKA_MAX_CHARGE) * BAZOOKA_LAUNCH
     } else {
         charge.min(crate::game::loop_runner::MAX_CHARGE) * 20.0
@@ -100,15 +106,55 @@ pub fn tick_bazooka(proj: &mut Projectile, wind: f32, terrain: Option<&crate::wo
     hit
 }
 
+/// Grenade on WA's thrown-weapon engine (wa_thrown.rs), 5 WA frames per 3 ticks. Returns how many land contacts
+/// (bounces) happened this tick. `terrain = None` = collision-free prediction for live clients. `bodies` = integer pixel centres of
+/// live worms (WA grenades bounce off worm bodies; the thrower is exempt until the grenade has left it).
+pub fn tick_grenade(proj: &mut Projectile, terrain: Option<&crate::world::Terrain>, bodies: &[(i32, i32)]) -> u8 {
+    use crate::physics::wa_missile::WaMissile;
+    use crate::physics::wa_thrown::Thrown;
+    let ts = WA_TIME_SCALE as f64;
+    let mut g = proj.thrown.unwrap_or_else(|| {
+        let s = 65536.0f64;
+        let fuse_ms = match proj.fuse { FuseState::Burning(n) => (n as i32) * 1000 / 30, _ => i32::MAX / 2 };
+        Thrown::grenade((proj.pos.x as f64 * s).round() as i32, (proj.pos.y as f64 * s).round() as i32,
+            (proj.vel.x as f64 / ts * s).round() as i32, (proj.vel.y as f64 / ts * s).round() as i32, fuse_ms, proj.kind == WeaponKind::BananaBomb) // banana: 60% floor bounce (rec 8/42)
+    });
+    let mut hits = 0u8;
+    let mut exploded = false;
+    for _ in 0..WaMissile::frames_for_age(proj.age_ticks) {
+        let f = match terrain {
+            Some(t) => g.step_with(&|x, y| t.is_blocked(x, y), 0, bodies),
+            None => g.step_with(&|_, _| false, 0, bodies),
+        };
+        hits += f.hits;
+        exploded |= f.exploded;
+    }
+    proj.pos = crate::world::WorldPos::new(g.x as f32 / 65536.0, g.y as f32 / 65536.0);
+    proj.vel = crate::world::Vec2::new((g.vx as f64 / 65536.0 * ts) as f32, (g.vy as f64 / 65536.0 * ts) as f32);
+    proj.thrown = Some(g);
+    proj.age_ticks += 1;
+    if proj.fuse.is_burning() {
+        proj.fuse = if exploded { FuseState::Expired } else { FuseState::Burning(((g.fuse_ms.max(0) as i64 * 30 + 999) / 1000) as u32) };
+    } else {
+        // HHG after it stopped: Armed stays armed, Detonating(n) must keep counting down to the blast (the freeze: it never did).
+        proj.fuse = proj.fuse.tick();
+    }
+    hits
+}
+
 pub fn tick(proj: &mut Projectile, wind: f32) {
     if proj.kind == WeaponKind::Bazooka {
         tick_bazooka(proj, wind, None);
         return;
     }
+    if uses_wa_thrown(proj.kind) {
+        tick_grenade(proj, None, &[]);
+        return;
+    }
     // ── Acceleration ──────────────────────────────────────────────────────────
     // Homing missiles maintain constant speed — no gravity or wind drift.
     if proj.kind != WeaponKind::HomingMissile {
-        proj.vel.y += if proj.kind == WeaponKind::Bazooka { BAZOOKA_GRAVITY } else { GRAVITY };
+        proj.vel.y += if matches!(proj.kind, WeaponKind::Bazooka | WeaponKind::AirStrike) { BAZOOKA_GRAVITY } else { GRAVITY }; // Air Strike bomb: WA gravity 100%, wind 0 (rec 27 embedded record)
         if proj.kind.affected_by_wind() {
             let scale = if proj.kind == WeaponKind::Bazooka { BAZOOKA_WIND_SCALE } else { WIND_SCALE };
             proj.vel.x += wind * scale;
@@ -116,7 +162,7 @@ pub fn tick(proj: &mut Projectile, wind: f32) {
     }
 
     // ── Terminal velocity (Y only) ────────────────────────────────────────────
-    if proj.kind != WeaponKind::Bazooka && proj.vel.y > TERMINAL_VELOCITY {
+    if !matches!(proj.kind, WeaponKind::Bazooka | WeaponKind::AirStrike) && proj.vel.y > TERMINAL_VELOCITY {
         proj.vel.y = TERMINAL_VELOCITY;
     }
 
@@ -158,6 +204,13 @@ mod tests {
         )
     }
 
+    /// Float-engine stand-in for the old grenade tests (the grenade itself is on WA's engine now).
+    fn cluster(x: f32, y: f32, vx: f32, vy: f32) -> Projectile {
+        let mut p = Projectile::new(WorldPos::new(x, y), Vec2::new(vx, vy), WeaponKind::Tnt);
+        p.fuse = FuseState::Burning(60);
+        p
+    }
+
     fn grenade(x: f32, y: f32, vx: f32, vy: f32) -> Projectile {
         Projectile::new(
             WorldPos::new(x, y),
@@ -181,8 +234,8 @@ mod tests {
     // ── Bazooka reference constants (bazooka only; other weapons unchanged) ───
 
     #[test]
-    fn non_bazooka_keeps_shared_gravity() {
-        let mut g = grenade(100.0, 100.0, 0.0, 0.0);
+    fn non_wa_weapon_keeps_shared_gravity() {
+        let mut g = cluster(100.0, 100.0, 0.0, 0.0);
         tick(&mut g, 0.0);
         assert!((g.vel.y - GRAVITY).abs() < 1e-5, "grenade must keep the shared gravity");
     }
@@ -270,7 +323,7 @@ mod tests {
 
     #[test]
     fn y_velocity_capped_at_terminal_velocity() {
-        let mut p = grenade(100.0, 100.0, 0.0, 0.0);
+        let mut p = cluster(100.0, 100.0, 0.0, 0.0);
         // Run enough ticks that gravity would exceed terminal velocity
         tick_n(&mut p, 0.0, 200);
         assert!(
@@ -334,8 +387,8 @@ mod tests {
     }
 
     #[test]
-    fn grenade_fuse_counts_down_each_tick() {
-        let mut p = grenade(100.0, 100.0, 0.0, 0.0);
+    fn float_fuse_counts_down_each_tick() {
+        let mut p = cluster(100.0, 100.0, 0.0, 0.0);
         assert_eq!(p.fuse, FuseState::Burning(60));
         tick(&mut p, 0.0);
         assert_eq!(p.fuse, FuseState::Burning(59));
@@ -382,5 +435,38 @@ mod tests {
         assert!(peak_y < y_start, "projectile should rise above start");
         assert!(landed, "projectile should come back down past start height");
         assert!(p.pos.x > 100.0, "projectile should have moved rightward");
+    }
+
+    #[test]
+    fn grenade_on_wa_engine_falls_with_wa_gravity_and_fuse() {
+        // 3 ticks = 5 WA frames: vy = 5 * 0.24 px/frame (x 5/3 to px/tick); fuse 3 s = 90 ticks.
+        let mut g = grenade(100.0, 100.0, 0.0, 0.0);
+        g.fuse = FuseState::Burning(90);
+        for _ in 0..3 { tick(&mut g, 0.0); }
+        let expect = 5.0 * 15728.0 / 65536.0 * WA_TIME_SCALE;
+        assert!((g.vel.y - expect).abs() < 1e-3, "vy {} vs {}", g.vel.y, expect);
+        assert_eq!(g.fuse, FuseState::Burning(87));
+        for _ in 0..87 { tick(&mut g, 0.0); }
+        assert_eq!(g.fuse, FuseState::Expired);
+    }
+}
+
+#[cfg(test)]
+mod hhg_fuse_tests {
+    use super::*;
+    use crate::physics::projectile::{FuseState, Projectile, WeaponKind};
+    use crate::world::{Vec2, WorldPos};
+
+    /// Regression: a stopped Holy Hand Grenade is `Detonating(n)`; tick_grenade used to leave that fuse frozen, so the blast
+    /// never came and the projectile just expired by age (game appeared frozen).
+    #[test]
+    fn detonating_hhg_counts_down_to_expiry() {
+        let mut p = Projectile::new(WorldPos::new(500.0, 300.0), Vec2::new(0.0, 0.0), WeaponKind::HolyHandGrenade);
+        p.fuse = FuseState::Detonating(3);
+        for _ in 0..10 {
+            tick_grenade(&mut p, None, &[]);
+            if p.fuse.is_expired() { return; }
+        }
+        panic!("Detonating fuse never expired: {:?}", p.fuse);
     }
 }

@@ -215,6 +215,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
         fx:                  _, // client-only particle system
         fx_text:             _, // client-only damage-number popups
         pending_deaths:      _, // transient pre-explosion wait
+        wa_rng:              _, // server-side sim only
         meteor_chain:        _, // transient per-tick flag
     } = g;
 
@@ -251,6 +252,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
                 death_explosion_pending: _, // not synced: server-side death timer
                 hp_display_ticks: _,        // not synced: client-local visibility timer
                 displayed_hp: _,    // not synced: client-local animation toward hp
+                displayed_hp_f: _,  // not synced: client-local ease state (fraction)
                 damage_settle: _,   // not synced: server-side tally window
                 pending_bat_damage: _, // not synced: deferred-hit bookkeeping, same category
                 kill_weapon,        // → kill_weapon_u8 (255 = None)
@@ -294,6 +296,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
             owner: _,         // not synced: server-side self-hit grace
             cleared_owner: _, // not synced: server-side self-hit grace
             wa: _,            // not synced: derived fixed-point shadow of pos/vel, rebuilt from them
+            thrown: _,        // not synced: grenade fixed-point shadow of pos/vel, rebuilt from them
         } = p;
         let fuse = match fuse {
             FuseState::None           => 0u64,
@@ -383,7 +386,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
 
     // ── garcia ────────────────────────────────────────────────────────────────
     let garcia = garcia.as_ref().map(|g| {
-        let GarciaState { cursor_x, cursor_y, render_x, render_y, blink_timer,
+        let GarciaState { vel_x: _, cursor_x, cursor_y, render_x, render_y, blink_timer,
                           falling, fall_y, vel_y, bounce_count } = g;
         GarciaSn {
             cursor: (*cursor_x, *cursor_y), render: (*render_x, *render_y),
@@ -394,7 +397,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
 
     // ── jumpbot ─────────────────────────────────────────────────────────────────
     let jumpbot = jumpbot.as_ref().map(|r| {
-        let JumpbotState { x, y, vel_y, vel_x, facing, fuse_ticks, grounded, walk_ticks, owner_team, just_jumped, wa: _ } = r;
+        let JumpbotState { x, y, vel_y, vel_x, facing, fuse_ticks, grounded, walk_ticks, owner_team, just_jumped, wa: _, super_bot: _, flying: _, heading: _, fly_phase: _ } = r;
         JumpbotSn {
             pos: (*x, *y), vel_y: *vel_y, vel_x: *vel_x, facing: *facing,
             fuse_ticks: *fuse_ticks, grounded: *grounded, walk_ticks: *walk_ticks,
@@ -593,13 +596,13 @@ fn round_trip_preserves_synced_state() {
     // Garcia (targeting mode)
     server.garcia = Some(GarciaState {
         cursor_x: 400.0, cursor_y: 300.0, render_x: 398.0, render_y: 301.0,
-        blink_timer: 5, falling: false, fall_y: 0.0, vel_y: 0.0, bounce_count: 0,
+        blink_timer: 5, falling: false, fall_y: 0.0, vel_y: 0.0, bounce_count: 0, vel_x: 0.0,
     });
 
     // Jumpbot (walking)
     server.jumpbot = Some(JumpbotState {
         x: 600.0, y: 250.0, vel_y: 0.0, vel_x: 0.0, facing: -1,
-        fuse_ticks: 90, grounded: true, walk_ticks: 12, owner_team: 0, just_jumped: false, wa: None,
+        fuse_ticks: 90, grounded: true, walk_ticks: 12, owner_team: 0, just_jumped: false, wa: None, super_bot: false, flying: false, heading: 0.0, fly_phase: 0,
     });
 
     // AirStrike (active, plane in flight)
@@ -695,7 +698,7 @@ fn garcia_state_parity() {
     let mut server = build_game(7);
     server.garcia = Some(arty::game::state::GarciaState {
         cursor_x: 400.0, cursor_y: 300.0, render_x: 399.0, render_y: 299.5,
-        blink_timer: 12, falling: false, fall_y: 0.0, vel_y: 0.0, bounce_count: 0,
+        blink_timer: 12, falling: false, fall_y: 0.0, vel_y: 0.0, bounce_count: 0, vel_x: 0.0,
     });
     assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
 
@@ -710,7 +713,7 @@ fn jumpbot_state_parity() {
     let mut server = build_game(9);
     server.jumpbot = Some(arty::game::state::JumpbotState {
         x: 300.0, y: 200.0, vel_y: 0.0, vel_x: 0.0, facing: 1,
-        fuse_ticks: 120, grounded: true, walk_ticks: 5, owner_team: 1, just_jumped: false, wa: None,
+        fuse_ticks: 120, grounded: true, walk_ticks: 5, owner_team: 1, just_jumped: false, wa: None, super_bot: false, flying: false, heading: 0.0, fly_phase: 0,
     });
     assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
 
@@ -1345,4 +1348,17 @@ fn no_channel_bypass_in_source() {
         }
     }
     assert!(violations.is_empty(), "channel bypasses found:\n{}", violations.join("\n"));
+}
+
+#[test]
+fn super_bot_flight_fields_survive_the_wire() {
+    let mut server = build_game(77);
+    server.jumpbot = Some(arty::game::state::JumpbotState {
+        x: 300.0, y: 200.0, vel_y: 0.0, vel_x: 0.0, facing: 1,
+        fuse_ticks: 120, grounded: false, walk_ticks: 5, owner_team: 0, just_jumped: false, wa: None,
+        super_bot: true, flying: true, heading: 33.5, fly_phase: 1,
+    });
+    let client = round_trip(&server, 1, 0);
+    let j = client.jumpbot.as_ref().unwrap();
+    assert!(j.super_bot && j.flying && (j.heading - 33.5).abs() < 1e-6);
 }

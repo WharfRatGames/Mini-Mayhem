@@ -12,13 +12,15 @@ pub mod wa_body;
 pub mod wa_missile;
 pub mod wa_worm;
 pub mod wa_sheep;
+pub mod wa_thrown;
+pub mod wa_weapons;
 
 pub use projectile::{Projectile, WeaponKind, FuseState};
 pub use tick::{tick, tick_n, GRAVITY, TERMINAL_VELOCITY, WIND_SCALE};
 pub use collision::{swept_collision, CollisionResult};
 pub use outcome::{resolve, Outcome};
 pub use fall::{FallTracker, fall_damage, SAFE_FALL_PX, FALL_DAMAGE_PER_PX};
-pub use step::{step_projectile, StepResult};
+pub use step::{step_projectile, step_projectile_with, StepResult};
 pub use wind::{Wind, WIND_MAX, WIND_ARROWS};
 
 /// Returns true if the straight line from (x0,y0) to (x1,y1) crosses no

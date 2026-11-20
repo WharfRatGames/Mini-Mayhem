@@ -57,7 +57,7 @@ fn sheep_on_real_map() {
     let (px, py) = (g.teams[0].soldiers[0].pos.x, g.teams[0].soldiers[0].pos.y);
     // place directly
     use arty::game::state::JumpbotState;
-    g.jumpbot = Some(JumpbotState { x: px + 8.0, y: py - 4.0, vel_y: 0.0, vel_x: 0.0, facing: 1, fuse_ticks: 300, grounded: false, walk_ticks: 0, owner_team: 0, just_jumped: false, wa: None });
+    g.jumpbot = Some(JumpbotState { x: px + 8.0, y: py - 4.0, vel_y: 0.0, vel_x: 0.0, facing: 1, fuse_ticks: 300, grounded: false, walk_ticks: 0, owner_team: 0, just_jumped: false, wa: None, super_bot: false, flying: false, heading: 0.0, fly_phase: 0 });
     let _ = fire_jumpbot;
     let inp = arty::input::InputState::new();
     let mut hops = 0; let mut last_air = false; let mut xs = vec![];

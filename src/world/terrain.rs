@@ -703,6 +703,29 @@ impl Terrain {
     /// well-separated standable spots, actively spread across the map's vertical
     /// range; on very sparse terrain separation constraints relax rather than
     /// stamping artificial platforms.
+    /// One WA placement pass for worms AND map objects (see `wa_mapgen::spawn_positions_ordered`): returns
+    /// `(worm_spawns, object_spawns)`. `worm_spawns` is identical to `find_team_spawns(0, WORLD_W, worms)` (sorted by x);
+    /// `object_spawns` are the next placements in WA's acceptance order, at most `objects` of them: fewer when the map has no room,
+    /// exactly as WA skips mines and drums when there are too few placement coordinates. Without a WA seed (legacy maps) there are
+    /// no object spawns.
+    pub fn find_spawn_pool(&mut self, worms: usize, objects: usize) -> (Vec<WorldPos>, Vec<WorldPos>) {
+        if self.wa_seed != 0 {
+            let dy = WATER_Y as i32 - 696;
+            let ordered = {
+                let me: &Terrain = self;
+                super::wa_mapgen::spawn_positions_ordered(&|x, y| me.is_solid(x, y + dy), self.wa_seed, 0, WORLD_W as i32, worms + objects)
+            };
+            if ordered.len() >= worms {
+                let conv = |p: &(i32, i32)| WorldPos::new(p.0 as f32, (p.1 + dy) as f32);
+                let mut w: Vec<(i32, i32)> = ordered[..worms].to_vec();
+                w.sort_by_key(|p| p.0);
+                let o: Vec<WorldPos> = ordered[worms..].iter().map(conv).collect();
+                return (w.iter().map(conv).collect(), o);
+            }
+        }
+        (self.find_team_spawns(0, WORLD_W, worms), Vec::new())
+    }
+
     pub fn find_team_spawns(&mut self, x_lo: u32, x_hi: u32, count: usize) -> Vec<WorldPos> {
         if self.wa_seed != 0 {
             let dy = WATER_Y as i32 - 696;

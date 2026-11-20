@@ -249,6 +249,12 @@ pub struct NetJumpbot {
     pub walk_ticks: u32,
     pub owner_team: usize,
     pub just_jumped: bool,
+    #[serde(default)]
+    pub super_bot:  bool,
+    #[serde(default)]
+    pub flying:     bool,
+    #[serde(default)]
+    pub heading:    f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,6 +302,9 @@ pub struct NetSoldier {
     /// right death-message flavour pool (it generates the text locally).
     pub death_cause_u8:   u8,
     pub on_fire_ticks:    u8,
+    /// Jump/backflip wind-up (crouch) age: 0 = not crouching, else 30 Hz ticks since the press + 1. Lets the live client animate the crouch.
+    #[serde(default)]
+    pub crouch:           u8,
     /// Weapon credited for the most recent damaging hit (WeaponKind::to_net_u8),
     /// or 255 if none yet. Needed so the live client can report per-weapon kill
     /// stats (missions, leaderboards) after the match — without this the live

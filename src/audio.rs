@@ -403,14 +403,199 @@ mod imp {
 
     // ── ALSA playback ─────────────────────────────────────────────────────────
 
+    // ── Software mixer ────────────────────────────────────────────────────────
+    // hw:0,0 is exclusive: opening it per sound meant overlapping sounds were dropped or delayed (a 5 s black-hole hum
+    // silenced explosions and vice versa) and every open/close produced a pop. One thread now holds the device open for
+    // the whole run and mixes every active sound into a single continuous stream. If the device can't be opened the old
+    // per-sound path below is used instead.
+    use std::sync::Mutex;
+    use std::sync::atomic::AtomicU8;
+
+    struct Voice { samples: Vec<i16>, pos: usize, looped: bool }
+    static VOICES: Mutex<Vec<Voice>> = Mutex::new(Vec::new());
+    static QUEUED_FRAMES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0); // mixer's current device queue depth
+    static TARGET_FRAMES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static VOICE_LOGS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    static MIXER_STATE: AtomicU8 = AtomicU8::new(0); // 0 not started, 1 opening, 2 running, 3 failed (use legacy path)
+    const MAX_VOICES: usize = 16;
+
+    fn start_mixer_once() {
+        if MIXER_STATE.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            std::thread::spawn(mixer_thread);
+        }
+    }
+
+    /// Queue a sound on the mixer. Returns false if the mixer is unavailable (caller falls back to the legacy path).
+    fn submit_voice(samples: Vec<i16>, looped: bool) -> bool {
+        start_mixer_once();
+        if MIXER_STATE.load(Ordering::SeqCst) == 3 { return false; }
+        if let Ok(mut v) = VOICES.lock() {
+            if v.len() >= MAX_VOICES { v.remove(0); }
+            if !looped && VOICE_LOGS.fetch_add(1, Ordering::Relaxed) < 300 {
+                // Onset latency = frames already queued ahead of this sound at 48 kHz (plus up to one 5 ms chunk).
+                log(&format!("MIXER voice len_ms={} queued_ms={} voices={} target_ms={}", samples.len() / 48, QUEUED_FRAMES.load(Ordering::Relaxed) / 48, v.len(), TARGET_FRAMES.load(Ordering::Relaxed) / 48));
+                crate::dlog!("sfx", "voice submitted len_ms={} queued_ms={} voices={}", samples.len() / 48, QUEUED_FRAMES.load(Ordering::Relaxed) / 48, v.len());
+            }
+            v.push(Voice { samples, pos: 0, looped });
+            return true;
+        }
+        false
+    }
+
+    fn mixer_thread() {
+        let candidates: &[&[u8]] = &[b"/customer/lib/libasound.so.2\0", b"/usr/lib/libasound.so.2\0", b"libasound.so.2\0"];
+        let lib = candidates.iter().find_map(|p| {
+            let h = unsafe { libc::dlopen(p.as_ptr() as *const libc::c_char, libc::RTLD_NOW) };
+            if h.is_null() { None } else { Some(h) }
+        });
+        let Some(lib) = lib else { log("MIXER FAIL: dlopen"); MIXER_STATE.store(3, Ordering::SeqCst); return };
+        macro_rules! sym {
+            ($name:literal, $T:ty) => {{
+                let s = unsafe { libc::dlsym(lib, concat!($name, "\0").as_ptr() as *const libc::c_char) };
+                if s.is_null() { log(concat!("MIXER FAIL: dlsym ", $name)); MIXER_STATE.store(3, Ordering::SeqCst); return; }
+                unsafe { std::mem::transmute::<_, $T>(s) }
+            }};
+        }
+        type PcmT = *mut libc::c_void;
+        let pcm_open: unsafe extern "C" fn(*mut PcmT, *const libc::c_char, i32, i32) -> i32 = sym!("snd_pcm_open", _);
+        let pcm_set: unsafe extern "C" fn(PcmT, u32, u32, u32, u32, i32, u32) -> i32 = sym!("snd_pcm_set_params", _);
+        let pcm_write: unsafe extern "C" fn(PcmT, *const i16, u32) -> i32 = sym!("snd_pcm_writei", _);
+        let pcm_recover: unsafe extern "C" fn(PcmT, i32, i32) -> i32 = sym!("snd_pcm_recover", _);
+        let pcm_avail: unsafe extern "C" fn(PcmT) -> libc::c_long = sym!("snd_pcm_avail_update", _);
+        let pcm_state: unsafe extern "C" fn(PcmT) -> i32 = sym!("snd_pcm_state", _);
+        let pcm_start: unsafe extern "C" fn(PcmT) -> i32 = sym!("snd_pcm_start", _);
+        let pcm_drop: unsafe extern "C" fn(PcmT) -> i32 = sym!("snd_pcm_drop", _);
+        let pcm_prepare: unsafe extern "C" fn(PcmT) -> i32 = sym!("snd_pcm_prepare", _);
+
+        let dev = b"hw:0,0\0";
+        let mut pcm: PcmT = std::ptr::null_mut();
+        let mut open_r = -1i32;
+        for _ in 0..20 {
+            open_r = unsafe { pcm_open(&mut pcm, dev.as_ptr() as *const libc::c_char, 0, 0) };
+            if open_r == 0 && !pcm.is_null() { break; }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        log(&format!("MIXER pcm_open={}", open_r));
+        if open_r < 0 || pcm.is_null() { MIXER_STATE.store(3, Ordering::SeqCst); return; }
+        // 60 ms hardware buffer (driver periods ~15 ms). The old 120 ms buffer made every sound ~120 ms late; the mixer thread now keeps
+        // the queue tight itself, so the big buffer is no longer needed to ride out slow frames.
+        let r = unsafe { pcm_set(pcm, 2/*S16_LE*/, 3/*RW_INTERLEAVED*/, 1/*MONO*/, RATE, 0, 60_000) };
+        log(&format!("MIXER pcm_set={}", r));
+        if r < 0 { MIXER_STATE.store(3, Ordering::SeqCst); return; }
+        MIXER_STATE.store(2, Ordering::SeqCst);
+
+        // Best-effort: raise this thread's priority so the game's render thread can't starve the audio stream.
+        unsafe {
+            let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+            let r = libc::setpriority(libc::PRIO_PROCESS, tid, -10);
+            log(&format!("MIXER setpriority={}", r));
+        }
+        let mut underruns = 0u32;
+        let mut starts = 0u32;
+        // Latency control. Audio written ahead of the speaker waits its turn, so a deep queue delays every new sound by its depth
+        // (120 ms of buffer = explosions audibly late). Keep only `target` frames queued and top up in small chunks; the rest of the
+        // hardware buffer is headroom that is never filled. Start tight and widen by 10 ms after each underrun (max 55 ms), so a
+        // device that cannot keep up degrades to the old safe behaviour instead of crackling.
+        const CHUNK: usize = 128; // 2.7 ms
+        let buffer_frames = (unsafe { pcm_avail(pcm) }).max(CHUNK as libc::c_long) as usize; // empty device: avail == buffer size
+        // 25 ms queued. The stream now only runs while sounds play and restarts fresh for each burst, so the first sound has no lead
+        // regardless of depth (the sound is mixed into the first chunk written, then the stream starts); the depth only has to ride out
+        // scheduling jitter (12 ms, below one 15 ms hardware period, stuttered for ~10 s on device).
+        let mut target = (RATE as usize * 25 / 1000).min(buffer_frames);
+        let max_target = (RATE as usize * 60 / 1000).min(buffer_frames);
+        log(&format!("MIXER buffer_frames={} target_frames={}", buffer_frames, target));
+        let mut acc = vec![0i32; CHUNK];
+        let mut out = vec![0i16; CHUNK];
+        // Idle handling. The device keeps its own FIFO ahead of what ALSA reports, and a stream that has been running (streaming
+        // silence) leaves a lead of silence in front of every new sound, so only the FIRST sound after start was prompt. So when
+        // nothing has played for IDLE_STOP_MS the stream is dropped, and the next sound restarts it fresh, like that first one.
+        const IDLE_STOP_MS: u128 = 80;
+        let mut stopped = false;
+        let mut idle_since: Option<std::time::Instant> = None;
+        loop {
+            let have_voices = VOICES.lock().map(|v| !v.is_empty()).unwrap_or(true) || TORCH_ACTIVE.load(Ordering::Relaxed);
+            if stopped {
+                if !have_voices { std::thread::sleep(std::time::Duration::from_millis(1)); continue; }
+                let r = unsafe { pcm_prepare(pcm) };
+                if starts < 5 { log(&format!("MIXER restart prepare={}", r)); }
+                stopped = false;
+                idle_since = None;
+            } else if !have_voices {
+                let t0 = *idle_since.get_or_insert_with(std::time::Instant::now);
+                if t0.elapsed().as_millis() >= IDLE_STOP_MS {
+                    unsafe { pcm_drop(pcm); }
+                    stopped = true;
+                    continue;
+                }
+            } else {
+                idle_since = None;
+            }
+            let avail = unsafe { pcm_avail(pcm) };
+            if avail < 0 {
+                // Underrun seen by avail_update: recover, and widen the queue like a failed write does (this path used to be silent).
+                underruns += 1;
+                target = (target + RATE as usize * 10 / 1000).min(max_target);
+                if underruns <= 50 { log(&format!("MIXER avail_err={} (count {}), target now {} frames", avail, underruns, target)); }
+                unsafe { pcm_recover(pcm, avail as i32, 1); }
+                continue;
+            }
+            let queued = buffer_frames.saturating_sub(avail as usize);
+            QUEUED_FRAMES.store(queued, Ordering::Relaxed);
+            TARGET_FRAMES.store(target, Ordering::Relaxed);
+            // ALSA only auto-starts once the buffer reaches its start threshold (the whole 120 ms buffer). We deliberately keep just
+            // `target` frames queued, so without this the stream sits in PREPARED forever and nothing is heard. Start it explicitly
+            // (SND_PCM_STATE_PREPARED = 2), but only once the queue is prefilled to `target`: starting on the first 5 ms chunk
+            // underran at once, and each underrun widened the queue back to the full 120 ms. Also restarts after xrun recovery.
+            if queued >= target && unsafe { pcm_state(pcm) } == 2 {
+                let r = unsafe { pcm_start(pcm) };
+                if starts < 5 { log(&format!("MIXER start={} queued={}", r, queued)); }
+                starts += 1;
+            }
+            if queued > target { std::thread::sleep(std::time::Duration::from_millis(2)); continue; }
+            for a in acc.iter_mut() { *a = 0; }
+            if let Ok(mut voices) = VOICES.lock() {
+                let torch_on = TORCH_ACTIVE.load(Ordering::Relaxed);
+                voices.retain_mut(|v| {
+                    if v.looped && !torch_on { return false; }
+                    if v.samples.is_empty() { return false; }
+                    for a in acc.iter_mut() {
+                        if v.pos >= v.samples.len() {
+                            if v.looped { v.pos = 0; } else { return false; }
+                        }
+                        *a += v.samples[v.pos] as i32;
+                        v.pos += 1;
+                    }
+                    if v.pos >= v.samples.len() && !v.looped { return false; }
+                    true
+                });
+            }
+            for (o, a) in out.iter_mut().zip(acc.iter()) { *o = (*a).clamp(-32768, 32767) as i16; }
+            let mut off = 0usize;
+            while off < CHUNK {
+                let r = unsafe { pcm_write(pcm, out[off..].as_ptr(), (CHUNK - off) as u32) };
+                if r < 0 {
+                    underruns += 1;
+                    target = (target + RATE as usize * 5 / 1000).min(max_target);
+                    if underruns <= 50 { log(&format!("MIXER write_err={} (count {}), target now {} frames", r, underruns, target)); }
+                    unsafe { pcm_recover(pcm, r, 1); }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                else if r == 0 { break; }
+                else { off += r as usize; }
+            }
+        }
+    }
+
     fn play_samples(samples: Vec<i16>) {
+        if submit_voice(samples.clone(), false) { return; }
         std::thread::spawn(move || {
             play_samples_inner(&samples, true);
         });
     }
 
-    // Fire-and-forget: skip silently if hw:0,0 is busy. For rapid-fire sounds.
+    // Fire-and-forget. With the mixer this never drops a sound; the legacy path skips if hw:0,0 is busy.
     fn play_samples_once(samples: Vec<i16>) {
+        if submit_voice(samples.clone(), false) { return; }
         std::thread::spawn(move || {
             play_samples_inner(&samples, false);
         });
@@ -522,6 +707,10 @@ mod imp {
     pub fn start_torch() {
         if super::MUTED.load(Ordering::Relaxed) { return; }
         if TORCH_ACTIVE.swap(true, Ordering::Relaxed) { return; } // already burning
+        ensure_loaded();
+        if let Some(t) = TORCH.get() {
+            if !t.is_empty() && submit_voice(t.clone(), true) { return; }
+        }
         std::thread::spawn(|| { play_torch_inner(); });
     }
 

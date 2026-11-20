@@ -408,6 +408,32 @@ impl InputState {
         state
     }
 
+    /// Bitmask (`Button::ALL` order) of buttons pressed this frame.
+    pub fn pressed_bits(&self) -> u16 {
+        let mut bits = 0u16;
+        for (i, &btn) in Button::ALL.iter().enumerate() { if self.just_pressed.contains(&btn) { bits |= 1 << i; } }
+        bits
+    }
+
+    /// Bitmask (`Button::ALL` order) of buttons released this frame.
+    pub fn released_bits(&self) -> u16 {
+        let mut bits = 0u16;
+        for (i, &btn) in Button::ALL.iter().enumerate() { if self.just_released.contains(&btn) { bits |= 1 << i; } }
+        bits
+    }
+
+    /// Rebuild a frame from explicit held / pressed / released bitmasks (replays). Unlike `from_bits` the press and release events
+    /// are given, not derived from the previous frame, because the live server receives them as network events.
+    pub fn from_sets(held: u16, pressed: u16, released: u16) -> Self {
+        let mut s = Self::new();
+        for (i, &btn) in Button::ALL.iter().enumerate() {
+            if (held >> i) & 1 == 1 { s.held.insert(btn); }
+            if (pressed >> i) & 1 == 1 { s.just_pressed.push(btn); }
+            if (released >> i) & 1 == 1 { s.just_released.push(btn); }
+        }
+        s
+    }
+
     pub fn inject_press(&mut self, btn: Button) {
         self.held.insert(btn);
         if !self.just_pressed.contains(&btn) {

@@ -6,6 +6,7 @@ pub mod soldier;
 pub mod team;
 pub mod turn;
 pub mod state;
+pub mod setup;
 pub mod loop_runner;
 pub mod net_sync;
 

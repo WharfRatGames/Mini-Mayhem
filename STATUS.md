@@ -1,5 +1,8 @@
 # Mini Mayhem — Project Status
 
+> **RULE (user, 2026-11-19): ALWAYS use `tools/wa_rig` FIRST to measure/verify any WA value or behaviour (HP, damage, speeds, timings, spawns, offsets) before decompile-guessing or hand-writing gdb. Add a scenario + probes/fields there if one is missing. Arty-side checks: `cargo run --release --example scenario -- <hp|bazooka|banana|direct>` in /home/dusty/arty-experimental.**
+> Resume file: /home/dusty/worms_decomp/resume.md (section START HERE).
+
 > **Decompilation research** (WA.exe → Arty): see `/home/dusty/worms_decomp/findings/README.md`
 > (index of `mapgen.md`, `rope.md`, `physics.md`, `terrain_collision.md`, weapon tables) and the
 > Unicorn oracle in `/home/dusty/worms_decomp/emu/`. The entries below that mention archetypes,

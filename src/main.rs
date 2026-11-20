@@ -9,7 +9,7 @@ mod updater;
 mod audio;
 mod https;
 mod bug_report;
-const VERSION: &str = "0.5.4.439-exp20";
+const VERSION: &str = "0.5.4.439-exp28";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -553,6 +553,7 @@ fn main() {
             (WeaponKind::Jackhammer,    None),
             (WeaponKind::Garcia,          None),
             (WeaponKind::Jumpbot,           None),
+            (WeaponKind::SuperSheep,        None),
             (WeaponKind::AirStrike,       None),
             (WeaponKind::HolyHandGrenade, None),
             (WeaponKind::Minigun,         None),
@@ -1309,8 +1310,8 @@ fn build_default_game_n(seed: u64, team_count: usize) -> GameState {
         teams.push(Team::new(i, false, Difficulty::Medium, &spawns));
     }
     let mut game = GameState::new(seed, terrain, teams, n);
-    place_map_mines(&mut game);
-    place_map_barrels(&mut game);
+    game::setup::place_map_mines(&mut game);
+    game::setup::place_map_barrels(&mut game);
     game
 }
 
@@ -1560,107 +1561,9 @@ fn build_default_game_opts(seed: u64, with_mines: bool, with_barrels: bool) -> G
     ];
 
     let mut game = GameState::new(seed, terrain, teams, 2);
-    if with_mines   { place_map_mines(&mut game); }
-    if with_barrels { place_map_barrels(&mut game); }
+    if with_mines   { game::setup::place_map_mines(&mut game); }
+    if with_barrels { game::setup::place_map_barrels(&mut game); }
     game
-}
-
-/// Deterministically place 9–15 armed mines across the map using the game seed.
-fn place_map_mines(game: &mut GameState) {
-    use game::state::{PlacedMine, MineState};
-    let seed = game.map_seed;
-    let mine_count = 16 + (seed % 9) as usize;  // 16–24
-
-    // Simple LCG derived from seed
-    let mut rng = seed.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-    let spread = WORLD_W / (mine_count as u32 + 1);
-
-    for i in 1..=mine_count {
-        rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-        let offset = (rng % spread as u64) as u32;
-        let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
-        if let Some(surf_y) = game.terrain.surface_y_at_with_scenery(x) {
-            let mine_pos = WorldPos::new(x as f32, surf_y as f32 - 1.0);
-            if (surf_y as f32) < crate::world::WATER_Y as f32 - 10.0
-                && !too_close_to_soldiers(&game, mine_pos)
-            {
-                game.mines.push(PlacedMine {
-                    pos: mine_pos,
-                    state: MineState::Armed,
-                    arm_ticks: 0,
-                    trigger_ticks: 0,
-                });
-            }
-        }
-    }
-}
-
-/// Deterministically place 7–11 explosive barrels across the map using the game seed.
-fn place_map_barrels(game: &mut game::state::GameState) {
-    use game::state::{Barrel, BarrelState};
-    let seed = game.map_seed;
-    let count = 14 + (seed.wrapping_mul(0xDEAD_C0DE) % 7) as usize; // 14–20
-
-    let mut rng = seed.wrapping_mul(0xBEEF_1234_5678_9ABCu64).wrapping_add(1442695040888963407);
-    let spread = WORLD_W / (count as u32 + 1);
-
-    for i in 1..=count {
-        rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-        let offset = (rng % spread as u64) as u32;
-        let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
-        // On cave maps (is_cavern) the surface is the sealed rock cap — barrels
-        // placed via surface_y_at_with_scenery land on the unreachable roof.
-        // Use the same standable-cave-floor lookup as maybe_drop_crate so
-        // barrels rest inside an actual accessible chamber.
-        let pos = if game.terrain.is_cavern {
-            match game.terrain.standable_cave_foot_simple(x as i32) {
-                Some(foot_y) => WorldPos::new(x as f32, foot_y as f32 - 1.0),
-                None => continue, // no standable cave floor at this x
-            }
-        } else {
-            match game.terrain.surface_y_at_with_scenery(x) {
-                // pos.y = first air pixel above terrain or scenery (surf_y - 1); physics rests here.
-                Some(surf_y) => WorldPos::new(x as f32, surf_y as f32 - 1.0),
-                None => continue,
-            }
-        };
-        if pos.y < crate::world::WATER_Y as f32 - 10.0
-            && !too_close_to_soldiers(game, pos)
-            && !too_close_to_scenery(game, x as i32)
-        {
-            game.barrels.push(Barrel {
-                pos,
-                vel: crate::world::Vec2::new(0.0, 0.0),
-                hp: 60,
-                state: BarrelState::Normal,
-            });
-        }
-    }
-}
-
-/// Returns true if column `x` overlaps (or sits too close to) any scenery
-/// object's footprint. Barrels only checked their landing Y against scenery
-/// (via `surface_y_at_with_scenery`, so they rest on top instead of embedding)
-/// but never checked X clearance, so one could land stacked directly against/
-/// on top of a decoration with no visual gap. Mirrors `find_team_spawns`'
-/// `clear_of_scenery` margin (footprint + 24px breathing room).
-fn too_close_to_scenery(game: &game::state::GameState, x: i32) -> bool {
-    let theme = world::terrain::Theme::of(game.terrain.is_cavern, game.terrain.template_id);
-    game.terrain.scenery.iter().any(|o| {
-        let hw = o.footprint(theme).0 + 24;
-        (x - o.x as i32).abs() <= hw
-    })
-}
-
-/// Returns true if `pos` is within the mine's safe-spawn exclusion radius of any soldier.
-/// Uses 50px — covers trigger radius (20) + blast radius (25) + margin.
-fn too_close_to_soldiers(game: &game::state::GameState, pos: WorldPos) -> bool {
-    const EXCLUSION: f32 = 50.0;
-    game.teams.iter().flat_map(|t| t.soldiers.iter()).any(|s| {
-        let dx = s.pos.x - pos.x;
-        let dy = s.pos.y - pos.y;
-        (dx * dx + dy * dy).sqrt() < EXCLUSION
-    })
 }
 
 /// Seed from system time.

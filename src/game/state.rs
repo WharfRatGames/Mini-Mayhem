@@ -1,5 +1,5 @@
 use crate::world::{Terrain, WorldPos, Crater, WORLD_W, WATER_Y};
-use crate::physics::{Projectile, Wind, StepResult, step_projectile, WeaponKind};
+use crate::physics::{Projectile, Wind, StepResult, step_projectile_with, WeaponKind};
 use super::soldier::DeathCause;
 use super::team::Team;
 use super::turn::TurnManager;
@@ -311,6 +311,8 @@ pub struct GarciaState {
     pub vel_y:       f32,
     /// Bounce count (for scaling explosion force on later bounces).
     pub bounce_count: u32,
+    /// Horizontal drift while falling (server-side only; clients see it through `cursor_x`).
+    pub vel_x: f32,
 }
 
 /// Autonomous walking Jumpbot (WA Sheep-style) session; None = inactive.
@@ -341,6 +343,14 @@ pub struct JumpbotState {
     pub just_jumped: bool,
     /// WA Sheep fixed-point body (physics::wa_sheep). Server/sim only — not networked; created lazily from x/y.
     pub wa:         Option<crate::physics::wa_sheep::SheepBody>,
+    /// Super Bot (WA Super Sheep): same walker, plus a jetpack flight mode.
+    pub super_bot:  bool,
+    /// Currently flying (jetpack lit). Synced so clients can draw the flame.
+    pub flying:     bool,
+    /// Flight heading in degrees, 0 = up, positive = right. Synced for the tilt.
+    pub heading:    f32,
+    /// A presses so far: 0 = none, 1 = flying, 2 = walking again (next A detonates). Server only.
+    pub fly_phase:  u8,
 }
 
 /// The complete mutable game state.
@@ -456,6 +466,8 @@ pub struct GameState {
     /// Set true during the meteor bomb impact loop so chain-detonated barrels/mines
     /// also scatter fragments. Transient — not networked.
     pub meteor_chain: bool,
+    /// WA's global gameplay RNG (world+0x45ec): s = (frame + s)*0x19660d + 0x3c6ef35f per draw. Server-side sim only (clients never draw).
+    pub wa_rng: u32,
 }
 
 impl GameState {
@@ -531,6 +543,7 @@ impl GameState {
             airstrike: None,
             homing_missile: None,
             meteor_chain: false,
+            wa_rng: (map_seed as u32) ^ ((map_seed >> 32) as u32) ^ 0x6A09E667,
             teams,
         }
     }
@@ -621,6 +634,7 @@ impl GameState {
 
     pub fn emit_sound(&mut self, s: crate::audio::Sfx) {
         self.sounds.push(s as u8);
+        crate::dlog!("sfx", "emit {:?} tick={}", s as u8, self.tick);
         crate::audio::play(s);
     }
 
@@ -682,11 +696,21 @@ impl GameState {
             for soldier in &mut team.soldiers {
                 if !soldier.is_alive() { continue; }
                 let dx = soldier.pos.x - pos.x;
-                let dy = soldier.pos.y - pos.y;
+                // WA measures from the worm's body centre (6 px above the foot point).
+                let wa_blast = wa_blast_kind(kind);
+                let dy = if wa_blast { soldier.pos.y - 6.0 - pos.y } else { soldier.pos.y - pos.y };
                 let dist = (dx * dx + dy * dy).sqrt();
-                if dist >= radius { continue; }
+                // WA (FUN_004ff390, rig-verified): reach 2*(damage+2) px, HP lost = floor(damage*(reach-d)/reach).
+                let wa_amount: Option<u32> = if wa_blast {
+                    let a = wa_blast_amount(max_dmg, dist);
+                    if a == 0 { continue; }
+                    Some(a)
+                } else {
+                    if dist >= radius { continue; }
+                    None
+                };
 
-                let falloff = 1.0 - dist / radius;
+                let falloff = if wa_blast { 1.0 } else { 1.0 - dist / radius };
 
                 // Snapshot state before damage so knockback uses pre-kill state.
                 // This lets soldiers killed by an explosion still fly before their
@@ -696,7 +720,7 @@ impl GameState {
 
                 // Damage: linear falloff only — no direct-hit bonus for any weapon,
                 // so max_damage() is the true ceiling regardless of distance.
-                let dmg = (max_dmg as f32 * falloff) as u32;
+                let dmg = wa_amount.unwrap_or((max_dmg as f32 * falloff) as u32);
                 if dmg > 0 {
                     crate::dlog!("blast", "  hit soldier at ({:.1},{:.1}) dist={:.1} dmg={} hp_before={}", soldier.pos.x, soldier.pos.y, dist, dmg, soldier.hp);
                     soldier.death_cause = super::soldier::DeathCause::Explosion;
@@ -719,7 +743,12 @@ impl GameState {
                     (0.0, -1.0) // at center: launch straight up
                 };
                 let impulse = falloff * force;
-                let (vx, vy) = if kind == WeaponKind::AirStrike {
+                let (vx, vy) = if let Some(a) = wa_amount {
+                    // WA: A/5 px per 50 Hz frame along the unit vector away from the blast, no upward bias = A/3 px per tick.
+                    // Cluster: the caller's `force` is WA's force % (0 for the main blast, 1 for pieces).
+                    let spd = a as f32 / 3.0 * if kind == WeaponKind::ClusterBomb { force } else { wa_blast_force(kind) };
+                    (nx * spd, ny * spd)
+                } else if kind == WeaponKind::AirStrike {
                     // More horizontal throw, less vertical
                     (nx * impulse * 1.2, ny * impulse * 0.5 - impulse * 0.1)
                 } else if kind == WeaponKind::HolyHandGrenade {
@@ -855,6 +884,7 @@ impl GameState {
         let wind_val = self.wind.value();
         let mut resolved = false;
         let mut explosions: Vec<(WorldPos, WeaponKind)> = Vec::new();
+        // NOTE: WA gives a hit worm NO extra shove (wa_rig direct_hit: FUN_004fe750 / msg 0x4b never fires for a bazooka hit; the worm gets pure blast knockback).
         let mut meteor_impacts:        Vec<WorldPos> = Vec::new();
         let mut cluster_impacts:       Vec<WorldPos> = Vec::new();
         let mut cluster_frag_explosions: Vec<WorldPos> = Vec::new();
@@ -951,6 +981,9 @@ impl GameState {
         }
 
         let mut hhg_armed = false;
+        // Live worm bodies (WA object collision): thrown weapons bounce off them.
+        let bodies: Vec<(i32, i32)> = self.teams.iter().flat_map(|t| t.soldiers.iter())
+            .filter(|s| s.is_alive()).map(|s| (s.pos.x as i32, s.pos.y as i32 - crate::physics::wa_worm::FOOT_OFFSET)).collect();
         self.projectiles.retain_mut(|proj| {
             // Silently expire projectiles that have flown far off the map edges or too high.
             if proj.pos.x < -(WORLD_W as f32) || proj.pos.x > 2.0 * WORLD_W as f32 || proj.pos.y < -600.0 {
@@ -959,7 +992,7 @@ impl GameState {
             }
             let kind = proj.kind;
             let effective_wind = if !kind.affected_by_wind() { 0.0 } else { wind_val };
-            match step_projectile(proj, &self.terrain, effective_wind) {
+            match step_projectile_with(proj, &self.terrain, effective_wind, &bodies) {
                 StepResult::HHGArmed => {
                     // Projectile just stopped — play hallelujah, then Detonating
                     // fuse ticks down. Can't emit_sound inside the retain_mut
@@ -1094,8 +1127,8 @@ impl GameState {
                 StepResult::Drowned => {
                     crate::dlog!("shot", "tick={} {:?} drowned at ({:.1},{:.1}) age={}", self.tick, kind, proj.pos.x, proj.pos.y, proj.age_ticks);
                     // Fused weapons (grenades) explode even in water — fuse was burning
-                    // Armed HHG also explodes on water contact
-                    if kind.has_fuse() {
+                    // The Sacred Ordnance just sinks (user, 2026-11-20): no blast at the waterline.
+                    if kind.has_fuse() && kind != WeaponKind::HolyHandGrenade {
                         explosions.push((proj.pos, kind));
                     }
                     resolved = true;
@@ -1119,31 +1152,18 @@ impl GameState {
             }
             self.apply_explosion(pos, kind);
         }
-
-        // Meteor Bomb main impact: large crash + scatter 6 fragments in radial burst
-        self.meteor_chain = true;
+        // Banana Bomb (WA rec 8): the main bomb explodes at its fuse (75 dmg, r51) and throws 4 pieces (rec 42, wa_rig capture) that bounce at 60%.
         for pos in meteor_impacts {
-            self.emit_sound(crate::audio::Sfx::Meteor);
-            // Initial impact: TNT profile at 60% radius, 48% damage (20% cut from 0.6) with gentle knockback.
-            self.apply_explosion_scaled(pos, WeaponKind::Tnt, 9.0, 0.6, 0.48);
-            let seed = (pos.x as u32)
-                .wrapping_mul(0x9E3779B9)
-                .wrapping_add(pos.y as u32)
-                .wrapping_add(self.tick.wrapping_mul(0x6B5A6B5A));
-            // Evenly-spaced radial base angles (degrees, screen: 90°=up, 270°=down)
-            const BASE_ANGLES_DEG: [f32; 6] = [90.0, 45.0, 135.0, 225.0, 315.0, 270.0];
-            for (i, &base_deg) in BASE_ANGLES_DEG.iter().enumerate() {
-                let ra = seed.wrapping_mul((i as u32).wrapping_mul(0xDEAD).wrapping_add(0xBEEF));
-                let rs = seed.wrapping_mul((i as u32).wrapping_mul(0xCAFE).wrapping_add(0xBABE));
-                // ±25° jitter so every throw looks different
-                let jitter = (ra as f32 / u32::MAX as f32 - 0.5) * 50.0;
-                let rad = (base_deg + jitter).to_radians();
-                let speed = 5.0 + (rs as f32 / u32::MAX as f32) * 4.0; // 5..9 px/tick
-                let vx =  rad.cos() * speed;
-                let vy = -rad.sin() * speed; // -y is up in screen space
+            self.emit_sound(crate::audio::Sfx::Grenade);
+            self.apply_explosion(pos, WeaponKind::BananaBomb);
+            for _ in 0..4 {
+                let d1 = self.wa_rand();
+                let d2 = self.wa_rand();
+                let (vx, vy, ox, oy) = wa_piece_launch(d1, d2, true);
                 use crate::physics::projectile::Projectile;
                 self.projectiles.push(Projectile::new_meteor_fragment(
-                    pos,
+                    // WA: pieces appear (8 sin a, -20 cos a) px from the burst (wa_rig).
+                    crate::world::WorldPos::new(pos.x + ox, pos.y + oy),
                     crate::world::Vec2::new(vx, vy),
                 ));
             }
@@ -1154,38 +1174,25 @@ impl GameState {
         // Cluster bomb: small burst + scatter 5 fragments in W:A flower pattern
         for pos in cluster_impacts {
             self.emit_sound(crate::audio::Sfx::Grenade);
-            self.apply_explosion_scaled(pos, WeaponKind::ClusterBomb, 1.0, 1.0, 20.0 / 30.0);
+            // WA rec 3 (rig): main blast damage 20, force 0 (no knockback), reach 44.
+            self.apply_explosion_scaled(pos, WeaponKind::ClusterBomb, 0.0, 1.0, 1.0);
             // Base angles (degrees, screen-space: 90° = straight up):
             //   upper-left=135, straight-up=90, upper-right=45, lower-left=225, lower-right=315
-            const BASE_ANGLES_DEG: [f32; 5] = [135.0, 90.0, 45.0, 225.0, 315.0];
-            let seed = (pos.x as u32)
-                .wrapping_mul(0x9E3779B9)
-                .wrapping_add(pos.y as u32)
-                .wrapping_add(self.tick.wrapping_mul(0x6B5A6B5A));
             use crate::physics::projectile::Projectile as Proj;
-            for (i, &base_deg) in BASE_ANGLES_DEG.iter().enumerate() {
-                let ra = seed.wrapping_mul((i as u32).wrapping_mul(0xDEAD).wrapping_add(0xBEEF));
-                let rs = seed.wrapping_mul((i as u32).wrapping_mul(0xCAFE).wrapping_add(0xBABE));
-                // ±20° random variation around base
-                let jitter = (ra as f32 / u32::MAX as f32 - 0.5) * 40.0;
-                let deg = base_deg + jitter;
-                let rad = deg.to_radians();
-                // Upper fragments faster (more airtime); lower fragments slower
-                let speed_base = if base_deg < 180.0 { 5.5 } else { 3.5 };
-                let speed = speed_base + (rs as f32 / u32::MAX as f32) * 2.0;
-                // In screen coords: +x = right, +y = down, so vx=cos(rad), vy=-sin(rad)
-                let vx =  rad.cos() * speed;
-                let vy = -rad.sin() * speed;
+            for _ in 0..5 {
+                let d1 = self.wa_rand();
+                let d2 = self.wa_rand();
+                let (vx, vy, ox, oy) = wa_piece_launch(d1, d2, false);
                 self.projectiles.push(Proj::new_cluster_fragment(
-                    pos,
+                    crate::world::WorldPos::new(pos.x + ox, pos.y + oy),
                     crate::world::Vec2::new(vx, vy),
                 ));
             }
         }
 
-        // Cluster bomb fragments: reduced damage (15 vs 20 for main burst)
+        // Cluster pieces (WA): damage 20, force 100%.
         for pos in cluster_frag_explosions {
-            self.apply_explosion_scaled(pos, WeaponKind::ClusterBomb, 1.0, 1.0, 15.0 / 30.0);
+            self.apply_explosion_scaled(pos, WeaponKind::ClusterBomb, 1.0, 1.0, 1.0);
         }
 
         // Beehive impact: small burst + spawn 6 homing bees
@@ -1261,7 +1268,7 @@ impl GameState {
         // Tier drop chances (weapon pool):
         //   Common     60%  — Mine, Shotgun, TNT, Grapple, Bat, Torch, Cluster, Jackhammer  (equal within tier)
         //   Uncommon   24%  — Blasthive, Meteor Bomb, Air Strike
-        //   Rare       14%  — Black Hole, Revolver, Minigun, Sacred Ordnance
+        //   Rare       14%  — Black Hole, Revolver, Minigun, Sacred Ordnance, Jumpbot, Super Bot
         //   Ultra Rare  2%  — Hand of Jerry
         let kind = if kind_rng >= 0.75 {
             CrateKind::Health // +25 HP
@@ -1278,10 +1285,10 @@ impl GameState {
                 [WeaponKind::Blasthive, WeaponKind::BananaBomb,
                  WeaponKind::AirStrike, WeaponKind::HomingMissile][slot.min(3)]
             } else if w < 0.98 {
-                let slot = ((w - 0.84) / 0.14 * 5.0) as usize;
+                let slot = ((w - 0.84) / 0.14 * 6.0) as usize;
                 [WeaponKind::BlackHoleBomb, WeaponKind::Revolver,
                  WeaponKind::Minigun, WeaponKind::HolyHandGrenade,
-                 WeaponKind::Jumpbot][slot.min(4)]
+                 WeaponKind::Jumpbot, WeaponKind::SuperSheep][slot.min(5)]
             } else {
                 WeaponKind::Garcia
             };
@@ -1742,6 +1749,8 @@ impl GameState {
         const STRENGTH:       f32 = 1.5;
         const SWIRL:          f32 = 0.1;
         const EJECT_FORCE:    f32 = 8.0;
+        const COLLAPSE_FULL:  f32 = 40.0; // full damage inside this radius at collapse
+        const COLLAPSE_DMG:   i32 = 35;
 
         let holes: Vec<BlackHole> = self.black_holes.clone();
         let mut expired: Vec<WorldPos> = Vec::new();
@@ -1860,13 +1869,23 @@ impl GameState {
                     let dx = soldier.pos.x - hx;
                     let dy = soldier.pos.y - hy;
                     let dist = (dx * dx + dy * dy).sqrt();
-                    if dist >= EVENT_HORIZON { continue; }
+                    // Damage is a fixed function of distance at the moment of collapse: full inside COLLAPSE_FULL, falling linearly
+                    // to nothing at the edge of the pull radius. It used to hit ONLY soldiers inside the 13 px event horizon, so a soldier
+                    // still orbiting at 14 px took nothing while his neighbour at 12 px took 35 - the "inconsistent damage" report.
+                    if dist >= PULL_RADIUS { continue; }
+                    let dmg = if dist <= COLLAPSE_FULL { COLLAPSE_DMG } else {
+                        let t = (PULL_RADIUS - dist) / (PULL_RADIUS - COLLAPSE_FULL);
+                        ((COLLAPSE_DMG as f32 * t).round() as i32).max(5)
+                    };
                     soldier.death_cause = super::soldier::DeathCause::Explosion;
-                    soldier.take_damage(35);
+                    soldier.take_damage(dmg as _);
                     if !soldier.is_alive() { continue; }
+                    // Knockback scales the same way, so a soldier on the rim is shoved, not launched across the map.
+                    let kb = if dist <= COLLAPSE_FULL { 1.0 } else { (PULL_RADIUS - dist) / (PULL_RADIUS - COLLAPSE_FULL) }.max(0.25);
                     let (ex, ey) = if dist > 0.5 { (dx / dist, dy / dist) } else { (0.0, -1.0) };
+                    soldier.fall.begin_fall(soldier.pos.y);
                     soldier.state = SoldierState::Airborne {
-                        vel: Vec2::new(ex * EJECT_FORCE, ey * EJECT_FORCE - 3.0),
+                        vel: Vec2::new(ex * EJECT_FORCE * kb, ey * EJECT_FORCE * kb - 3.0),
                         spinning: true,
                     };
                 }
@@ -2337,5 +2356,131 @@ mod tests {
         g.maybe_drop_crate(0.30, 0.5, 0.5);
         g.maybe_drop_crate(0.99, 0.5, 0.5);
         assert_eq!(g.crates.len(), before, "no crate should drop at rng>=0.30");
+    }
+}
+
+/// Weapons whose Arty damage equals the WA record's, so WA's explosion model (reach 2*(damage+2), knockback A/5) applies.
+pub fn wa_blast_kind(kind: WeaponKind) -> bool {
+    matches!(kind, WeaponKind::Bazooka | WeaponKind::Grenade | WeaponKind::HolyHandGrenade | WeaponKind::Tnt | WeaponKind::BananaBomb | WeaponKind::ClusterBomb | WeaponKind::Landmine | WeaponKind::HomingMissile | WeaponKind::AirStrike | WeaponKind::Garcia | WeaponKind::DeathExplosion | WeaponKind::Jumpbot | WeaponKind::SuperSheep)
+}
+
+/// WA's explosion "force %" (first arg of FUN_004ff390) as a multiplier on knockback: bazooka/grenade 100, Holy Hand Grenade 125
+/// (wa_rig hhg_kb: worm at d=165.6 left with v=(2.879,-3.80) = A 19/5 * 1.25 * unit). Banana main blast reports 90, its pieces 100,
+/// cluster main blast 0, cluster pieces 100 (not applied yet: Arty does not separate main/piece blasts for those).
+pub fn wa_blast_force(kind: WeaponKind) -> f32 {
+    match kind { WeaponKind::HolyHandGrenade => 1.25, WeaponKind::AirStrike => 1.15, _ => 1.0 } // AirStrike: live rec 27 bomb force 115
+}
+
+/// Launch velocity of a cluster/banana piece (px per 30 Hz tick). WA's sub-munition launcher (0x5096a0, params dumped with wa_rig):
+/// speed = 24 px/frame * base * (1 - jitter*u1), direction = straight up +- spread/2 (angle = (u2-0.5)*spread), vx = s*sin(a), vy = -s*cos(a).
+/// Banana: base 40%, jitter 30%, spread 22 deg, 4 pieces. Cluster: base 30%, jitter 30%, spread 45 deg, 5 pieces. Arty seeds u1/u2 from its own
+/// hash instead of WA's LCG, so only the distribution matches. x5/3 converts px/frame to px/tick.
+fn wa_piece_velocity(d1: u32, d2: u32, banana: bool) -> (f32, f32) {
+    let (vx, vy, _, _) = wa_piece_launch(d1, d2, banana);
+    (vx, vy)
+}
+
+/// Same draw, plus WA's spawn offset from the burst: (8*sin a, -20*cos a) px (rig-verified, 5/5 pieces).
+fn wa_piece_launch(d1: u32, d2: u32, banana: bool) -> (f32, f32, f32, f32) {
+    // WA 0x5096a0, integer math: s16 = base - jitter_part*(1-u1) in 16.16 (u1 = d1 & 0xffff); angle = ((d2&0xffff)-0x8000)*spread/360 turns.
+    let (pct, jit, spread): (i64, i64, i64) = if banana { (40, 30, 22) } else { (30, 30, 45) };
+    let base = (pct << 16) / 100;
+    let jp = jit * base / 100;
+    let s16 = base + ((jp * (d1 & 0xffff) as i64) >> 16) - jp;
+    let a16 = (((d2 & 0xffff) as i64 - 0x8000) * spread) / 360;
+    let a = a16 as f64 / 65536.0 * std::f64::consts::TAU;
+    let speed = s16 as f64 / 65536.0 * 24.0;
+    ((speed * a.sin() * (5.0 / 3.0)) as f32, (-speed * a.cos() * (5.0 / 3.0)) as f32, (8.0 * a.sin()) as f32, (-20.0 * a.cos()) as f32)
+}
+
+impl GameState {
+    /// One draw of WA's global RNG (frame counter mixed in, 50 Hz frame = tick*5/3).
+    pub fn wa_rand(&mut self) -> u32 {
+        self.wa_rng = (self.tick.wrapping_mul(5) / 3).wrapping_add(self.wa_rng).wrapping_mul(0x19660d).wrapping_add(0x3c6ef35f);
+        self.wa_rng
+    }
+}
+
+#[cfg(test)]
+mod wa_piece_rig_tests {
+    /// wa_rig cluster_rng capture: global rng s=3380183219, frame 646, 5 pieces; WA launched (85392,-366480) .. in 16.16 px/frame.
+    #[test]
+    fn pieces_match_the_wa_rig_capture() {
+        let (mut s, fc) = (3380183219u32, 646u32);
+        let want = [(85392i32, -366480i32), (-132168, -439296), (73632, -355824), (34152, -403656), (-122568, -418992)];
+        for (wx, wy) in want {
+            s = fc.wrapping_add(s).wrapping_mul(0x19660d).wrapping_add(0x3c6ef35f); let d1 = s;
+            s = fc.wrapping_add(s).wrapping_mul(0x19660d).wrapping_add(0x3c6ef35f); let d2 = s;
+            let (vx, vy, _, _) = super::wa_piece_launch(d1, d2, false);
+            let (gx, gy) = (vx as f64 * 0.6 * 65536.0, vy as f64 * 0.6 * 65536.0);
+            assert!((gx - wx as f64).abs() < 400.0 && (gy - wy as f64).abs() < 400.0, "{gx} {gy} vs {wx} {wy}");
+        }
+    }
+
+    /// wa_rig banana_rng capture: s=3158676611, frame 645, 4 pieces (rec 42: 40%, jitter 30, spread 22).
+    #[test]
+    fn banana_pieces_match_the_wa_rig_capture() {
+        let (mut s, fc) = (3158676611u32, 645u32);
+        let want = [(81672i32, -587136i32), (-37920, -582960), (105480, -561168), (-72, -534048)];
+        for (wx, wy) in want {
+            s = fc.wrapping_add(s).wrapping_mul(0x19660d).wrapping_add(0x3c6ef35f); let d1 = s;
+            s = fc.wrapping_add(s).wrapping_mul(0x19660d).wrapping_add(0x3c6ef35f); let d2 = s;
+            let (vx, vy, _, _) = super::wa_piece_launch(d1, d2, true);
+            let (gx, gy) = (vx as f64 * 0.6 * 65536.0, vy as f64 * 0.6 * 65536.0);
+            assert!((gx - wx as f64).abs() < 400.0 && (gy - wy as f64).abs() < 400.0, "{gx} {gy} vs {wx} {wy}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod wa_piece_tests {
+    use super::wa_piece_velocity;
+    #[test]
+    fn pieces_stay_inside_the_wa_rig_ranges() {
+        // rig (px/frame): banana vy -7.06..-9.13, |vx| <= 1.6; cluster vy -5.2..-6.6 seen, |vx| <= 2.1 seen. Formula bounds below.
+        for i in 0..2000u32 {
+            let ra = i.wrapping_mul(2654435761) >> 7; let rs = i.wrapping_mul(40503).wrapping_add(12345).wrapping_mul(2246822519) >> 3;
+            let (bx, by) = wa_piece_velocity(ra, rs, true);
+            assert!(bx.abs() <= 1.83 * 5.0 / 3.0 + 1e-3 && by <= -6.5 * 5.0 / 3.0 && by >= -9.61 * 5.0 / 3.0);
+            let (cx, cy) = wa_piece_velocity(ra, rs, false);
+            assert!(cx.abs() <= 2.76 * 5.0 / 3.0 && cy <= -4.6 * 5.0 / 3.0 && cy >= -7.21 * 5.0 / 3.0);
+        }
+    }
+}
+
+/// HP lost at `dist` px from the blast centre (WA FUN_004ff390): reach = 2*(damage+2) px, linear, floored.
+pub fn wa_blast_amount(damage: u32, dist: f32) -> u32 {
+    let reach = 2.0 * (damage as f32 + 2.0);
+    if dist > reach { return 0; }
+    (damage as f32 * (reach - dist) / reach).floor() as u32
+}
+
+#[cfg(test)]
+mod wa_blast_tests {
+    use super::*;
+    #[test]
+    fn matches_the_two_rig_shots() {
+        assert_eq!(wa_blast_amount(50, 70.05), 16); // Druss: 100 -> 84
+        assert_eq!(wa_blast_amount(50, 79.0), 12);  // Coomeroy: 100 -> 88 (WA's length approximation reads 79.26 as <= 79.04)
+        assert_eq!(wa_blast_amount(50, 0.0), 50);
+        assert_eq!(wa_blast_amount(50, 104.5), 0);  // reach 104 px, wider than the 48 px crater
+        assert!(wa_blast_kind(WeaponKind::Bazooka) && !wa_blast_kind(WeaponKind::Blasthive));
+    }
+
+    #[test]
+    fn holy_hand_grenade_knockback_is_125_percent() {
+        // A=19 at d=165.6: WA launched the worm at (2.879, -3.80) px/frame = 19/5 * 1.25 * unit(0.604,-0.797) = (2.869, -3.786).
+        let a = wa_blast_amount(100, 165.0) as f32;
+        let v = a / 5.0 * wa_blast_force(WeaponKind::HolyHandGrenade);
+        assert!((v * 0.604 - 2.879).abs() < 0.03 && (v * 0.797 - 3.80).abs() < 0.03, "{v}");
+        assert_eq!(wa_blast_force(WeaponKind::Bazooka), 1.0);
+    }
+
+    #[test]
+    fn holy_hand_grenade_reach_matches_the_rig() {
+        // wa_rig hhg_reach (Blast Zone, damage 100): blast centre vs worm body centre, real HP lost. R = 2*(100+2) = 204.
+        assert_eq!(wa_blast_amount(100, 164.6), 19);
+        assert_eq!(wa_blast_amount(100, 193.1), 5);
+        assert_eq!(wa_blast_amount(100, 204.5), 0);
     }
 }

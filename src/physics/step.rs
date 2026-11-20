@@ -51,10 +51,16 @@ impl StepResult {
 ///   5. Resolve outcome (bounce, explode, drown, continue)
 ///
 /// `wind` is in [-1.0, 1.0].
-pub fn step_projectile(
+pub fn step_projectile(proj: &mut Projectile, terrain: &Terrain, wind: f32) -> StepResult {
+    step_projectile_with(proj, terrain, wind, &[])
+}
+
+/// `step_projectile` with the live worm bodies (integer pixel centres) that thrown weapons bounce off (WA behaviour).
+pub fn step_projectile_with(
     proj:    &mut Projectile,
     terrain: &Terrain,
     wind:    f32,
+    bodies:  &[(i32, i32)],
 ) -> StepResult {
     // Already expired before we even start this tick
     if proj.is_expired() {
@@ -66,9 +72,15 @@ pub fn step_projectile(
 
     // Apply physics (updates pos, vel, age, fuse). The bazooka runs WA's engine incl. its pixel collision.
     let first_tick = proj.age_ticks == 0;
+    let mut grenade_hits = 0u8;
     let wa_hit = if proj.kind == WeaponKind::Bazooka {
         // The muzzle can sit next to terrain at steep aims: the first tick flies free (as before).
         crate::physics::tick::tick_bazooka(proj, wind, if first_tick { None } else { Some(terrain) })
+    } else if crate::physics::tick::uses_wa_thrown(proj.kind) {
+        // WA thrown-weapon engine does land bounces itself; edges/water below still use the swept test.
+        let h = crate::physics::tick::tick_grenade(proj, if first_tick { None } else { Some(terrain) }, bodies);
+        grenade_hits = h;
+        None
     } else {
         tick(proj, wind);
         None
@@ -103,7 +115,9 @@ pub fn step_projectile(
     if proj.age_ticks < 2 {
         return StepResult::Flying;
     }
-    let collision = if proj.kind == WeaponKind::Bazooka {
+    let collision = if crate::physics::tick::uses_wa_thrown(proj.kind) {
+        match swept_collision(pos_before, proj.pos, terrain) { CollisionResult::Terrain(_) => CollisionResult::None, o => o }
+    } else if proj.kind == WeaponKind::Bazooka {
         match wa_hit {
             Some(h) => CollisionResult::Terrain(h),
             // Edges only (water / walls); land is WA's pixel test above.
@@ -121,6 +135,20 @@ pub fn step_projectile(
         Outcome::Explode(p)      => StepResult::Explode(p),
         Outcome::FuseExplode(p) => StepResult::FuseExplode(p),
     };
+
+    if crate::physics::tick::uses_wa_thrown(proj.kind) {
+        // Edge bounce in `resolve` changed pos/vel on the float side: carry it into the fixed-point body.
+        if matches!(collision, CollisionResult::Wall(_)) {
+            if let Some(g) = proj.thrown.as_mut() {
+                let ts = crate::physics::wa_missile::TIME_SCALE as f64;
+                g.x = (proj.pos.x as f64 * 65536.0).round() as i32;
+                g.y = (proj.pos.y as f64 * 65536.0).round() as i32;
+                g.vx = (proj.vel.x as f64 / ts * 65536.0).round() as i32;
+                g.vy = (proj.vel.y as f64 / ts * 65536.0).round() as i32;
+            }
+        }
+        if grenade_hits > 0 && matches!(step, StepResult::Flying) { return StepResult::Bounced; }
+    }
 
     // HHG armed: check if it has come to rest (vel.y ≈ 0 = on ground, speed < 1)
     if proj.fuse == FuseState::Armed {
@@ -216,7 +244,11 @@ mod tests {
     #[test]
     fn projectile_falling_into_water_returns_drowned() {
         let mut p = bazooka(100.0, WATER_Y as f32 - 3.0, 0.0, 5.0);
-        let result = step_projectile(&mut p, &empty(), 0.0);
+        let mut result = StepResult::Flying;
+        for _ in 0..30 {
+            result = step_projectile(&mut p, &empty(), 0.0);
+            if result != StepResult::Flying { break; }
+        }
         assert_eq!(result, StepResult::Drowned);
     }
 

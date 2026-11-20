@@ -32,8 +32,15 @@ pub enum SoldierAnim {
     /// Hanging from the ninja rope: the whole body lays out along the swing
     /// direction instead of staying upright, like WA's rope pose.
     RopeSwing { vel_x: f32, vel_y: f32 },
+    /// Wind-up before a jump/backflip: the body squashes down toward the feet. `depth` 0..=1.
+    Crouch { depth: f32 },
     Dead,
 }
+
+/// Crouch depth (0..=1) `age` 30 Hz ticks into the wind-up: down over the first 3 ticks (0.1 s), then held until takeoff.
+pub fn crouch_depth(age: u32) -> f32 { ((age + 1) as f32 / 3.0).min(1.0) }
+/// Fraction of its height the soldier is squashed to at full crouch.
+pub const CROUCH_SQUASH: f32 = 0.7;
 
 // ── Bone math ────────────────────────────────────────────────────────────────
 
@@ -593,7 +600,7 @@ pub fn draw_soldier_skeletal(
 
     // Select animation; spin returns a root_angle for whole-skeleton rotation
     let root_angle = match anim {
-        SoldierAnim::Idle =>
+        SoldierAnim::Idle | SoldierAnim::Crouch { .. } =>
             { pose_idle(&mut bones, pos.x * 0.0 + 0.0); 0.0 }
         SoldierAnim::Walking { tick } =>
             { pose_walk(&mut bones, *tick, f); 0.0 }
@@ -858,8 +865,9 @@ pub fn draw_soldier_skeletal(
         let saved = buf.scale_state();
         buf.end_scale();
         let base = super::draw_sprites::SOLDIER_H + 28;
-        let lift = ((base + hat_name_lift(hat_id)) as f32 * k) as i32 - base;
-        draw_hp_number_lifted(buf, pos.x as i32, pos.y as i32, hp, team, lift);
+        let _ = (k, hat_name_lift(hat_id));
+        let lift = super::draw_sprites::plate_top() - base;
+        draw_hp_number_lifted(buf, pos.x.round() as i32, pos.y.round() as i32, hp, team, lift);
         if let Some((ax, ay, sc)) = saved { buf.begin_scale(ax, ay, sc); }
     }
 
@@ -895,18 +903,23 @@ fn draw_look_body(
     buf.end_scale();
     let k = saved.map(|t| t.2).unwrap_or(1.0);
     let f = if facing >= 0 { 1.0f32 } else { -1.0 };
+    let sc = super::draw_sprites::LOOK_SCALE;
     let mut jx = 0.0; let mut jy = 0.0;
     if on_fire_ticks > 0 {
         let seed = tick.wrapping_add((pos.x as u32).wrapping_mul(17));
         jx = ((seed % 5) as f32 - 2.0) * 0.8;
         jy = (((seed / 5) % 3) as f32 - 1.0) * 0.8;
     }
+    let sq = match anim { SoldierAnim::Crouch { depth } => 1.0 - (1.0 - CROUCH_SQUASH) * depth.clamp(0.0, 1.0), _ => 1.0 };
     let (pose, angle, cy_off) = match anim {
-        SoldierAnim::Idle => (0usize, 0.0f32, 11.0f32),
-        SoldierAnim::Walking { tick } => (1 + ((*tick as usize * 5 / 3) % 8), 0.0, 11.0),
-        SoldierAnim::Airborne { spinning: true, .. } | SoldierAnim::RopeSwing { .. } => (9, root_angle, 11.0),
-        SoldierAnim::Airborne { .. } => (9, 0.0, 11.0),
-        SoldierAnim::Dead => (0, -f * std::f32::consts::FRAC_PI_2, 7.0),
+        SoldierAnim::Idle => (0usize, 0.0f32, 11.0 * sc),
+        // Crouch: the idle pose squashed vertically toward the feet (see `sq` below).
+        SoldierAnim::Crouch { .. } => (0usize, 0.0f32, 11.0 * sc * sq),
+        // A whole number of ticks per frame (2 = a 0.53 s cycle, matched to the 1.5x walk speed in loop_runner): a fractional rate alternates frame lengths and looks jerky.
+        SoldierAnim::Walking { tick } => (1 + ((*tick as usize / 2) % 8), 0.0, 11.0 * sc),
+        SoldierAnim::Airborne { spinning: true, .. } | SoldierAnim::RopeSwing { .. } => (9, root_angle, 11.0 * sc),
+        SoldierAnim::Airborne { .. } => (9, 0.0, 11.0 * sc),
+        SoldierAnim::Dead => (0, -f * std::f32::consts::FRAC_PI_2, 7.0 * sc),
     };
     let alive = hp > 0;
     let upright = angle == 0.0;
@@ -927,13 +940,16 @@ fn draw_look_body(
     let (sa, ca) = (angle.sin(), angle.cos());
     let blank = [0u8; 0];
     let _ = blank;
-    for dy in -26..=26i32 {
-        for dx in -26..=26i32 {
+    // Draw window half-size. The sprite stands ~(11 + PIV_Y) rows tall above the feet (~46 px at LOOK_SCALE) and a spinning soldier
+    // rotates about the pivot, so 26 * sc (39 px) clipped the top of the helmet off every soldier.
+    let rng = (34.0 * sc).ceil() as i32;
+    for dy in -rng..=rng {
+        for dx in -rng..=rng {
             let rx = (pos.x as i32 + dx) as f32 + 0.5 - cx;
             let ry = (pos.y as i32 + dy) as f32 + 0.5 - cy;
-            // inverse rotation by `angle` (matches rot(): x' = x cos - y sin, y' = x sin + y cos)
-            let ux =  rx * ca + ry * sa;
-            let uy = -rx * sa + ry * ca;
+            // inverse rotation by `angle` (matches rot(): x' = x cos - y sin, y' = x sin + y cos), then undo the draw scale
+            let ux = ( rx * ca + ry * sa) / sc;
+            let uy = (-rx * sa + ry * ca) / (sc * sq);
             let sx = (ux * f + L::PIV_X).floor() as i32;
             let sy = (uy + L::PIV_Y).floor() as i32;
             if sx < 0 || sy < 0 || sx >= L::W as i32 || sy >= L::H as i32 { continue; }
@@ -964,36 +980,37 @@ fn draw_look_body(
         let a = (tick as f32 / 4.0).floor() * dir * speed * std::f32::consts::FRAC_PI_4;
         let half = 4.5 * a.cos().abs();
         let by = 1 + bob;
-        let wy = (cy + (by as f32 + 0.5 - L::PIV_Y)).floor() as i32;
+        let wy = (cy + (by as f32 + 0.5 - L::PIV_Y) * sc).floor() as i32;
+        let bsz = sc.ceil() as u32;
         let n = (half * 2.0).round() as i32;
         for j in 0..=n.max(1) {
             let sxf = 12.5 - half + j as f32 * (2.0 * half) / n.max(1) as f32;
-            let wx = (cx + f * (sxf - L::PIV_X)).floor() as i32;
+            let wx = (cx + f * (sxf - L::PIV_X) * sc).floor() as i32;
             let col = if sxf < 12.5 { Bgra::new(200, 58, 58) } else { Bgra::new(224, 180, 58) };
-            buf.set_pixel(wx, wy, col);
+            buf.fill_rect(wx, wy, bsz, bsz, col);
         }
-        let hubx = (cx + f * (12.5 - L::PIV_X)).floor() as i32;
-        buf.set_pixel(hubx, wy, Bgra::new(42, 38, 48));
+        let hubx = (cx + f * (12.5 - L::PIV_X) * sc).floor() as i32;
+        buf.fill_rect(hubx, wy, bsz, bsz, Bgra::new(42, 38, 48));
     }
     let mut result = None;
     if held {
-        let origin = (pos.x + f * 2.0 + jx, pos.y - 14.5 + jy);
+        let origin = (pos.x + f * 2.5 * sc + jx, pos.y - 14.5 * sc * sq + jy);
         draw_held_weapon(buf, origin.0 as i32, origin.1 as i32, held_weapon.unwrap(), tick);
         result = Some(origin);
     } else if aiming {
         let aim = aim_angle.unwrap();
-        let origin = (pos.x + f * 2.0 + jx, pos.y - 14.5 + jy);
+        let origin = (pos.x + f * 2.5 * sc + jx, pos.y - 14.5 * sc * sq + jy);
         if cgun != 0 {
             // Rotate the gun layer about the grip; muzzle = rotated tip.
             let (gx, gy) = (14.5f32, 16.5f32);
             let (sn, cs) = (aim.sin(), aim.cos());
-            let gcx = pos.x + f * (gx - L::PIV_X) + jx;
-            let gcy = cy + (gy - L::PIV_Y);
+            let gcx = pos.x + f * (gx - L::PIV_X) * sc + jx;
+            let gcy = cy + (gy - L::PIV_Y) * sc * sq;
             let g_shift = gun_shift;
-            for dy in -26..=26i32 {
-                for dx in -26..=26i32 {
-                    let wx = (pos.x as i32 + dx) as f32 + 0.5 - gcx;
-                    let wy = (pos.y as i32 + dy) as f32 + 0.5 - gcy;
+            for dy in -rng..=rng {
+                for dx in -rng..=rng {
+                    let wx = ((pos.x as i32 + dx) as f32 + 0.5 - gcx) / sc;
+                    let wy = ((pos.y as i32 + dy) as f32 + 0.5 - gcy) / sc;
                     let lx = wx * f;
                     let ux = lx * cs - wy * sn;
                     let uy = lx * sn + wy * cs;
@@ -1006,10 +1023,10 @@ fn draw_look_body(
             }
             let (tx, ty) = L::GUN_TIPS[cgun];
             let (rx, ry) = (tx as f32 + 0.5 - gx, ty as f32 + 0.5 - gy);
-            result = Some((gcx + f * (rx * cs + ry * sn), gcy + (-rx * sn + ry * cs)));
+            result = Some((gcx + f * (rx * cs + ry * sn) * sc, gcy + (-rx * sn + ry * cs) * sc));
         } else {
             let disp = if f >= 0.0 { aim } else { std::f32::consts::PI - aim };
-            result = Some(draw_gun_style_len(buf, origin, disp, 0, 18.0));
+            result = Some(draw_gun_style_len(buf, origin, disp, 0, 18.0 * sc));
         }
     }
     if let Some((ax, ay, sc)) = saved { buf.begin_scale(ax, ay, sc); }

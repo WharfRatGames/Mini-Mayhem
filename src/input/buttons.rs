@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn unknown_key_code_returns_none() {
         assert_eq!(Button::from_key_code(0),   None);
-        assert_eq!(Button::from_key_code(1),   None);
+        assert_eq!(Button::from_key_code(1),   Some(Button::Menu)); // KEY_ESC
         assert_eq!(Button::from_key_code(999), None);
         assert_eq!(Button::from_key_code(255), None);
     }
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn all_slice_contains_all_variants() {
-        assert_eq!(Button::ALL.len(), 14);
+        assert_eq!(Button::ALL.len(), 15);
         // Every variant appears exactly once
         for &btn in Button::ALL {
             let count = Button::ALL.iter().filter(|&&b| b == btn).count();

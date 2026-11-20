@@ -400,6 +400,9 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
     }
 
     let mut game = build_game(seed);
+    // Internal tooling: records the match as a replay when ARTY_RECORD_DIR is set (see src/replay.rs); never affects the sim.
+    let mut rec = arty::replay::MatchRecorder::from_env(seed, &[0, 1]);
+    let mut rec_n = 0u32;
     let mut tick: u32 = 0;
     let mut paused: Option<(usize, Instant)> = None; // (disconnected_team, since)
     // Index into game.crater_log of the first crater not yet sent to clients
@@ -567,6 +570,7 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
 
         let msgs_before: std::collections::HashSet<String> =
             game.messages.iter().map(|m| m.text.clone()).collect();
+        if let Some(r) = rec.as_mut() { r.push(&input_state, aim_angle_override, muzzle_override, inp.as_ref().map(|m| m.selected_weapon_kind)); }
         arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override, aim_angle_override);
 
         // Log in-game messages (death phrases, crate pickups, etc.)
@@ -632,7 +636,9 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
+            if let Some(r) = rec.take() { r.save(&format!("{match_id}-{rec_n}")); rec_n += 1; }
             game = build_game(seed);
+            rec = arty::replay::MatchRecorder::from_env(seed, &[0, 1]);
             tick = 0;
             last_craters_sent = 0;
             *inp0.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -655,107 +661,8 @@ fn run_match(match_id: u64, s0: ArcStream, s1: ArcStream, registry: Registry, se
     if reconnectable {
         registry.lock().unwrap_or_else(|e| e.into_inner()).remove(&session_token);
     }
+    if let Some(r) = rec.take() { r.save(&format!("{match_id}-{rec_n}")); }
     mboth!(&mut mfile, match_id, "ended");
-}
-
-fn apply_input(game: &mut GameState, input: &InputMsg) {
-    use arty::input::Button;
-    let ti = game.active_team();
-    let si = game.teams[ti].active;
-
-    let held = |b: NetButton| input.held.contains(&b);
-    let pressed  = |b: NetButton| input.pressed.contains(&b);
-    let released = |b: NetButton| input.released.contains(&b);
-
-    // Movement
-    if held(NetButton::Left) {
-        let nx = game.teams[ti].soldiers[si].pos.x - 2.0;
-        let nx = nx.clamp(0.0, (WORLD_W - 1) as f32);
-        game.teams[ti].soldiers[si].pos.x = nx;
-        game.teams[ti].soldiers[si].facing = -1;
-        snap_to_surface(game, ti, si);
-    }
-    if held(NetButton::Right) {
-        let nx = game.teams[ti].soldiers[si].pos.x + 2.0;
-        let nx = nx.clamp(0.0, (WORLD_W - 1) as f32);
-        game.teams[ti].soldiers[si].pos.x = nx;
-        game.teams[ti].soldiers[si].facing = 1;
-        snap_to_surface(game, ti, si);
-    }
-
-    // Aim
-    let delta = 0.08f32;
-    if held(NetButton::Up)   { game.aim.angle += delta; }
-    if held(NetButton::Down) { game.aim.angle -= delta; }
-
-    // Plasma torch: step aim through 3 valid directions on Up/Down press.
-    use arty::physics::projectile::WeaponKind;
-    if game.teams[ti].current_weapon() == WeaponKind::PlasmaTorch && game.plasma_torch.is_none() {
-        const TORCH_ANGLE: f32 = 0.611;
-        game.aim.angle = if game.aim.angle > TORCH_ANGLE * 0.5 { TORCH_ANGLE }
-                         else if game.aim.angle < -TORCH_ANGLE * 0.5 { -TORCH_ANGLE }
-                         else { 0.0 };
-        if pressed(NetButton::Up) {
-            game.aim.angle = (game.aim.angle + TORCH_ANGLE).min(TORCH_ANGLE);
-        }
-        if pressed(NetButton::Down) {
-            game.aim.angle = (game.aim.angle - TORCH_ANGLE).max(-TORCH_ANGLE);
-        }
-    }
-
-    // Fire
-    if held(NetButton::A) {
-        game.aim.power = (game.aim.power + 1.0).min(100.0);
-    }
-    // Jump
-    let on_ground = is_on_ground(game, ti, si);
-    if pressed(NetButton::B) && on_ground {
-        use arty::game::soldier::SoldierState;
-        use arty::world::Vec2;
-        let vx = game.teams[ti].soldiers[si].facing as f32 * 5.0;
-        game.teams[ti].soldiers[si].pos.y -= arty::game::loop_runner::jump_unstick_lift(game, ti, si);
-        game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel: Vec2::new(vx, -4.0), spinning: false };
-        game.teams[ti].soldiers[si].airtime = 0;
-    }
-    if pressed(NetButton::Y) && on_ground {
-        use arty::game::soldier::SoldierState;
-        use arty::world::Vec2;
-        let vx = game.teams[ti].soldiers[si].facing as f32 * -1.5;
-        game.teams[ti].soldiers[si].pos.y -= arty::game::loop_runner::jump_unstick_lift(game, ti, si);
-        game.teams[ti].soldiers[si].state = SoldierState::Airborne { vel: Vec2::new(vx, -6.5), spinning: true };
-        // Reset airtime so the backflip spin always plays in full (see loop_runner).
-        game.teams[ti].soldiers[si].airtime = 0;
-    }
-    if released(NetButton::A) && game.aim.power > 0.0 {
-        fire_bazooka(game);
-        game.aim.power = 0.0;
-    }
-    // TNT: instant placement on A press (no charge), locked until turn 5.
-    if pressed(NetButton::A) && game.aim.power == 0.0 {
-        use arty::physics::projectile::WeaponKind;
-        let weapon = game.teams[ti].current_weapon();
-        if weapon == WeaponKind::Tnt && game.turn.turn_number >= 5 * game.teams.len() as u32 {
-            arty::game::loop_runner::fire_tnt(game, ti, si);
-        }
-        if weapon == WeaponKind::Landmine {
-            arty::game::loop_runner::fire_mine(game, ti, si);
-        }
-    }
-}
-
-fn fire_bazooka(game: &mut GameState) {
-    use arty::physics::projectile::{Projectile, WeaponKind};
-    use arty::world::Vec2;
-    let ti = game.active_team();
-    let si = game.teams[ti].active;
-    let fm = game.teams[ti].soldiers[si].facing as f32;
-    let angle = game.aim.angle;
-    let power = game.aim.power / 100.0 * 20.0;
-    let sx = game.teams[ti].soldiers[si].pos.x + fm * 8.0;
-    let sy = game.teams[ti].soldiers[si].pos.y - 4.0;
-    game.projectiles.push(Projectile::new(WorldPos::new(sx, sy), Vec2::new(angle.cos() * power * fm, -angle.sin() * power), WeaponKind::Bazooka));
-    game.teams[ti].soldiers[si].has_fired = true;
-    game.turn.on_fired();
 }
 
 // ── Casual lobby ────────────────────────────────────────────────────────────
@@ -968,7 +875,8 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
     }
     thread::sleep(Duration::from_millis(500));
 
-    let mut game = build_game_n(seed, &colors);
+    let mut game = arty::game::setup::build_game_n(seed, &colors);
+    let mut rec = arty::replay::MatchRecorder::from_env(seed, &colors);
     // Apply each player's roster to their team.
     for (i, m) in members.iter().enumerate() {
         if let (Some(j), Some(team)) = (m.join.as_ref(), game.teams.get_mut(i)) {
@@ -1154,6 +1062,7 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
             if let Some(ref mut i) = *m.input.lock().unwrap_or_else(|e| e.into_inner()) { i.pressed.clear(); i.released.clear(); }
         }
 
+        if let Some(r) = rec.as_mut() { r.push(&input_state, aim_angle_override2, muzzle_override2, inp.as_ref().map(|m| m.selected_weapon_kind)); }
         arty::game::loop_runner::server_tick(&mut game, &input_state, muzzle_override2, aim_angle_override2);
 
         if !matches!(game.result, arty::game::state::GameResult::Ongoing) {
@@ -1178,97 +1087,14 @@ fn run_lobby_match(match_id: u64, members: Vec<LobbyMember>, seed: u64, casual_r
         let mut cr = casual_registry.lock().unwrap_or_else(|e| e.into_inner());
         for tok in &tokens { cr.remove(tok); }
     }
+    if let Some(r) = rec.take() { r.save(&format!("{match_id}-lobby")); }
     mboth!(&mut mfile, match_id, "casual lobby match ended");
 }
 
 fn build_game(seed: u64) -> GameState {
     // 2-team game with default colours (Red=0, Blue=1) — used by ranked.
-    build_game_n(seed, &[0, 1])
+    arty::game::setup::build_game_n(seed, &[0, 1])
 }
-
-/// Build an N-team game (N = colors.len(), 2-4). The map is divided into N
-/// vertical bands so each team spawns in its own region; `colors[i]` sets team
-/// i's colour identity. The 2-team case reproduces the original left/right split
-/// exactly so ranked/local maps are unchanged.
-fn build_game_n(seed: u64, colors: &[u8]) -> GameState {
-    let mut terrain = arty::world::Terrain::generate_tactical(seed);
-    let n = colors.len().clamp(2, 4);
-    let all_spawns = terrain.find_team_spawns(0, WORLD_W, n * 4);
-    let mut teams = Vec::with_capacity(n);
-    for i in 0..n {
-        let spawns: Vec<_> = all_spawns.iter().cloned()
-            .enumerate().filter(|(k, _)| k % n == i).map(|(_, s)| s).collect();
-        let mut team = Team::new(i, false, Difficulty::Medium, &spawns);
-        team.set_color(colors[i]);
-        teams.push(team);
-    }
-    let mut game = GameState::new(seed, terrain, teams, n);
-    place_map_mines(&mut game);
-    place_map_barrels(&mut game);
-    game
-}
-
-fn place_map_mines(game: &mut GameState) {
-    use arty::game::state::{PlacedMine, MineState};
-    let seed = game.map_seed;
-    let mine_count = 16 + (seed % 9) as usize;  // 16–24
-    let mut rng = seed.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-    let spread = WORLD_W / (mine_count as u32 + 1);
-    for i in 1..=mine_count {
-        rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-        let offset = (rng % spread as u64) as u32;
-        let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
-        if let Some(surf_y) = game.terrain.surface_y_at_with_scenery(x) {
-            let mine_pos = WorldPos::new(x as f32, surf_y as f32 - 1.0);
-            if (surf_y as f32) < arty::world::WATER_Y as f32 - 10.0
-                && !too_close_to_soldiers_srv(game, mine_pos)
-            {
-                game.mines.push(PlacedMine {
-                    pos: mine_pos,
-                    state: MineState::Armed,
-                    arm_ticks: 0,
-                    trigger_ticks: 0,
-                });
-            }
-        }
-    }
-}
-
-fn place_map_barrels(game: &mut GameState) {
-    use arty::game::state::{Barrel, BarrelState};
-    let seed = game.map_seed;
-    let count = 14 + (seed.wrapping_mul(0xDEAD_C0DE) % 7) as usize;  // 14–20
-    let mut rng = seed.wrapping_mul(0xBEEF_1234_5678_9ABCu64).wrapping_add(1442695040888963407);
-    let spread = WORLD_W / (count as u32 + 1);
-    for i in 1..=count {
-        rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-        let offset = (rng % spread as u64) as u32;
-        let x = (spread * i as u32 + offset).clamp(20, WORLD_W - 20);
-        if let Some(surf_y) = game.terrain.surface_y_at_with_scenery(x) {
-            let pos = WorldPos::new(x as f32, surf_y as f32 - 1.0);
-            if (surf_y as f32) < arty::world::WATER_Y as f32 - 10.0
-                && !too_close_to_soldiers_srv(game, pos)
-            {
-                game.barrels.push(Barrel {
-                    pos,
-                    vel: arty::world::Vec2::new(0.0, 0.0),
-                    hp: 60,
-                    state: BarrelState::Normal,
-                });
-            }
-        }
-    }
-}
-
-fn too_close_to_soldiers_srv(game: &GameState, pos: WorldPos) -> bool {
-    const EXCLUSION: f32 = 50.0;
-    game.teams.iter().flat_map(|t| t.soldiers.iter()).any(|s| {
-        let dx = s.pos.x - pos.x;
-        let dy = s.pos.y - pos.y;
-        (dx * dx + dy * dy).sqrt() < EXCLUSION
-    })
-}
-
 
 fn read_loop(s: ArcStream, inbox: Arc<Mutex<Option<InputMsg>>>, quit: Arc<AtomicBool>) {
     let mut buf: Vec<u8> = Vec::new();
@@ -1371,20 +1197,6 @@ fn snap_to_surface(game: &mut GameState, ti: usize, si: usize) {
     }
 }
 
-fn is_on_ground(game: &GameState, ti: usize, si: usize) -> bool {
-    let s = &game.teams[ti].soldiers[si];
-    let x = s.pos.x as i32;
-    let y = s.pos.y as i32;
-    // Probe a small horizontal window, not just the single foot column: on a steep
-    // slope or ledge edge the exact column under the foot can be air within 3px even
-    // while the soldier is clearly standing, which silently blocked jump/backflip.
-    (-1..=1).any(|dx| {
-        game.terrain.is_solid(x + dx, y + 1)
-            || game.terrain.is_solid(x + dx, y + 2)
-            || game.terrain.is_solid(x + dx, y + 3)
-    })
-}
-
 /// Sanitize a player-supplied name: printable ASCII only, max 20 chars.
 fn sanitize_name(s: &str) -> String {
     s.chars().filter(|c| c.is_ascii_graphic() || *c == ' ').take(20).collect()
@@ -1393,7 +1205,7 @@ fn sanitize_name(s: &str) -> String {
 const MAGIC: &[u8; 4] = b"MMAY";
 
 /// Exact client version required. Bump with every release.
-const REQUIRED_VERSION: &str = "0.5.4.439-exp20";
+const REQUIRED_VERSION: &str = "0.5.4.439-exp28";
 
 fn version_ok(ver: &str) -> bool {
     ver == REQUIRED_VERSION

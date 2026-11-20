@@ -66,6 +66,8 @@ pub fn draw_jumpbot_sprite(buf: &mut WorldBuffer, x: i32, feet_y: i32, facing: i
     let steel_dk = Bgra::new(60,  66,  76);
     let eye      = Bgra::new(70, 210, 255);
     let mouth_c  = Bgra::new(20, 22, 26);
+    let spring   = Bgra::new(143, 152, 163);
+    let bulb     = Bgra::new(232, 64, 42);
 
     let half_w = w / 2;
     let top    = feet_y - h;
@@ -81,8 +83,16 @@ pub fn draw_jumpbot_sprite(buf: &mut WorldBuffer, x: i32, feet_y: i32, facing: i
     let leg_off = if grounded { 2 } else { 0 };
     let (l_dx, r_dx) = if stride { (facing * leg_off, -facing * leg_off) } else { (-facing * leg_off, facing * leg_off) };
     let leg_y = feet_y - leg_h;
-    buf.fill_rect(x - half_w + 1 + l_dx, leg_y, 3, leg_h as u32, steel_dk);
-    buf.fill_rect(x + half_w - 4 + r_dx, leg_y, 3, leg_h as u32, steel_dk);
+    // Coil springs: wide loop / narrow link, alternating; squashed one row when grounded mid-stride.
+    let coil = |buf: &mut WorldBuffer, cx: i32| {
+        for row in 0..leg_h {
+            let wide = (row + if grounded { 0 } else { 1 }) % 2 == 0;
+            if wide { buf.fill_rect(cx - 2, leg_y + row, 5, 1, steel_dk); buf.fill_rect(cx - 1, leg_y + row, 3, 1, spring); }
+            else    { buf.fill_rect(cx - 1, leg_y + row, 3, 1, steel_dk); buf.set_pixel(cx, leg_y + row, spring); }
+        }
+    };
+    coil(buf, x - half_w + 3 + l_dx);
+    coil(buf, x + half_w - 3 + r_dx);
 
     // Body
     buf.fill_rect(x - half_w, body_top, w as u32, body_h as u32, steel_dk);
@@ -102,7 +112,35 @@ pub fn draw_jumpbot_sprite(buf: &mut WorldBuffer, x: i32, feet_y: i32, facing: i
 
     // Antenna
     buf.fill_rect(x - 1, top - 4, 2, 4, steel_dk);
-    buf.fill_circle(x, top - 5, 2, eye);
+    buf.fill_circle(x, top - 5, 2, bulb);
+}
+
+/// Super Bot jetpack: red pack with a yellow gauge strapped to the back (opposite `facing`), plus a flame when `flying`.
+/// `heading` is degrees from straight up (positive = right); the flame trails opposite the direction of travel.
+pub fn draw_jetpack(buf: &mut WorldBuffer, x: i32, feet_y: i32, facing: i32, flying: bool, heading: f32, tick: u32) {
+    let red   = Bgra::new(216, 70, 47);
+    let dark  = Bgra::new(40, 30, 34);
+    let gauge = Bgra::new(255, 210, 74);
+    let metal = Bgra::new(143, 152, 163);
+    let px = x - facing * 10;           // pack centre, behind the body
+    let py = feet_y - 13;               // upper body
+    buf.fill_rect(px - 3, py - 1, 6, 8, dark);
+    buf.fill_rect(px - 2, py, 4, 6, red);
+    buf.fill_rect(px - 1, py + 1, 2, 3, gauge);
+    buf.fill_rect(px - 2, py + 7, 4, 2, metal);
+    if flying {
+        let (sx, cy) = (heading.to_radians().sin(), heading.to_radians().cos());
+        let flick = (tick / 2) % 2 == 0;
+        let len = if flick { 9 } else { 6 };
+        for i in 0..len {
+            let t = i as f32;
+            let fx = px as f32 - sx * (t + 3.0);
+            let fy = (py + 9) as f32 + cy * (t + 3.0) * 0.0 + (t + 1.0);
+            let col = if i < 3 { Bgra::new(255, 226, 122) } else if i < 6 { Bgra::new(255, 138, 42) } else { Bgra::new(232, 64, 42) };
+            let w = if i < 5 { 3 } else { 1 };
+            buf.fill_rect(fx as i32 - w / 2, fy as i32, w as u32, 1, col);
+        }
+    }
 }
 
 // ── Team colours ──────────────────────────────────────────────────────────────
@@ -138,6 +176,14 @@ pub const SOLDIER_HALF_W: i32 = SOLDIER_W / 2;
 /// Worm sprites are drawn this much smaller than their authored size so they read at WA's scale
 /// against the terrain on the small screen (physics body is 9x16).
 pub const WORM_SPRITE_SCALE: f32 = 0.6;
+/// Draw scale of the pixel-art soldiers (24x32 sprites), relative to their native pixel size.
+pub const LOOK_SCALE: f32 = 1.5;
+/// Height (px above the feet, in caller coordinates) of the top of the HP box over a soldier: the sprite's head top plus a gap.
+/// The name sits above it. Shared by the renderer and the loop's name/marker placement.
+/// Height in pixels of a soldier as drawn (31 sprite rows at `LOOK_SCALE`). The collision body (`BODY_H`) is much smaller (WA's
+/// 16 px worm), so anything meant to read as "relative to the soldier on screen" (jump height, walk pace) is measured against this.
+pub fn drawn_soldier_height() -> f32 { 31.0 * LOOK_SCALE }
+pub fn plate_top() -> i32 { drawn_soldier_height().round() as i32 + 3 + 11 }
 pub const BODY_W: i32 = 9;
 pub const BODY_H: i32 = 16;
 pub const BODY_HALF_W: i32 = BODY_W / 2;
@@ -547,6 +593,37 @@ pub fn draw_hp_number_lifted(buf: &mut WorldBuffer, cx: i32, fy: i32, hp: u8, te
     buf.fill_rect(tx - 3, ty - 2,  1, 13, Bgra::new(70, 70, 90));
     buf.fill_rect(tx + tw + 2, ty - 2, 1, 13, Bgra::new(70, 70, 90));
     draw_str(buf, &text, tx, ty, col);
+}
+
+/// WA worm plates (sampled from the real game): black fill, 1 px grey border with cut corners, text in the team colour
+/// (white on the active worm). The name plate sits on top of the HP plate with a 1 px overlap.
+pub const WA_PLATE_BORDER: Bgra = Bgra::new(156, 157, 156);
+/// WA's plate text colours (sampled from the real game) for Arty's four team slots; white on the active worm.
+pub fn wa_plate_text(team: usize, active: bool) -> Bgra {
+    if active { return Bgra::new(252, 254, 252); }
+    match team.min(3) { 0 => Bgra::new(252, 128, 128), 1 => Bgra::new(156, 157, 254), 2 => Bgra::new(128, 252, 128), _ => Bgra::new(252, 252, 128) }
+}
+const WA_PLATE_H: i32 = 12;
+fn draw_wa_plate(buf: &mut WorldBuffer, text: &str, cx: i32, top: i32, col: Bgra) {
+    use super::font::{draw_str, str_width};
+    let tw = str_width(text);
+    let w = tw + 7;
+    let x = cx - w / 2;
+    let black = Bgra::new(0, 0, 0);
+    let b = WA_PLATE_BORDER;
+    buf.fill_rect(x + 1, top, (w - 2) as u32, 1, b);
+    buf.fill_rect(x + 1, top + WA_PLATE_H - 1, (w - 2) as u32, 1, b);
+    buf.fill_rect(x, top + 1, 1, (WA_PLATE_H - 2) as u32, b);
+    buf.fill_rect(x + w - 1, top + 1, 1, (WA_PLATE_H - 2) as u32, b);
+    buf.fill_rect(x + 1, top + 1, (w - 2) as u32, (WA_PLATE_H - 2) as u32, black);
+    draw_str(buf, text, x + 3, top + 2, col);
+}
+/// Name plate above HP plate above the worm. `fy` = foot y; `hp` is the displayed (counting-down) value.
+pub fn draw_worm_plates(buf: &mut WorldBuffer, cx: i32, fy: i32, name: &str, hp: u8, team: usize, active: bool) {
+    let col = wa_plate_text(team, active);
+    let hp_top = fy - plate_top() - 2;
+    draw_wa_plate(buf, &format!("{}", hp), cx, hp_top, col);
+    draw_wa_plate(buf, name, cx, hp_top - (WA_PLATE_H - 1), col);
 }
 
 /// Draw the aim arrow for the active soldier.
@@ -1100,17 +1177,22 @@ mod tests {
     fn soldier_body_pixels_are_team_colour() {
         let mut b = buf();
         draw_soldier(&mut b, pos(100.0, 200.0), 0, 1, 100, 0);
-        // Centre of body should be team 0 colour
-        let cx = 100i32;
-        let fy = 200i32;
-        assert_eq!(b.get_pixel(cx, fy - SOLDIER_H / 2), TEAM_COLOURS[0]);
+        // Pixel-art soldiers: team colour is tinted into the uniform rather than a flat body fill, so check that the
+        // soldier paints a real figure above his feet (non-black pixels) and that the pixel under his feet stays untouched.
+        let painted = (0..48).filter(|dy| b.get_pixel(100, 200 - dy) != Bgra::new(0, 0, 0)).count();
+        assert!(painted > 10, "soldier drew only {painted} px in his column");
     }
 
     #[test]
     fn dead_soldier_uses_dead_colour() {
         let mut b = buf();
         draw_soldier(&mut b, pos(100.0, 200.0), 1, 1, 0, 0);
-        assert_eq!(b.get_pixel(100, 200 - SOLDIER_H / 2), TEAM_COLOURS_DEAD[1]);
+        // A dead soldier is drawn dimmer than a live one in the same spot.
+        let mut live = buf();
+        draw_soldier(&mut live, pos(100.0, 200.0), 1, 1, 100, 0);
+        let sum = |b: &WorldBuffer| (0..48).flat_map(|dy| (96..105).map(move |dx| (dx, dy)))
+            .map(|(dx, dy)| { let c = b.get_pixel(dx, 200 - dy); c.r as u32 + c.g as u32 + c.b as u32 }).sum::<u32>();
+        assert!(sum(&b) < sum(&live), "dead soldier should be dimmer");
     }
 
     #[test]

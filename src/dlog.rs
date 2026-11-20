@@ -11,6 +11,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 const MAX_BYTES: u64 = 512 * 1024;
@@ -60,6 +61,18 @@ macro_rules! dlog {
     ($tag:expr, $($arg:tt)*) => { $crate::dlog::log($tag, format_args!($($arg)*)) };
 }
 
+/// Time spent inside `simulate()` this perf window (microseconds): sum, worst tick, tick count. Fed by `note_sim` from the
+/// offline game loop; the live client never runs `simulate()` so these stay 0 there. Diagnostic only, never read by the sim.
+static SIM_US_SUM: AtomicU64 = AtomicU64::new(0);
+static SIM_US_MAX: AtomicU64 = AtomicU64::new(0);
+static SIM_TICKS: AtomicU64 = AtomicU64::new(0);
+
+pub fn note_sim(us: u64) {
+    SIM_US_SUM.fetch_add(us, Ordering::Relaxed);
+    SIM_US_MAX.fetch_max(us, Ordering::Relaxed);
+    SIM_TICKS.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Per-second performance/smoothness window (internal diagnostics). Feed it every frame; it writes one `[perf]` line a second:
 /// `fps`, frame time avg/max (ms), blit max (ms), how many frames received 0 / 1 / 2+ network states, ping, and the
 /// active worm's per-frame x steps (`dx`) — uneven `dx` or frame-time spikes explain visible jerkiness.
@@ -101,6 +114,8 @@ impl PerfWin {
                 self.st[0], self.st[1], self.st[2], ping_ms,
                 self.ph_sum[0]/n, self.ph_sum[1]/n, self.ph_sum[2]/n, self.ph_sum[3]/n, self.ph_max[0], self.ph_max[1], self.ph_max[2], self.ph_max[3],
                 if moving { format!(" dx={:?}", self.dx) } else { String::new() }));
+            let (n_sim, sum, max) = (SIM_TICKS.swap(0, Ordering::Relaxed), SIM_US_SUM.swap(0, Ordering::Relaxed), SIM_US_MAX.swap(0, Ordering::Relaxed));
+            if n_sim > 0 { log("sim", format_args!("ticks={} avg={}us max={}us per tick, {:.1}ms/s", n_sim, sum / n_sim, max, sum as f64 / 1000.0)); }
             *self = Self { last_x: self.last_x, ..Self::new() };
         }
     }

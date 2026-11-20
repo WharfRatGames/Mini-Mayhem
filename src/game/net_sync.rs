@@ -52,6 +52,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
                     }
                 },
                 on_fire_ticks: s.on_fire_ticks.min(255) as u8,
+                crouch: match s.wa_act { Some(crate::game::soldier::WaAct::Windup { age, .. }) => (age + 1).min(255) as u8, _ => 0 },
                 kill_weapon_u8: s.kill_weapon.map(|w| w.to_net_u8()).unwrap_or(255),
             }
         })).collect(),
@@ -151,6 +152,7 @@ pub fn build_state(game: &GameState, tick: u32, _crater_start: usize) -> StateMs
             x: r.x, y: r.y, vel_y: r.vel_y, vel_x: r.vel_x, facing: r.facing,
             fuse_ticks: r.fuse_ticks, grounded: r.grounded, walk_ticks: r.walk_ticks,
             owner_team: r.owner_team, just_jumped: r.just_jumped,
+            super_bot: r.super_bot, flying: r.flying, heading: r.heading,
         }),
         homing_missile: game.homing_missile.as_ref().map(|hm| NetHomingMissile {
             cursor_x: hm.cursor_x, render_x: hm.render_x,
@@ -222,6 +224,8 @@ pub fn apply_server_state(
                 soldier.airtime         = ns.airtime;
                 soldier.walk_ticks      = ns.walk_ticks;
                 soldier.on_fire_ticks   = ns.on_fire_ticks as u32;
+                // Crouch wind-up is display-only on the live client (it runs no sim); the server owns the real timer.
+                soldier.wa_act = if ns.crouch > 0 { Some(crate::game::soldier::WaAct::Windup { backflip: false, tilt: 0, age: ns.crouch as u32 - 1 }) } else { None };
                 soldier.death_cause = {
                     use crate::game::soldier::DeathCause;
                     match ns.death_cause_u8 {
@@ -503,7 +507,7 @@ pub fn apply_server_state(
         game.garcia = state.garcia.as_ref().map(|ng| GarciaState {
             cursor_x: ng.cursor_x, render_x: ng.render_x, cursor_y: ng.cursor_y, render_y: ng.render_y,
             blink_timer: ng.blink_timer,
-            falling: ng.falling, fall_y: ng.fall_y, vel_y: ng.vel_y, bounce_count: ng.bounce_count,
+            falling: ng.falling, fall_y: ng.fall_y, vel_y: ng.vel_y, bounce_count: ng.bounce_count, vel_x: 0.0,
         });
     }
     // Sync Jumpbot walker
@@ -513,6 +517,7 @@ pub fn apply_server_state(
             x: nr.x, y: nr.y, vel_y: nr.vel_y, vel_x: nr.vel_x, facing: nr.facing,
             fuse_ticks: nr.fuse_ticks, grounded: nr.grounded, walk_ticks: nr.walk_ticks,
             owner_team: nr.owner_team, just_jumped: nr.just_jumped, wa: None,
+            super_bot: nr.super_bot, flying: nr.flying, heading: nr.heading, fly_phase: 0,
         });
     }
     // Sync Homing Missile targeting cursor
@@ -604,6 +609,7 @@ fn _gamestate_parity_checklist(g: &GameState) {
         revolver_shots_left: _, minigun_shots_left: _, minigun_fire_timer: _, uzi_shots_left: _, uzi_fire_timer: _, pistol_shots_left: _, pistol_fire_timer: _, bullet_trails: _, rope_session: _,
         rope_used_this_turn: _, rope_retreat_ticks: _, tnt_placed: _, crate_watch_ticks: _,
         smoke_particles: _, fx: _, fx_text: _, pending_deaths: _,
+        wa_rng: _, // server-side sim only
         meteor_chain: _, // not synced: transient per-tick flag, reset each tick
     } = g;
 }
@@ -643,12 +649,13 @@ fn _soldier_parity_checklist(s: &crate::game::soldier::Soldier) {
         wa: _,            // not synced: fixed-point flight body, re-derived from pos/vel by whoever simulates
         wa_walk: _,       // not synced: walk-cycle phase, server/sim-local
         wa_vis: _,        // display-only smoothing
-        wa_act: _,        // not synced: windup/recovery timers, server/sim-local (clients see Idle then Airborne)
+        wa_act: _,        // → NetSoldier.crouch (windup age only, display; recovery stays server-local)
         has_moved: _,     // not synced: server-internal turn bookkeeping
         has_grave: _,     // not synced: graves ship separately via NetGrave
         death_explosion_pending: _, // not synced: server-side death timer
         hp_display_ticks: _,        // not synced: client-local HP-box visibility timer
         displayed_hp: _,  // not synced: client-local animation toward hp
+        displayed_hp_f: _,
         damage_settle: _, // not synced: server-side tally window; popup ships via fx_events
         pending_bat_damage: _, // not synced: server-side deferred-hit bookkeeping between
                                 // swing and landing, same category as damage_settle — the
@@ -688,6 +695,7 @@ fn _projectile_parity_checklist(p: &crate::physics::projectile::Projectile) {
         owner: _,         // not synced: server-side self-hit grace bookkeeping
         cleared_owner: _, // not synced: server-side self-hit grace bookkeeping
         wa: _,            // not synced: derived fixed-point shadow of pos/vel (bazooka), rebuilt from them
+        thrown: _,        // not synced: derived fixed-point shadow of pos/vel (grenade), rebuilt from them
     } = p;
 }
 
@@ -775,7 +783,7 @@ fn _garcia_parity_checklist(g: &crate::game::state::GarciaState) {
     let crate::game::state::GarciaState {
         // ── Synced via NetGarcia ──
         cursor_x: _, render_x: _, cursor_y: _, render_y: _, blink_timer: _,
-        falling: _, fall_y: _, vel_y: _, bounce_count: _,
+        falling: _, fall_y: _, vel_y: _, bounce_count: _, vel_x: _,
     } = g;
 }
 
@@ -785,9 +793,9 @@ fn _jumpbot_parity_checklist(r: &crate::game::state::JumpbotState) {
     let crate::game::state::JumpbotState {
         // ── Synced via NetJumpbot ──
         x: _, y: _, vel_y: _, vel_x: _, facing: _, fuse_ticks: _, grounded: _, walk_ticks: _,
-        owner_team: _, just_jumped: _,
+        owner_team: _, just_jumped: _, super_bot: _, flying: _, heading: _,
         // ── Sim-only, not synced ──
-        wa: _,
+        wa: _, fly_phase: _,
     } = r;
 }
 

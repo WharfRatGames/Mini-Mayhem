@@ -15,7 +15,7 @@ pub const WALK_DX: i32 = 0x20000;
 /// Step-up / step-down height, rec+0xb4.
 pub const STEP_PX: i32 = 4;
 /// Hop angle (degrees) rec+0xc4 and speed percent rec+0xc8.
-pub const HOP_ANGLE_DEG: f64 = 25.0;
+pub const HOP_ANGLE_DEG: i32 = 25;
 pub const HOP_PERCENT: i32 = 100;
 /// Look-ahead probes (px) for obstacles.
 pub const PROBE_FAR: i32 = 60;
@@ -74,12 +74,15 @@ impl SheepBody {
     }
 
     /// FUN_0050a330: random leap. Speed `((r&0xffff)+0x28000) * percent * 2 / 100`, direction `angle` above horizontal.
-    pub fn hop(&mut self, angle_deg: f64, percent: i32) {
+    /// The angle is measured FROM VERTICAL (oracle-verified against WA's real code): vx = sin * m, vy = -cos * m, with WA's
+    /// interpolated trig tables. A 25 degree "hop angle" is therefore a steep, mostly upward leap.
+    pub fn hop(&mut self, angle_deg: i32, percent: i32) {
+        use super::wa_rope::{cos16, sin16};
         self.rng = self.frame.wrapping_add(self.rng).wrapping_mul(0x19660d).wrapping_add(0x3c6ef35f);
-        let m = (((self.rng & 0xffff) as i64 + 0x28000) * percent as i64 * 2 / 100) as f64;
-        let a = angle_deg.to_radians();
-        self.vx = (a.cos() * m).round() as i32 * self.dir;
-        self.vy = -(a.sin() * m).round() as i32;
+        let m = (((self.rng & 0xffff) as i64 + 0x28000) * percent as i64 * 2 / 100) as i64;
+        let a = angle_deg.wrapping_mul(0x10000) / 0x168;
+        self.vx = (((sin16(a) as i64 * m) >> 16) as i32).wrapping_mul(self.dir);
+        self.vy = -(((cos16(a) as i64 * m) >> 16) as i32);
         self.hopped = true;
     }
 
@@ -99,7 +102,7 @@ impl SheepBody {
         out
     }
 
-    /// FUN_0050a900 (walking mode).
+    /// FUN_0050a900 (walking mode), ported from the instructions (oracle-verified, tests/wa_sheep_oracle.rs).
     fn walk(&mut self, solid: &dyn Fn(i32, i32) -> bool, water_row: i32, out: &mut Frame) {
         let y0 = self.y;
         let r = self.step_move(WALK_DX * self.dir, STEP_PX, solid);
@@ -111,50 +114,62 @@ impl SheepBody {
         } else if r == -1 {
             jump = true; // walked off a ledge (rec+0xc4 >= 0)
         }
-        if (self.y >> 16) >= water_row { jump = true; }
-        // rec+0xc4 > 0: steep change, or an obstacle within 30/60 px ahead.
-        if (self.y - y0).abs() > 0x40000 { jump = true; }
-        let ahead = |px: i32| Self::blocked(solid, self.x.wrapping_add(self.dir * px * 0x10000), self.y);
-        if ahead(PROBE_FAR) || ahead(PROBE_NEAR) { jump = true; }
-        // Embedded in terrain right here: never hop.
-        if Self::blocked(solid, self.x, self.y) { jump = false; }
+        // Reached the water row: clamp to the row above it and hop.
+        if (self.y >> 16) >= water_row {
+            self.y = (water_row << 16).wrapping_sub(0x10000);
+            jump = true;
+        }
+        // rec+0xc4 > 0 (sheep): steep change, or an obstacle ahead. WA: 0x3ffff < |dy|.
+        if (self.y - y0).abs() >= 0x40000 { jump = true; }
+        let free_at = |dx_px: i32, dy_px: i32| !Self::blocked(solid, self.x.wrapping_add(self.dir * dx_px * 0x10000), self.y.wrapping_add(dy_px * 0x10000));
+        // 60 px ahead probed 8 px ABOVE the sheep, then (if clear) 30 px ahead at his own height.
+        let mut check_ceiling = true;
+        if !free_at(PROBE_FAR, -8) {
+            jump = true;
+        } else if !free_at(PROBE_NEAR, 0) {
+            jump = true;
+        } else if !jump {
+            check_ceiling = false; // nothing ahead and no other reason: skip straight to the end
+        }
+        // A hop is cancelled when there is no room above: the spot 48 px straight up is blocked.
+        if check_ceiling && Self::blocked(solid, self.x, self.y.wrapping_sub(0x300000)) {
+            jump = false;
+        }
         if jump {
             self.hop(HOP_ANGLE_DEG, HOP_PERCENT);
         }
     }
 
-    /// Ballistic flight. Gravity, then move one pixel at a time so thin walls can't be tunnelled.
+    /// Ballistic flight on WA's real mover (`wa_body::sweep`, oracle-verified): gravity, then up to two sweep+bounce rounds
+    /// (FUN_004fcdf0). The sheep is weapon category 3, so FUN_004ff490 bounces with obj[0x6c]=0x9999 (walls), obj[0x70]=0 and
+    /// obj[0x74]=0 (floor/ceiling): a floor or ceiling hit kills all velocity, a wall hit reflects vx at 0.6 and zeroes vy.
     fn air(&mut self, solid: &dyn Fn(i32, i32) -> bool, out: &mut Frame) {
+        use super::wa_body::{sweep, Body};
+        use super::wa_collide::overlaps_land;
         self.vy = self.vy.wrapping_add(GRAVITY16);
-        // Horizontal.
-        let mut rem = self.vx as i64;
-        let sx = if rem < 0 { -1 } else { 1 };
-        let mut x = self.x as i64;
-        while rem != 0 {
-            let step = if rem.abs() > 0x10000 { 0x10000 * sx } else { rem };
-            let nx = (x + step) as i32;
-            if Self::blocked(solid, nx, self.y) { self.vx = 0; break; }
-            x += step;
-            rem -= step;
-        }
-        self.x = x as i32;
-        // Vertical.
-        let mut rem = self.vy as i64;
-        let sy = if rem < 0 { -1 } else { 1 };
-        let mut y = self.y as i64;
-        while rem != 0 {
-            let step = if rem.abs() > 0x10000 { 0x10000 * sy } else { rem };
-            let ny = (y + step) as i32;
-            if Self::blocked(solid, self.x, ny) {
-                if self.vy > 0 { out.landed = true; }
-                self.vy = 0;
-                if out.landed { self.vx = 0; }
-                break;
+        let blocked = |x16: i32, y16: i32| overlaps_land(solid, SHAPE, x16 >> 16, y16 >> 16);
+        let mut b = Body { x: self.x, y: self.y, vx: self.vx, vy: self.vy, f30: 0xb, f38: SHAPE as i32, fb0: 0 };
+        let mut frac = 0x10000;
+        let mut rounds = 0;
+        while frac != 0 && rounds < 2 {
+            let r = sweep(&mut b, &mut frac, 0x200, &blocked);
+            if r.hit && blocked(b.x, b.y.wrapping_add(0x10000)) {
+                // FUN_00508c90, category 3: touching ground one pixel below (FUN_005018f0 == 0) kills all velocity, whatever the side.
+                b.vx = 0; b.vy = 0; out.landed = true;
+            } else if r.hit {
+                let vx_before = b.vx;
+                // FUN_00508c90 0x508f09: category 3 draws the RNG after every bounce; one time in 16 a WALL hit (sides 2/4) turns the sheep
+                // to face the way it was travelling.
+                self.rng = self.frame.wrapping_add(self.rng).wrapping_mul(0x19660d).wrapping_add(0x3c6ef35f);
+                if self.rng & 0xf000_0000 == 0 && (r.side == 2 || r.side == 4) { self.dir = if vx_before >= 0 { 1 } else { -1 }; }
+                match r.side {
+                    1 | 3 => { if r.side == 3 { out.landed = true; } b.vx = 0; b.vy = 0; }
+                    _ => { b.vx = -(((b.vx as i64 * 0x9999) >> 16) as i32); b.vy = 0; }
+                }
             }
-            y += step;
-            rem -= step;
+            rounds += 1;
         }
-        self.y = y as i32;
+        self.x = b.x; self.y = b.y; self.vx = b.vx; self.vy = b.vy;
     }
 }
 
@@ -189,10 +204,10 @@ mod tests {
         let mut hopped = false;
         for _ in 0..3 { if s.frame(&solid, 10_000).hopped { hopped = true; break; } }
         assert!(hopped, "no hop with wall within 60px");
-        // speed in [5.0, 7.0] px/frame at 25 degrees
+        // speed in [5.0, 7.0] px/frame, 25 degrees from vertical (steep)
         let mag = ((s.vx as f64).powi(2) + (s.vy as f64).powi(2)).sqrt() / 65536.0;
         assert!(mag > 4.9 && mag < 7.1, "hop speed {mag}");
-        assert!(s.vx > 0 && s.vy < 0);
+        assert!(s.vx > 0 && s.vy < 0 && -s.vy > s.vx, "hop should be steeper than 45 degrees");
     }
 
     #[test]

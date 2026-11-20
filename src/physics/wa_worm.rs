@@ -56,6 +56,18 @@ impl WormBody {
         self.vx == 0 && self.vy == 0 && Self::blocked_with(solid, others, self.x, self.y.wrapping_add(0x10000))
     }
 
+    /// WA's "supported" test (cf. FUN_004fb580): land or another worm overlaps this body shifted 1 px down, velocity ignored.
+    pub fn supported_with(&self, solid: &dyn Fn(i32, i32) -> bool, others: &[(i32, i32)]) -> bool {
+        Self::blocked_with(solid, others, self.x, self.y.wrapping_add(0x10000))
+    }
+
+    /// The worm half of WA's "supported" test (cf. FUN_004fb580): does another worm's mask overlap this body shifted 1 px down?
+    /// `others` are their integer body-centre pixels. Lets a worm resting on another's shoulder or head count as supported even
+    /// where a rectangular "feet at the head" test disagrees with the real mask shape.
+    pub fn resting_on_worm(&self, others: &[(i32, i32)]) -> bool {
+        others.iter().any(|&(ox, oy)| overlaps_body(WORM_SHAPE, self.x >> 16, self.y.wrapping_add(0x10000) >> 16, WORM_SHAPE, ox, oy))
+    }
+
     fn blocked_at(solid: &dyn Fn(i32, i32) -> bool, x16: i32, y16: i32) -> bool {
         overlaps_land(solid, WORM_SHAPE, x16 >> 16, y16 >> 16)
     }
@@ -259,6 +271,11 @@ mod fall_tests {
         assert_eq!(fall_damage(12 << 16), 11);                  // 12 px/frame ~ a 300 px drop
         assert!(fall_damage(20 << 16) > fall_damage(12 << 16));
         // Real WA rig captures (state 0x80 forced at a chosen speed): impact vy (after gravity) -> HP lost.
+        // Teleport drops on a mine-free column (wa_rig fall_damage c88_*, 2026-11-19): vy after gravity at impact -> HP lost,
+        // falls of 146/152/160/180/200/220/240 px. (136 px lands at 8.16 px/frame -> 0.)
+        for (vy, hp) in [(550_480, 1), (566_208, 2), (581_936, 2), (613_392, 4), (644_848, 5), (676_304, 6), (707_760, 8)] {
+            assert_eq!(fall_damage(vy), hp, "drop vy {vy}");
+        }
         for (vy, hp) in [(605_552, 3), (736_624, 9), (867_696, 14), (1_129_840, 26)] {
             assert_eq!(fall_damage(vy), hp, "vy {vy}");
         }
