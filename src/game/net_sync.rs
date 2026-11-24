@@ -471,7 +471,7 @@ pub fn apply_server_state(
             landed: nf.landed,
             lifetime: nf.lifetime,
             landed_ticks: nf.landed_ticks,
-            carves: nf.carves,
+            carves: nf.carves, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false,
         }).collect();
     }
 
@@ -748,6 +748,8 @@ fn _firepatch_parity_checklist(f: &crate::game::state::FirePatch) {
     let crate::game::state::FirePatch {
         // ── Synced via NetFirePatch ──
         pos: _, vel: _, landed: _, lifetime: _, landed_ticks: _, carves: _,
+        // ── Not networked (server-side molotov chain) ──
+        splits: _, dir: _, timer: _, cool: _, wisp: _, turns: _,
     } = f;
 }
 

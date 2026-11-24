@@ -26,3 +26,17 @@ fn walking_into_a_soldier_never_teleports_past_him() {
     }
     }
 }
+
+#[test]
+fn one_px_short_headroom_is_not_a_wall() {
+    // -exp35 'Smeg' stuck: a ceiling exactly HEAD_CLEAR px above the pit floor, with the floor 1 px higher next door (headroom 35 < 36).
+    use arty::game::loop_runner::{walk_headroom_ok, HEAD_CLEAR};
+    let mut t = arty::world::Terrain::empty();
+    for x in 100..200 { for y in 400..440 { t.set_solid(x, y, true); } }      // floor top y=400 (foot y=399) for x<150
+    for x in 150..200 { for y in 400..401 { t.set_solid(x, y, false); } }     // pit floor 1 px lower at x>=150 (foot y=400)
+    for x in 100..200 { for y in 300..(399 - HEAD_CLEAR + 1) { t.set_solid(x, y, true); } } // ceiling
+    assert!(walk_headroom_ok(&t, 160, 400, 140, 399), "1 px short of HEAD_CLEAR must be walkable");
+    // a real squeeze is still refused
+    for x in 120..130 { for y in (399 - 20)..(399 - 19) { t.set_solid(x, y, true); } }
+    assert!(!walk_headroom_ok(&t, 160, 400, 125, 399), "a 19 px gap must stay blocked");
+}

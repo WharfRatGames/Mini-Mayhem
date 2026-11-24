@@ -252,6 +252,123 @@ pub fn draw_list_panel(
     }
 }
 
+/// One row of a [`draw_side_menu`] list.
+pub struct SideItem<'a> {
+    pub label:  &'a str,
+    /// Small red count badge at the row's right end ("" = none).
+    pub badge:  &'a str,
+    /// Red text (e.g. LOG OUT).
+    pub danger: bool,
+}
+
+/// Info card shown beside the list for the highlighted item.
+pub struct SideCard<'a> {
+    pub title: &'a str,
+    pub body:  &'a str,
+    /// (label, value, value colour) rows under the body.
+    pub stats: &'a [(String, String, Bgra)],
+}
+
+pub const SIDE_GOLD:  Bgra = Bgra::new(255, 225, 55);
+pub const SIDE_GREEN: Bgra = Bgra::new(90, 230, 120);
+pub const SIDE_WHITE: Bgra = Bgra::new(240, 240, 255);
+pub const SIDE_SCRAP: Bgra = Bgra::new(230, 200, 80);
+
+/// Darken + tint a rect in place (cheap "glass" panel over the title art).
+fn shade_rect(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32, keep: u32, tint: (u32, u32, u32)) {
+    let (sw, sh) = (SCREEN_W as i32, SCREEN_H as i32);
+    for yy in y.max(0)..(y + h).min(sh) {
+        for xx in x.max(0)..(x + w).min(sw) {
+            let p = buf.get_pixel(xx, yy);
+            let m = |c: u8, t: u32| ((c as u32 * keep + t * (256 - keep)) / 256) as u8;
+            buf.set_pixel(xx, yy, Bgra::new(m(p.r, tint.0), m(p.g, tint.1), m(p.b, tint.2)));
+        }
+    }
+}
+
+/// Full-screen submenu layout used by every menu below the title screen:
+/// dimmed title art, header bar (screen name left, `who` right), big rows
+/// filling the left column (no scrolling), an info card for the highlighted
+/// row on the right, and button hints in the footer.
+pub fn draw_side_menu(
+    buf:    &mut WorldBuffer,
+    crumb:  &str,
+    who:    &str,
+    items:  &[SideItem],
+    cursor: usize,
+    card:   &SideCard,
+    hints:  &[(&str, &str)],
+) {
+    use super::font::wrap_text;
+    let (sw, sh) = (SCREEN_W as i32, SCREEN_H as i32);
+    let accent = Bgra::new(255, 180, 0);
+    super::title_bg::draw_title_bg(buf, 0);
+    shade_rect(buf, 0, 0, sw, sh, 55, (6, 8, 24));
+
+    // Header
+    shade_rect(buf, 0, 0, sw, 44, 40, (10, 14, 40));
+    buf.fill_rect(0, 44, SCREEN_W, 2, accent);
+    draw_str_shadow_scaled(buf, crumb, 18, 10, SIDE_GOLD, 3);
+    draw_str(buf, who, sw - str_width(who) - 14, 17, Bgra::new(200, 205, 235));
+
+    // Item column — rows share the full height; one label size per screen.
+    let (col_x, col_w, top) = (14, 372, 58);
+    let n = items.len().max(1) as i32;
+    let row_h = ((sh - 30 - top) / n).min(96);
+    let scale = if items.iter().all(|it| str_width_scaled(it.label, 3)
+        + if it.badge.is_empty() { 10 } else { 50 } <= col_w - 22) { 3 } else { 2 };
+    for (i, it) in items.iter().enumerate() {
+        let y = top + i as i32 * row_h;
+        let sel = i == cursor;
+        if sel {
+            shade_rect(buf, col_x, y, col_w, row_h - 6, 60, (20, 30, 90));
+            buf.fill_rect(col_x, y, 4, (row_h - 6) as u32, accent);
+        } else {
+            shade_rect(buf, col_x, y, col_w, row_h - 6, 150, (8, 10, 30));
+        }
+        let col = match (sel, it.danger) {
+            (true, true)   => Bgra::new(255, 100, 80),
+            (true, false)  => SIDE_GOLD,
+            (false, true)  => Bgra::new(200, 80, 70),
+            (false, false) => Bgra::new(225, 228, 245),
+        };
+        draw_str_shadow_scaled(buf, it.label, col_x + 18, y + (row_h - 6 - 8 * scale) / 2, col, scale);
+        if !it.badge.is_empty() {
+            let bw = str_width_scaled(it.badge, 2) + 12;
+            let bx = col_x + col_w - bw - 10;
+            let by = y + (row_h - 6 - 22) / 2;
+            buf.fill_rect(bx, by, bw as u32, 22, Bgra::new(210, 60, 50));
+            draw_str_shadow_scaled(buf, it.badge, bx + 6, by + 3, Bgra::new(255, 255, 255), 2);
+        }
+    }
+
+    // Info card
+    let cx = col_x + col_w + 10;
+    let (cy, cw, ch) = (58, sw - cx - 10, sh - 30 - 58 - 6);
+    shade_rect(buf, cx, cy, cw, ch, 45, (10, 14, 40));
+    buf.fill_rect(cx, cy, cw as u32, 2, accent);
+    draw_str_shadow_scaled(buf, card.title, cx + 12, cy + 14, SIDE_GOLD, 2);
+    let mut y = cy + 44;
+    for line in wrap_text(card.body, 1, cw - 24) {
+        draw_str(buf, &line, cx + 12, y, Bgra::new(205, 210, 235));
+        y += 15;
+    }
+    y += 14;
+    for (k, v, c) in card.stats {
+        if y + 40 > cy + ch { break; }
+        buf.fill_rect(cx + 12, y - 6, (cw - 24) as u32, 1, Bgra::new(60, 64, 110));
+        draw_str(buf, k, cx + 12, y, Bgra::new(150, 155, 195));
+        y += 14;
+        let vw = str_width_scaled(v, 2);
+        draw_str_shadow_scaled(buf, v, cx + cw - 12 - vw, y, *c, 2);
+        y += 26;
+    }
+
+    // Footer
+    shade_rect(buf, 0, sh - 24, sw, 24, 40, (10, 14, 40));
+    draw_button_hints(buf, hints, 0, 4);
+}
+
 /// Standard full-width screen header bar with a centered 2x title.
 pub fn draw_screen_header(buf: &mut WorldBuffer, title: &str) {
     let sw = SCREEN_W as i32;
@@ -265,9 +382,14 @@ pub fn draw_screen_header(buf: &mut WorldBuffer, title: &str) {
 /// Returns true if Quit was selected, false if Resume.
 /// `cursor` is 0 = Resume, 1 = Quit.
 pub fn draw_pause_menu(buf: &mut WorldBuffer, cursor: u8, cam_x: i32, cam_y: u32) {
+    draw_pause_menu_items(buf, &["RESUME", "EXIT MATCH"], cursor, cam_x, cam_y);
+}
+
+/// Pause menu with a caller-supplied item list (TEST mode adds "PAUSE GAME", a full freeze that also stops the turn timer).
+pub fn draw_pause_menu_items(buf: &mut WorldBuffer, items: &[&str], cursor: u8, cam_x: i32, cam_y: u32) {
     use super::font::{draw_str_scaled, str_width_scaled};
     let panel_w = 230u32;
-    let panel_h = 110u32;
+    let panel_h = 50 + 30 * items.len() as u32;
     let panel_x = cam_x + (SCREEN_W - panel_w) as i32 / 2;
     let panel_y = cam_y as i32 + (SCREEN_H - panel_h) as i32 / 2;
 
@@ -287,7 +409,6 @@ pub fn draw_pause_menu(buf: &mut WorldBuffer, cursor: u8, cam_x: i32, cam_y: u32
         Bgra::new(255, 210, 50), 2);
 
     // Menu items — 2x scaled
-    let items = ["RESUME", "EXIT MATCH"];
     for (i, &item) in items.iter().enumerate() {
         let item_y = panel_y + 46 + i as i32 * 30;
         let selected = i as u8 == cursor;

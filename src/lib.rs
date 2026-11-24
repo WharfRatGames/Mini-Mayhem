@@ -7,5 +7,6 @@ pub mod game;
 pub mod audio;
 pub mod net;
 pub mod https;
+pub mod ota;
 pub mod bug_report;
 pub mod replay;

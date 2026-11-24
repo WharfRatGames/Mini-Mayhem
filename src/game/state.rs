@@ -213,6 +213,20 @@ pub struct FirePatch {
     // crate-spray fire burn and damage but leave terrain intact (verified against
     // real WA footage — assets/barrel.mp4). Set true only at the barrel spawn site.
     pub carves:      bool,
+    // WA Molotov chain (decompile 0x5501a0/0x54f940): `splits` generations left (20 at the first flame), `dir` crawl direction
+    // (0 = the initial flame, which spawns both ways), `timer` WA frames since this flame was created. Not networked (render only).
+    pub splits:      u8,
+    pub dir:         i8,
+    pub timer:       u8,
+    /// WA flames whose launch struct has +0xa0 = 1 (Molotov): `lifetime` is 5 turns of 100 units (+1); it falls 100 at every turn end
+    /// (msg 0x18, scheme +0xd998 = 20 %), ~90 per worm hit (30 x the flame's decay rate), and does NOT decay while resting.
+    /// Other flames (barrel/crate bursts, flag 0) decay by resting ticks instead.
+    pub turns:       bool,
+    /// WA per-flame hit cooldown (obj+0x60 / 0x14): WA frames until this flame may hurt again (5..11 after a hit). Not networked.
+    pub cool:        u8,
+    /// WA wisp accumulator (obj+0x50, 16.16): += (1-size)/24 + 0x51e each frame, whole part = 0x267 puffs this frame, only the
+    /// fraction is kept. Not networked.
+    pub wisp:        u32,
 }
 
 /// Torch angle (relative to soldier facing direction).
@@ -625,7 +639,7 @@ impl GameState {
                     landed: false,
                     lifetime: life,
                     landed_ticks: 0,
-                    carves: false, // crate-spray fire does not eat terrain (WA)
+                    carves: false, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false, // crate-spray fire does not eat terrain (WA)
                 });
             }
         }
@@ -658,31 +672,25 @@ impl GameState {
         let max_dmg = (kind.max_damage() as f32 * dmg_scale) as u32;
         crate::dlog!("blast", "tick={} {:?} at ({:.2},{:.2}) r={:.1} max_dmg={} force={:.2}", self.tick, kind, pos.x, pos.y, radius, max_dmg, force);
 
-        // The Molotov leaves NO upfront blast crater — a dug-out pit combined with
-        // the fire pool becomes an inescapable death trap. WA's petrol bomb barely
-        // scratches the terrain on impact; here the fire does all the work instead,
-        // gradually eating a shallow trench over its lifetime (see the per-tick
-        // carve in step_fire_patches) rather than digging one deep pit up front.
-        // (crater_log drives client-side carving too, so not pushing keeps every
-        // path crater-free without a desync.)
-        if kind != WeaponKind::MolotovCocktail {
-            let crater = Crater::new(pos.x, pos.y, radius);
-            crater.carve(&mut self.terrain);
-            self.crater_log.push((pos.x, pos.y, radius));
-        }
+        // WA (wa_rig molo_land, 1-bpp land dump before/after): a Molotov impact carves ONE instant circular crater of radius 18
+        // (372 px on a slope; circle fit error 7 px) at the impact frame, and the flames afterwards remove NOTHING (land bitmap identical
+        // from +3 frames to +570 frames). The blast's damage radius (55) is separate from this crater radius.
+        let crater_r = if kind == WeaponKind::MolotovCocktail { 18.0 } else { radius };
+        let crater = Crater::new(pos.x, pos.y, crater_r);
+        crater.carve(&mut self.terrain);
+        self.crater_log.push((pos.x, pos.y, crater_r));
 
         // Spawn explosion animation (visual only — happens regardless of terrain)
         self.explosions.push(Explosion::new(pos, radius));
 
         // Spawn effect fallout: dirt chunks + sparks (or a water splash on water).
-        // Visual only — not networked. The Molotov carves nothing, so skip the dirt
-        // fallout (flying dirt with no crater looks wrong); the fire is its visual.
+        // Visual only — not networked.
         if pos.y >= WATER_Y as f32 {
             self.emit_fx(crate::renderer::fx::FxEvent::Splash { x: pos.x, y: pos.y });
-        } else if kind != WeaponKind::MolotovCocktail {
+        } else {
             let d = biome_dirt(self.terrain.is_cavern, self.terrain.template_id);
             self.emit_fx(crate::renderer::fx::FxEvent::Explosion {
-                x: pos.x, y: pos.y, radius, col: [d.r, d.g, d.b],
+                x: pos.x, y: pos.y, radius: crater_r, col: [d.r, d.g, d.b],
             });
         }
 
@@ -823,7 +831,7 @@ impl GameState {
                     landed: false,
                     lifetime: life,
                     landed_ticks: 0,
-                    carves: false, // crate-spray fire does not eat terrain (WA)
+                    carves: false, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false, // crate-spray fire does not eat terrain (WA)
                 });
             }
         }
@@ -836,7 +844,7 @@ impl GameState {
             let dy = mine.pos.y - pos.y;
             if (dx * dx + dy * dy).sqrt() < radius {
                 mine.state = MineState::Triggered;
-                mine.trigger_ticks = 8; // short chain delay
+                mine.trigger_ticks = 0; // WA 0x503ad0: a mine hit by a blast goes to state 0x67 and explodes on its next frame (no fuse)
             }
         }
 
@@ -1543,7 +1551,7 @@ impl GameState {
                         let dy = mine.pos.y - pos.y;
                         if (dx * dx + dy * dy).sqrt() < 43.0 {
                             mine.state = MineState::Triggered;
-                            mine.trigger_ticks = 5; // shorter chain delay
+                            mine.trigger_ticks = 0; // chain: next frame, same as a blast hit (WA 0x503ad0 msg 0x1c)
                         }
                     }
                 }
@@ -1660,36 +1668,38 @@ impl GameState {
         }
     }
 
-    /// Shatter a molotov cocktail: small blast + 48 fire patches that burn for 2.5 min.
+    /// Shatter a molotov cocktail: WA's blast (crater r18) + ONE flame falling at 4 px/WA-frame that, 4 frames later, starts two chains
+    /// of flames crawling left and right along the ground (20 generations, 41 flames in total: rig flame_spawn, decompile
+    /// 0x5501a0 / 0x54f940 / ctor 0x54f4c0). See `step_fire_patches` for the chain logic.
     pub fn spawn_molotov_fire(&mut self, pos: WorldPos) {
         use crate::world::Vec2;
         use crate::physics::projectile::WeaponKind;
         self.apply_explosion(pos, WeaponKind::MolotovCocktail);
-        let mut rng = (pos.x as u64)
-            .wrapping_mul(0x6364136223846885)
-            .wrapping_add((pos.y as u64).wrapping_mul(0x9e3779b97f4a7c15))
-            .wrapping_add((self.tick as u64).wrapping_mul(0x517CC1B727220A95));
-        let count = 36; // dense pool of fire, trimmed down a bit from 48
-        for _ in 0..count {
-            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-            let raw_angle = (rng >> 33) as f32 / (u32::MAX as f32);
-            let angle = (raw_angle - 0.5) * std::f32::consts::PI * 1.6; // -144°..+144°
-            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-            let speed = 2.5 + (rng >> 33) as f32 / (u32::MAX as f32) * 5.5;
-            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-            // 2.5 min = 4500 ticks ± 10% spread so patches don't all expire together
-            let life = 4050 + (rng >> 33) as u32 % 900; // 4050–4950 ticks (~2.25–2.75 min)
-            self.fire_patches.push(FirePatch {
-                pos,
-                vel: Vec2::new(angle.cos() * speed, angle.sin() * speed - 1.5),
-                landed: false,
-                lifetime: life,
-                    landed_ticks: 0,
-                carves: false, // molotov/petrol fire does not eat terrain (WA)
-            });
-        }
+        self.fire_patches.push(FirePatch {
+            pos,
+            vel: Vec2::new(0.0, 4.0 * 5.0 / 3.0), // struct vy = 0x40000 = 4 px per WA frame
+            landed: false,
+            lifetime: Self::MOLOTOV_FLAME_LIFE,
+            landed_ticks: 0,
+            carves: false, // molotov/petrol fire does not eat terrain (WA)
+            splits: 20, dir: 0, timer: 0, cool: 0, wisp: 0, turns: true,
+        });
         self.emit_sound(crate::audio::Sfx::Explosion);
     }
+
+    /// Molotov flame life: size 0xffff = 5 steps of 13106 + 5, one step per turn end -> alive through 5 turn ends, gone at the 6th (rig
+    /// flame_life: 41 flames, sizes 65535 -> 52429 -> 39323 -> 26153 at the turn ends, none dead after 55 s). 100 units per step.
+    pub const MOLOTOV_FLAME_LIFE: u32 = 501;
+    pub const FLAME_TURN_STEP: u32 = 100;
+
+    /// Msg 0x18 (turn end): every Molotov-type flame loses one step. Call once per turn change.
+    pub fn fire_turn_end(&mut self) {
+        for p in self.fire_patches.iter_mut().filter(|p| p.turns) {
+            p.lifetime = p.lifetime.saturating_sub(Self::FLAME_TURN_STEP);
+        }
+    }
+
+    pub fn explode_barrel_pub(&mut self, pos: WorldPos) { self.explode_barrel(pos) }
 
     fn explode_barrel(&mut self, pos: WorldPos) {
         use crate::world::Vec2;
@@ -1717,24 +1727,23 @@ impl GameState {
             }
         }
 
-        // Spawn fire patches — deterministic scatter using position-seeded LCG
+        // WA oil drum burst (decompile 0x509ba0, rig drum_land): 12 flames, each placed at the drum +-8 px on both axes (uniform), all
+        // launched straight down at 4 px per WA frame, flag +0xa0 = 0 (they decay while resting), life 5000 ms: decay per resting
+        // frame = 65536000/(5000*50) + (rnd&0xffff)/500 = 262..393 of 65535 -> 167..250 resting WA frames = 100..150 ticks of 30 Hz.
         let mut rng = (pos.x as u64).wrapping_mul(0x6364136223846885)
             .wrapping_add((pos.y as u64).wrapping_mul(0x9e3779b97f4a7c15));
-        let count = 18 + (rng % 11) as usize; // WA-style: a barrel throws a big splash of fire, 18–28 patches
-        for _ in 0..count {
-            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-            let angle = (rng >> 33) as f32 / (u32::MAX as f32) * std::f32::consts::TAU;
-            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-            let speed = 3.0 + (rng >> 33) as f32 / (u32::MAX as f32) * 7.0; // more spread
-            rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407);
-            let life = 150 + (rng >> 33) as u32 % 90; // 5–8 s
+        let mut next = || { rng = rng.wrapping_mul(0x6364136223846885).wrapping_add(1442695040888963407); ((rng >> 33) & 0xffff) as f32 / 65536.0 };
+        for _ in 0..12 {
+            let (ox, oy) = ((next() - 0.5) * 16.0, (next() - 0.5) * 16.0);
+            let decay = 262.0 + next() * 131.0;
+            let life = (65535.0 / decay * 0.6) as u32;
             self.fire_patches.push(FirePatch {
-                pos,
-                vel: Vec2::new(angle.cos() * speed, angle.sin() * speed - 3.0), // bias upward
+                pos: WorldPos::new((pos.x + ox).clamp(0.0, crate::world::WORLD_W as f32 - 1.0), pos.y + oy),
+                vel: Vec2::new(0.0, 4.0 * 5.0 / 3.0),
                 landed: false,
                 lifetime: life,
-                    landed_ticks: 0,
-                carves: true, // barrel fire DOES eat terrain (WA — assets/barrel.mp4)
+                landed_ticks: 0,
+                carves: true, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false, // barrel fire DOES eat terrain (WA — assets/barrel.mp4)
             });
         }
     }
@@ -1898,139 +1907,126 @@ impl GameState {
         }
     }
 
+    /// WA flame particles (decompile 0x5501a0 / 0x54fe20 / 0x54fad0, findings/physics.md "WA flame particle"), run at WA's 50 Hz
+    /// (1-2 frames per 30 Hz tick, `WaMissile::frames_for_age`).
+    ///  * motion: wind + 2x gravity, +-0.5 px/frame random on BOTH axes, x0.9 drag, sweep along the velocity; the first solid pixel
+    ///    zeroes it (flames never slide or bounce); a flame at rest on solid ground does nothing.
+    ///  * a flame hits a worm whose centre is within a box of 5..20 px: the worm takes 1 HP and a shove of
+    ///    (flame v/8 + unit(flame -> worm centre-8px), vy + sign*0.3) px/frame. At most one hit per worm per frame; each flame
+    ///    then waits 5-11 frames (here: a stateless ~1-in-8 chance per frame so `FirePatch` / the wire format stay unchanged).
+    ///  There is NO burn state, hop or slide in WA: a worm in fire is only shoved by the hits.
     pub fn step_fire_patches(&mut self) {
         use crate::world::{WATER_Y, WORLD_W};
-        const GRAVITY:      f32 = 0.4;
-        const WIND_AIR:     f32 = 0.18; // strong wind influence while airborne
-        const WIND_GROUND:  f32 = 0.01; // almost none once settled
-        const BOUNCE_DAMP:   f32 = 0.25; // velocity multiplier on terrain impact
-        const DOT_RADIUS:    f32 = 10.0;
-        // Burn damage is capped PER SOLDIER (not per patch): a molotov spawns ~48
-        // overlapping patches, so per-patch damage stacked into an instant kill.
-        // A burning soldier loses 1 HP every BURN_INTERVAL ticks regardless of how
-        // many flames touch it.
-        const BURN_INTERVAL: u32 = 8;    // 1 HP / 8 ticks ≈ 3.75 HP/s while burning
-        const SLIDE_STEP:    f32 = 1.2;  // px/tick a burning grounded soldier slides
-        // WA: a burning worm "jumps due to the burns" — a periodic hop that moves it
-        // downhill/out of the fire and, critically, UNSTICKS it from pits and ledges
-        // where a pure slide would trap it until it dies. The escape direction is
-        // LATCHED at ignition (away from the blast) and committed to, so the worm
-        // travels one way out of the pool instead of hopping back and forth in it.
-        // Burn-hop now fires on every damage tick (see `deal_damage` below) rather
-        // than its own interval, so it stays in lockstep with the 1 HP/BURN_INTERVAL
-        // damage tick — one jump away from the fire per tick of damage taken.
-        const HOP_VX:        f32 = 3.0;  // horizontal hop speed — distance trimmed down a bit
-        const HOP_VY:        f32 = 3.0;  // upward hop speed — raised back up from 2.0
-        // WA-style gradual burn: a landed ember eats terrain away instead of
-        // digging one deep pit up front (see the removed upfront crater in
-        // apply_explosion_scaled). Tuned down from an initial WA-footage-driven
-        // pass that ate far too much (whole terrain chunks) — capped to the
-        // first few seconds of landing so a 2.5-minute molotov burn doesn't
-        // keep eroding for its entire lifetime. Staggered cadence across
-        // patches keeps 48 molotov patches from all carving on the same tick.
-        // Carve as wide as the visible flame sprite (~18 px across → radius 9),
-        // so the eaten channel matches the flame the player sees rather than a
-        // thin sliver under it. Depth over time is still bounded by INTERVAL +
-        // DURATION below.
-        // 9.0 → 2.25 (1/4 depth): carve radius per hit cut to a quarter.
-        const BURN_CARVE_RADIUS:   f32 = 2.25;
-        // 8 → 32 (1/4 rate): carve 4x less often per patch.
-        const BURN_CARVE_INTERVAL: u32 = 32;
-        const BURN_CARVE_DURATION_TICKS: u32 = 50; // ~1.7s @ 30fps — carving stops after this
+        use crate::physics::wa_missile::WaMissile;
+        use super::soldier::SoldierState;
+        const GRAVITY_F:  f32 = 0.48;  // WA frame: gravity 15728/65536 * 2
+        const DRAG:       f32 = 0.9;   // 0xe666 / 65536
+        const WIND_F:     f32 = 0.0054;
+        const BURN_CARVE_RADIUS:   f32 = 2.6; // tuned so a barrel's fire removes ~1100 px (WA drum_land: 3428 px for 3 drums over ~6 s)
+        const BURN_CARVE_INTERVAL: u32 = 16;
+        const BURN_CARVE_DURATION_TICKS: u32 = 90;
+        const FOOT_TO_CENTRE: f32 = 6.0; // worm body centre is 6 px above the foot (wa_worm::FOOT_OFFSET)
+        let rnd = |tick: u32, i: usize, k: u32, salt: u32| -> f32 {
+            let mut h = (tick as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ ((i as u64) << 20) ^ ((k as u64) << 8) ^ salt as u64;
+            h ^= h >> 31; h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9); h ^= h >> 29; h = h.wrapping_mul(0x94D0_49BB_1331_11EB); h ^= h >> 32;
+            (h & 0xffff) as f32 / 65536.0 - 0.5
+        };
 
-        let wind = self.wind.value() * 0.05;
-
-        // Away-from-flame direction accumulator (sum of soldier-minus-patch dx),
-        // used to re-latch the escape direction on every hop tick.
-        let mut away_dx: Vec<Vec<f32>> =
-            self.teams.iter().map(|t| vec![0.0f32; t.soldiers.len()]).collect();
-
-        // Snapshot active soldier HP before the loop so we can detect fire damage.
+        let wind = self.wind.value() * WIND_F;
         let ati = self.active_team();
         let asi = self.teams[ati].active;
         let active_hp_before = self.teams[ati].soldiers[asi].hp;
-
+        let frames = WaMissile::frames_for_age(self.tick);
         let mut to_remove: Vec<usize> = Vec::new();
+        // (team, soldier, dvx, dvy in px per 30 Hz tick) for this tick's fire hits.
+        let mut hits: Vec<(usize, usize, f32, f32)> = Vec::new();
+        // flames that reached the water this tick: (x, y, remaining splits) -> steam puffs
+        let mut water_hits: Vec<(f32, f32, u32)> = Vec::new();
+        // burning-flame wisps (WA sprite 0x267): positions of single steam puffs shed this tick
+        let mut wisps: Vec<(f32, f32, u32)> = Vec::new();
 
-        for (i, patch) in self.fire_patches.iter_mut().enumerate() {
-            if patch.lifetime == 0 { to_remove.push(i); continue; }
-            patch.lifetime -= 1;
-
-            if !patch.landed {
-                // ── Airborne: full gravity + strong wind ────────────────────
-                patch.vel.x += wind * WIND_AIR;
-                patch.vel.y = (patch.vel.y + GRAVITY).min(12.0);
-
-                let nx = patch.pos.x + patch.vel.x;
-                let ny = patch.pos.y + patch.vel.y;
-
-                if ny >= WATER_Y as f32 { to_remove.push(i); continue; }
-
-                let nx_c = nx.clamp(0.0, (WORLD_W as f32) - 1.0);
-                if self.terrain.is_solid(nx_c as i32, ny as i32) {
-                    // Bounce with heavy damping (WA: velocity *= 0.3 on impact)
-                    patch.vel.x *= BOUNCE_DAMP;
-                    patch.vel.y *= -BOUNCE_DAMP;
-                    // If speed is now negligible, settle immediately
-                    if patch.vel.x.abs() < 0.3 && patch.vel.y.abs() < 0.3 {
-                        patch.landed = true;
-                        patch.vel = crate::world::Vec2::new(0.0, 0.0);
+        for k in 0..frames {
+            let mut spawn: Vec<FirePatch> = Vec::new();
+            let mut hit_this_frame: Vec<(usize, usize)> = Vec::new();
+            for (i, patch) in self.fire_patches.iter_mut().enumerate() {
+                if to_remove.contains(&i) { continue; }
+                if k == 0 && patch.lifetime == 0 { to_remove.push(i); continue; }
+                // ── WA motion (velocity kept in px per 30 Hz tick; a WA frame is 0.6 tick) ──
+                let (mut vx, mut vy) = (patch.vel.x * 0.6, patch.vel.y * 0.6);
+                let below = self.terrain.is_solid(patch.pos.x as i32, patch.pos.y as i32 + 1);
+                let resting = vx == 0.0 && vy == 0.0 && below;
+                if resting {
+                    patch.landed = true;
+                    // size only decays while the flame did not move (WA: local_48 == 0)
+                    if k == 0 { patch.landed_ticks = patch.landed_ticks.saturating_add(1); if !patch.turns { patch.lifetime -= 1; } }
+                } else {
+                    vx += wind + rnd(self.tick, i, k, 1);
+                    vy += GRAVITY_F + rnd(self.tick, i, k, 2);
+                    vx *= DRAG; vy *= DRAG;
+                    let steps = ((vx.abs().max(vy.abs()) * 4.0).ceil() as i32).max(1);
+                    let (mut nx, mut ny) = (patch.pos.x, patch.pos.y);
+                    let mut blocked = false;
+                    for st in 1..=steps {
+                        let t = st as f32 / steps as f32;
+                        let (tx, ty) = (patch.pos.x + vx * t, patch.pos.y + vy * t);
+                        let txc = tx.clamp(0.0, WORLD_W as f32 - 1.0);
+                        if self.terrain.is_solid(txc as i32, ty as i32) { blocked = true; break; }
+                        nx = txc; ny = ty;
                     }
-                    // Stay at last valid position (don't push into terrain)
-                } else {
-                    patch.pos.x = nx_c;
-                    patch.pos.y = ny;
+                    patch.pos.x = nx; patch.pos.y = ny;
+                    if blocked { vx = 0.0; vy = 0.0; patch.landed = true; }
+                    if ny >= WATER_Y as f32 { to_remove.push(i); water_hits.push((nx, ny, patch.splits as u32)); continue; }
                 }
-            } else {
-                // ── Grounded: WA-style terrain sliding ──────────────────────
-                patch.landed_ticks = patch.landed_ticks.saturating_add(1);
-                // Gravity + tiny wind keep pulling; fire walks downhill into pits.
-                patch.vel.x += wind * WIND_GROUND;
-                patch.vel.y = (patch.vel.y + GRAVITY).min(6.0);
+                patch.vel = crate::world::Vec2::new(vx / 0.6, vy / 0.6);
 
-                let px = patch.pos.x as i32;
-                let py = patch.pos.y as i32;
+                // ── Burning-flame wisps (WA 0x5501a0): each frame acc += (1-size)/24 + 0x51e (16.16); its whole part is the number of 0x267
+                // puffs spawned, then cleared (only the fraction stays). ~0.02 puffs/frame on a fresh flame rising to ~0.06 as it shrinks.
+                // `FirePatch.wisp` holds the fraction (not networked).
+                {
+                    // WA keeps the size as a 16.16 fixed value (1.0 = 65536); the accumulator's whole part is cleared each frame.
+                    let size16 = ((patch.lifetime as f32 / if patch.turns { 501.0 } else { 150.0 }).clamp(0.0, 1.0) * 65536.0) as u32;
+                    patch.wisp += (65536 - size16.min(65536)) / 0x18 + 0x51e;
+                    let n = patch.wisp >> 16;
+                    patch.wisp &= 0xffff;
+                    if n > 0 { wisps.push((patch.pos.x, patch.pos.y - 3.0, n)); }
+                }
 
-                // Check if support has been blown away — resume falling
-                let has_support = self.terrain.is_solid(px,     py)
-                    || self.terrain.is_solid(px,     py + 1)
-                    || self.terrain.is_solid(px - 2, py)
-                    || self.terrain.is_solid(px + 2, py);
-                if !has_support {
-                    patch.landed = false;
-                    // keep vel so it continues sliding
-                    patch.vel.y = patch.vel.y.max(1.0);
-                } else {
-                    // Try to slide one pixel in the direction gravity + vel wants.
-                    // Priority: straight down → down-left → down-right → stay.
-                    let candidates: [(i32, i32); 3] = [
-                        (px,     py + 1),   // straight down
-                        (px - 1, py + 1),   // down-left
-                        (px + 1, py + 1),   // down-right
-                    ];
-                    let mut moved = false;
-                    for &(cx, cy) in &candidates {
-                        if cx < 0 || cx >= WORLD_W as i32 { continue; }
-                        if cy >= WATER_Y as i32 { to_remove.push(i); moved = true; break; }
-                        if !self.terrain.is_solid(cx, cy) {
-                            patch.pos.x = cx as f32;
-                            patch.pos.y = cy as f32;
-                            moved = true;
-                            break;
+                // ── Molotov chain (WA 0x5501a0 -> 0x54f940): 4 frames after its creation a flame with generations left spawns its child(ren)
+                // ~3-6 px sideways at its own height (probing up to 6 px over obstacles, reversing at walls), then stops splitting.
+                if patch.splits > 0 && patch.lifetime > 0 {
+                    patch.timer = patch.timer.saturating_add(1);
+                    if patch.timer >= 4 {
+                        let (mut bx, mut by) = (patch.pos.x.floor() as i32, patch.pos.y.floor() as i32);
+                        let dirs: &[i8] = if patch.dir == 0 { &[-1, 1] } else { &[patch.dir] };
+                        for (n, &d0) in dirs.iter().enumerate() {
+                            let mut d = d0;
+                            let off = (((rnd(self.tick, i, k, 10 + n as u32) + 0.5) * 4.0) as i32 & 3) + 3;
+                            let nx = (bx + off * d as i32).clamp(0, WORLD_W as i32 - 1);
+                            let mut ny = by;
+                            let mut tries = 0;
+                            let (cx, cy);
+                            loop {
+                                if !self.terrain.is_solid(nx, ny) { cx = nx; cy = ny; break; }
+                                ny -= 1; tries += 1;
+                                if tries > 6 { d = -d; cx = bx; cy = by; break; }
+                            }
+                            spawn.push(FirePatch {
+                                pos: crate::world::WorldPos::new(cx as f32, cy as f32),
+                                vel: crate::world::Vec2::new(patch.vel.x * 0.75, patch.vel.y * 0.75),
+                                landed: false,
+                                lifetime: if patch.turns { Self::MOLOTOV_FLAME_LIFE } else { 120 },
+                                landed_ticks: 0, carves: patch.carves,
+                                splits: patch.splits - 1, dir: d, timer: 0, cool: 0, wisp: 0, turns: patch.turns,
+                            });
+                            // WA quirk: the second child starts from the first child's placed position.
+                            bx = cx; by = cy;
                         }
-                    }
-                    if !moved {
-                        // Completely blocked — settled in a pit, zero velocity
-                        patch.vel = crate::world::Vec2::new(0.0, 0.0);
+                        patch.splits = 0;
                     }
                 }
 
-                // Gradually eat into the terrain at the ember's current spot,
-                // but only for the first BURN_CARVE_DURATION_TICKS after landing
-                // — after that the ember keeps burning/damaging but stops
-                // digging. Staggered per-patch (offset by index i) so a
-                // 48-patch molotov burst doesn't carve everywhere on the same tick.
-                if patch.carves
+                // Terrain erosion (barrel fire only), once per tick.
+                if k == 0 && patch.carves && patch.landed
                     && patch.landed_ticks <= BURN_CARVE_DURATION_TICKS
                     && (self.tick + i as u32) % BURN_CARVE_INTERVAL == 0 {
                     let crater = Crater::new(patch.pos.x, patch.pos.y, BURN_CARVE_RADIUS);
@@ -2038,153 +2034,88 @@ impl GameState {
                     self.crater_log.push((patch.pos.x, patch.pos.y, BURN_CARVE_RADIUS));
                 }
 
-                // Mark soldiers standing in this flame as burning and accumulate a
-                // net away-from-flame direction (used as a flat-ground slide
-                // tiebreaker). Actual damage + slide are applied per-soldier once,
-                // after the patch loop, so N overlapping flames don't multiply them.
-                for (ti, team) in self.teams.iter_mut().enumerate() {
-                    for (si, s) in team.soldiers.iter_mut().enumerate() {
-                        if !s.is_alive() { continue; }
-                        let dx = s.pos.x - patch.pos.x;
-                        let dy = s.pos.y - patch.pos.y;
-                        if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
-                            s.on_fire_ticks = 10;
-                            away_dx[ti][si] += dx;
-                        }
+                // ── Hit test (WA 0x54fad0): skipped 1 frame in 16, then a flame is on cooldown ~8 frames between hits ──
+                // WA 0x54fad0: a flame on cooldown (+0x60 > 0, -0x14 per frame) cannot hit; one that hits waits (rand&0x7f)+100 = 5..11 frames.
+                if patch.cool > 0 { patch.cool -= 1; continue; }
+                if (self.tick * 2 + k + i as u32) % 16 == 0 { continue; }
+                let size = (patch.lifetime as f32 / if patch.turns { 501.0 } else { 150.0 }).clamp(0.0, 1.0);
+                let reach = 5.0 + 15.0 * size;
+                for (ti, team) in self.teams.iter().enumerate() {
+                    for (si, s) in team.soldiers.iter().enumerate() {
+                        if !s.is_alive() || hit_this_frame.contains(&(ti, si)) { continue; }
+                        let cy = s.pos.y - FOOT_TO_CENTRE;
+                        if (s.pos.x - patch.pos.x).abs() >= reach || (cy - patch.pos.y).abs() >= reach { continue; }
+                        // unit vector flame -> (worm centre - 8 px)
+                        let (dx, dy) = (s.pos.x - patch.pos.x, cy - patch.pos.y - 8.0);
+                        let len = (dx * dx + dy * dy).sqrt();
+                        let (ux, mut uy) = if len > 1e-3 { (dx / len, dy / len) } else { (0.0, -1.0) };
+                        uy += if uy >= 0.0 { 0.3 } else { -0.3 };
+                        let (svx, svy) = (vx / 8.0 + ux, vy / 8.0 + uy); // px per WA frame
+                        hit_this_frame.push((ti, si));
+                        patch.cool = (((rnd(self.tick, i, k, 3) + 0.5) * 128.0) as u32 + 100).div_ceil(20) as u8;
+                        if patch.turns { patch.lifetime = patch.lifetime.saturating_sub(90); } // WA: size -= scheme(+0xd99c = 30) x decay (~440) ~ 0.9 of a turn step
+                        hits.push((ti, si, svx * 5.0 / 3.0, svy * 5.0 / 3.0));
                     }
                 }
 
-                // Flames ignite nearby barrels.
-                for barrel in &mut self.barrels {
-                    if let BarrelState::Normal = barrel.state {
-                        let dx = barrel.pos.x - patch.pos.x;
-                        let dy = barrel.pos.y - patch.pos.y;
-                        if (dx*dx + dy*dy).sqrt() < 6.0 {
-                            barrel.state = BarrelState::Triggered { ticks: 5 };
+                // Flames ignite nearby barrels / mines and destroy landed crates (once per tick).
+                if k == 0 && patch.landed {
+                    for barrel in &mut self.barrels {
+                        if let BarrelState::Normal = barrel.state {
+                            let (dx, dy) = (barrel.pos.x - patch.pos.x, barrel.pos.y - patch.pos.y);
+                            if (dx*dx + dy*dy).sqrt() < 6.0 { barrel.state = BarrelState::Triggered { ticks: 5 }; }
                         }
                     }
-                }
-
-                // Flames detonate nearby armed mines.
-                for mine in &mut self.mines {
-                    if mine.state == MineState::Armed {
-                        let dx = mine.pos.x - patch.pos.x;
-                        let dy = mine.pos.y - patch.pos.y;
-                        if (dx*dx + dy*dy).sqrt() < 6.0 {
-                            mine.state = MineState::Triggered;
-                            mine.trigger_ticks = 5;
+                    for mine in &mut self.mines {
+                        if mine.state == MineState::Armed {
+                            let (dx, dy) = (mine.pos.x - patch.pos.x, mine.pos.y - patch.pos.y);
+                            if (dx*dx + dy*dy).sqrt() < 6.0 { mine.state = MineState::Triggered; mine.trigger_ticks = 0; }
                         }
                     }
-                }
-
-                // Flames destroy landed crates instantly on contact.
-                for crate_ in &mut self.crates {
-                    if !crate_.landed { continue; }
-                    let dx = crate_.pos.x - patch.pos.x;
-                    let dy = crate_.pos.y - patch.pos.y;
-                    if (dx*dx + dy*dy).sqrt() < DOT_RADIUS {
-                        crate_.damage_this_turn = 20;
+                    for crate_ in &mut self.crates {
+                        if !crate_.landed { continue; }
+                        let (dx, dy) = (crate_.pos.x - patch.pos.x, crate_.pos.y - patch.pos.y);
+                        if (dx*dx + dy*dy).sqrt() < 10.0 { crate_.damage_this_turn = 20; }
                     }
                 }
             }
+            self.fire_patches.extend(spawn);
         }
 
-        for i in to_remove.into_iter().rev() {
-            self.fire_patches.remove(i);
+        to_remove.sort_unstable();
+        to_remove.dedup();
+        for i in to_remove.into_iter().rev() { self.fire_patches.remove(i); }
+        // WA 0x5501a0: a flame in the water spawns 4 + 4 * splits steam puffs (type 0x262) and dies.
+        for (x, y, splits) in water_hits {
+            self.emit_fx(crate::renderer::fx::FxEvent::Smoke { x, y: y.min(WATER_Y as f32), count: 4 + 4 * splits });
         }
 
-        // Per-soldier burn effects (bounded, independent of flame count):
-        //  - damage: 2.5 HP/BURN_INTERVAL average while on fire (2.5x the original
-        //    1 HP/BURN_INTERVAL) — alternates 2/3 HP per burn tick since damage is
-        //    integer HP.
-        //  - slide: grounded burning soldiers slide DOWNHILL along the terrain (WA:
-        //    burning worms slip down slopes into pits/water). try_move_horizontal +
-        //    snap_to_surface follow the surface down; sliding off an edge becomes a
-        //    fall via normal physics next tick. On flat ground, drift away from the
-        //    flame so a trapped worm still edges out.
-        use super::soldier::SoldierState;
-        let deal_damage = self.tick % BURN_INTERVAL == 0;
-        for ti in 0..self.teams.len() {
-            for si in 0..self.teams[ti].soldiers.len() {
-                if self.teams[ti].soldiers[si].on_fire_ticks == 0 { continue; }
-                if !self.teams[ti].soldiers[si].is_alive() { continue; }
+        for (x, y, n) in wisps {
+            self.emit_fx(crate::renderer::fx::FxEvent::Smoke { x, y, count: n });
+        }
 
-                if deal_damage {
-                    self.teams[ti].soldiers[si].death_cause =
-                        super::soldier::DeathCause::Explosion;
-                    let burn_dmg = if (self.tick / BURN_INTERVAL) % 2 == 0 { 2 } else { 3 };
-                    self.teams[ti].soldiers[si].take_damage(burn_dmg);
-                    if !self.teams[ti].soldiers[si].is_alive() { continue; }
-                }
-
-                // Only grounded soldiers move here; mid-hop (Airborne) ones are
-                // carried by normal physics and still burn (damage above applies).
-                if !matches!(self.teams[ti].soldiers[si].state,
-                    SoldierState::Idle | SoldierState::Walking { .. }) { continue; }
-
-                // Re-latch the escape direction (away from whichever flame pool(s)
-                // the worm is currently standing in) every hop tick, not just on
-                // fresh ignition. A worm that hops out of one pool and lands in a
-                // different one must flee THAT pool's centre, not keep running the
-                // original escape direction. Between hops we still commit to the
-                // last-latched direction so hop and slide don't fight each other.
-                if deal_damage {
-                    let a = away_dx[ti][si];
-                    if a != 0.0 {
-                        self.teams[ti].soldiers[si].facing = if a > 0.0 { 1 } else { -1 };
-                    }
-                }
-
-                // Move ONLY in the committed escape direction (facing). We do NOT
-                // consult downhill any more: the fire pools in the terrain's low
-                // spots, so "slide downhill" dragged the worm back into the flames
-                // and it rocked around the valley bottom. Heading one fixed way out
-                // means it either clears the pool or stops against a wall and burns
-                // (exactly WA's "can't escape against a wall" behaviour).
-                let dir = {
-                    let f = self.teams[ti].soldiers[si].facing as f32;
-                    if f == 0.0 { 1.0 } else { f }
-                };
-
-                if deal_damage {
-                    // Burn-hop: jump toward `dir`. If a barrier (tall terrain, a
-                    // barrel/mine) blocks that way, hop the OTHER way instead and
-                    // commit to it — so a worm wedged against a wall keeps trying the
-                    // opposite direction until it finds a way out of the fire.
-                    let sx = self.teams[ti].soldiers[si].pos.x as i32;
-                    let sy = self.teams[ti].soldiers[si].pos.y as i32;
-                    let blocked = |d: f32| {
-                        let ax = sx + (d as i32) * 8;
-                        self.terrain.is_blocked(ax, sy - 2)
-                            && self.terrain.is_blocked(ax, sy - 16)
-                    };
-                    let mut hd = dir;
-                    if blocked(hd) {
-                        hd = -hd;
-                        self.teams[ti].soldiers[si].facing = if hd > 0.0 { 1 } else { -1 };
-                    }
-                    self.teams[ti].soldiers[si].state = SoldierState::Airborne {
-                        vel: crate::world::Vec2::new(hd * HOP_VX, -HOP_VY),
-                        spinning: false,
-                    };
-                } else {
-                    // Between hops: slide along the surface in the same committed
-                    // direction, so hop and slide never fight each other.
-                    let new_x = self.teams[ti].soldiers[si].pos.x + dir * SLIDE_STEP;
-                    crate::game::loop_runner::try_move_horizontal(self, ti, si, new_x);
-                }
+        // Apply the hits: 1 HP each + the shove (added to an airborne worm's velocity, launching a grounded one).
+        for (ti, si, dvx, dvy) in hits {
+            let soldier = &mut self.teams[ti].soldiers[si];
+            if !soldier.is_alive() { continue; }
+            soldier.death_cause = super::soldier::DeathCause::Explosion;
+            soldier.take_damage(1);
+            soldier.on_fire_ticks = 4; // visual squirm only (no gameplay effect in WA)
+            let was_grounded = matches!(soldier.state, SoldierState::Idle | SoldierState::Walking { .. });
+            let new_state = match &soldier.state {
+                SoldierState::Airborne { vel, spinning } => Some(SoldierState::Airborne { vel: crate::world::Vec2::new(vel.x + dvx, vel.y + dvy), spinning: *spinning }),
+                SoldierState::Idle | SoldierState::Walking { .. } => Some(SoldierState::Airborne { vel: crate::world::Vec2::new(dvx, dvy), spinning: false }),
+                SoldierState::Dead => None,
+            };
+            if let Some(st) = new_state {
+                if was_grounded { soldier.fall.begin_fall(soldier.pos.y); }
+                soldier.state = st;
             }
         }
-
         for team in &mut self.teams {
-            for s in &mut team.soldiers {
-                if s.on_fire_ticks > 0 { s.on_fire_ticks -= 1; }
-            }
+            for s in &mut team.soldiers { if s.on_fire_ticks > 0 { s.on_fire_ticks -= 1; } }
         }
-
-        if self.teams[ati].soldiers[asi].hp < active_hp_before {
-            self.active_worm_hit = true;
-        }
+        if self.teams[ati].soldiers[asi].hp < active_hp_before { self.active_worm_hit = true; }
     }
 }
 

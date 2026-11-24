@@ -1,6 +1,5 @@
-//! Fire patches must render as the WA flame sprite: visible pixels in the
-//! flame palette (red/orange/yellow/white), animated across ticks, shrinking
-//! near expiry. Set FLAME_DUMP=/path/prefix to dump PPM crops for eyeballing.
+//! Fire patches must render like WA's: a carpet of tiny 1-2 px specks in the flame palette (pale yellow / gold / orange; wa_rig flame_look),
+//! re-rolled across ticks, thinning near expiry and sparse in flight, never a big sprite. Set FLAME_DUMP=/path/prefix to dump PPM crops for eyeballing.
 
 use arty::game::loop_runner::{render, LoopState};
 use arty::game::state::{FirePatch, GameState};
@@ -57,9 +56,9 @@ fn fire_patches_render_wa_flames() {
     let spot = WorldPos { x: pos.x + 40.0, y: pos.y };
     // Landed long-lived flame, landed dying flame, airborne spark.
     game.fire_patches = vec![
-        FirePatch { pos: spot, vel: Vec2 { x: 1.3, y: -0.7 }, landed: true, lifetime: 500, landed_ticks: 0, carves: false },
-        FirePatch { pos: WorldPos { x: spot.x + 30.0, y: spot.y }, vel: Vec2 { x: -2.1, y: 0.4 }, landed: true, lifetime: 20, landed_ticks: 0, carves: false },
-        FirePatch { pos: WorldPos { x: spot.x - 30.0, y: spot.y - 40.0 }, vel: Vec2 { x: 0.5, y: 2.0 }, landed: false, lifetime: 300, landed_ticks: 0, carves: false },
+        FirePatch { pos: spot, vel: Vec2 { x: 1.3, y: -0.7 }, landed: true, lifetime: 500, landed_ticks: 0, carves: false, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false },
+        FirePatch { pos: WorldPos { x: spot.x + 30.0, y: spot.y }, vel: Vec2 { x: -2.1, y: 0.4 }, landed: true, lifetime: 20, landed_ticks: 0, carves: false, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false },
+        FirePatch { pos: WorldPos { x: spot.x - 30.0, y: spot.y - 40.0 }, vel: Vec2 { x: 0.5, y: 2.0 }, landed: false, lifetime: 300, landed_ticks: 0, carves: false, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false },
     ];
 
     let mut cam = Camera::new(spot.x, spot.y);
@@ -79,23 +78,23 @@ fn fire_patches_render_wa_flames() {
     dump(&buf, spot.x as i32, spot.y as i32, "landed");
     dump(&buf, spot.x as i32 + 30, spot.y as i32, "dying");
     dump(&buf, spot.x as i32 - 30, spot.y as i32 - 40, "spark");
-    assert!(full > 60, "landed flame too small/invisible ({full} px)");
-    assert!(dying > 3 && dying < full, "dying flame should be a small spark ({dying} vs {full})");
-    assert!(spark > 3 && spark < full, "airborne spark should be small ({spark} vs {full})");
+    assert!(full >= 6, "landed fire invisible ({full} px)");
+    assert!(full <= 90, "a flame is a small icon like WA's, not a big sprite ({full} px)");
+    assert!(dying >= 1 && dying < full, "dying fire should thin out ({dying} vs {full})");
+    assert!(spark >= 1, "airborne flame invisible ({spark} px)"); // WA draws an airborne flame like a landed one
 
-    // Animation: advancing lifetime must change the drawn frame.
+    // WA draws a flame from a fixed frame chosen by its size band: no flicker. Same size band => identical pixels; smaller band => fewer.
     game.fire_patches[0].lifetime = 498;
     let mut buf2 = WorldBuffer::new();
     render(&game, &mut buf2, &cam, &mut LoopState::new());
-    let mut diff = 0;
     for dy in -22i32..4 {
         for dx in -14i32..=14 {
-            if buf.get_pixel(spot.x as i32 + dx, spot.y as i32 + dy)
-                != buf2.get_pixel(spot.x as i32 + dx, spot.y as i32 + dy)
-            {
-                diff += 1;
-            }
+            assert_eq!(buf.get_pixel(spot.x as i32 + dx, spot.y as i32 + dy), buf2.get_pixel(spot.x as i32 + dx, spot.y as i32 + dy), "flame must not animate");
         }
     }
-    assert!(diff > 10, "flame doesn't animate (diff={diff})");
+    game.fire_patches[0].lifetime = 40; // size < 1/4 -> smallest frame
+    let mut buf3 = WorldBuffer::new();
+    render(&game, &mut buf3, &cam, &mut LoopState::new());
+    let small = flame_pixels(&buf3, &base, spot.x as i32, spot.y as i32);
+    assert!(small < full, "a smaller flame draws fewer pixels ({small} vs {full})");
 }

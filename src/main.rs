@@ -8,8 +8,9 @@ mod net;
 mod updater;
 mod audio;
 mod https;
+mod ota;
 mod bug_report;
-const VERSION: &str = "0.5.4.439-exp33";
+const VERSION: &str = "0.5.4.439-exp44";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -75,6 +76,7 @@ fn main() {
     // Always run the check — even when a prior update attempt set the sentinel —
     // so the title screen can show an "UPDATE AVAILABLE" banner. The sentinel
     // only skips the blocking pre-title gate (prevents update-retry loops).
+    updater::mark_boot_ok();
     let skip_update = updater::prior_update_attempted();
     let (update_tx, update_rx) = std::sync::mpsc::channel::<(bool, bool)>();
     std::thread::spawn(move || { let _ = update_tx.send(updater::check_for_update(VERSION)); });
@@ -177,6 +179,7 @@ fn main() {
             let rosters = { let mut r = load_cached_rosters(); if r.is_empty() { r.push(Roster::default_named(0)); } r };
             let token = load_saved_creds().map(|(_, t)| t).unwrap_or_default();
             show_my_teams_menu(&mut fb, &mut input, &mut buf, &rosters, &token);
+            title.refresh_account();
             continue; // back to title
         }
         if c == TitleChoice::Settings {
@@ -189,8 +192,8 @@ fn main() {
             title.continue_to_submenu(); // return to MULTIPLAYER submenu
             continue;
         }
-        if c == game::title::TitleChoice::Account {
-            run_account_menu(&mut fb, &mut input, &mut buf);
+        if c == TitleChoice::Leaderboards {
+            show_leaderboard_screen(&mut fb, &mut input, &mut buf);
             title.continue_to_submenu();
             continue;
         }
@@ -215,8 +218,7 @@ fn main() {
         || choice == game::title::TitleChoice::Test;
     let is_mp_mode = choice == TitleChoice::Live
         || choice == TitleChoice::TakeATurn
-        || choice == game::title::TitleChoice::LiveRanked
-        || choice == game::title::TitleChoice::TatRanked;
+        || choice == game::title::TitleChoice::LiveRanked;
     // MP/TAT always re-checks regardless of skip_update — the sentinel only prevents
     // retry loops at boot; for multiplayer entry we must know the current version even
     // if a prior update attempt failed and we're stuck on the old binary. The check
@@ -269,39 +271,7 @@ fn main() {
     let is_hotseat      = choice == TitleChoice::Hotseat || is_test;
     let is_vs_cpu       = choice == TitleChoice::VsCpu;
     let is_live_ranked  = choice == game::title::TitleChoice::LiveRanked;
-    let is_tat_ranked   = choice == game::title::TitleChoice::TatRanked;
-    let is_live_stats        = choice == game::title::TitleChoice::LiveStats;
-    let is_tat_stats         = choice == game::title::TitleChoice::TatStats;
-    let is_leaderboard_casual = choice == game::title::TitleChoice::LeaderboardCasual;
-    let is_leaderboard_ranked = choice == game::title::TitleChoice::LeaderboardRanked;
     let cpu_team: Option<usize> = if is_vs_cpu { Some(1) } else { None };
-
-    // Stats screens
-    if is_live_stats || is_tat_stats {
-        let mode = if is_live_stats { "live" } else { "tat" };
-        use game::account::load_saved_creds;
-        if let Some((_, token)) = load_saved_creds() {
-            show_stats_screen(&mut fb, &mut input, &mut buf, &token, mode);
-        } else {
-            draw_msg(&mut buf, &mut fb, "LOG IN FIRST");
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-        title.continue_to_submenu();
-        continue 'game;
-    }
-
-    // Leaderboard screens
-    if is_leaderboard_casual || is_leaderboard_ranked {
-        show_leaderboard_screen(&mut fb, &mut input, &mut buf, is_leaderboard_ranked);
-        title.continue_to_submenu();
-        continue 'game;
-    }
-
-    // TAT RANKED → same account flow as casual TAT but with ranked flag
-    if is_tat_ranked {
-        run_take_a_turn_ranked(&mut fb, &mut input, &mut buf);
-        continue 'game;
-    }
 
     // ── Account + roster (live mode, casual or ranked) ─────────────────────
     let mut live_roster: Option<game::account::Roster> = None;
@@ -1576,11 +1546,6 @@ fn current_time_seed() -> u64 {
 
 fn run_multiplayer(_fb: &mut renderer::Framebuffer, _input: &mut input::InputState, _buf: &mut renderer::WorldBuffer) {}
 
-/// Ranked TAT — same as casual but passes ranked=true to the lobby.
-fn run_take_a_turn_ranked(fb: &mut renderer::Framebuffer, input: &mut input::InputState, buf: &mut WorldBuffer) {
-    run_take_a_turn_impl(fb, input, buf, true);
-}
-
 /// Show the roster picker and return the chosen roster, or None if cancelled.
 fn show_roster_picker(
     fb:      &mut renderer::Framebuffer,
@@ -1611,56 +1576,32 @@ fn show_roster_picker(
 /// MULTIPLAYER → ACCOUNT entry point.
 /// Not logged in: shows login/register screen.
 /// Logged in: shows a small screen with username + logout option.
-fn run_account_menu(
+/// MY TEAMS → LOG IN: the login / register flow. Returns true if the
+/// player ended up logged in.
+fn do_login(
     fb:    &mut renderer::Framebuffer,
     input: &mut input::InputState,
     buf:   &mut WorldBuffer,
-) {
+) -> bool {
     use renderer::Bgra;
-    use renderer::font::{draw_str_scaled, str_width_scaled};
     use world::{SCREEN_W, SCREEN_H};
-
-    if let Some((username, _token)) = game::account::load_saved_creds() {
-        // Already logged in — same list-style menu as MY TEAMS / lobby
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        let msg = format!("LOGGED IN AS  {}", username.to_uppercase());
-        run_screen_loop(fb, input, buf, false, |input, buf, fb| {
-            if input.just_pressed(input::Button::B) { return Some(()); }
-            if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
-                do_logout(buf, fb);
-                return Some(());
-            }
-            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-            renderer::hud::draw_screen_header(buf, "ACCOUNT");
-            let mw = str_width_scaled(&msg, 2);
-            draw_str_scaled(buf, &msg, sw/2 - mw/2, sh/2 - 60, Bgra::new(120, 200, 120), 2);
-            renderer::hud::draw_list_panel(
-                buf, None, &[("LOG OUT", true)], 0, 0,
-                &renderer::hud::ListStyle { panel_y: sh/2 - 8, on_image: false, ..Default::default() });
-            renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
-            None
-        });
-    } else {
-        // Not logged in — show full login/register screen
-        use game::account::{AccountScreen, AccountAction};
-        let mut acct = AccountScreen::new();
-        run_screen_loop(fb, input, buf, false, |input, buf, fb| {
-            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 8, 20));
-            if let Some(action) = acct.update(input, buf, 0) {
-                match action {
-                    AccountAction::LoggedIn { username, .. } => {
-                        let msg = format!("WELCOME  {}", username.to_uppercase());
-                        draw_msg(buf, fb, &msg);
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                    }
-                    AccountAction::Back => {}
+    use game::account::{AccountScreen, AccountAction};
+    let mut acct = AccountScreen::new();
+    run_screen_loop(fb, input, buf, false, |input, buf, fb| {
+        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 8, 20));
+        if let Some(action) = acct.update(input, buf, 0) {
+            return Some(match action {
+                AccountAction::LoggedIn { username, .. } => {
+                    let msg = format!("WELCOME  {}", username.to_uppercase());
+                    draw_msg(buf, fb, &msg);
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    true
                 }
-                return Some(());
-            }
-            None
-        });
-    }
+                AccountAction::Back => false,
+            });
+        }
+        None
+    })
 }
 
 /// SETTINGS from the title menu — thin wrapper mirroring the other show_* screens.
@@ -1685,6 +1626,7 @@ fn do_logout(buf: &mut WorldBuffer, fb: &mut renderer::Framebuffer) {
     std::thread::sleep(std::time::Duration::from_secs(1));
 }
 
+/// MY TEAMS — rosters, cosmetics, profile, and the one place to log in/out.
 fn show_my_teams_menu(
     fb:      &mut renderer::Framebuffer,
     input:   &mut input::InputState,
@@ -1692,37 +1634,77 @@ fn show_my_teams_menu(
     rosters: &[game::account::Roster],
     token:   &str,
 ) {
-    const ITEMS: &[(&str, bool)] = &[
-        ("ROSTERS", false), ("STORE", false), ("EQUIP", false),
-        ("PROFILE", false), ("LOG OUT", true),
-    ];
     let style = renderer::hud::ListStyle::default();
     let mut cursor = 0usize;
-    let username = game::account::load_saved_creds().map(|(u, _)| u).unwrap_or_default();
+    let mut rosters = rosters.to_vec();
+    let mut token = token.to_string();
+    let mut username = game::account::load_saved_creds().map(|(u, _)| u).unwrap_or_default();
+    let cached_profile = game::account::load_cached_profile();
 
     run_screen_loop(fb, input, buf, false, |input, buf, fb| {
+        let logged_in = !token.is_empty();
+        let items: [(&str, bool); 5] = [
+            ("ROSTERS", false), ("STORE", false), ("EQUIP", false), ("PROFILE", false),
+            if logged_in { ("LOG OUT", true) } else { ("LOG IN", false) },
+        ];
         if input.just_pressed(input::Button::B) { return Some(()); }
-        let n = ITEMS.len();
+        let n = items.len();
         if input.just_pressed(input::Button::Up)   { cursor = (cursor + n - 1) % n; }
         if input.just_pressed(input::Button::Down) { cursor = (cursor + 1) % n; }
         let scroll = renderer::hud::list_scroll_for(cursor, style.max_visible);
 
         if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
             match cursor {
-                0 => { show_roster_picker(fb, input, buf, rosters, token); }
-                1 => { show_store_screen(fb, input, buf, token); }
-                2 => { show_equip_screen(fb, input, buf, rosters, token); }
-                3 => { show_profile_screen(fb, input, buf, token, &username); }
-                4 => { do_logout(buf, fb); return Some(()); }
+                0 => { show_roster_picker(fb, input, buf, &rosters, &token); }
+                1 => { show_store_screen(fb, input, buf, &token); }
+                2 => { show_equip_screen(fb, input, buf, &rosters, &token); }
+                3 => { show_profile_screen(fb, input, buf, &token, &username); }
+                4 if logged_in => {
+                    do_logout(buf, fb);
+                    token.clear();
+                    username.clear();
+                }
+                4 => {
+                    if do_login(fb, input, buf) {
+                        if let Some((u, t)) = game::account::load_saved_creds() {
+                            username = u;
+                            token = t;
+                        }
+                        rosters = game::account::load_cached_rosters();
+                        if rosters.is_empty() { rosters.push(game::account::Roster::default_named(0)); }
+                    }
+                }
                 _ => {}
             }
         }
 
-        // Draw — same layout as title submenus
-        renderer::title_bg::draw_title_bg(buf, 0);
-        let header = if username.is_empty() { None } else { Some(username.as_str()) };
-        renderer::hud::draw_list_panel(buf, header, ITEMS, cursor, scroll, &style);
-        crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
+        // Draw — same full-screen side layout as the title submenus
+        use renderer::hud::{draw_side_menu, SideItem, SideCard, SIDE_SCRAP, SIDE_WHITE};
+        let _ = scroll;
+        let who = if username.is_empty() { "NOT LOGGED IN".to_string() } else { username.to_uppercase() };
+        let rows: Vec<SideItem> = items.iter()
+            .map(|&(label, danger)| SideItem { label, badge: "", danger }).collect();
+        const INFO: [&str; 5] = [
+            "Name your teams and soldiers, pick avatars and headstones.",
+            "Spend scrap on hats, uniforms, boots and guns.",
+            "Dress each soldier with the cosmetics you own.",
+            "Your record in every mode, balance and recent matches.",
+            "",
+        ];
+        let body = match cursor {
+            4 if logged_in => "Sign out of this device.",
+            4 => "Log in or create an account to play online, earn scrap and keep your stats.",
+            c => INFO[c],
+        };
+        let mut stats = Vec::new();
+        if logged_in && (cursor == 1 || cursor == 3) {
+            if let Some(p) = &cached_profile { stats.push(("SCRAP".to_string(), p.0.to_string(), SIDE_SCRAP)); }
+        }
+        if cursor == 0 {
+            stats.push(("TEAMS".to_string(), rosters.len().to_string(), SIDE_WHITE));
+        }
+        let card = SideCard { title: items[cursor].0, body, stats: &stats };
+        draw_side_menu(buf, "MY TEAMS", &who, &rows, cursor, &card, &[("A", "SELECT"), ("B", "BACK")]);
         None
     })
 }
@@ -2333,11 +2315,8 @@ Connection: close
     unsafe { libc::execv(path.as_ptr(), std::ptr::null()); }
 }
 
+/// MULTIPLAYER → TAKE A TURN: one lobby for casual and ranked async matches.
 fn run_take_a_turn(fb: &mut renderer::Framebuffer, input: &mut input::InputState, buf: &mut WorldBuffer) {
-    run_take_a_turn_impl(fb, input, buf, false);
-}
-
-fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::InputState, buf: &mut WorldBuffer, ranked: bool) {
     use game::account::{AccountScreen, AccountAction, RosterPicker, RosterAction, load_saved_creds};
 
     // ── Login ────────────────────────────────────────────────────────────────
@@ -2403,27 +2382,13 @@ fn run_take_a_turn_impl(fb: &mut renderer::Framebuffer, input: &mut input::Input
 
     // ── Match lobby ──────────────────────────────────────────────────────────
     use game::lobby::{LobbyScreen, LobbyAction};
-    let mut lobby = LobbyScreen::new_ranked(token.clone(), username.clone(), VERSION, ranked);
+    let mut lobby = LobbyScreen::new(token.clone(), username.clone(), VERSION);
     loop {
         let frame_start = std::time::Instant::now();
         input.poll();
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 8, 20));
         match lobby.update(input, buf, 0) {
             Some(LobbyAction::Back) => break,
-            Some(LobbyAction::LoggedOut) => {
-                // Re-show account screen
-                use game::account::{AccountScreen, AccountAction};
-                let mut acct = AccountScreen::new();
-                let result = run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
-                    acct.update(input, buf, 0)
-                });
-                match result {
-                    AccountAction::LoggedIn { token: t2, username: u2, .. } => {
-                        lobby = LobbyScreen::new(t2, u2, VERSION);
-                    }
-                    AccountAction::Back => break,
-                }
-            }
             Some(LobbyAction::StartMatch { match_id, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, opp_hat_ids, opp_uniform_color_ids, opp_boot_color_ids, opp_gun_style_ids, days_remaining }) => {
                 let roster_for_match = pick_roster_for_match(fb, input, buf, match_id, &rosters, &token, my_slot, moves.len());
                 let selected_roster = match roster_for_match {
@@ -2854,12 +2819,27 @@ fn run_tat_game(
     Some((game::lobby::Move { angle: pre_angle, power: pre_power, facing: pre_facing, active_soldier: pre_active, inputs: recorded_inputs }, my_kills, my_deaths, weapon_kills, end_screen))
 }
 
+/// MULTIPLAYER → LEADERBOARDS: one screen, L1/R1 (or LEFT/RIGHT) switches
+/// between the CASUAL and RANKED tabs; B goes back.
 fn show_leaderboard_screen(
+    fb:    &mut renderer::Framebuffer,
+    input: &mut input::InputState,
+    buf:   &mut WorldBuffer,
+) {
+    let mut ranked = false;
+    while let Some(next) = show_leaderboard_tab(fb, input, buf, ranked) {
+        ranked = next;
+    }
+}
+
+/// One leaderboard tab. Returns Some(other tab) when the player switches tabs,
+/// None when they back out (or the fetch fails).
+fn show_leaderboard_tab(
     fb:     &mut renderer::Framebuffer,
     input:  &mut input::InputState,
     buf:    &mut WorldBuffer,
     ranked: bool,
-) {
+) -> Option<bool> {
     use renderer::Bgra;
     use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
     use world::{SCREEN_W, SCREEN_H};
@@ -2867,7 +2847,6 @@ fn show_leaderboard_screen(
 
     let sw = SCREEN_W as i32;
     let sh = SCREEN_H as i32;
-    let title = if ranked { "RANKED LEADERBOARD" } else { "CASUAL LEADERBOARD" };
     let (my_username, token) = load_saved_creds().unwrap_or_default();
 
     draw_msg(buf, fb, "LOADING...");
@@ -2879,7 +2858,7 @@ fn show_leaderboard_screen(
         Err(_) => {
             draw_msg(buf, fb, "NETWORK ERROR");
             std::thread::sleep(std::time::Duration::from_secs(2));
-            return;
+            return None;
         }
     };
 
@@ -2988,7 +2967,11 @@ fn show_leaderboard_screen(
     let dim_line    = Bgra::new(40, 40, 70);
 
     run_screen_loop(fb, input, buf, true, |input, buf, _fb| {
-        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { return Some(()); }
+        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { return Some(None); }
+        if input.just_pressed(input::Button::L1) || input.just_pressed(input::Button::R1)
+            || input.just_pressed(input::Button::Left) || input.just_pressed(input::Button::Right) {
+            return Some(Some(!ranked));
+        }
         if input.held(input::Button::Down) || input.held(input::Button::Up) {
             hold_ticks += 1;
         } else {
@@ -3006,8 +2989,18 @@ fn show_leaderboard_screen(
         buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(6, 8, 20));
         buf.fill_rect(0, 0, SCREEN_W, 38, Bgra::new(18, 22, 50));
         buf.fill_rect(0, 38, SCREEN_W, 1, dim_line);
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, sw/2 - tw/2, 9, col_head, 2);
+        // Tabs: "CASUAL   RANKED", active one bright with < > around it
+        let tab_gap = 40;
+        let cw = str_width_scaled("CASUAL", 2);
+        let rw = str_width_scaled("RANKED", 2);
+        let tx = sw/2 - (cw + tab_gap + rw)/2;
+        let col_tab_off = Bgra::new(90, 90, 130);
+        let (cc, rc) = if ranked { (col_tab_off, col_head) } else { (col_head, col_tab_off) };
+        draw_str_scaled(buf, "CASUAL", tx, 9, cc, 2);
+        draw_str_scaled(buf, "RANKED", tx + cw + tab_gap, 9, rc, 2);
+        let (ax, aw) = if ranked { (tx + cw + tab_gap, rw) } else { (tx, cw) };
+        draw_str(buf, "<", ax - 14, 13, col_head);
+        draw_str(buf, ">", ax + aw + 6, 13, col_head);
 
         // Clip drawing to body region
         // iy = absolute content y; ry = screen y = iy - scroll + body_top
@@ -3124,98 +3117,10 @@ fn show_leaderboard_screen(
         // ── Footer ────────────────────────────────────────────────────────────
         buf.fill_rect(0, body_bot, SCREEN_W, 1, dim_line);
         if max_scroll > 0 {
-            crate::renderer::hud::draw_button_hints(buf, &[("UP/DOWN", "SCROLL"), ("B", "BACK")], 0, 0);
+            crate::renderer::hud::draw_button_hints(buf, &[("L1/R1", "CASUAL/RANKED"), ("UP/DOWN", "SCROLL"), ("B", "BACK")], 0, 0);
         } else {
-            crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
+            crate::renderer::hud::draw_button_hints(buf, &[("L1/R1", "CASUAL/RANKED"), ("B", "BACK")], 0, 0);
         }
-        None
-    })
-}
-
-fn show_stats_screen(
-    fb:    &mut renderer::Framebuffer,
-    input: &mut input::InputState,
-    buf:   &mut WorldBuffer,
-    token: &str,
-    mode:  &str, // "live" or "tat"
-) {
-    use renderer::Bgra;
-    use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
-    use world::{SCREEN_W, SCREEN_H};
-    use game::account::http_get;
-
-    let title = if mode == "live" { "LIVE STATS" } else { "TAT STATS" };
-    let sw = SCREEN_W as i32;
-    let sh = SCREEN_H as i32;
-
-    // Fetch stats from API
-    draw_msg(buf, fb, "LOADING STATS...");
-    let url = format!("/api/stats?mode={}&token={}", mode, token);
-    let resp = match http_get(&url) {
-        Ok(r) => r,
-        Err(_) => {
-            draw_msg(buf, fb, "NETWORK ERROR");
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            return;
-        }
-    };
-
-    // Parse JSON fields (reuse existing json_field helper via account module)
-    use game::account::json_field;
-    let cas_w   = json_field(&resp, "casual_wins").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let cas_l   = json_field(&resp, "casual_losses").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let cas_k   = json_field(&resp, "casual_kills").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let cas_d   = json_field(&resp, "casual_deaths").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let rnk_w   = json_field(&resp, "ranked_wins").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let rnk_l   = json_field(&resp, "ranked_losses").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let rnk_k   = json_field(&resp, "ranked_kills").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let rnk_d   = json_field(&resp, "ranked_deaths").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let elo_str = json_field(&resp, "elo").unwrap_or_default();
-
-    let head_col   = Bgra::new(140, 200, 255);
-    let label_col  = Bgra::new(130, 130, 160);
-    let val_col    = Bgra::new(240, 240, 255);
-    let dim_line   = Bgra::new(50, 50, 80);
-
-    run_screen_loop(fb, input, buf, true, |input, buf, _fb| {
-        if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { return Some(()); }
-
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(6, 8, 20));
-        // Header
-        buf.fill_rect(0, 0, SCREEN_W, 36, Bgra::new(18, 22, 50));
-        buf.fill_rect(0, 36, SCREEN_W, 1, dim_line);
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, sw/2 - tw/2, 9, Bgra::new(255, 220, 50), 2);
-
-        let mut y = 48i32;
-        let line = |buf: &mut WorldBuffer, label: &str, val: &str, y: i32| {
-            draw_str(buf, label, 24, y, label_col);
-            let vw = str_width(val);
-            draw_str(buf, val, sw - 24 - vw, y, val_col);
-        };
-
-        // CASUAL section
-        draw_str(buf, "CASUAL", 20, y, head_col); y += 18;
-        buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, dim_line); y += 6;
-        line(buf, "Wins",             &cas_w.to_string(), y); y += 16;
-        line(buf, "Losses",           &cas_l.to_string(), y); y += 16;
-        line(buf, "Soldiers Killed",  &cas_k.to_string(), y); y += 16;
-        line(buf, "Soldiers Lost",    &cas_d.to_string(), y); y += 24;
-
-        // RANKED section
-        draw_str(buf, "RANKED", 20, y, head_col); y += 18;
-        buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, dim_line); y += 6;
-        line(buf, "Wins",             &rnk_w.to_string(), y); y += 16;
-        line(buf, "Losses",           &rnk_l.to_string(), y); y += 16;
-        line(buf, "Soldiers Killed",  &rnk_k.to_string(), y); y += 16;
-        line(buf, "Soldiers Lost",    &rnk_d.to_string(), y); y += 16;
-        if !elo_str.is_empty() {
-            line(buf, "ELO", &elo_str, y);
-        }
-
-        // Footer
-        buf.fill_rect(0, sh - 26, SCREEN_W, 1, dim_line);
-        crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
         None
     })
 }
@@ -3239,18 +3144,15 @@ fn show_profile_screen(
     let tat_resp     = http_get(&format!("/api/stats?mode=tat&token={}", token)).unwrap_or_default();
     let history_resp = http_get(&format!("/api/match/history?token={}&limit=10", token)).unwrap_or_default();
 
-    let live_w = json_field(&live_resp, "casual_wins").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
-               + json_field(&live_resp, "ranked_wins").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let live_l = json_field(&live_resp, "casual_losses").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
-               + json_field(&live_resp, "ranked_losses").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let live_k = json_field(&live_resp, "casual_kills").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
-               + json_field(&live_resp, "ranked_kills").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let tat_w  = json_field(&tat_resp, "casual_wins").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
-               + json_field(&tat_resp, "ranked_wins").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let tat_l  = json_field(&tat_resp, "casual_losses").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
-               + json_field(&tat_resp, "ranked_losses").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-    let tat_k  = json_field(&tat_resp, "casual_kills").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
-               + json_field(&tat_resp, "ranked_kills").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    // Per mode: [casual W, L, K, D, ranked W, L, K, D] — the old STATS
+    // screens' casual/ranked split now lives here, as one table.
+    let stat_row = |resp: &str| -> [u32; 8] {
+        let keys = ["casual_wins", "casual_losses", "casual_kills", "casual_deaths",
+                    "ranked_wins", "ranked_losses", "ranked_kills", "ranked_deaths"];
+        keys.map(|k| json_field(resp, k).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0))
+    };
+    let live_stats = stat_row(&live_resp);
+    let tat_stats  = stat_row(&tat_resp);
     let elo      = json_field(&profile_resp, "elo").unwrap_or_default();
     let scrap    = json_field(&profile_resp, "scrap").unwrap_or_default();
     let warbonds = json_field(&profile_resp, "warbonds").unwrap_or_default();
@@ -3301,19 +3203,26 @@ fn show_profile_screen(
             buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, dim_line); y += 10;
         }
 
-        // Live stats
-        draw_str(buf, "LIVE GAME", 20, y, Bgra::new(140, 200, 255)); y += 18;
+        // Stats table: rows = mode, column groups = CASUAL / RANKED
+        let sect_col = Bgra::new(140, 200, 255);
+        let cols: [i32; 8] = [200, 250, 300, 350, 430, 480, 530, 580];
+        draw_str(buf, "STATS", 20, y, sect_col);
+        draw_str(buf, "CASUAL", cols[0], y, sect_col);
+        draw_str(buf, "RANKED", cols[4], y, sect_col);
+        y += 16;
+        for (i, h) in ["W", "L", "K", "D", "W", "L", "K", "D"].iter().enumerate() {
+            draw_str(buf, h, cols[i], y, label_col);
+        }
+        y += 14;
         buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, dim_line); y += 6;
-        line(buf, "Wins",   &live_w.to_string(), y); y += 16;
-        line(buf, "Losses", &live_l.to_string(), y); y += 16;
-        line(buf, "Kills",  &live_k.to_string(), y); y += 20;
-
-        // TAT stats
-        draw_str(buf, "TAKE A TURN", 20, y, Bgra::new(140, 200, 255)); y += 18;
-        buf.fill_rect(20, y, (SCREEN_W - 40) as u32, 1, dim_line); y += 6;
-        line(buf, "Wins",   &tat_w.to_string(), y); y += 16;
-        line(buf, "Losses", &tat_l.to_string(), y); y += 16;
-        line(buf, "Kills",  &tat_k.to_string(), y); y += 20;
+        for (name, row) in [("LIVE", &live_stats), ("TAKE A TURN", &tat_stats)] {
+            draw_str(buf, name, 24, y, label_col);
+            for (i, v) in row.iter().enumerate() {
+                draw_str(buf, &v.to_string(), cols[i], y, val_col);
+            }
+            y += 16;
+        }
+        y += 4;
 
         // Match history
         if let Some(arr_start) = history_resp.find("\"history\":[") {

@@ -39,7 +39,14 @@ pub fn too_close_to_scenery(game: &crate::game::state::GameState, x: i32) -> boo
 /// (interleaved: 3 of every 5 spots are mines, 2 are drums). Empty on maps without a WA seed.
 fn object_pool(game: &mut GameState, want: usize) -> Vec<WorldPos> {
     let worms: usize = game.teams.iter().map(|t| t.soldiers.len()).sum();
-    game.terrain.find_spawn_pool(worms, want).1
+    // The pool's own worm slots are only a model: the soldiers are really placed by find_team_spawns (nudged/fallback spots), so an
+    // object spot can land on a worm (-exp35: 6% of soldiers within 10 px of a mine/drum). Drop any spot too close to a real soldier;
+    // WA keeps a 107 px exclusion between spots, 40 px is the floor we enforce. Deterministic (same soldiers on server and client).
+    let soldiers: Vec<WorldPos> = game.teams.iter().flat_map(|t| t.soldiers.iter().map(|s| s.pos)).collect();
+    game.terrain.find_spawn_pool(worms, want + soldiers.len()).1.into_iter()
+        .filter(|p| soldiers.iter().all(|s| (s.x - p.x).hypot(s.y - p.y) >= 40.0))
+        .take(want)
+        .collect()
 }
 
 pub const MAX_MINES: usize = 12;

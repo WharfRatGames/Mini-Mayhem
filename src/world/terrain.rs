@@ -782,21 +782,26 @@ impl Terrain {
     pub fn find_team_spawns(&mut self, x_lo: u32, x_hi: u32, count: usize) -> Vec<WorldPos> {
         if self.wa_seed != 0 {
             let dy = WATER_Y as i32 - 696;
+            // WA's placement list in acceptance order. Ask for extra candidates: a spot that is not standable (e.g. on a steep slope WA
+            // lets the worm slide down) is SKIPPED in favour of the next WA candidate instead of abandoning every WA spawn, which used
+            // to fall back to Arty's own spawner and clump a whole cavern map's soldiers on one bridge.
             let found = {
                 let me: &Terrain = self;
-                super::wa_mapgen::spawn_positions(
-                    &|x, y| me.is_solid(x, y + dy), self.wa_seed, x_lo as i32, x_hi as i32, count,
+                super::wa_mapgen::spawn_positions_ordered(
+                    &|x, y| me.is_solid(x, y + dy), self.wa_seed, x_lo as i32, x_hi as i32, count * 2,
                 )
             };
             if found.len() >= count {
                 // WA drops a worm onto the ground after placing it (its probe sits 13 px below the free square, so a girder deck can
                 // end up inside the body). Arty doesn't settle spawns, so snap each to a real standing spot: body clear, ground below.
-                // Unfixable spawn -> use Arty's own spawner below.
-                let mut fixed = Vec::with_capacity(found.len());
+                let mut fixed: Vec<WorldPos> = Vec::with_capacity(count);
                 for &(x, y) in &found {
-                    match self.nudge_spawn(x, y + dy) { Some(p) => fixed.push(p), None => { fixed.clear(); break; } }
+                    if let Some(p) = self.nudge_spawn(x, y + dy) { fixed.push(p); if fixed.len() == count { break; } }
                 }
-                if fixed.len() == found.len() { return fixed; }
+                if fixed.len() == count {
+                    fixed.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap());
+                    return fixed;
+                }
             }
         }
         // Loosened from an earlier 140/120: dynamic analysis of real WA (Deathmatch

@@ -163,12 +163,46 @@ pub fn check_for_update_bg(current: &'static str) -> std::thread::JoinHandle<(bo
     std::thread::spawn(move || check_for_update(current))
 }
 
+/// URL prefix of the update channel this build follows.
+#[cfg(not(feature = "desktop"))]
+fn channel_base() -> &'static str {
+    if crate::net::EXPERIMENTAL { crate::ota::EXP_BASE } else { "/arty" }
+}
+
+/// Binary file name on the server.
+#[cfg(not(feature = "desktop"))]
+fn channel_bin() -> &'static str {
+    if crate::net::EXPERIMENTAL { crate::ota::EXP_BIN } else { "mini-mayhem" }
+}
+
+/// Where the download lands (tmpfs on the device).
+#[cfg(not(feature = "desktop"))]
+fn tmp_new() -> &'static str {
+    if crate::net::EXPERIMENTAL { "/tmp/arty-exp.new" } else { "/tmp/mini-mayhem.new" }
+}
+
+/// Experimental channel: the published `version.txt` (version, size, sha256), if reachable and well-formed.
+#[cfg(not(feature = "desktop"))]
+fn fetch_ota_info(timeout_secs: u64) -> Option<crate::ota::OtaInfo> {
+    let (body, _) = http_get_body(&format!("{}/version.txt", crate::ota::EXP_BASE), timeout_secs)?;
+    crate::ota::parse_version_file(&body)
+}
+
+/// Info of the build `stream_binary` last downloaded and verified (so `apply_binary` knows its size and target version).
+#[cfg(not(feature = "desktop"))]
+static LAST_OTA: std::sync::Mutex<Option<crate::ota::OtaInfo>> = std::sync::Mutex::new(None);
+
 /// Returns (update_available, tls_broken).
 /// tls_broken=true means HTTPS failed and we fell back to HTTP — force the update, no skip.
 #[cfg(not(feature = "desktop"))]
 pub fn check_for_update(current: &str) -> (bool, bool) {
-    // Experimental builds never self-update: the live release would overwrite them.
-    if crate::net::EXPERIMENTAL { return (false, false); }
+    // Experimental builds follow their OWN channel (/arty/exp, see ota.rs), never the production release.
+    if crate::net::EXPERIMENTAL {
+        return match fetch_ota_info(3) {
+            Some(info) => (crate::ota::is_newer(&info.version, crate::VERSION), false),
+            None => (false, false),
+        };
+    }
     // HTTPS first; fall back to HTTP (port 80) then LAN IP for hairpin-NAT routers.
     let body =
         crate::https::https_get(UPDATE_HOST, "/arty/version.txt", 2, 2)
@@ -184,7 +218,7 @@ pub fn check_for_update(current: &str) -> (bool, bool) {
 
 #[cfg(not(feature = "desktop"))]
 pub fn fetch_changelog(timeout_secs: u64) -> Option<Vec<String>> {
-    let (body, _) = http_get_body("/arty/changelog.txt", timeout_secs)?;
+    let (body, _) = http_get_body(&format!("{}/changelog.txt", channel_base()), timeout_secs)?;
     let lines: Vec<String> = String::from_utf8_lossy(&body)
         .lines()
         .map(|l| l.trim_end().to_string())
@@ -239,9 +273,9 @@ pub fn sync_assets_bg(version: &'static str) {
 #[cfg(not(feature = "desktop"))]
 fn stream_binary_http<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u8>> {
     use std::io::Write;
-    let body = crate::https::http_get_via(UPDATE_HOST_LAN, UPDATE_HOST, "/arty/mini-mayhem", 10, 120).ok()?;
+    let body = crate::https::http_get_via(UPDATE_HOST_LAN, UPDATE_HOST, &format!("{}/{}", channel_base(), channel_bin()), 10, 120).ok()?;
     if body.len() < 4 { return None; }
-    let tmp_path = "/tmp/mini-mayhem.new";
+    let tmp_path = tmp_new();
     let mut f = std::fs::File::create(tmp_path).ok()?;
     f.write_all(&body).ok()?;
     on_progress(body.len(), body.len());
@@ -253,18 +287,38 @@ fn stream_binary_http<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<
 // Streams the binary directly to /tmp/mini-mayhem.new to avoid buffering 26MB in RAM.
 // Returns Some(path) on success, None on failure.
 pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u8>> {
+    if !crate::net::EXPERIMENTAL { return stream_binary_once(&mut on_progress); }
+    // Experimental channel: only ever accept a build that matches the published size + sha256, retrying a flaky link a few times.
+    for attempt in 0..3 {
+        let info = match fetch_ota_info(5) { Some(i) => i, None => { std::thread::sleep(std::time::Duration::from_millis(500 * (attempt + 1))); continue; } };
+        if !crate::ota::is_newer(&info.version, crate::VERSION) { return None; }
+        // last attempt goes straight to plain HTTP (via the LAN IP): covers a TLS stream that connects but keeps dropping
+        let got = if attempt == 2 { stream_binary_http(|d, t| on_progress(d, t)) } else { stream_binary_once(&mut on_progress) };
+        let ok = got.is_some() && crate::ota::verify_file(std::path::Path::new(tmp_new()), &info);
+        if ok {
+            *LAST_OTA.lock().unwrap() = Some(info);
+            return got;
+        }
+        let _ = std::fs::remove_file(tmp_new());
+        crate::dlog!("ota", "download attempt {} failed verification", attempt + 1);
+    }
+    None
+}
+
+#[cfg(not(feature = "desktop"))]
+fn stream_binary_once<F: FnMut(usize, usize)>(on_progress: &mut F) -> Option<Vec<u8>> {
     use std::io::{Read, Write};
     use std::net::{TcpStream, ToSocketAddrs};
     use rustls::pki_types::ServerName;
 
-    let req = format!("GET /arty/mini-mayhem HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", UPDATE_HOST);
+    let req = format!("GET {}/{} HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n", channel_base(), channel_bin(), UPDATE_HOST);
     let addr = match (UPDATE_HOST, 443u16).to_socket_addrs().ok().and_then(|mut a| a.next()) {
         Some(a) => a,
-        None => return stream_binary_http(on_progress), // DNS failed, go straight to LAN HTTP
+        None => return stream_binary_http(|d, t| on_progress(d, t)), // DNS failed, go straight to LAN HTTP
     };
     let tcp = match TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)) {
         Ok(t) => t,
-        Err(_) => return stream_binary_http(on_progress), // TCP failed (hairpin NAT), try LAN HTTP
+        Err(_) => return stream_binary_http(|d, t| on_progress(d, t)), // TCP failed (hairpin NAT), try LAN HTTP
     };
     tcp.set_read_timeout(Some(std::time::Duration::from_secs(120))).ok();
 
@@ -293,7 +347,7 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
         .unwrap_or(0);
 
     // Stream directly to disk — avoid holding the full binary in RAM
-    let tmp_path = "/tmp/mini-mayhem.new";
+    let tmp_path = tmp_new();
     let mut file = std::fs::File::create(tmp_path).ok()?;
     let mut written = 0usize;
     let mut last_reported = 0usize;
@@ -331,12 +385,34 @@ pub fn stream_binary<F: FnMut(usize, usize)>(mut on_progress: F) -> Option<Vec<u
 const SENTINEL: &str = "/tmp/mini-mayhem_update_sentinel";
 
 #[cfg(not(feature = "desktop"))]
+const SENTINEL_EXP: &str = "/tmp/arty-exp_update_sentinel";
+
+#[cfg(not(feature = "desktop"))]
 pub fn prior_update_attempted() -> bool {
+    if crate::net::EXPERIMENTAL {
+        // Experimental: the marker holds the version we tried to install. Skip the start-up gate only if that attempt did not take
+        // (running something else), which prevents retry loops; after a good update the next published build is offered normally.
+        let s = std::fs::read_to_string(SENTINEL_EXP).ok();
+        return crate::ota::gate_skipped(s.as_deref(), crate::VERSION);
+    }
     std::path::Path::new(SENTINEL).exists()
+}
+
+/// Experimental builds: call once at start-up. After the build has run `ota::BOOT_OK_SECS` the update is considered good and the
+/// roll-back marker next to the binary is removed (see `ota::apply_script`). No-op elsewhere.
+pub fn mark_boot_ok() {
+    if !crate::net::EXPERIMENTAL { return; }
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(crate::ota::BOOT_OK_SECS));
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() { let _ = std::fs::remove_file(dir.join(".ota_pending")); }
+        }
+    });
 }
 
 #[cfg(not(feature = "desktop"))]
 pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) {
+    if crate::net::EXPERIMENTAL { return apply_binary_exp(buf, fb); }
     let dest = std::env::current_exe()
         .unwrap_or_else(|_| std::path::PathBuf::from("/mnt/SDCARD/App/Arty/mini-mayhem"));
     let dest_str = dest.to_str().unwrap_or("/mnt/SDCARD/App/Arty/mini-mayhem");
@@ -408,8 +484,36 @@ pub fn apply_binary(binary: &[u8], buf: &mut WorldBuffer, fb: &mut Framebuffer) 
     std::process::exit(0);
 }
 
+/// Experimental channel install: the verified download is at `tmp_new()`; hand over to `ota::apply_script` (atomic replace, keeps
+/// `.prev`, rolls back a build that crashes at start, always relaunches).
+#[cfg(not(feature = "desktop"))]
+fn apply_binary_exp(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
+    let fail = |buf: &mut WorldBuffer, fb: &mut Framebuffer, m: &str| {
+        super::draw_msg(buf, fb, m);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    };
+    let info = match LAST_OTA.lock().unwrap().clone() { Some(i) => i, None => return fail(buf, fb, "FAIL:NOINFO") };
+    // Re-check what is on disk right before installing (the file sits in /tmp between download and here).
+    if !crate::ota::verify_file(std::path::Path::new(tmp_new()), &info) { return fail(buf, fb, "FAIL:VERIFY"); }
+    let dest = match std::env::current_exe() { Ok(d) => d, Err(_) => return fail(buf, fb, "FAIL:EXE") };
+    let dest_str = match dest.to_str() { Some(d) => d.to_string(), None => return fail(buf, fb, "FAIL:EXE") };
+    let script = crate::ota::apply_script(&dest_str, tmp_new(), info.size);
+    let script_path = "/tmp/arty-exp_update.sh";
+    if std::fs::write(script_path, script.as_bytes()).is_err() { return fail(buf, fb, "FAIL:SCRIPT"); }
+    unsafe { libc::chmod(b"/tmp/arty-exp_update.sh\0".as_ptr() as *const libc::c_char, 0o755); }
+    crate::dlog!("ota", "installing {} (from {})", info.version, crate::VERSION);
+    let _ = std::fs::write(SENTINEL_EXP, info.version.as_bytes());
+    for fd in 3..=255i32 { unsafe { libc::close(fd); } }
+    let sh  = std::ffi::CString::new("/bin/sh").unwrap();
+    let arg = std::ffi::CString::new(script_path).unwrap();
+    let args: [*const libc::c_char; 3] = [sh.as_ptr(), arg.as_ptr(), std::ptr::null()];
+    unsafe { libc::execv(sh.as_ptr(), args.as_ptr()); }
+    std::process::exit(0);
+}
+
 #[cfg(not(feature = "desktop"))]
 pub fn download_and_apply(buf: &mut WorldBuffer, fb: &mut Framebuffer) {
+    if crate::net::EXPERIMENTAL { return; } // experimental builds use stream_binary + apply_binary (verified, rollback-safe)
     super::draw_msg(buf, fb, "DOWNLOADING UPDATE...");
     let binary = match http_get_body("/arty/mini-mayhem", 120).map(|(b,_)| b) {
         Some(b) => b,

@@ -102,6 +102,8 @@ pub fn push_crate_message(game: &mut GameState) {
 
 pub struct LoopState {
     pub paused:             bool,
+    /// TEST mode "PAUSE GAME": everything frozen including the turn timer, menu hidden (see `tick`).
+    pub frozen:             bool,
     pub pause_open_tick:    u32,
     pub tick:               u32,
     pub pause_cursor:       usize,
@@ -150,7 +152,7 @@ impl LoopState {
         use crate::renderer::draw_sprites::{WATER_STRIP_H};
         use crate::world::SCREEN_W;
         Self {
-            paused: false, pause_open_tick: 0, tick: 0, pause_cursor: 0,
+            paused: false, frozen: false, pause_open_tick: 0, tick: 0, pause_cursor: 0,
             weapon_menu_open: false, weapon_menu_cursor: 0, fire_grace: 0,
             prev_turn_number: 0,
             vis_hist: std::collections::HashMap::new(),
@@ -421,6 +423,7 @@ pub fn simulate_with_muzzle(game: &mut GameState, input: &InputState, muzzle_ove
                 log::info!("TEAM {} HP: {}", ti, team.soldiers.iter().map(|s| s.hp as u32).sum::<u32>());
             }
             let alive: Vec<bool> = game.teams.iter().map(|t| t.alive_count() > 0).collect();
+            game.fire_turn_end(); // WA msg 0x18: Molotov flames lose a fifth of their size each turn end
             game.turn.advance(&alive);
             game.active_team_mut().advance_active();
             {
@@ -640,20 +643,37 @@ pub fn tick(
             game.aim.power         = 0.0;
             game.aim.charge_armed  = false;
         };
+        // TEST mode: RESUME / PAUSE GAME / EXIT MATCH (PAUSE GAME = hard freeze incl. the turn timer, for inspecting a stuck screen).
+        let n_items = if game.is_test { 3 } else { 2 };
+        if lstate.frozen {
+            if (input.just_pressed(Button::Start) && settle) || input.just_pressed(Button::B) || input.just_pressed(Button::A) {
+                lstate.frozen = false; // back to the pause menu
+                lstate.pause_open_tick = lstate.tick;
+            }
+            render(game, buf, cam, lstate); // no sim, no game.turn.tick()
+            let label = "GAME PAUSED - PRESS A";
+            let lw = crate::renderer::font::str_width_scaled(label, 1);
+            crate::renderer::font::draw_str_scaled(buf, label, cam.left_edge() as i32 + (crate::world::SCREEN_W as i32 - lw) / 2, cam.top_edge() as i32 + 60, Bgra::new(255, 210, 50), 1);
+            return true;
+        }
         if input.just_pressed(Button::Start) && settle { resume(lstate, game); }
         if input.just_pressed(Button::B)               { resume(lstate, game); }
-        if input.just_pressed(Button::Up)   { lstate.pause_cursor = if lstate.pause_cursor == 0 { 1 } else { 0 }; }
-        if input.just_pressed(Button::Down) { lstate.pause_cursor = if lstate.pause_cursor == 0 { 1 } else { 0 }; }
+        if input.just_pressed(Button::Up)   { lstate.pause_cursor = (lstate.pause_cursor + n_items - 1) % n_items; }
+        if input.just_pressed(Button::Down) { lstate.pause_cursor = (lstate.pause_cursor + 1) % n_items; }
         if input.just_pressed(Button::A) {
-            match lstate.pause_cursor {
-                0 => resume(lstate, game),
+            match (lstate.pause_cursor, game.is_test) {
+                (0, _) => resume(lstate, game),
+                (1, true) => { lstate.frozen = true; lstate.pause_open_tick = lstate.tick; }
                 _ => return false,
             }
         }
         // Timer always ticks — pause menu doesn't freeze the clock
         game.turn.tick();
         render(game, buf, cam, lstate);
-        draw_pause_menu(buf, lstate.pause_cursor as u8, cam.left_edge() as i32, cam.top_edge());
+        if !lstate.frozen {
+            let items: &[&str] = if game.is_test { &["RESUME", "PAUSE GAME", "EXIT MATCH"] } else { &["RESUME", "EXIT MATCH"] };
+            crate::renderer::hud::draw_pause_menu_items(buf, items, lstate.pause_cursor as u8, cam.left_edge() as i32, cam.top_edge());
+        }
         return true;
     }
     // Open the pause menu this frame. The weapon menu has input priority (mirrors
@@ -944,8 +964,12 @@ pub fn headroom(terrain: &crate::world::Terrain, x: i32, foot_y: i32, limit: i32
 /// May a walking soldier step from `(ox, oy)` to `(nx, ny)` under the headroom rule?
 pub fn walk_headroom_ok(terrain: &crate::world::Terrain, ox: i32, oy: i32, nx: i32, ny: i32) -> bool {
     let new = headroom(terrain, nx, ny, HEAD_CLEAR);
-    new >= HEAD_CLEAR || new >= headroom(terrain, ox, oy, HEAD_CLEAR)
+    // HEAD_CLEAR_SLACK: a floor 1-2 px higher than the one he stands on under a low ceiling (a bridge/scenery with exactly HEAD_CLEAR px
+    // above the pit floor) left him 1 px short of 36 and refused forever -> stuck between a cactus and that ledge (WA-3 seed 18eab93d,
+    // 'Smeg', head_new=35 head_old=36). A 3 px shortfall is not a visible squeeze, so it passes.
+    new >= HEAD_CLEAR - HEAD_CLEAR_SLACK || new >= headroom(terrain, ox, oy, HEAD_CLEAR)
 }
+pub const HEAD_CLEAR_SLACK: i32 = 3;
 
 /// One 30 Hz tick of WA walking at `WALK_FRAMES_PER_TICK` of the fixed-point walk cycle (`wa_worm::walk_frame`).
 fn wa_walk_tick(game: &mut GameState, ti: usize, si: usize, dir: i32) {
@@ -2741,6 +2765,33 @@ pub fn step_jumpbot(game: &mut GameState, input: &InputState) {
     if let Some(r) = game.jumpbot.as_mut() { r.walk_ticks = r.walk_ticks.wrapping_add(1); }
 }
 
+/// Flame icon painted on every oil drum (12 x 23 px, hand-drawn): O orange outline, Y yellow body, W pale core, D dark base.
+const DRUM_FLAME: [&str; 23] = [
+    ".........O..",
+    ".........OO.",
+    "........OOO.",
+    "........OYOO",
+    ".......OOYYO",
+    ".......OYYYO",
+    "..O....OYYYO",
+    "..OO..OOYYYO",
+    "..OOO.OYYYYO",
+    "..OYOOOYYYYO",
+    "..OYYOYYYYOO",
+    ".OOYYYYYYYO.",
+    ".OYYYYWYYYOO",
+    ".OYYYYWWYYYO",
+    "OOYYYWWWYYYO",
+    "OYYYYWWWWYYO",
+    "OYYYYWWWWYYO",
+    "OYYYYYWWWYYO",
+    "OOYYYYYWYYOO",
+    ".OYYYYYYYYO.",
+    ".OOYYYYYYOO.",
+    "..OOOYYYOO..",
+    "...DDDDDDD..",
+];
+
 fn step_garcia(game: &mut GameState, input: &InputState) {
     use crate::world::WORLD_W;
     use crate::physics::WeaponKind;
@@ -2748,14 +2799,18 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
     let g = match game.garcia.as_mut() { Some(g) => g, None => return };
 
     if g.falling {
-        // WA Concrete Donkey (rec 46, decompile 2026-11-20): a one-bomb strike whose bomb is a bazooka-class projectile spawned at
-        // (target x, y = -208 in WA's level frame) with v = 0, standard gravity 0.24 px/frame^2 (no speed cap), wind 70 %, that explodes
-        // ONCE on first contact: damage 100, radius 71, force 100 %. No bounce, no side blasts, no tunnelling.
+        // Concrete Donkey / Hand of Jerry as it was on the exp branch before the drag-fall and tunnelling experiments (reverted at the
+        // user's request 2026-11-24): a bazooka-class bomb spawned at y = -208 (WA level frame) with v = 0, free fall at 0.24 px/frame^2 (no
+        // drag, no speed cap), wind 70 %, one blast on first contact. (WA's real bomb has drag 0.9 and the video shows repeated blasts:
+        // findings/physics.md "Concrete Donkey", kept there in case it is wanted again.)
         const GRAVITY_TICK: f32 = 0.24 * (5.0 / 3.0) * (5.0 / 3.0);
         g.vel_y += GRAVITY_TICK;
         g.vel_x += game.wind.value() * crate::physics::tick::BAZOOKA_WIND_SCALE * 0.7;
         g.fall_y += g.vel_y;
         g.cursor_x = (g.cursor_x + g.vel_x).clamp(0.0, WORLD_W as f32 - 1.0);
+        // The sprite (and the live client's camera) are drawn at render_x: keep it on the wind-drifted x or the donkey falls straight
+        // and the blast appears tens of px away from where it vanished ("teleports" on the first hit).
+        g.render_x = g.cursor_x;
 
         let fx = g.cursor_x as i32;
         let fy = g.fall_y as i32;
@@ -2821,6 +2876,7 @@ fn step_garcia(game: &mut GameState, input: &InputState) {
             g.vel_y        = 0.0;
             g.vel_x        = 0.0;
             g.bounce_count = 0;
+            g.blink_timer  = 0;
         }
         game.emit_sound(crate::audio::Sfx::Garcia);
     } else if input.just_pressed(Button::B) {
@@ -3620,7 +3676,7 @@ fn fire_minigun_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override
             if mine.state == super::state::MineState::Armed {
                 if (mine.pos.x - rx).abs() < 8.0 && (mine.pos.y - ry).abs() < 8.0 {
                     mine.state = super::state::MineState::Triggered;
-                    mine.trigger_ticks = 8;
+                    mine.trigger_ticks = 0;
                     break 'ray;
                 }
             }
@@ -3765,7 +3821,7 @@ fn fire_uzi_shot(game: &mut GameState, ti: usize, si: usize, muzzle_override: Op
             if mine.state == super::state::MineState::Armed {
                 if (mine.pos.x - rx).abs() < 8.0 && (mine.pos.y - ry).abs() < 8.0 {
                     mine.state = super::state::MineState::Triggered;
-                    mine.trigger_ticks = 8;
+                    mine.trigger_ticks = 0;
                     break 'ray;
                 }
             }
@@ -4744,17 +4800,30 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
             let flicker = matches!(barrel.state, BarrelState::Triggered { .. })
                 && (game.tick / 3) % 2 == 0;
             let body_col = if flicker { Bgra::new(255, 140, 40) } else { Bgra::new(160, 30, 20) };
-            let hi_col   = Bgra::new(200, 60, 50);
+            let rim_col  = Bgra::new(214, 84, 70);
             let dark_col = Bgra::new(80, 10, 8);
-            let band_col = Bgra::new(200, 180, 50); // yellow warning band
-            // Drawn at WA's oil-drum size (24x36 px) scaled like the soldiers (OBJECT_ART_SCALE); collision stays WA-sized.
-            let mut r = |x: i32, y: i32, w: i32, h: i32, c: Bgra| obj_rect(buf, wx, wy, x, y, w, h, c);
-            r(-8, 0, 16, 3, Bgra::new(0, 0, 0));        // shadow at the terrain surface
-            r(-8, -36, 16, 36, dark_col);               // body outline (16 px wide: WA's 24 px frame includes padding, read as too wide)
-            r(-7, -34, 14, 32, body_col);
-            r(-7, -34, 3, 32, hi_col);                  // left highlight
-            r(-8, -22, 16, 5, band_col);                // warning band
-            r(-8, -38, 16, 3, dark_col);                // lid
+            // Drawn EXACTLY at its collision footprint (BARREL_HALF_W/BARREL_H, see `stamp_objects`): WA's oil drum is a 20x31 shape and
+            // the art used to be ~1.2x scaled 36 px (43 px) over a 25 px collision box, so soldiers stood half-way up it and walked through
+            // its stripe, and it read too big. Plain body + lid/base rims, with a hand-drawn flame icon on the face (WA's drums carry one).
+            let mut r = |x: i32, y: i32, w: i32, h: i32, c: Bgra| buf.fill_rect(wx + x, wy + y, w as u32, h as u32, c);
+            let hw = BARREL_HALF_W;
+            let h = BARREL_H;
+            r(-hw, -h, 2 * hw + 1, h + 1, dark_col);                  // outline = the whole collision box
+            r(-hw + 1, -h + 2, 2 * hw - 1, h - 2, body_col);
+            r(-hw, -h, 2 * hw + 1, 3, rim_col);                       // lid rim
+            r(-hw, -3, 2 * hw + 1, 3, rim_col);                       // base rim
+            for (fy, row) in DRUM_FLAME.iter().enumerate() {
+                for (fx, ch) in row.bytes().enumerate() {
+                    let c = match ch {
+                        b'O' => Bgra::new(240, 112, 6),
+                        b'Y' => Bgra::new(255, 205, 10),
+                        b'W' => Bgra::new(255, 240, 140),
+                        b'D' => Bgra::new(190, 80, 6),
+                        _ => continue,
+                    };
+                    buf.set_pixel(wx - 5 + fx as i32, wy - 28 + fy as i32, c);
+                }
+            }
         }
     }
 
@@ -4904,34 +4973,16 @@ fn render_my_team(game: &GameState, buf: &mut WorldBuffer, cam: &Camera, lstate:
     mark!("soldiers");
 
     // 5b. Fire patches — drawn after soldiers so fire renders in front.
-    // Genuine WA flame sprites (32 frames: ~0-21 curling flicker loop,
-    // 22-31 shrink-to-spark die-out), two variants so neighbours differ.
-    const FLAME_LOOP_FRAMES: u32 = 22;
-    const FLAME_DIE_TICKS:   u32 = 45; // last 1.5 s play the die-out frames
+    // WA draws a flame from a FIXED sprite frame chosen by its size (decompile 0x5501a0 case 3: frame 15/14/13/12 for size > 3/4, 1/2,
+    // 1/4, less): no flicker or sway, it only shrinks. Same here: one static flame, four sizes.
     for patch in &game.fire_patches {
         let wx = patch.pos.x as i32;
         let wy = patch.pos.y as i32;
         if patch.pos.x < vx0 - 10.0 || patch.pos.x >= vx1 + 10.0 { continue; }
         if wy < cam_y as i32 - 20 || wy >= cam_y as i32 + sh { continue; }
-
-        // Stable per-patch variation from spawn velocity (constant after spawn):
-        // picks flame1 vs flame2 and offsets the animation phase so flames
-        // don't flicker in lockstep.
-        let seed = (patch.vel.x * 37.0 + patch.vel.y * 53.0).abs() as u32;
-        let sprite = crate::renderer::wa_sprites::flame(seed);
-        let frame = if patch.lifetime <= FLAME_DIE_TICKS {
-            // Dying: map remaining lifetime onto the shrink frames 22..31.
-            let die_span = sprite.frame_count - FLAME_LOOP_FRAMES;
-            let gone = FLAME_DIE_TICKS - patch.lifetime;
-            FLAME_LOOP_FRAMES + (gone * die_span / FLAME_DIE_TICKS).min(die_span - 1)
-        } else if !patch.landed {
-            // In flight: small spark — cycle the mid die-out frames (24-27).
-            24 + (patch.lifetime / 2 + seed) % 4
-        } else {
-            // Burning on the ground: flicker loop at ~2 ticks per frame.
-            (patch.lifetime / 2 + seed) % FLAME_LOOP_FRAMES
-        };
-        sprite.draw_frame(buf, frame, wx, wy + 1);
+        let size = (patch.lifetime as f32 / if patch.turns { 501.0 } else { 150.0 }).clamp(0.0, 1.0);
+        let frame = if size > 0.75 { 0 } else if size > 0.5 { 24 } else if size > 0.25 { 27 } else { 30 };
+        crate::renderer::fx::draw_flame_star(buf, frame, wx, wy + 1);
     }
 
     mark!("fire_patches");
@@ -5996,17 +6047,20 @@ fn obj_rect(buf: &mut crate::renderer::buffer::WorldBuffer, fx: i32, fy: i32, x:
     buf.fill_rect(x0, y0, (x1 - x0).max(1) as u32, (y1 - y0).max(1) as u32, c);
 }
 
+/// Oil drum footprint (WA shape 20x31; width trimmed to 17 because WA's frame carries padding). Drawn and collided at the same size.
+pub const BARREL_HALF_W: i32 = 8;
+pub const BARREL_H: i32 = 31;
+
 fn stamp_objects(game: &mut GameState) {
     use crate::game::state::MineState;
     game.terrain.clear_objects();
 
-    // Barrels: 14×24 px footprint matching the visual (pos.y = terrain surface,
-    // barrel extends upward to pos.y-24; dx ±7 matches the drawn body width).
+    // Barrels: BARREL_H-tall footprint exactly matching the drawn drum (pos.y = terrain surface, extends up to pos.y-BARREL_H).
     for barrel in &game.barrels {
         let cx = barrel.pos.x as i32;
         let cy = barrel.pos.y as i32;
-        for dy in -24..=0i32 {
-            for dx in -7..=7i32 {
+        for dy in -BARREL_H..=0i32 {
+            for dx in -BARREL_HALF_W..=BARREL_HALF_W {
                 game.terrain.stamp_object(cx + dx, cy + dy);
             }
         }
@@ -6320,6 +6374,7 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                             let cy = game.teams[ti].soldiers[si].pos.y;
                             let mut pos16 = ((cx * 65536.0) as i32, (cy * 65536.0) as i32);
                             let mut v16 = ((vel.x * 65536.0) as i32, (vel.y * 65536.0) as i32);
+                            let (pos_in, v_in) = (pos16, v16);
                             // Reference per-frame order: swing impulse (vx and +vy), world
                             // gravity, then damping + tangential arc motion inside step().
                             let sdir = input.held(Button::Right) as i32 - input.held(Button::Left) as i32;
@@ -6332,6 +6387,24 @@ fn apply_all_gravity(game: &mut GameState, input: &InputState) {
                                 let env = RopeEnv(&game.terrain);
                                 chain.step(&mut pos16, &mut v16, ROPE_MAX_SPEED as i32 * 65536, &env)
                             };
+                            // Diagnostics (dlog only): once per ~10 ticks while roped, and EVERY tick a swing step leaves the body where it was
+                            // (blocked by the body test, a wrap/unwrap event or a stale anchor) so a "slammed into the ground after climbing a
+                            // slope on the rope" report (fall dmg 21 @ 15.6 px/frame, 2026-11-24) can be traced from arty-exp.log.
+                            if pos16 == pos_in || game.tick % 10 == 0 {
+                                crate::dlog!("rope", "tick={} step pos=({:.1},{:.1}){} v=({:.2},{:.2})->({:.2},{:.2}) len={:.1} nseg={} out={:?} keys=[{}{}{}{}]",
+                                    game.tick, nx_dbg(pos16.0), nx_dbg(pos16.1), if pos16 == pos_in { " UNMOVED" } else { "" },
+                                    nx_dbg(v_in.0), nx_dbg(v_in.1), nx_dbg(v16.0), nx_dbg(v16.1), chain.len as f32 / 65536.0, chain.nseg, outcome,
+                                    if input.held(Button::Left) { "L" } else { "" }, if input.held(Button::Right) { "R" } else { "" },
+                                    if input.held(Button::Up) { "U" } else { "" }, if input.held(Button::Down) { "D" } else { "" });
+                            }
+                            // A swing step that could not move the body (pressed against the slope: the body test blocks it, WA leaves pos AND v
+                            // untouched) must not bank speed: gravity + damping run every frame, so a worm held there reached 20+ px/frame and was
+                            // slammed into the ground on release (user report 2026-11-24, touching a slope on a 14 px rope: fall dmg 21 @ 15.6 px/frame).
+                            // tests/rope_slope.rs reproduces it (vy 25.5 px/tick without this).
+                            if pos16 == pos_in && outcome != wr::Outcome::Released {
+                                let m = |v: (i32, i32)| (v.0 as i64).pow(2) + (v.1 as i64).pow(2);
+                                if m(v16) > m(v_in) { v16 = v_in; }
+                            }
                             vel.x = v16.0 as f32 / 65536.0;
                             vel.y = v16.1 as f32 / 65536.0;
                             if outcome == wr::Outcome::Released {

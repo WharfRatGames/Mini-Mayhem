@@ -16,23 +16,33 @@ pub enum TitleChoice {
     Sp,
     MyTeam,
     LiveRanked,
-    TatRanked,
-    LiveStats,
-    TatStats,
     Test,        // all-weapons infinite-ammo hotseat
-    LeaderboardCasual,
-    LeaderboardRanked,
+    Leaderboards,
     Missions,
     Settings,
-    Account,
 }
 
 const ITEMS:      &[&str] = &["SINGLEPLAYER", "MULTIPLAYER", "MY TEAMS", "SETTINGS", "HOW TO PLAY", "QUIT"];
 const SP_ITEMS:   &[&str] = &["VS CPU", "HOTSEAT", "TEST"];
-const MP_ITEMS:   &[&str] = &["LIVE CASUAL", "LIVE RANKED", "TAT CASUAL", "TAT RANKED",
-                              "LEADERBOARDS", "STATS", "MISSIONS", "ACCOUNT"];
-const LB_ITEMS:    &[&str] = &["CASUAL", "RANKED"];
-const STATS_ITEMS: &[&str] = &["LIVE", "TAT"];
+const SP_INFO:    &[&str] = &[
+    "Fight a computer opponent on a random map.",
+    "Two players share this device and take turns.",
+    "Every weapon with infinite ammo. Practise anything.",
+];
+const MP_INFO:    &[&str] = &[
+    "Real-time match against another player. Casual or ranked.",
+    "Async games: play your turn whenever you like. Up to 15 at once, 14 days per turn.",
+    "Daily and weekly challenges. Claim scrap for the ones you finish.",
+    "Top players by wins and kills. L1/R1 switches casual and ranked.",
+];
+const LIVE_INFO:  &[&str] = &[
+    "Real-time match. No ELO at stake.",
+    "Real-time match against a player near your ELO. Wins and losses change your rank.",
+];
+const MP_ITEMS:   &[&str] = &["LIVE MATCH", "TAKE A TURN", "MISSIONS", "LEADERBOARDS"];
+const LIVE_ITEMS: &[&str] = &["CASUAL", "RANKED"];
+/// MP_ITEMS index of LIVE MATCH — cursor returns here when backing out of it.
+const MP_LIVE_IDX: usize = 0;
 
 // Max items visible in the panel before scrolling kicks in.
 const MAX_VISIBLE: usize = 4;
@@ -59,53 +69,34 @@ pub const PAGE_CONTROLS: HelpPage = HelpPage {
     ],
 };
 
-pub const PAGE_SPECIAL_CONTROLS: HelpPage = HelpPage {
-    title: "SPECIAL CONTROLS",
+/// Per-weapon controls — the one copy, shared by HOW TO PLAY and
+/// SETTINGS → CONTROLS. Keep ≤15 lines (HOW TO PLAY pager height).
+pub const PAGE_WEAPON_CONTROLS: HelpPage = HelpPage {
+    title: "WEAPON CONTROLS",
     lines: &[
         "GRAPPLE HOOK",
-        "  A          Fire / Release / Re-rope",
-        "  UP / DOWN  Shorten / Lengthen rope",
-        "  LEFT / RIGHT  Swing while attached",
+        "  A              Fire / Release / Re-rope",
+        "  UP / DOWN      Shorten / Lengthen rope",
+        "  LEFT / RIGHT   Swing while attached",
         "",
-        "PLASMA TORCH",
-        "  HOLD A       Burn  (release to stop)",
-        "  UP / DOWN    Aim angle",
+        "REVOLVER   A fires once per shot (6 per turn)",
+        "SHOTGUN    A fires one of 2 shots per turn",
+        "GRENADE / CLUMP BOMB   L1 / R1  fuse 1-5s",
+        "TNT / MINE / BAT / JUMPBOT   A to place/swing",
         "",
-        "JACKHAMMER",
-        "  A            Start / stop drilling (straight down)",
-        "",
-        "AIR STRIKE",
-        "  UP / DOWN    Move cursor",
-        "  A            Call strike",
-        "",
-        "REVOLVER / SHOTGUN",
-        "  A            Fire (up to 6 / 2 shots)",
+        "PLASMA TORCH   Hold A to burn, UP/DOWN aims",
+        "JACKHAMMER     A starts drilling down, A stops",
+        "AIR STRIKE     UP/DOWN moves cursor, A strikes",
+        "HAND OF JERRY  LEFT/RIGHT aims, A drops",
     ],
 };
 
 /// Pages shown by SETTINGS → CONTROLS.
-pub const CONTROLS_PAGES: &[HelpPage] = &[PAGE_CONTROLS, PAGE_SPECIAL_CONTROLS];
+pub const CONTROLS_PAGES: &[HelpPage] = &[PAGE_CONTROLS, PAGE_WEAPON_CONTROLS];
 
 const HOW_TO_PAGES: &[HelpPage] = &[
     PAGE_CONTROLS,
-    HelpPage {
-        title: "WEAPON CONTROLS",
-        lines: &[
-            "GRAPPLE HOOK",
-            "  A              Fire / Release / Re-rope",
-            "  UP / DOWN      Shorten / Lengthen rope",
-            "  LEFT / RIGHT   Swing while attached",
-            "",
-            "REVOLVER   A fires once per shot (6 per turn)",
-            "SHOTGUN    A fires one of 2 shots per turn",
-            "GRENADE / CLUMP BOMB   L1 / R1  fuse 1-5s",
-            "TNT / MINE / BAT / JUMPBOT   A to place/swing",
-            "",
-            "PLASMA TORCH   Hold A to burn, UP/DOWN aims",
-            "JACKHAMMER     A starts drilling down, A stops",
-            "AIR STRIKE     UP/DOWN moves cursor, A strikes",
-        ],
-    },
+    PAGE_WEAPON_CONTROLS,
     HelpPage {
         title: "HOW TO PLAY",
         lines: &[
@@ -205,16 +196,15 @@ const HOW_TO_PAGES: &[HelpPage] = &[
             "HOTSEAT  Two players share one device.",
             "TEST     All weapons, infinite ammo.",
             "",
-            "LIVE CASUAL / LIVE RANKED",
+            "LIVE MATCH (casual or ranked)",
             "  Real-time multiplayer. Ranked uses ELO.",
             "",
-            "TAT CASUAL / TAT RANKED",
-            "  Take A Turn: async — play at your pace.",
+            "TAKE A TURN (casual or ranked)",
+            "  Async — play at your pace.",
             "  Matchmake or join by code (casual).",
             "  14-day turn timer, up to 15 games.",
             "",
-            "Leaderboards and stats live in the",
-            "MULTIPLAYER menu.",
+            "Your stats are in MY TEAMS -> PROFILE.",
         ],
     },
     HelpPage {
@@ -322,7 +312,7 @@ pub struct HelpPage {
 }
 
 #[derive(PartialEq)]
-enum Sub { None, SP, MP, Leaderboards, Stats, HowToPlay }
+enum Sub { None, SP, MP, Live, HowToPlay }
 
 pub struct TitleScreen {
     cursor:        usize,
@@ -333,20 +323,43 @@ pub struct TitleScreen {
     tick:          u32,
     version:       &'static str,
     update_available: bool,
+    /// Header text for submenus: logged-in username, or NOT LOGGED IN.
+    who:           String,
+    /// Cached scrap balance (None = no cached profile).
+    scrap:         Option<u32>,
 }
 
 impl TitleScreen {
     pub fn new(version: &'static str) -> Self {
-        Self { cursor: 0, sub_cursor: 0, scroll_offset: 0, sub: Sub::None, help_page: 0, tick: 0, version, update_available: false }
+        let who = crate::game::account::load_saved_creds()
+            .map(|(u, _)| u.to_uppercase())
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| "NOT LOGGED IN".to_string());
+        let scrap = crate::game::account::load_cached_profile().map(|p| p.0);
+        Self { cursor: 0, sub_cursor: 0, scroll_offset: 0, sub: Sub::None, help_page: 0, tick: 0, version, update_available: false, who, scrap }
+    }
+
+    /// Re-read login + cached scrap (after MY TEAMS, where you log in/out).
+    pub fn refresh_account(&mut self) {
+        let fresh = Self::new(self.version);
+        self.who = fresh.who;
+        self.scrap = fresh.scrap;
     }
 
     pub fn set_update_available(&mut self, v: bool) {
         self.update_available = v;
     }
 
+    /// Return to the MULTIPLAYER submenu, keeping the cursor where it was
+    /// (e.g. on MISSIONS after closing the missions screen).
     pub fn continue_to_submenu(&mut self) {
+        if self.sub != Sub::MP { self.back_to_mp(0); }
+    }
+
+    fn back_to_mp(&mut self, cursor: usize) {
         self.sub = Sub::MP;
-        self.sub_cursor = 0;
+        self.sub_cursor = cursor;
+        self.scroll_offset = scroll_for(cursor, MP_ITEMS.len());
     }
 
     pub fn continue_to_sp_submenu(&mut self) {
@@ -377,39 +390,23 @@ impl TitleScreen {
                 if input.just_pressed(Button::B)    { self.sub = Sub::None; self.scroll_offset = 0; }
                 if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
                     match self.sub_cursor {
-                        0 => return Some(TitleChoice::Live),
-                        1 => return Some(TitleChoice::LiveRanked),
-                        2 => return Some(TitleChoice::TakeATurn),
-                        3 => return Some(TitleChoice::TatRanked),
-                        4 => { self.sub = Sub::Leaderboards; self.sub_cursor = 0; self.scroll_offset = 0; }
-                        5 => { self.sub = Sub::Stats;        self.sub_cursor = 0; self.scroll_offset = 0; }
-                        6 => return Some(TitleChoice::Missions),
-                        7 => return Some(TitleChoice::Account),
+                        0 => { self.sub = Sub::Live; self.sub_cursor = 0; self.scroll_offset = 0; }
+                        1 => return Some(TitleChoice::TakeATurn),
+                        2 => return Some(TitleChoice::Missions),
+                        3 => return Some(TitleChoice::Leaderboards),
                         _ => { self.sub = Sub::None; self.scroll_offset = 0; }
                     }
                 }
             }
-            Sub::Leaderboards => {
-                let n = LB_ITEMS.len();
+            Sub::Live => {
+                let n = LIVE_ITEMS.len();
                 if input.just_pressed(Button::Up)   { self.nav_up(n); }
                 if input.just_pressed(Button::Down) { self.nav_down(n); }
-                if input.just_pressed(Button::B)    { self.sub = Sub::MP; self.sub_cursor = 4; self.scroll_offset = scroll_for(4, MP_ITEMS.len()); }
+                if input.just_pressed(Button::B)    { self.back_to_mp(MP_LIVE_IDX); }
                 if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
                     match self.sub_cursor {
-                        0 => return Some(TitleChoice::LeaderboardCasual),
-                        _ => return Some(TitleChoice::LeaderboardRanked),
-                    }
-                }
-            }
-            Sub::Stats => {
-                let n = STATS_ITEMS.len();
-                if input.just_pressed(Button::Up)   { self.nav_up(n); }
-                if input.just_pressed(Button::Down) { self.nav_down(n); }
-                if input.just_pressed(Button::B)    { self.sub = Sub::MP; self.sub_cursor = 5; self.scroll_offset = scroll_for(5, MP_ITEMS.len()); }
-                if input.just_pressed(Button::A) || input.just_pressed(Button::Start) {
-                    match self.sub_cursor {
-                        0 => return Some(TitleChoice::LiveStats),
-                        _ => return Some(TitleChoice::TatStats),
+                        0 => return Some(TitleChoice::Live),
+                        _ => return Some(TitleChoice::LiveRanked),
                     }
                 }
             }
@@ -463,30 +460,38 @@ impl TitleScreen {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
 
+        // Submenus: full-screen side layout (list left, info card right).
+        let sub_menu: Option<(&str, &[&str], &[&str])> = match self.sub {
+            Sub::SP   => Some(("SINGLEPLAYER", SP_ITEMS, SP_INFO)),
+            Sub::MP   => Some(("MULTIPLAYER", MP_ITEMS, MP_INFO)),
+            Sub::Live => Some(("LIVE MATCH", LIVE_ITEMS, LIVE_INFO)),
+            _ => None,
+        };
+        if let Some((crumb, items, info)) = sub_menu {
+            use crate::renderer::hud::{draw_side_menu, SideItem, SideCard, SIDE_SCRAP};
+            let rows: Vec<SideItem> = items.iter()
+                .map(|&label| SideItem { label, badge: "", danger: false }).collect();
+            let c = self.sub_cursor.min(items.len() - 1);
+            let mut stats = Vec::new();
+            if self.sub == Sub::MP && c == 2 {
+                if let Some(sc) = self.scrap { stats.push(("SCRAP".to_string(), sc.to_string(), SIDE_SCRAP)); }
+            }
+            let card = SideCard { title: items[c], body: info[c], stats: &stats };
+            draw_side_menu(buf, crumb, &self.who, &rows, c, &card, &[("A", "SELECT"), ("B", "BACK")]);
+            return;
+        }
+
         // Title background image
         draw_title_bg(buf, 0);
 
-        // Which items and cursor to show
-        let (items, cursor) = match self.sub {
-            Sub::MP           => (MP_ITEMS    as &[&str], self.sub_cursor),
-            Sub::SP           => (SP_ITEMS    as &[&str], self.sub_cursor),
-            Sub::Leaderboards => (LB_ITEMS    as &[&str], self.sub_cursor),
-            Sub::Stats        => (STATS_ITEMS as &[&str], self.sub_cursor),
-            _                 => (ITEMS       as &[&str], self.cursor),
-        };
-
-        // Menu items overlaid directly on image — scroll window keeps cursor visible
-        let list: Vec<(&str, bool)> = items.iter().map(|&s| (s, false)).collect();
+        // Main title menu (unchanged layout)
+        let list: Vec<(&str, bool)> = ITEMS.iter().map(|&s| (s, false)).collect();
         crate::renderer::hud::draw_list_panel(
-            buf, None, &list, cursor, self.scroll_offset,
+            buf, None, &list, self.cursor, self.scroll_offset,
             &crate::renderer::hud::ListStyle::default());
 
         // Hint + version
-        if self.sub != Sub::None && self.sub != Sub::HowToPlay {
-            crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
-        } else {
-            crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT")], 0, 0);
-        }
+        crate::renderer::hud::draw_button_hints(buf, &[("A", "SELECT")], 0, 0);
         draw_str(buf, self.version, sw - str_width(self.version) - 6, sh - 18, Bgra::new(70, 70, 100));
         if self.update_available {
             // Blinking banner above the version string so an available update is

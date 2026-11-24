@@ -354,7 +354,7 @@ fn synced_snapshot(g: &GameState) -> SyncedSnapshot {
 
     // ── fire patches ──────────────────────────────────────────────────────────
     let fire_patches = fire_patches.iter().map(|f| {
-        let arty::game::state::FirePatch { pos, vel, landed, lifetime, landed_ticks, carves } = f;
+        let arty::game::state::FirePatch { pos, vel, landed, lifetime, landed_ticks, carves, splits: _, dir: _, timer: _, cool: _, wisp: _, turns: _ } = f;
         FirePatchSnap {
             pos: (pos.x, pos.y), vel: (vel.x, vel.y), landed: *landed, lifetime: *lifetime,
             landed_ticks: *landed_ticks, carves: *carves,
@@ -573,7 +573,7 @@ fn round_trip_preserves_synced_state() {
         landed: false,
         lifetime: 150,
         landed_ticks: 0,
-        carves: true,
+        carves: true, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false,
     });
 
     // Rope (flying hook)
@@ -757,8 +757,8 @@ fn mines_in_all_states_survive_round_trip() {
 fn fire_patches_survive_round_trip() {
     use arty::game::state::FirePatch;
     let mut server = build_game(55);
-    server.fire_patches.push(FirePatch { pos: WorldPos::new(300.0, 150.0), vel: Vec2::new(3.5, -2.0), landed: false, lifetime: 180, landed_ticks: 0, carves: true });
-    server.fire_patches.push(FirePatch { pos: WorldPos::new(500.0, 320.0), vel: Vec2::new(0.0,  0.0), landed: true,  lifetime: 90,  landed_ticks: 0, carves: true });
+    server.fire_patches.push(FirePatch { pos: WorldPos::new(300.0, 150.0), vel: Vec2::new(3.5, -2.0), landed: false, lifetime: 180, landed_ticks: 0, carves: true, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false });
+    server.fire_patches.push(FirePatch { pos: WorldPos::new(500.0, 320.0), vel: Vec2::new(0.0,  0.0), landed: true,  lifetime: 90,  landed_ticks: 0, carves: true, splits: 0, dir: 0, timer: 0, cool: 0, wisp: 0, turns: false });
     assert_eq!(synced_snapshot(&server), synced_snapshot(&round_trip(&server, 1, 0)));
 }
 

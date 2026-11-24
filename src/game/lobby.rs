@@ -1,6 +1,6 @@
 use crate::input::{InputState, Button};
 use crate::renderer::{WorldBuffer, Bgra};
-use crate::renderer::font::{draw_str, draw_str_shadow, draw_str_scaled, str_width, str_width_scaled};
+use crate::renderer::font::{draw_str, draw_str_shadow, draw_str_scaled, draw_str_shadow_scaled, str_width, str_width_scaled};
 use crate::renderer::hud::COLOR_DARK_BG;
 use crate::renderer::keyboard::Keyboard;
 use crate::world::{SCREEN_W, SCREEN_H};
@@ -9,7 +9,6 @@ use crate::game::account::{http_post, http_get, json_field};
 pub enum LobbyAction {
     StartMatch { match_id: i64, seed: u64, my_slot: usize, moves: Vec<Move>, my_elo: i32, opp_elo: i32, has_mines: bool, has_barrels: bool, opp_name: String, opp_worm_names: [String; 4], opp_hat_ids: [u8; 4], opp_uniform_color_ids: [u8; 4], opp_boot_color_ids: [u8; 4], opp_gun_style_ids: [u8; 4], days_remaining: i32 },
     Back,
-    LoggedOut,
 }
 
 enum LoadResult {
@@ -27,6 +26,7 @@ pub struct Move {
     pub inputs:        Vec<u16>,
 }
 
+#[derive(Clone)]
 struct PendingMatch {
     match_id:      i64,
     code:          String,
@@ -58,25 +58,23 @@ pub struct LobbyScreen {
     error:     String,
     version:   &'static str,
     load_rx:   Option<std::sync::mpsc::Receiver<LoadResult>>,
-    check_rx:  Option<std::sync::mpsc::Receiver<bool>>,
+    check_rx:  Option<std::sync::mpsc::Receiver<Vec<PendingMatch>>>,
     has_ready: bool,
-    ranked:    bool,   // true = ranked lobby
+    /// Last known match list (background check / MY MATCHES), for the info card.
+    known:     Vec<PendingMatch>,
     my_elo:    i32,
     elo_rx:    Option<std::sync::mpsc::Receiver<i32>>,
 }
 
-const MENU_ITEMS_CASUAL: &[&str] = &["MATCHMAKE", "GET CODE", "JOIN MATCH", "MY MATCHES", "LOG OUT"];
-const MENU_ITEMS_RANKED: &[&str] = &["FIND RANKED MATCH", "MY MATCHES", "LOG OUT"];
+/// One lobby for casual and ranked TAT. MY MATCHES lists both kinds (ranked
+/// rows are tagged [R]); log in/out lives in MY TEAMS.
+const MENU_ITEMS: &[&str] = &["MY MATCHES", "MATCHMAKE", "RANKED MATCH", "GET CODE", "JOIN MATCH"];
 
 impl LobbyScreen {
     pub fn new(token: String, username: String, version: &'static str) -> Self {
-        Self::new_ranked(token, username, version, false)
-    }
-
-    pub fn new_ranked(token: String, username: String, version: &'static str, ranked: bool) -> Self {
         let check_rx = Self::start_turn_check(&token);
-        // Fetch user ELO from profile endpoint in background (ranked lobby only)
-        let elo_rx = if ranked {
+        // Fetch user ELO from profile endpoint in background (shown in the header)
+        let elo_rx = {
             let tok = token.clone();
             let (tx, rx) = std::sync::mpsc::channel::<i32>();
             std::thread::spawn(move || {
@@ -87,7 +85,7 @@ impl LobbyScreen {
                 }
             });
             Some(rx)
-        } else { None };
+        };
         Self {
             screen: Screen::Menu,
             token, username,
@@ -96,23 +94,20 @@ impl LobbyScreen {
             version,
             load_rx: None,
             check_rx: Some(check_rx),
-            ranked,
             has_ready: false,
+            known: Vec::new(),
             my_elo: 0,
             elo_rx,
         }
     }
 
-    fn start_turn_check(token: &str) -> std::sync::mpsc::Receiver<bool> {
+    fn start_turn_check(token: &str) -> std::sync::mpsc::Receiver<Vec<PendingMatch>> {
         let token = token.to_string();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let path = format!("/api/matches/pending?token={}", token);
-            let ready = match http_get(&path) {
-                Ok(resp) => parse_matches(&resp).iter().any(|m| m.your_turn),
-                Err(_)   => false,
-            };
-            let _ = tx.send(ready);
+            let list = http_get(&path).map(|r| parse_matches(&r)).unwrap_or_default();
+            let _ = tx.send(list);
         });
         rx
     }
@@ -125,8 +120,9 @@ impl LobbyScreen {
 
         // ── Background turn-readiness check ───────────────────────────────────
         if let Some(rx) = &self.check_rx {
-            if let Ok(ready) = rx.try_recv() {
-                self.has_ready = ready;
+            if let Ok(list) = rx.try_recv() {
+                self.has_ready = list.iter().any(|m| m.your_turn);
+                self.known = list;
                 self.check_rx = None;
             }
         }
@@ -138,6 +134,7 @@ impl LobbyScreen {
                 Ok(LoadResult::Matches(m)) => {
                     self.load_rx = None;
                     self.has_ready = m.iter().any(|m| m.your_turn);
+                    self.known = m.clone();
                     self.screen = Screen::Pending(m, 0, 0);
                 }
                 Ok(LoadResult::MatchState(action)) => {
@@ -170,36 +167,26 @@ impl LobbyScreen {
 
         match &mut self.screen {
             Screen::Menu => {
-                let menu = if self.ranked { MENU_ITEMS_RANKED } else { MENU_ITEMS_CASUAL };
-                let n = menu.len();
+                let n = MENU_ITEMS.len();
                 if input.just_pressed(Button::Up)   { self.cursor = if self.cursor == 0 { n - 1 } else { self.cursor - 1 }; }
                 if input.just_pressed(Button::Down) { self.cursor = (self.cursor + 1) % n; }
                 if input.just_pressed(Button::B) || input.just_pressed(Button::Start) { return Some(LobbyAction::Back); }
                 if input.just_pressed(Button::A) {
-                    // Ranked menu: [0=FIND RANKED MATCH, 1=MY MATCHES, 2=LOG OUT]
-                    // Casual menu: [0=MATCHMAKE, 1=GET CODE, 2=JOIN MATCH, 3=MY MATCHES, 4=LOG OUT]
-                    let action_idx = self.cursor;
-                    match (self.ranked, action_idx) {
-                        // ── RANKED LOBBY ────────────────────────────────────────────
-                        (true, 0) => { // FIND RANKED MATCH
-                            let body = format!(r#"{{"token":"{}","ranked":true}}"#, self.token);
-                            self.enter_matchmaking_pool(body, true);
-                        }
-                        // ── CASUAL LOBBY ─────────────────────────────────────────────
-                        (false, 0) => { // MATCHMAKE — auto-pair from pool
+                    match self.cursor {
+                        0 => self.start_load_matches(),
+                        1 => { // MATCHMAKE — auto-pair from casual pool
                             let body = format!(r#"{{"token":"{}","ranked":false}}"#, self.token);
                             self.enter_matchmaking_pool(body, false);
                         }
-                        (false, 1) => { // GET CODE — always create shareable code
+                        2 => { // RANKED MATCH — auto-pair from ranked pool
+                            let body = format!(r#"{{"token":"{}","ranked":true}}"#, self.token);
+                            self.enter_matchmaking_pool(body, true);
+                        }
+                        3 => { // GET CODE — always create shareable casual code
                             let body = format!(r#"{{"token":"{}","ranked":false,"force_code":true}}"#, self.token);
                             self.enter_matchmaking_pool(body, false);
                         }
-                        (false, 2) => { self.screen = Screen::Join(Keyboard::new(6)); }
-                        // ── SHARED ───────────────────────────────────────────────────
-                        (true, 1) | (false, 3) => { // MY MATCHES
-                            self.start_load_matches();
-                        }
-                        _ => { crate::game::account::save_creds("", ""); return Some(LobbyAction::LoggedOut); }
+                        _ => { self.screen = Screen::Join(Keyboard::new(6)); }
                     }
                 }
             }
@@ -416,28 +403,45 @@ impl LobbyScreen {
         let hint_y = sh - 18;
         match &self.screen {
             Screen::Menu => {
-                if self.has_ready {
-                    buf.fill_rect(cam_x, 44, SCREEN_W, 28, Bgra::new(20, 60, 30));
-                    let banner = "YOUR TURN IS READY";
-                    let bw = str_width_scaled(banner, 2);
-                    draw_str_scaled(buf, banner, cam_x + sw/2 - bw/2, 48, Bgra::new(80, 220, 100), 2);
-                }
-                let menu = if self.ranked { MENU_ITEMS_RANKED } else { MENU_ITEMS_CASUAL };
-                let item_h = 44;
-                let total = menu.len() as i32 * item_h;
-                let start_y = if self.has_ready { (sh - total) / 2 + 20 } else { (sh - total) / 2 + 10 };
-                for (i, &item) in menu.iter().enumerate() {
-                    let y = start_y + i as i32 * item_h;
-                    let selected = i == self.cursor;
-                    if selected {
-                        crate::renderer::hud::draw_menu_selection(buf, cam_x + sw/2 - 140, y - 4, 280, 26);
+                // Same full-screen side layout as the title submenus.
+                use crate::renderer::hud::{draw_side_menu, SideItem, SideCard, SIDE_GREEN, SIDE_WHITE};
+                let ready_n = self.known.iter().filter(|m| m.your_turn).count();
+                let badge = if ready_n > 0 { ready_n.to_string() } else { String::new() };
+                let rows: Vec<SideItem> = MENU_ITEMS.iter().enumerate()
+                    .map(|(i, &label)| SideItem { label, badge: if i == 0 { &badge } else { "" }, danger: false })
+                    .collect();
+                const INFO: [&str; 5] = [
+                    "Games in progress. R = ranked. A on one where it is your turn to play it.",
+                    "Get paired with a random opponent. No ELO at stake.",
+                    "Get paired with a player near your ELO. Wins and losses change your rank.",
+                    "Make a casual game and get a code to give a friend.",
+                    "Type a friend's code to join their game.",
+                ];
+                let mut stats: Vec<(String, String, Bgra)> = Vec::new();
+                match self.cursor {
+                    0 => {
+                        // Your-turn games first
+                        let mut ms: Vec<&PendingMatch> = self.known.iter().collect();
+                        ms.sort_by_key(|m| (!m.your_turn, m.days_remaining));
+                        for m in ms {
+                            let name = format!("VS {}{}", m.opponent.to_uppercase(), if m.ranked { "  R" } else { "" });
+                            let days = if m.days_remaining >= 0 { format!(" {}D", m.days_remaining) } else { String::new() };
+                            let (v, c) = if m.your_turn { (format!("GO{}", days), SIDE_GREEN) } else { (format!("WAIT{}", days), SIDE_WHITE) };
+                            stats.push((name, v, c));
+                        }
+                        if self.known.is_empty() && self.check_rx.is_none() {
+                            stats.push(("NO GAMES YET".to_string(), "-".to_string(), SIDE_WHITE));
+                        }
                     }
-                    let col = if selected { Bgra::new(255, 225, 55) } else { Bgra::new(170, 170, 200) };
-                    let iw = str_width_scaled(item, 2);
-                    draw_str_scaled(buf, item, cam_x + sw/2 - iw/2, y, col, 2);
+                    2 if self.my_elo > 0 => stats.push(("ELO".to_string(), self.my_elo.to_string(), SIDE_WHITE)),
+                    _ => {}
                 }
-                let hint = "B=BACK";
-                draw_str(buf, hint, cam_x + sw/2 - str_width(hint)/2, hint_y, Bgra::new(70, 70, 100));
+                let body = if self.error.is_empty() { INFO[self.cursor] } else { self.error.as_str() };
+                let card = SideCard { title: MENU_ITEMS[self.cursor], body, stats: &stats };
+                let who = if self.my_elo > 0 {
+                    format!("{}  ELO {}", self.username.to_uppercase(), self.my_elo)
+                } else { self.username.to_uppercase() };
+                draw_side_menu(buf, "TAKE A TURN", &who, &rows, self.cursor, &card, &[("A", "SELECT"), ("B", "BACK")]);
             }
             Screen::Join(kb) => { kb.draw(buf, cam_x, 0); }
             Screen::Pending(matches, cursor, scroll_offset) => {

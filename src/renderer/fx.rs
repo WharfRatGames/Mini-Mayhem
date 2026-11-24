@@ -23,6 +23,7 @@ pub enum FxKind {
     Spark,     // bright, near-weightless, fast fade
     Dust,      // soft grey puff, light gravity, drifts on wind
     Splash,    // white-blue water droplet, up-arc then falls
+    Smoke,     // WA flame-in-water steam puff: rises, jitters, drag 0.95, grows and fades (vel in px per 50 Hz frame)
 }
 
 pub struct FxParticle {
@@ -124,6 +125,24 @@ fn splash(fx: &mut Vec<FxParticle>, pos: WorldPos) {
     }
 }
 
+/// Steam puffs where a flame dies in water. WA (decompile 0x54fd40 spawner, 0x555280 particle step): each puff starts at the flame with
+/// a random +-0.5 px/frame velocity, rises (accel -0.15 px/frame^2), gets +-0.5 px/frame jitter and x0.95 drag every frame, and lives
+/// 65536/rate frames with rate 0x20c..0x49b (55..125 frames = 33..75 ticks). `count` = 4 + 4 * the flame's remaining splits in WA.
+fn smoke(fx: &mut Vec<FxParticle>, pos: WorldPos, count: u32) {
+    let mut s = seed_at(pos, 0x5B0 ^ count);
+    for _ in 0..count.min(24) {
+        let rate = 524.0 + rf(&mut s) * 655.0;
+        push(fx, FxParticle {
+            pos,
+            vel: Vec2::new(rf(&mut s) - 0.5, rf(&mut s) - 0.5),
+            age: 0,
+            life: ((65536.0 / rate) * 0.6) as u32,
+            kind: FxKind::Smoke,
+            col: Bgra::new(206, 208, 214),
+        });
+    }
+}
+
 /// Small dust puff(s) at the feet — landings and footsteps. `count` puffs,
 /// `kick` adds outward speed (scale by fall damage for landings).
 fn dust(fx: &mut Vec<FxParticle>, pos: WorldPos, count: u32, kick: f32, dir: f32) {
@@ -183,6 +202,8 @@ pub enum FxEvent {
     Dust      { x: f32, y: f32, count: u32, kick: f32, dir: f32 },
     Dig       { x: f32, y: f32, dir: f32, col: [u8; 3] },
     DamagePopup { x: f32, y: f32, amount: u8, color_id: u8 },
+    /// Steam puffs where a flame hits water (WA 0x5501a0: particles spawned by 0x54fd40).
+    Smoke     { x: f32, y: f32, count: u32 },
 }
 
 /// Spawn the particles described by `ev` into `fx`/`texts` (used both at the
@@ -199,6 +220,8 @@ pub fn apply_event(fx: &mut Vec<FxParticle>, texts: &mut Vec<FxDamageText>, ev: 
             dig(fx, WorldPos::new(x, y), dir, Bgra::new(col[0], col[1], col[2])),
         FxEvent::DamagePopup { x, y, amount, color_id } =>
             damage_popup(texts, WorldPos::new(x, y), amount, color_id),
+        FxEvent::Smoke { x, y, count } =>
+            smoke(fx, WorldPos::new(x, y), count),
     }
 }
 
@@ -208,11 +231,28 @@ pub fn apply_event(fx: &mut Vec<FxParticle>, texts: &mut Vec<FxDamageText>, ev: 
 /// terrain contact. Called from `simulate()` alongside `step_explosions()`.
 pub fn step_fx(fx: &mut Vec<FxParticle>, terrain: &Terrain, wind: f32) {
     for p in fx.iter_mut() {
+        if p.kind == FxKind::Smoke {
+            // 50 Hz WA frames: 1 or 2 per 30 Hz tick (5 per 3 ticks)
+            let frames = ((p.age + 1) * 5 / 3) - (p.age * 5 / 3);
+            for k in 0..frames {
+                let mut h = (p.age * 2 + k).wrapping_mul(0x9E37_79B1) ^ (p.pos.x as u32).wrapping_mul(0x85EB_CA6B) ^ (p.pos.y as u32).wrapping_mul(0xC2B2_AE35);
+                h ^= h >> 15; h = h.wrapping_mul(0x2C1B_3C6D); h ^= h >> 12;
+                let (jx, jy) = ((h & 0xffff) as f32 / 65536.0 - 0.5, ((h >> 16) & 0xffff) as f32 / 65536.0 - 0.5);
+                p.pos.x += p.vel.x;
+                p.pos.y += p.vel.y;
+                p.vel.y -= 0.15;
+                p.vel.x = (p.vel.x + jx) * 0.95;
+                p.vel.y = (p.vel.y + jy) * 0.95;
+            }
+            p.age += 1;
+            continue;
+        }
         let (grav, wind_k, drag) = match p.kind {
             FxKind::DirtChunk => (0.45, 0.02, 1.0),
             FxKind::Spark     => (0.08, 0.01, 0.92),
             FxKind::Dust      => (0.06, 0.05, 0.94),
             FxKind::Splash    => (0.40, 0.01, 1.0),
+            FxKind::Smoke     => (0.0, 0.0, 1.0), // handled above
         };
         p.vel.y += grav;
         p.vel.x = p.vel.x * drag + wind * wind_k;
@@ -280,6 +320,17 @@ pub fn draw_fx(buf: &mut WorldBuffer, fx: &[FxParticle], cam_x: u32) {
                 buf.set_pixel(x, y, p.col);
                 if t > 0.5 { buf.set_pixel(x, y - 1, p.col); }
             }
+            FxKind::Smoke => {
+                // grows from 1 to 4 px radius, then thins out (checker dither stands in for alpha) over the last third
+                let age = 1.0 - t;
+                let r = 1 + (age * 3.4) as i32;
+                let thin = t < 0.35;
+                for dy in -r..=r { for dx in -r..=r {
+                    if dx * dx + dy * dy > r * r + r / 2 { continue; }
+                    if thin && ((x + dx + y + dy) & 1) == 0 { continue; }
+                    buf.set_pixel(x + dx, y + dy, p.col);
+                } }
+            }
         }
     }
 }
@@ -308,5 +359,42 @@ pub fn draw_fx_text(buf: &mut WorldBuffer, texts: &[FxDamageText], cam_x: u32) {
             (base.b as f32 * k) as u8,
         );
         super::font::draw_str_shadow_scaled(buf, &text, x, y, col, scale);
+    }
+}
+
+
+/// One flame: a licking teardrop ~6 px wide and 8-12 px tall that sways and flickers (user: the star blobs read as sparks). Hot pale-yellow
+/// core, yellow body, orange edge and a red-orange tip. `frame` 0..21 = flicker loop (height/sway/tongue wobble), 22..31 = die-out
+/// (shrinks and goes red) like WA's 32-frame flame1/flame2 animation. Anchored bottom-centre at (cx, base_y). Cosmetic only.
+pub fn draw_flame_star(buf: &mut WorldBuffer, frame: u32, cx: i32, base_y: i32) {
+    let tau = std::f32::consts::TAU;
+    let (h, w0, ph, dying) = if frame < 22 {
+        let t = frame as f32 / 22.0;
+        (9.5 + 2.2 * (t * 2.0 * tau).sin() + 1.0 * (t * 3.0 * tau).cos(), 3.2 + 0.5 * (t * tau).cos(), t * tau, 0.0)
+    } else {
+        let d = (frame - 22) as f32 / 9.0;
+        ((9.0 * (1.0 - d * 0.85)).max(1.5), (3.0 * (1.0 - d * 0.7)).max(0.8), frame as f32 * 0.7, d)
+    };
+    let rows = h.ceil() as i32;
+    for r in 0..=rows {
+        let t = r as f32 / h.max(1.0); // 0 at the base .. 1 at the tip
+        if t > 1.0 { break; }
+        // teardrop: widest a little above the ground, pinching to the tip; the whole tongue leans and wobbles with height
+        let bulge = (t * 3.1).min(1.0).sqrt() * (1.0 - t).powf(0.85) * 1.35;
+        let half = (w0 * bulge).max(if t < 0.9 { 0.45 } else { 0.0 });
+        let sway = (ph + t * 2.6).sin() * 1.6 * t * t + (ph * 2.0 + t * 5.0).sin() * 0.5 * t;
+        let y = base_y - r;
+        let lo = (sway - half).round() as i32;
+        let hi = (sway + half).round() as i32;
+        for dx in lo..=hi {
+            let k = if half > 0.01 { ((dx as f32 - sway).abs() / half).min(1.0) } else { 1.0 }; // 0 axis .. 1 edge
+            let heat = 1.0 - (k * 0.7 + t * 0.55); // hotter at the core and low down
+            let col = if dying > 0.6 { if heat > 0.25 { Bgra::new(224, 100, 10) } else { Bgra::new(150, 40, 10) } }
+                      else if heat > 0.62 { Bgra::new(252, 240, 170) }
+                      else if heat > 0.38 { Bgra::new(250, 204, 40) }
+                      else if heat > 0.16 { Bgra::new(240, 140, 20) }
+                      else { Bgra::new(196, 62, 10) };
+            buf.set_pixel(cx + dx, y, col);
+        }
     }
 }
