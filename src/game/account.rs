@@ -293,6 +293,8 @@ pub struct RosterPicker {
     token:       String,
     screen:      RosterPickerScreen,
     error:       String,
+    /// Picking the team for a new TAT game: B goes back (no "skip"), header says PICK TEAM.
+    for_game:    bool,
 }
 
 impl RosterPicker {
@@ -306,13 +308,18 @@ impl RosterPicker {
         } else {
             RosterPickerScreen::List
         };
-        Self { rosters, cursor: 0, token, screen, error: String::new() }
+        Self { rosters, cursor: 0, token, screen, error: String::new(), for_game: false }
     }
 
     /// Like `new` but always shows the list — no auto-open of the editor.
     /// Used for in-game team selection where the player just needs to pick and go.
     pub fn new_list_only(token: String, rosters: Vec<Roster>) -> Self {
-        Self { rosters, cursor: 0, token, screen: RosterPickerScreen::List, error: String::new() }
+        Self { rosters, cursor: 0, token, screen: RosterPickerScreen::List, error: String::new(), for_game: false }
+    }
+
+    /// The team for a new TAT game, chosen before matchmaking / code / join: B = back (never skip).
+    pub fn new_for_game(token: String, rosters: Vec<Roster>) -> Self {
+        Self { for_game: true, ..Self::new_list_only(token, rosters) }
     }
 
     pub fn update(&mut self, input: &InputState, buf: &mut WorldBuffer, cam_x: i32) -> Option<RosterAction> {
@@ -360,7 +367,7 @@ impl RosterPicker {
         if input.just_pressed(Button::A) && !self.rosters.is_empty() {
             return Some(RosterAction::Selected(self.rosters[self.cursor].clone()));
         }
-        if input.just_pressed(Button::B)     { return Some(RosterAction::Skip); }
+        if input.just_pressed(Button::B)     { return Some(if self.for_game { RosterAction::Back } else { RosterAction::Skip }); }
         if input.just_pressed(Button::Start) { return Some(RosterAction::Back); }
 
         // L1/R1 = quick-cycle avatar on selected roster without opening editor
@@ -423,12 +430,14 @@ impl RosterPicker {
         // Same full-screen side layout as the menus: team names left, the team's card right.
         use crate::renderer::hud::{side_frame, side_rows, side_card, side_card_rect, SideItem, SideCard,
                                    SIDE_GOLD, SIDE_WHITE, SIDE_RED};
+        let b = if self.for_game { "BACK" } else { "SKIP" };
         let hints: &[(&str, &str)] = if self.rosters.len() > 1 {
-            &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("SEL", "DEL"), ("B", "SKIP")]
+            &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("SEL", "DEL"), ("B", b)]
         } else {
-            &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("B", "SKIP")]
+            &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("B", b)]
         };
-        side_frame(buf, "SELECT TEAM", &format!("{} TEAMS", self.rosters.len()), hints);
+        let crumb = if self.for_game { "TEAM FOR THIS GAME" } else { "SELECT TEAM" };
+        side_frame(buf, crumb, &format!("{} TEAMS", self.rosters.len()), hints);
         let names: Vec<String> = self.rosters.iter().map(|r| r.name.to_uppercase()).collect();
         let rows: Vec<SideItem> = names.iter().map(|n| SideItem::new(n.as_str())).collect();
         side_rows(buf, &rows, self.cursor);
@@ -1018,6 +1027,67 @@ pub fn load_match_roster(match_id: i64) -> Option<Roster> {
     })
 }
 
+/// A team as the JSON object the API stores per TAT game (`roster` in /match/create, /match/join,
+/// /match/<id>/roster; `my_roster` / `opponent_roster` in the match state).
+pub fn roster_json(r: &Roster) -> String {
+    let a = |v: [u8; 4]| format!("[{},{},{},{}]", v[0], v[1], v[2], v[3]);
+    format!(r#"{{"name":{},"worm_names":[{},{},{},{}],"avatar_id":{},"headstone_id":{},"hat_ids":{},"uniform_color_ids":{},"boot_color_ids":{},"gun_style_ids":{}}}"#,
+        json_str(&r.name), json_str(&r.worm_names[0]), json_str(&r.worm_names[1]), json_str(&r.worm_names[2]), json_str(&r.worm_names[3]),
+        r.avatar_id, r.headstone_id, a(r.hat_ids), a(r.uniform_color_ids), a(r.boot_color_ids), a(r.gun_style_ids))
+}
+
+/// The `{...}` value of `key` in `json` (brace-matched, string-aware), or None if missing / null.
+pub fn json_object<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+    let tag = format!("\"{}\":", key);
+    let start = json.find(&tag)? + tag.len();
+    let rest = json[start..].trim_start();
+    if !rest.starts_with('{') { return None; }
+    let (mut depth, mut in_str, mut esc) = (0i32, false, false);
+    for (i, c) in rest.char_indices() {
+        if in_str { if esc { esc = false } else if c == '\\' { esc = true } else if c == '"' { in_str = false } continue; }
+        match c { '"' => in_str = true, '{' => depth += 1, '}' => { depth -= 1; if depth == 0 { return Some(&rest[..=i]); } } _ => {} }
+    }
+    None
+}
+
+/// Parse a team object written by `roster_json` / stored by the API.
+pub fn roster_from_json(obj: &str) -> Option<Roster> {
+    fn arr(obj: &str, key: &str) -> [u8; 4] {
+        let tag = format!("\"{}\":", key);
+        let Some(i) = obj.find(&tag) else { return [0; 4] };
+        let rest = &obj[i + tag.len()..];
+        let (Some(a), Some(b)) = (rest.find('['), rest.find(']')) else { return [0; 4] };
+        let v: Vec<u8> = rest[a + 1..b].split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        if v.len() >= 4 { [v[0], v[1], v[2], v[3]] } else { [0; 4] }
+    }
+    fn names(obj: &str) -> Option<[String; 4]> {
+        let i = obj.find("\"worm_names\":")?;
+        let rest = &obj[i + 13..];
+        let a = rest.find('[')?;
+        let mut out: Vec<String> = Vec::new();
+        let (mut cur, mut in_str, mut esc) = (String::new(), false, false);
+        for c in rest[a + 1..].chars() {
+            if in_str {
+                if esc { cur.push(c); esc = false } else if c == '\\' { esc = true } else if c == '"' { in_str = false; out.push(std::mem::take(&mut cur)) } else { cur.push(c) }
+            } else if c == '"' { in_str = true } else if c == ']' { break }
+        }
+        if out.len() < 4 { return None; }
+        Some([out[0].clone(), out[1].clone(), out[2].clone(), out[3].clone()])
+    }
+    let name = json_field(obj, "name")?;
+    Some(Roster {
+        id: 0,
+        name,
+        worm_names: names(obj)?,
+        avatar_id: json_field(obj, "avatar_id").and_then(|s| s.parse().ok()).unwrap_or(0),
+        headstone_id: json_field(obj, "headstone_id").and_then(|s| s.parse().ok()).unwrap_or(0),
+        hat_ids: arr(obj, "hat_ids"),
+        uniform_color_ids: arr(obj, "uniform_color_ids"),
+        boot_color_ids: arr(obj, "boot_color_ids"),
+        gun_style_ids: arr(obj, "gun_style_ids"),
+    })
+}
+
 /// Load rosters from local cache — instant, no network.
 pub fn load_cached_rosters() -> Vec<Roster> {
     #[cfg(feature = "desktop")]
@@ -1510,5 +1580,27 @@ pub fn draw_worn_icon_z(buf: &mut WorldBuffer, look: usize, cx: i32, foot_y: i32
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod match_roster_json_tests {
+    use super::*;
+    #[test]
+    fn roster_json_round_trips_and_is_found_inside_a_state_reply() {
+        let mut r = Roster::default_named(0);
+        r.name = "FRAGS".into();
+        r.worm_names = ["GREB".into(), "THL\"ONK".into(), "GIBS".into(), "SMEG".into()];
+        r.avatar_id = 3; r.headstone_id = 2;
+        r.hat_ids = [36, 22, 34, 33]; r.uniform_color_ids = [4, 2, 1, 3]; r.boot_color_ids = [3, 4, 2, 3]; r.gun_style_ids = [17, 18, 21, 14];
+        let state = format!(r#"{{"seed": 5, "my_roster": {}, "opponent_roster": null, "hat_ids": [9,9,9,9]}}"#, roster_json(&r));
+        let obj = json_object(&state, "my_roster").expect("object");
+        let back = roster_from_json(obj).expect("parse");
+        assert_eq!(back.name, "FRAGS");
+        assert_eq!(back.worm_names[1], "THL\"ONK");
+        assert_eq!(back.hat_ids, [36, 22, 34, 33]);
+        assert_eq!(back.gun_style_ids, [17, 18, 21, 14]);
+        assert_eq!((back.avatar_id, back.headstone_id), (3, 2));
+        assert!(json_object(&state, "opponent_roster").is_none());
     }
 }

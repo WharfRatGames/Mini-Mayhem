@@ -274,8 +274,15 @@ def init_db(c):
         ("finished_at",      "INTEGER DEFAULT NULL"),
         ("p0_scrap",         "INTEGER DEFAULT NULL"),
         ("p1_scrap",         "INTEGER DEFAULT NULL"),
+        # Team each player picked for this TAT game (JSON, see clean_match_roster); NULL = not chosen (older clients).
+        ("p0_roster",        "TEXT DEFAULT NULL"),
+        ("p1_roster",        "TEXT DEFAULT NULL"),
     ]:
         try: c.execute(f"ALTER TABLE matches ADD COLUMN {col} {defn}")
+        except: pass
+    # Team carried by a player waiting in a TAT pool, copied into the match when they are paired.
+    for _pool in ("ranked_pool", "casual_pool"):
+        try: c.execute(f"ALTER TABLE {_pool} ADD COLUMN roster TEXT DEFAULT NULL")
         except: pass
     for col, defn in [
         ("session_token", "TEXT DEFAULT NULL"),
@@ -315,6 +322,16 @@ def init_db(c):
     ]:
         try: c.execute(f"ALTER TABLE rosters ADD COLUMN {col} {defn}")
         except: pass
+    # One-time migration: session tokens used to be stored as plain text; lookups now compare SHA-256 digests (hash_token), so every
+    # session issued before that change was rejected ("invalid token", scrap shown as 0). Hash the old rows once. Rows touched at/after
+    # the hashing deploy (last_seen >= cutoff) already hold digests and are skipped. The flag keeps this from ever running twice
+    # (hashing a digest again would lock everybody out).
+    c.execute("CREATE TABLE IF NOT EXISTS schema_flags (name TEXT PRIMARY KEY)")
+    if not c.execute("SELECT 1 FROM schema_flags WHERE name='tokens_hashed'").fetchone():
+        for _id, _tok in c.execute("SELECT id, token FROM users WHERE token IS NOT NULL AND token != '' "
+                                   "AND (last_seen IS NULL OR last_seen < 1792635300)").fetchall():
+            c.execute("UPDATE users SET token=? WHERE id=?", (hash_token(_tok), _id))
+        c.execute("INSERT INTO schema_flags(name) VALUES('tokens_hashed')")
     # One-time migration: copy gun_color_ids → gun_style_ids
     c.execute("UPDATE rosters SET gun_style_ids=gun_color_ids WHERE gun_color_ids!='[0,0,0,0]' AND gun_style_ids='[0,0,0,0]'")
     c.executescript("""
@@ -661,6 +678,31 @@ def read_req(s):
         return method, path, body_bytes, qs, headers
     body_str = body_bytes.decode('utf-8', errors='replace').strip()
     return method, path, body_str, qs, headers
+
+def clean_match_roster(r):
+    """The team a player picked for a TAT game, as sent by the client ({"name", "worm_names", "avatar_id",
+    "headstone_id", "hat_ids", "uniform_color_ids", "boot_color_ids", "gun_style_ids"}). Returns a JSON string
+    with only those keys, sane types and lengths, or None if `r` is not usable."""
+    if not isinstance(r, dict): return None
+    def s(v, n): return str(v)[:n] if isinstance(v, (str, int)) else ""
+    def u8(v):
+        try: return max(0, min(255, int(v)))
+        except Exception: return 0
+    def arr4(v): return [u8(x) for x in (list(v)[:4] if isinstance(v, list) else [])] + [0] * (4 - min(4, len(v) if isinstance(v, list) else 0))
+    names = r.get("worm_names")
+    names = [s(x, 16) for x in names[:4]] if isinstance(names, list) else []
+    names += [""] * (4 - len(names))
+    out = {"name": s(r.get("name", ""), 24), "worm_names": names,
+           "avatar_id": u8(r.get("avatar_id", 0)), "headstone_id": u8(r.get("headstone_id", 0)),
+           "hat_ids": arr4(r.get("hat_ids")), "uniform_color_ids": arr4(r.get("uniform_color_ids")),
+           "boot_color_ids": arr4(r.get("boot_color_ids")), "gun_style_ids": arr4(r.get("gun_style_ids"))}
+    return json.dumps(out)
+
+def set_match_roster(db, mid, slot, roster_json):
+    """Store a player's team for a game once: never overwrites a team already chosen."""
+    if not roster_json or slot not in (0, 1): return
+    col = "p0_roster" if slot == 0 else "p1_roster"
+    db.execute(f"UPDATE matches SET {col}=? WHERE id=? AND {col} IS NULL", (roster_json, mid))
 
 def send_json(s, status, obj):
     body = json.dumps(obj)
@@ -1122,6 +1164,7 @@ def _handle(db, sock, peer_ip="?"):
         if not uid2: send_json(sock, 401, {"error":"invalid token"}); return
         ranked = bool(data.get("ranked", False))
         force_code = bool(data.get("force_code", False))
+        my_roster = clean_match_roster(data.get("roster"))  # team picked before the game (newer clients)
         seed = int(time.time())
         active = db.execute("SELECT COUNT(*) FROM matches WHERE (p0=? OR p1=?) AND done=0", (uid2, uid2)).fetchone()[0]
         if active >= 15:
@@ -1131,8 +1174,10 @@ def _handle(db, sock, peer_ip="?"):
         if not ranked and force_code:
             code = gen_code()
             db.execute("INSERT INTO matches(code,p0,seed,ranked,has_mines,has_barrels,mode,turn_started_at,turn_timeout) VALUES(?,?,?,0,1,1,'tat',?,?)", (code, uid2, seed, seed, 14*24*3600))
+            mid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            set_match_roster(db, mid, 0, my_roster)
             db.commit()
-            send_json(sock, 200, {"code": code})
+            send_json(sock, 200, {"code": code})  # no match_id: clients treat one as "paired, load it now"
             sock.close(); return
 
         if ranked:
@@ -1145,17 +1190,19 @@ def _handle(db, sock, peer_ip="?"):
             db.execute("DELETE FROM ranked_pool WHERE user_id=? AND match_id IS NULL", (uid2,))
             # Find a match
             opponent = db.execute(
-                "SELECT id,user_id,elo,joined_at FROM ranked_pool WHERE match_id IS NULL AND user_id!=? ORDER BY ABS(elo-?) LIMIT 1",
+                "SELECT id,user_id,elo,joined_at,roster FROM ranked_pool WHERE match_id IS NULL AND user_id!=? ORDER BY ABS(elo-?) LIMIT 1",
                 (uid2, my_elo)
             ).fetchone()
             if opponent:
-                pool_id, opp_uid, opp_elo, opp_joined = opponent
+                pool_id, opp_uid, opp_elo, opp_joined, opp_roster = opponent
                 wait_secs = now - opp_joined
                 window = 200 + (wait_secs // 30) * 50
                 if abs(my_elo - opp_elo) <= window:
                     code = gen_code()
                     db.execute("INSERT INTO matches(code,p0,p1,seed,ranked,has_mines,has_barrels,mode,turn_started_at,turn_timeout) VALUES(?,?,?,?,1,1,1,'tat',?,?)", (code, opp_uid, uid2, seed, seed, 14*24*3600))
                     mid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    set_match_roster(db, mid, 0, opp_roster)
+                    set_match_roster(db, mid, 1, my_roster)
                     db.execute("UPDATE ranked_pool SET match_id=? WHERE id=?", (mid, pool_id))
                     # Add pool entry for creator (already matched)
                     db.execute("INSERT INTO ranked_pool(user_id,elo,joined_at,match_id) VALUES(?,?,?,?)", (uid2, my_elo, now, mid))
@@ -1163,7 +1210,7 @@ def _handle(db, sock, peer_ip="?"):
                     send_json(sock, 200, {"match_id": mid, "searching": False, "opponent_elo": opp_elo})
                     sock.close(); return
             # No match found — add to pool
-            db.execute("INSERT INTO ranked_pool(user_id,elo,joined_at) VALUES(?,?,?)", (uid2, my_elo, now))
+            db.execute("INSERT INTO ranked_pool(user_id,elo,joined_at,roster) VALUES(?,?,?,?)", (uid2, my_elo, now, my_roster))
             db.commit()
             send_json(sock, 200, {"searching": True})
         else:
@@ -1172,13 +1219,15 @@ def _handle(db, sock, peer_ip="?"):
             db.execute("DELETE FROM casual_pool WHERE joined_at < ? AND match_id IS NULL", (now - 600,))
             db.execute("DELETE FROM casual_pool WHERE user_id=? AND match_id IS NULL", (uid2,))
             opponent = db.execute(
-                "SELECT id,user_id FROM casual_pool WHERE match_id IS NULL AND user_id!=? LIMIT 1", (uid2,)
+                "SELECT id,user_id,roster FROM casual_pool WHERE match_id IS NULL AND user_id!=? LIMIT 1", (uid2,)
             ).fetchone()
             if opponent:
-                pool_id, opp_uid = opponent
+                pool_id, opp_uid, opp_roster = opponent
                 code = gen_code()
                 db.execute("INSERT INTO matches(code,p0,p1,seed,ranked,has_mines,has_barrels,mode,turn_started_at,turn_timeout) VALUES(?,?,?,?,0,1,1,'tat',?,?)", (code, opp_uid, uid2, seed, seed, 14*24*3600))
                 mid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+                set_match_roster(db, mid, 0, opp_roster)
+                set_match_roster(db, mid, 1, my_roster)
                 db.execute("UPDATE casual_pool SET match_id=? WHERE id=?", (mid, pool_id))
                 db.execute("INSERT INTO casual_pool(user_id,joined_at,match_id) VALUES(?,?,?)", (uid2, now, mid))
                 db.commit()
@@ -1187,8 +1236,10 @@ def _handle(db, sock, peer_ip="?"):
                 # No one waiting — create a match with a shareable code
                 code = gen_code()
                 db.execute("INSERT INTO matches(code,p0,seed,ranked,has_mines,has_barrels,mode,turn_started_at,turn_timeout) VALUES(?,?,?,0,1,1,'tat',?,?)", (code, uid2, seed, seed, 14*24*3600))
+                mid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+                set_match_roster(db, mid, 0, my_roster)
                 db.commit()
-                send_json(sock, 200, {"code": code})
+                send_json(sock, 200, {"code": code})  # no match_id: clients treat one as "paired, load it now"
 
     elif method == "GET" and path == "/ranked/tat/status":
         uid2 = uid(token)
@@ -1225,6 +1276,19 @@ def _handle(db, sock, peer_ip="?"):
         db.commit()
         send_json(sock, 200, {"ok": True})
 
+    elif method == "POST" and path.startswith("/match/") and path.endswith("/roster"):
+        # Pick the team for a game that has none stored yet for this player (e.g. matched by an older client).
+        parts = path.strip('/').split('/'); mid = int(parts[1]) if len(parts) > 2 and parts[1].isdigit() else 0
+        uid2 = uid(token)
+        if not uid2: send_json(sock, 401, {"error":"invalid token"}); return
+        row = db.execute("SELECT p0,p1 FROM matches WHERE id=?", (mid,)).fetchone()
+        if not row or uid2 not in (row[0], row[1]): send_json(sock, 404, {"error":"not found"}); return
+        r = clean_match_roster(data.get("roster"))
+        if not r: send_json(sock, 400, {"error":"bad roster"}); return
+        set_match_roster(db, mid, 0 if uid2 == row[0] else 1, r)
+        db.commit()
+        send_json(sock, 200, {"ok": True})
+
     elif method == "POST" and path == "/match/join":
         uid2 = uid(token); code = data.get("code","").upper()
         if not uid2: send_json(sock, 401, {"error":"invalid token"}); return
@@ -1236,6 +1300,7 @@ def _handle(db, sock, peer_ip="?"):
             mid, is_ranked = row
             if is_ranked: send_json(sock, 400, {"error":"cannot join ranked match by code"}); return
             db.execute("UPDATE matches SET p1=? WHERE id=?", (uid2, mid))
+            set_match_roster(db, mid, 1, clean_match_roster(data.get("roster")))
             db.commit()
             send_json(sock, 200, {"match_id": mid})
         else: send_json(sock, 400, {"error":"match not found or full"})
@@ -1393,9 +1458,9 @@ def _handle(db, sock, peer_ip="?"):
         parts = path.strip('/').split('/'); mid = int(parts[1]) if len(parts) > 1 else 0
         uid2 = uid(token)
         if not uid2: send_json(sock, 401, {"error":"invalid token"}); return
-        row = db.execute("SELECT p0,p1,turn,moves,seed,done,ranked,has_mines,has_barrels,turn_started_at,turn_timeout FROM matches WHERE id=?", (mid,)).fetchone()
+        row = db.execute("SELECT p0,p1,turn,moves,seed,done,ranked,has_mines,has_barrels,turn_started_at,turn_timeout,p0_roster,p1_roster FROM matches WHERE id=?", (mid,)).fetchone()
         if not row: send_json(sock, 404, {"error":"not found"}); return
-        p0,p1,turn,moves,seed,done,is_ranked,has_mines_val,has_barrels_val,turn_started_at,turn_timeout = row
+        p0,p1,turn,moves,seed,done,is_ranked,has_mines_val,has_barrels_val,turn_started_at,turn_timeout,p0_roster,p1_roster = row
         has_mines_val   = has_mines_val or 0
         has_barrels_val = has_barrels_val or 0
         # 14-day turn timeout: forfeit if current player has not moved in time
@@ -1419,7 +1484,14 @@ def _handle(db, sock, peer_ip="?"):
         opp_worm_names = ["", "", "", ""]
         opp_hat_ids = [0,0,0,0]; opp_uniform_ids = [0,0,0,0]
         opp_boot_ids = [0,0,0,0]; opp_gun_ids = [0,0,0,0]
-        if opp_uid:
+        my_picked  = json.loads(p0_roster if my_slot == 0 else p1_roster) if (p0_roster if my_slot == 0 else p1_roster) else None
+        opp_picked = json.loads(p1_roster if my_slot == 0 else p0_roster) if (p1_roster if my_slot == 0 else p0_roster) else None
+        if opp_picked:
+            # The team the opponent picked for THIS game
+            opp_worm_names = opp_picked["worm_names"]
+            opp_hat_ids = opp_picked["hat_ids"]; opp_uniform_ids = opp_picked["uniform_color_ids"]
+            opp_boot_ids = opp_picked["boot_color_ids"]; opp_gun_ids = opp_picked["gun_style_ids"]
+        elif opp_uid:
             opp_roster = db.execute(
                 "SELECT worm_names,hat_ids,uniform_color_ids,boot_color_ids,gun_style_ids FROM rosters WHERE user_id=? ORDER BY id LIMIT 1", (opp_uid,)
             ).fetchone()
@@ -1435,7 +1507,8 @@ def _handle(db, sock, peer_ip="?"):
                               "has_mines": bool(has_mines_val), "has_barrels": bool(has_barrels_val),
                               "opponent_worm_names": opp_worm_names,
                               "opponent_hat_ids": opp_hat_ids, "opponent_uniform_color_ids": opp_uniform_ids,
-                              "opponent_boot_color_ids": opp_boot_ids, "opponent_gun_style_ids": opp_gun_ids})
+                              "opponent_boot_color_ids": opp_boot_ids, "opponent_gun_style_ids": opp_gun_ids,
+                              "my_roster": my_picked, "opponent_roster": opp_picked})
 
     elif method == "GET" and path == "/match/history":
         uid2 = uid(token)

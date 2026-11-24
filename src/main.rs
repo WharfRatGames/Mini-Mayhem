@@ -10,7 +10,7 @@ mod audio;
 mod https;
 mod ota;
 mod bug_report;
-const VERSION: &str = "0.5.4.439-exp45";
+const VERSION: &str = "0.5.4.439-exp46";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -2351,9 +2351,15 @@ fn run_take_a_turn(fb: &mut renderer::Framebuffer, input: &mut input::InputState
     // Beyond that the match is already in progress — never show the roster picker again.
     let pick_roster_for_match = |fb: &mut renderer::Framebuffer, input: &mut input::InputState,
                                   buf: &mut WorldBuffer, match_id: i64, rosters: &[game::account::Roster],
-                                  token: &str, my_slot: usize, moves_len: usize| -> Option<game::account::Roster> {
+                                  token: &str, my_slot: usize, moves_len: usize,
+                                  server_pick: Option<game::account::Roster>| -> Option<game::account::Roster> {
         // Already chose one for this match → use it, no picker shown
         if let Some(r) = game::account::load_match_roster(match_id) { return Some(r); }
+        // Picked before the game (lobby PICK TEAM, maybe on another device): the server keeps it per game.
+        if let Some(r) = server_pick {
+            game::account::save_match_roster(match_id, &r);
+            return Some(r);
+        }
         // Mid-match (past first turn) and local save is gone (e.g. reboot) →
         // auto-select first roster without showing picker so the team can't be changed.
         let is_first_turn = moves_len == my_slot; // 0 for p0, 1 for p1
@@ -2377,20 +2383,23 @@ fn run_take_a_turn(fb: &mut renderer::Framebuffer, input: &mut input::InputState
             RosterAction::Back => return None,
         };
         game::account::save_match_roster(match_id, &r);
+        // Store it with the game so the opponent sees this team (games started before teams were picked in the lobby).
+        let body = format!(r#"{{"token":"{}","roster":{}}}"#, token, game::account::roster_json(&r));
+        std::thread::spawn(move || { let _ = game::account::http_post(&format!("/api/match/{}/roster", match_id), &body); });
         Some(r)
     };
 
     // ── Match lobby ──────────────────────────────────────────────────────────
     use game::lobby::{LobbyScreen, LobbyAction};
-    let mut lobby = LobbyScreen::new(token.clone(), username.clone(), VERSION);
+    let mut lobby = LobbyScreen::new(token.clone(), username.clone(), VERSION).with_rosters(rosters.clone());
     loop {
         let frame_start = std::time::Instant::now();
         input.poll();
         buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 8, 20));
         match lobby.update(input, buf, 0) {
             Some(LobbyAction::Back) => break,
-            Some(LobbyAction::StartMatch { match_id, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, opp_hat_ids, opp_uniform_color_ids, opp_boot_color_ids, opp_gun_style_ids, days_remaining }) => {
-                let roster_for_match = pick_roster_for_match(fb, input, buf, match_id, &rosters, &token, my_slot, moves.len());
+            Some(LobbyAction::StartMatch { match_id, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, opp_hat_ids, opp_uniform_color_ids, opp_boot_color_ids, opp_gun_style_ids, days_remaining, my_roster }) => {
+                let roster_for_match = pick_roster_for_match(fb, input, buf, match_id, &rosters, &token, my_slot, moves.len(), my_roster);
                 let selected_roster = match roster_for_match {
                     Some(r) => r,
                     None => { continue; } // user pressed Back from roster picker
@@ -2445,7 +2454,7 @@ fn run_take_a_turn(fb: &mut renderer::Framebuffer, input: &mut input::InputState
                     load_saved_creds().map(|(_, t)| t).unwrap_or_default(),
                     load_saved_creds().map(|(u, _)| u).unwrap_or_default(),
                     VERSION,
-                );
+                ).with_rosters(game::account::load_cached_rosters());
             }
             None => {}
         }

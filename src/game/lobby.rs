@@ -7,7 +7,9 @@ use crate::world::{SCREEN_W, SCREEN_H};
 use crate::game::account::{http_post, http_get, json_field};
 
 pub enum LobbyAction {
-    StartMatch { match_id: i64, seed: u64, my_slot: usize, moves: Vec<Move>, my_elo: i32, opp_elo: i32, has_mines: bool, has_barrels: bool, opp_name: String, opp_worm_names: [String; 4], opp_hat_ids: [u8; 4], opp_uniform_color_ids: [u8; 4], opp_boot_color_ids: [u8; 4], opp_gun_style_ids: [u8; 4], days_remaining: i32 },
+    StartMatch { match_id: i64, seed: u64, my_slot: usize, moves: Vec<Move>, my_elo: i32, opp_elo: i32, has_mines: bool, has_barrels: bool, opp_name: String, opp_worm_names: [String; 4], opp_hat_ids: [u8; 4], opp_uniform_color_ids: [u8; 4], opp_boot_color_ids: [u8; 4], opp_gun_style_ids: [u8; 4], days_remaining: i32,
+                 /// The team this player picked for this game, as stored by the server (None: older game / client).
+                 my_roster: Option<crate::game::account::Roster> },
     Back,
 }
 
@@ -40,6 +42,8 @@ struct PendingMatch {
 
 enum Screen {
     Menu,
+    /// Choosing the team for a new game; `action` = the MENU_ITEMS index to run once a team is picked.
+    PickTeam { picker: crate::game::account::RosterPicker, action: usize },
     Join(Keyboard),
     Pending(Vec<PendingMatch>, usize, usize),  // matches, cursor, scroll_offset
     Loading(String),
@@ -60,6 +64,9 @@ pub struct LobbyScreen {
     load_rx:   Option<std::sync::mpsc::Receiver<LoadResult>>,
     check_rx:  Option<std::sync::mpsc::Receiver<Vec<PendingMatch>>>,
     has_ready: bool,
+    /// The player's teams (for PICK TEAM) and the team picked for the game being started.
+    rosters:   Vec<crate::game::account::Roster>,
+    team:      Option<crate::game::account::Roster>,
     /// Last known match list (background check / MY MATCHES), for the info card.
     known:     Vec<PendingMatch>,
     my_elo:    i32,
@@ -95,9 +102,39 @@ impl LobbyScreen {
             load_rx: None,
             check_rx: Some(check_rx),
             has_ready: false,
+            rosters: Vec::new(),
+            team: None,
             known: Vec::new(),
             my_elo: 0,
             elo_rx,
+        }
+    }
+
+    /// The player's teams, offered when starting a new game (one team: used without asking).
+    pub fn with_rosters(mut self, rosters: Vec<crate::game::account::Roster>) -> Self { self.rosters = rosters; self }
+
+    /// `"roster":{...},` for create/join bodies (empty when no team picked).
+    fn roster_field(&self) -> String {
+        self.team.as_ref().map(|r| format!(r#""roster":{},"#, crate::game::account::roster_json(r))).unwrap_or_default()
+    }
+
+    /// A new game now has an id: remember the picked team for it (locally, and on the server in case the
+    /// create/join request could not carry it). Only for games started from this lobby, never MY MATCHES.
+    fn claim_team(&mut self, mid: i64) {
+        let Some(r) = self.team.take() else { return };
+        crate::game::account::save_match_roster(mid, &r);
+        let body = format!(r#"{{"token":"{}","roster":{}}}"#, self.token, crate::game::account::roster_json(&r));
+        std::thread::spawn(move || { let _ = http_post(&format!("/api/match/{}/roster", mid), &body); });
+    }
+
+    /// Run a new-game menu action (1 MATCHMAKE, 2 RANKED MATCH, 3 GET CODE, 4 JOIN MATCH) with `self.team` set.
+    fn start_action(&mut self, action: usize) {
+        let rf = self.roster_field();
+        match action {
+            1 => { let body = format!(r#"{{{}"token":"{}","ranked":false}}"#, rf, self.token); self.enter_matchmaking_pool(body, false); }
+            2 => { let body = format!(r#"{{{}"token":"{}","ranked":true}}"#, rf, self.token); self.enter_matchmaking_pool(body, true); }
+            3 => { let body = format!(r#"{{{}"token":"{}","ranked":false,"force_code":true}}"#, rf, self.token); self.enter_matchmaking_pool(body, false); }
+            _ => { self.screen = Screen::Join(Keyboard::new(6)); }
         }
     }
 
@@ -112,6 +149,7 @@ impl LobbyScreen {
             screen: if menu { Screen::Menu } else { Screen::Pending(list.clone(), 1, 0) },
             token: String::new(), username: username.to_string(), cursor: 0, error: String::new(),
             version: "", load_rx: None, check_rx: None, has_ready: true, known: list, my_elo: 1042, elo_rx: None,
+            rosters: Vec::new(), team: None,
         }
     }
 
@@ -192,31 +230,44 @@ impl LobbyScreen {
                 if input.just_pressed(Button::A) {
                     match self.cursor {
                         0 => self.start_load_matches(),
-                        1 => { // MATCHMAKE — auto-pair from casual pool
-                            let body = format!(r#"{{"token":"{}","ranked":false}}"#, self.token);
-                            self.enter_matchmaking_pool(body, false);
+                        // New game: pick the team first (kept for the whole game), then matchmake / code / join.
+                        a if self.rosters.len() > 1 => {
+                            self.error.clear();
+                            self.screen = Screen::PickTeam {
+                                picker: crate::game::account::RosterPicker::new_for_game(self.token.clone(), self.rosters.clone()),
+                                action: a,
+                            };
                         }
-                        2 => { // RANKED MATCH — auto-pair from ranked pool
-                            let body = format!(r#"{{"token":"{}","ranked":true}}"#, self.token);
-                            self.enter_matchmaking_pool(body, true);
+                        a => {
+                            self.team = self.rosters.first().cloned();
+                            self.start_action(a);
                         }
-                        3 => { // GET CODE — always create shareable casual code
-                            let body = format!(r#"{{"token":"{}","ranked":false,"force_code":true}}"#, self.token);
-                            self.enter_matchmaking_pool(body, false);
-                        }
-                        _ => { self.screen = Screen::Join(Keyboard::new(6)); }
                     }
+                }
+            }
+            Screen::PickTeam { picker, action } => {
+                let action = *action;
+                match picker.update(input, buf, cam_x) {
+                    Some(crate::game::account::RosterAction::Selected(r)) => {
+                        self.rosters = picker.rosters.clone(); // edits / new teams made in the picker
+                        self.team = Some(r);
+                        self.screen = Screen::Menu;
+                        self.start_action(action);
+                    }
+                    Some(_) => { self.rosters = picker.rosters.clone(); self.screen = Screen::Menu; }
+                    None => return None, // the picker drew itself
                 }
             }
             Screen::Join(kb) => {
                 if input.just_pressed(Button::B) && kb.text.is_empty() { self.screen = Screen::Menu; return None; }
                 if kb.update(input) {
                     let code = kb.text.clone().to_uppercase();
-                    let body = format!(r#"{{"token":"{}","code":"{}"}}"#, self.token, code);
+                    let body = format!(r#"{{{}"token":"{}","code":"{}"}}"#, self.roster_field(), self.token, code);
                     match http_post("/api/match/join", &body) {
                         Ok(resp) => {
                             if let Some(mid_str) = json_field(&resp, "match_id") {
                                 let mid: i64 = mid_str.parse().unwrap_or(0);
+                                self.claim_team(mid);
                                 return self.load_match_state_async(mid);
                             } else {
                                 self.error = json_field(&resp, "error").unwrap_or("FAILED".to_string());
@@ -279,6 +330,7 @@ impl LobbyScreen {
                 match rx.try_recv() {
                     Ok(Some(match_id)) => {
                         // Found — load match state
+                        self.claim_team(match_id);
                         return self.load_match_state_async(match_id);
                     }
                     Ok(None) => {
@@ -344,6 +396,7 @@ impl LobbyScreen {
                 // Paired immediately (match_id returned) or casual code-share
                 if let Some(mid_str) = json_field(&resp, "match_id") {
                     if let Ok(mid) = mid_str.parse::<i64>() {
+                        self.claim_team(mid);
                         if let Some(action) = self.load_match_state_async(mid) {
                             // store for return — can't return here directly, store in screen
                             let _ = action; // handled by load_match_state_async setting load_rx
@@ -395,7 +448,9 @@ impl LobbyScreen {
                         let opp_uniform_color_ids  = parse_u8_arr(&resp, "opponent_uniform_color_ids");
                         let opp_boot_color_ids     = parse_u8_arr(&resp, "opponent_boot_color_ids");
                         let opp_gun_style_ids      = parse_u8_arr(&resp, "opponent_gun_style_ids");
-                        LoadResult::MatchState(Some(LobbyAction::StartMatch { match_id: mid, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, opp_hat_ids, opp_uniform_color_ids, opp_boot_color_ids, opp_gun_style_ids, days_remaining }))
+                        let my_roster = crate::game::account::json_object(&resp, "my_roster")
+                            .and_then(crate::game::account::roster_from_json);
+                        LoadResult::MatchState(Some(LobbyAction::StartMatch { match_id: mid, seed, my_slot, moves, my_elo, opp_elo, has_mines, has_barrels, opp_name, opp_worm_names, opp_hat_ids, opp_uniform_color_ids, opp_boot_color_ids, opp_gun_style_ids, days_remaining, my_roster }))
                     }
                 }
                 Err(e) => LoadResult::Err(format!("NET: {}", e.chars().take(20).collect::<String>())),
@@ -462,6 +517,7 @@ impl LobbyScreen {
                 } else { self.username.to_uppercase() };
                 draw_side_menu(buf, "TAKE A TURN", &who, &rows, self.cursor, &card, &[("A", "SELECT"), ("B", "BACK")]);
             }
+            Screen::PickTeam { .. } => {} // RosterPicker::update draws it
             Screen::Join(kb) => { kb.draw(buf, cam_x, 0); }
             Screen::Pending(matches, cursor, scroll_offset) => {
                 let ready_n = matches.iter().filter(|m| m.your_turn).count();
