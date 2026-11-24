@@ -32,6 +32,15 @@ impl MissionsScreen {
         Self { token, challenges: Vec::new(), cursor: 0, message: String::new(), message_timer: 0, scrap: 0 }
     }
 
+    /// Preview only (examples/menulook): made-up missions, no network. (desc, done, target, scrap, weekly, claimed)
+    #[doc(hidden)]
+    pub fn preview(items: &[(&str, u32, u32, u32, bool, bool)], scrap: u32) -> Self {
+        let challenges = items.iter().enumerate().map(|(i, &(d, p, t, sc, w, c))| Challenge {
+            id: i.to_string(), desc: d.to_string(), target: t, scrap: sc,
+            period_type: if w { "weekly".into() } else { "daily".into() }, progress: p, claimed: c }).collect();
+        Self { token: String::new(), challenges, cursor: 0, message: String::new(), message_timer: 0, scrap }
+    }
+
     pub fn load(&mut self) {
         let path = format!("/api/challenges?token={}", self.token);
         if let Ok(resp) = http_get(&path) {
@@ -95,21 +104,17 @@ impl MissionsScreen {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
 
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-        buf.fill_rect(0, 0, SCREEN_W, 28, Bgra::new(18, 22, 48));
-
-        let title = "MISSIONS";
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, sw/2 - tw/2, 6, Bgra::new(255, 210, 50), 2);
-
-        // Scrap balance
-        let bal = format!("SCRAP: {}", self.scrap);
-        draw_str(buf, &bal, sw - str_width(&bal) as i32 - 6, 10, Bgra::new(255, 200, 50));
+        use crate::renderer::hud::{side_frame, side_shade, side_row_bg, side_panel, SIDE_TOP, SIDE_GOLD};
+        use crate::renderer::font::draw_str_shadow_scaled;
+        let bal = format!("SCRAP {}", self.scrap);
+        let any_claim = self.challenges.iter().any(|c| !c.claimed && c.progress >= c.target);
+        side_frame(buf, "MISSIONS", &bal, if any_claim { &[("A", "CLAIM"), ("UP/DOWN", "MOVE"), ("B", "BACK")] } else { &[("B", "BACK")] });
 
         if self.challenges.is_empty() {
             let msg = "LOADING...";
-            let mw = str_width(msg) as i32;
-            draw_str(buf, msg, sw/2 - mw/2, sh/2, Bgra::new(120, 120, 160));
+            let mw = str_width_scaled(msg, 2) as i32;
+            side_panel(buf, sw/2 - 150, 200, 300, 60);
+            draw_str_shadow_scaled(buf, msg, sw/2 - mw/2, 222, SIDE_GOLD, 2);
             return;
         }
 
@@ -119,17 +124,15 @@ impl MissionsScreen {
             .collect();
 
         // Section headers + rows
-        let mut y = 36i32;
+        let mut y = SIDE_TOP;
         let row_h = 44i32;
         let mut claimable_cursor_idx = 0usize;
 
         for (section, label) in [("daily", "DAILY"), ("weekly", "WEEKLY")] {
             // Section header
-            buf.fill_rect(0, y, SCREEN_W, 14, COLOR_PANEL_BG);
-            let lw = str_width(label) as i32;
-            draw_str(buf, label, 8, y + 3, Bgra::new(100, 120, 200));
-            let _ = lw;
-            y += 16;
+            side_shade(buf, 14, y, sw - 28, 18, 50, (10, 14, 40));
+            draw_str(buf, label, 24, y + 5, SIDE_GOLD);
+            y += 22;
 
             for ch in self.challenges.iter().filter(|c| c.period_type == section) {
                 let is_done    = ch.progress >= ch.target;
@@ -138,26 +141,22 @@ impl MissionsScreen {
                 let is_selected = ci.map(|pos| pos == self.cursor).unwrap_or(false);
 
                 // Row bg
-                let bg = if is_selected { Bgra::new(24, 34, 72) } else { Bgra::new(12, 14, 32) };
-                buf.fill_rect(0, y, SCREEN_W, row_h as u32, bg);
-                if is_selected {
-                    buf.fill_rect(0, y, 3, row_h as u32, Bgra::new(255, 180, 0));
-                }
+                side_row_bg(buf, 14, y, sw - 28, row_h - 4, is_selected);
 
                 // Description
                 let desc_col = if is_claimed { Bgra::new(60, 70, 90) } else { Bgra::new(200, 210, 255) };
-                draw_str(buf, &ch.desc, 10, y + 4, desc_col);
+                draw_str(buf, &ch.desc, 26, y + 6, desc_col);
 
                 // Scrap reward
                 let reward_str = format!("+{}", ch.scrap);
                 let rw = str_width(&reward_str) as i32;
                 let reward_col = if is_claimed { Bgra::new(50, 60, 50) } else { Bgra::new(255, 210, 50) };
-                draw_str(buf, &reward_str, sw - rw - 8, y + 4, reward_col);
+                draw_str(buf, &reward_str, sw - rw - 26, y + 6, reward_col);
 
                 // Progress bar
-                let bar_x = 10i32;
-                let bar_w = (sw - 80) as u32;
-                let bar_y = y + 18;
+                let bar_x = 26i32;
+                let bar_w = (sw - 260) as u32;
+                let bar_y = y + 22;
                 let bar_h = 10u32;
                 buf.fill_rect(bar_x, bar_y, bar_w, bar_h, Bgra::new(20, 22, 40));
                 if ch.target > 0 {
@@ -185,7 +184,7 @@ impl MissionsScreen {
                 let prog_col = if is_claimed { Bgra::new(50, 80, 50) }
                                else if is_done { Bgra::new(100, 255, 100) }
                                else { Bgra::new(140, 160, 200) };
-                draw_str(buf, &prog_str, sw - pw - 8, bar_y + 1, prog_col);
+                draw_str(buf, &prog_str, sw - pw - 26, bar_y + 1, prog_col);
 
                 y += row_h;
                 if ci.is_some() { claimable_cursor_idx += 1; }
@@ -199,14 +198,8 @@ impl MissionsScreen {
             let mw = str_width_scaled(&self.message, 2);
             let mx = sw/2 - mw/2;
             let my = sh/2 - 10;
-            buf.fill_rect(mx - 8, my - 6, (mw + 16) as u32, 28, Bgra::new(10, 30, 10));
-            draw_str_scaled(buf, &self.message, mx, my, Bgra::new(80, 255, 80), 2);
-        }
-
-        if claimable.is_empty() {
-            crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
-        } else {
-            crate::renderer::hud::draw_button_hints(buf, &[("A", "CLAIM"), ("B", "BACK")], 0, 0);
+            side_panel(buf, mx - 20, my - 12, mw + 40, 40);
+            draw_str_shadow_scaled(buf, &self.message, mx, my, Bgra::new(80, 255, 80), 2);
         }
     }
 }

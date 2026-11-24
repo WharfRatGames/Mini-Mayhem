@@ -503,59 +503,40 @@ impl TitleScreen {
     }
 
     fn draw_help(&self, buf: &mut WorldBuffer) {
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        let page = &HOW_TO_PAGES[self.help_page];
-        let n_pages = HOW_TO_PAGES.len();
+        draw_help_page(buf, HOW_TO_PAGES, self.help_page, "HOW TO PLAY");
+    }
+}
 
-        // Background
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(6, 8, 20));
-
-        // Header bar + page title
-        crate::renderer::hud::draw_screen_header(buf, page.title);
-
-        // Page indicator dots
-        let dot_total = n_pages as i32 * 10;
-        let dot_start = sw/2 - dot_total/2;
-        for i in 0..n_pages {
-            let dx = dot_start + i as i32 * 10 + 4;
-            let col = if i == self.help_page { Bgra::new(255,200,50) } else { Bgra::new(60,60,100) };
-            buf.fill_rect(dx, 28, 6, 6, col);
-        }
-
-        // Body text
-        let line_h = 27i32;
-        let body_top = 46i32;
-        let text_col    = Bgra::new(210, 210, 230);
-        let heading_col = Bgra::new(140, 200, 255);
-        let dim_col     = Bgra::new(130, 130, 160);
-
-        for (i, &line) in page.lines.iter().enumerate() {
-            let ly = body_top + i as i32 * line_h;
-            if ly + line_h > sh - 28 { break; }
-            if line.is_empty() { continue; }
-            // Lines with leading spaces are sub-items (dimmer)
-            // Lines with no leading space that are short and ALL-CAPS or contain no space = heading
-            let (col, x_off) = if line.starts_with("  ") {
-                (dim_col, 12i32)
-            } else if !line.contains(' ') || (line.len() < 20 && line.chars().all(|c| c.is_uppercase() || c == ' ')) {
-                (heading_col, 0i32)
-            } else {
-                (text_col, 0i32)
-            };
-            let lx = 20 + x_off;
-            draw_str(buf, line.trim_start(), lx, ly, col);
-        }
-
-        // Footer
-        buf.fill_rect(0, sh - 26, SCREEN_W, 1, Bgra::new(40, 40, 80));
-        let nav = "< >  PREV/NEXT PAGE";
-        let back = "B = BACK";
-        draw_str(buf, nav,  20,              sh - 18, Bgra::new(70, 70, 110));
-        draw_str(buf, back, sw - str_width(back) - 20, sh - 18, Bgra::new(70, 70, 110));
-
-        // Page number
-        let pn = &format!("{}/{}", self.help_page + 1, n_pages);
-        draw_str(buf, pn, sw/2 - str_width(pn)/2, sh - 18, Bgra::new(100, 100, 140));
+/// One help page in the menu style (HOW TO PLAY and SETTINGS > CONTROLS share it): frame with the page title,
+/// "WHERE  n/N" on the right, the text on a glass panel. Headings (short, no spaces or ALL CAPS) gold,
+/// indented lines dim and indented.
+pub fn draw_help_page(buf: &mut WorldBuffer, pages: &[HelpPage], idx: usize, where_: &str) {
+    use crate::renderer::hud::{side_frame, side_panel, SIDE_TOP, SIDE_BOTTOM, SIDE_GOLD, SIDE_DIM, SIDE_TEXT};
+    let page = &pages[idx.min(pages.len() - 1)];
+    let who = format!("{}  {}/{}", where_, idx + 1, pages.len());
+    side_frame(buf, page.title, &who, &[("LEFT/RIGHT", "PAGE"), ("B", "BACK")]);
+    let (x, w) = (14, SCREEN_W as i32 - 28);
+    side_panel(buf, x, SIDE_TOP, w, SIDE_BOTTOM - SIDE_TOP - 4);
+    // Page dots along the panel's top edge
+    let n = pages.len() as i32;
+    let dot0 = SCREEN_W as i32 / 2 - n * 10 / 2;
+    for i in 0..n {
+        let col = if i as usize == idx { SIDE_GOLD } else { Bgra::new(70, 75, 120) };
+        buf.fill_rect(dot0 + i * 10 + 2, SIDE_TOP + 8, 6, 6, col);
+    }
+    let line_h = 24i32;
+    let mut y = SIDE_TOP + 24;
+    for &line in page.lines.iter() {
+        if y + line_h > SIDE_BOTTOM { break; }
+        if line.is_empty() { y += line_h / 2; continue; }
+        let (col, x_off) = if line.starts_with("  ") {
+            (SIDE_DIM, 16)
+        } else if !line.contains(' ') || (line.len() < 20 && line.chars().all(|c| c.is_uppercase() || c == ' ')) {
+            (SIDE_GOLD, 0)
+        } else {
+            (SIDE_TEXT, 0)
+        };
+        draw_str(buf, line.trim_start(), x + 16 + x_off, y, col);
+        y += line_h;
     }
 }

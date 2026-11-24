@@ -90,98 +90,19 @@ impl SettingsScreen {
     }
 
     fn draw(&self, buf: &mut WorldBuffer) {
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-
-        let panel_w = 300i32;
-        let panel_x = (sw - panel_w) / 2;
-        let panel_y = 60i32;
-        buf.fill_rect(panel_x, panel_y, panel_w as u32, 2, COLOR_BORDER);
-
-        let title = "SETTINGS";
-        let tw = str_width_scaled(title, 2);
-        draw_str_shadow_scaled(buf, title, sw/2 - tw/2, panel_y - 22, Bgra::new(200, 200, 230), 2);
-
-        let item_h = 36i32;
-        let start_y = panel_y + 14;
-
-        // Sound toggle
-        {
-            let iy = start_y;
-            let selected = self.cursor == 0;
-            if selected { draw_menu_selection(buf, panel_x, iy - 4, panel_w, item_h); }
-            let col = if selected { Bgra::new(255, 225, 55) } else { Bgra::new(200, 200, 220) };
-            draw_str_shadow_scaled(buf, "SOUND", panel_x + 30, iy + 4, col, 2);
-            let val = if self.settings.sound_on { "ON" } else { "OFF" };
-            let val_col = if self.settings.sound_on { Bgra::new(80, 220, 120) } else { Bgra::new(180, 80, 80) };
-            let vw = str_width_scaled(val, 2);
-            draw_str_shadow_scaled(buf, val, panel_x + panel_w - vw - 16, iy + 4, val_col, 2);
-        }
-
-        buf.fill_rect(panel_x, start_y + item_h, panel_w as u32, 1, COLOR_BORDER);
-
-        // Controls entry
-        {
-            let iy = start_y + item_h + 8;
-            let selected = self.cursor == 1;
-            if selected { draw_menu_selection(buf, panel_x, iy - 4, panel_w, item_h); }
-            let col = if selected { Bgra::new(255, 225, 55) } else { Bgra::new(200, 200, 220) };
-            draw_str_shadow_scaled(buf, "CONTROLS", panel_x + 30, iy + 4, col, 2);
-            let arrow = ">";
-            let aw = str_width_scaled(arrow, 2);
-            draw_str_shadow_scaled(buf, arrow, panel_x + panel_w - aw - 16, iy + 4, Bgra::new(140, 140, 170), 2);
-        }
-
-        buf.fill_rect(panel_x, start_y + item_h * 2 + 8, panel_w as u32, 2, COLOR_BORDER);
-
-        draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], 0, 0);
-        let saved_str = "SAVES ON EXIT";
-        let saved_w = str_width(saved_str);
-        draw_str(buf, saved_str, sw/2 - saved_w/2, sh - 26, Bgra::new(70, 70, 100));
+        use crate::renderer::hud::{draw_side_menu, SideItem, SideCard};
+        let sound = if self.settings.sound_on { "ON" } else { "OFF" };
+        let rows = [
+            SideItem { detail: sound, ..SideItem::new("SOUND") },
+            SideItem { detail: ">", ..SideItem::new("CONTROLS") },
+        ];
+        let body = if self.cursor == 0 { "Sound effects on or off. A or LEFT/RIGHT to switch." }
+                   else { "Buttons for moving, aiming and every weapon." };
+        let card = SideCard { title: rows[self.cursor.min(1)].label, body, stats: &[] };
+        draw_side_menu(buf, "SETTINGS", "SAVES ON EXIT", &rows, self.cursor, &card, &[("A", "SELECT"), ("B", "BACK")]);
     }
 
     fn draw_controls(&self, buf: &mut WorldBuffer, page: usize) {
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        let page_ref = &CONTROLS_PAGES[page];
-        let (title, lines) = (page_ref.title, page_ref.lines);
-
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-
-        // Title bar
-        buf.fill_rect(0, 0, SCREEN_W, 28, COLOR_PANEL_BG);
-        buf.fill_rect(0, 28, SCREEN_W, 2, COLOR_BORDER);
-        let tw = str_width_scaled(title, 2);
-        draw_str_shadow_scaled(buf, title, sw/2 - tw/2, 6, Bgra::new(200, 200, 230), 2);
-
-        // Page indicator
-        let total = CONTROLS_PAGES.len();
-        let indicator = format!("{}/{}", page + 1, total);
-        let iw = str_width(&indicator);
-        draw_str(buf, &indicator, sw - iw as i32 - 8, 10, Bgra::new(100, 100, 140));
-
-        // Lines
-        let line_h = 16i32;
-        let mut y = 40i32;
-        for line in lines.iter() {
-            if line.is_empty() { y += 6; continue; }
-            let col = if line.starts_with("  ") {
-                Bgra::new(160, 200, 255)
-            } else {
-                Bgra::new(220, 220, 240)
-            };
-            draw_str(buf, line, 12, y, col);
-            y += line_h;
-            if y > sh - 30 { break; }
-        }
-
-        let hints = if page + 1 < total {
-            &[("LEFT", "BACK"), ("RIGHT", "NEXT"), ("B", "CLOSE")][..]
-        } else {
-            &[("LEFT", "PREV"), ("B", "CLOSE")][..]
-        };
-        draw_button_hints(buf, hints, 0, 0);
+        super::title::draw_help_page(buf, CONTROLS_PAGES, page, "CONTROLS");
     }
 }

@@ -362,9 +362,14 @@ pub fn side_rows(buf: &mut WorldBuffer, items: &[SideItem], cursor: usize) {
         } else if it.detail.is_empty() {
             draw_str_shadow_scaled(buf, it.label, col_x + 18, mid - 4 * scale, col, scale);
         } else {
-            // Label small on the left, value big on the right.
-            draw_str(buf, it.label, col_x + 18, mid - 4, if sel { SIDE_GOLD } else { SIDE_DIM });
+            // Label on the left (2x when it fits beside the value, else small), value big on the right.
             let dw = str_width_scaled(it.detail, 2);
+            let lc = if sel { SIDE_GOLD } else { SIDE_DIM };
+            if str_width_scaled(it.label, 2) + dw + 50 <= col_w {
+                draw_str_shadow_scaled(buf, it.label, col_x + 18, mid - 8, lc, 2);
+            } else {
+                draw_str(buf, it.label, col_x + 18, mid - 4, lc);
+            }
             draw_str_shadow_scaled(buf, it.detail, col_x + col_w - 14 - dw, mid - 8, if sel { SIDE_GOLD } else { SIDE_WHITE }, 2);
         }
         if !it.badge.is_empty() {
@@ -407,6 +412,17 @@ pub fn side_card(buf: &mut WorldBuffer, card: &SideCard) -> i32 {
         y += 26;
     }
     y
+}
+
+/// A full screen that just says something (loading, saved, errors...): frame + one centred glass panel.
+pub fn side_message(buf: &mut WorldBuffer, crumb: &str, msg: &str, col: Bgra, hints: &[(&str, &str)]) {
+    let sw = SCREEN_W as i32;
+    side_frame(buf, crumb, "", hints);
+    let ms = if str_width_scaled(msg, 2) <= sw - 80 { 2 } else { 1 };
+    let mw = str_width_scaled(msg, ms);
+    let pw = (mw + 80).max(360).min(sw - 40);
+    side_panel(buf, sw / 2 - pw / 2, 196, pw, 76);
+    draw_str_shadow_scaled(buf, msg, sw / 2 - mw / 2, 226, col, ms);
 }
 
 /// Full-screen submenu layout used by every menu below the title screen:

@@ -275,46 +275,34 @@ impl StoreScreen {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
 
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(8, 12, 28));
-
-        // Header bar
-        buf.fill_rect(0, 0, SCREEN_W, 26, Bgra::new(20, 25, 60));
-        buf.fill_rect(0, 24, SCREEN_W, 2, Bgra::new(60, 80, 160));
-
-        draw_str_scaled(buf, "STORE", 8, 6, Bgra::new(255, 220, 50), 2);
-
-        // Balances top-right
-        let wb_str  = format!("{} WB", self.warbonds);
-        let sc_str  = format!("{} SC", self.balance);
-        let wb_w = str_width_scaled(&wb_str, 2);
-        let sc_w = str_width_scaled(&sc_str, 2);
-        draw_str_scaled(buf, &wb_str, sw - wb_w - 8,        6, Bgra::new(255, 200, 60), 2);
-        draw_str_scaled(buf, &sc_str, sw - wb_w - sc_w - 20, 6, Bgra::new(60, 220, 180), 2);
+        use crate::renderer::hud::{side_frame, side_shade, side_row_bg, side_panel, SIDE_GOLD, SIDE_DIM, SIDE_ACCENT, SIDE_TOP, SIDE_BOTTOM};
+        use crate::renderer::font::draw_str_shadow_scaled;
+        // Same frame as the menus; balances in the header.
+        let who = format!("SCRAP {}   WARBONDS {}", self.balance, self.warbonds);
+        side_frame(buf, "STORE", &who, &[("A", "BUY"), ("L1/R1", "TAB"), ("B", "BACK")]);
 
         // Tabs
-        let tab_y = 28i32;
-        let tab_h = 16i32;
+        let tab_y = SIDE_TOP;
+        let tab_h = 26i32;
         let tabs = [("SCRAP", Tab::Scrap), ("WARBONDS", Tab::Warbonds)];
-        let mut tx = 0i32;
+        let mut tx = 14i32;
         for (label, t) in &tabs {
-            let tw = str_width_scaled(label, 1) + 16;
+            let tw = str_width_scaled(label, 2) + 24;
             let active = self.tab == *t;
-            let bg = if active { Bgra::new(40, 55, 120) } else { Bgra::new(15, 18, 45) };
-            buf.fill_rect(tx, tab_y, tw as u32, tab_h as u32, bg);
-            let tc = if active { Bgra::new(255, 220, 50) } else { Bgra::new(120, 130, 160) };
-            draw_str(buf, label, tx + 8, tab_y + 4, tc);
-            if active {
-                buf.fill_rect(tx, tab_y + tab_h - 2, tw as u32, 2, Bgra::new(255, 180, 40));
-            }
-            tx += tw + 2;
+            side_shade(buf, tx, tab_y, tw, tab_h, if active { 60 } else { 140 }, if active { (20, 30, 90) } else { (8, 10, 30) });
+            let tc = if active { SIDE_GOLD } else { SIDE_DIM };
+            draw_str_shadow_scaled(buf, label, tx + 12, tab_y + 5, tc, 2);
+            if active { buf.fill_rect(tx, tab_y + tab_h - 2, tw as u32, 2, SIDE_ACCENT); }
+            tx += tw + 4;
         }
 
         // Item grid
         const COLS: usize = 2;
         const ROWS: usize = 5;
-        let grid_y = tab_y + tab_h + 2;
-        let cell_w = sw / COLS as i32;
-        let cell_h = (sh - grid_y - 22) / ROWS as i32;
+        let grid_y = tab_y + tab_h + 4;
+        let (gx, gw) = (14i32, sw - 28);
+        let cell_w = gw / COLS as i32;
+        let cell_h = (SIDE_BOTTOM - grid_y) / ROWS as i32;
 
         let active = if self.tab == Tab::Scrap { &self.items } else { &self.wb_items };
 
@@ -324,27 +312,11 @@ impl StoreScreen {
                 let idx = real_row * COLS + col;
                 if idx >= active.len() { continue; }
                 let item = &active[idx];
-                let cx = col as i32 * cell_w;
+                let cx = gx + col as i32 * cell_w;
                 let cy = grid_y + row as i32 * cell_h;
                 let selected = idx == self.cursor;
-
-                let bg = if selected {
-                    Bgra::new(30, 50, 100)
-                } else if item.coming_soon {
-                    Bgra::new(20, 18, 35)
-                } else if item.owned {
-                    Bgra::new(15, 35, 25)
-                } else {
-                    Bgra::new(12, 16, 38)
-                };
-                buf.fill_rect(cx + 2, cy + 2, (cell_w - 4) as u32, (cell_h - 4) as u32, bg);
-                if selected {
-                    let bc = if self.tab == Tab::Warbonds { Bgra::new(220, 160, 40) } else { Bgra::new(80, 120, 220) };
-                    buf.fill_rect(cx + 2, cy + 2,              (cell_w - 4) as u32, 1, bc);
-                    buf.fill_rect(cx + 2, cy + 2,              1, (cell_h - 4) as u32, bc);
-                    buf.fill_rect(cx + 2, cy + cell_h - 5,     (cell_w - 4) as u32, 1, bc);
-                    buf.fill_rect(cx + cell_w - 3, cy + 2,     1, (cell_h - 4) as u32, bc);
-                }
+                side_row_bg(buf, cx + 2, cy + 2, cell_w - 4, cell_h - 4, selected);
+                if item.owned && !selected { buf.fill_rect(cx + 2, cy + 2, 4, (cell_h - 4) as u32, Bgra::new(60, 200, 120)); }
 
                 // Icon
                 let icon_cx = cx + cell_w / 4;
@@ -411,17 +383,15 @@ impl StoreScreen {
             draw_str(buf, "v", sw - 12, grid_y + ROWS as i32 * cell_h - 10, Bgra::new(180, 180, 220));
         }
 
-        // Status bar
-        buf.fill_rect(0, sh - 22, SCREEN_W, 22, Bgra::new(12, 14, 35));
+        // Purchase feedback on a small panel above the footer
         if self.status_ttl > 0 {
             let sc = if self.status.contains("PURCHASED") { Bgra::new(60, 220, 120) }
                      else if self.status.contains("SOON")  { Bgra::new(255, 200, 60) }
                      else if self.status.contains("OWNED") || self.status.contains("SCRAP") || self.status.contains("WARBOND") { Bgra::new(220, 100, 60) }
                      else { Bgra::new(220, 60, 60) };
-            let sw2 = str_width(&self.status);
-            draw_str(buf, &self.status, sw / 2 - sw2 / 2, sh - 16, sc);
-        } else {
-            crate::renderer::hud::draw_button_hints(buf, &[("A", "BUY"), ("B", "BACK"), ("L1/R1", "TAB")], 0, 0);
+            let mw = str_width_scaled(&self.status, 2);
+            side_panel(buf, sw / 2 - mw / 2 - 14, sh - 70, mw + 28, 34);
+            draw_str_shadow_scaled(buf, &self.status, sw / 2 - mw / 2, sh - 60, sc, 2);
         }
     }
 }

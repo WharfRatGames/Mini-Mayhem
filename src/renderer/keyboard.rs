@@ -56,24 +56,52 @@ impl Keyboard {
         false
     }
 
+    /// The keyboard as a full screen in the menu style: frame (title, hints), `prompt` above the text field.
+    pub fn draw_screen(&self, buf: &mut WorldBuffer, title: &str, prompt: &str) {
+        use crate::renderer::hud::{side_frame, SIDE_WHITE};
+        use crate::renderer::font::{draw_str_shadow_scaled, str_width_scaled};
+        side_frame(buf, title, "", &[("A", "TYPE"), ("B", "DELETE"), ("L1", "CAPS"), ("START", "DONE")]);
+        if !prompt.is_empty() {
+            let sw = SCREEN_W as i32;
+            let ps = if str_width_scaled(prompt, 2) <= sw - 40 { 2 } else { 1 };
+            draw_str_shadow_scaled(buf, prompt, sw / 2 - str_width_scaled(prompt, ps) / 2, 70, SIDE_WHITE, ps);
+        }
+        self.draw(buf, 0, 0);
+    }
+
+    /// Draw just the keyboard (text field + keys), in the menu style. Callers draw the frame (`draw_screen`).
     pub fn draw(&self, buf: &mut WorldBuffer, cam_x: i32, cam_y: i32) {
+        use crate::renderer::hud::{side_shade, side_panel, SIDE_GOLD, SIDE_ACCENT, SIDE_DIM};
+        use crate::renderer::font::{draw_str_shadow_scaled, str_width_scaled};
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
 
         // Total keyboard width based on longest row (QWERTYUIOP = 10 keys)
         let total_w = 10 * (KEY_W + KEY_GAP) - KEY_GAP;
         let kb_x = cam_x + sw / 2 - total_w / 2;
-        let kb_y = cam_y + sh - (ROWS.len() as i32 * (KEY_H + KEY_GAP)) - 44; // extra room for spacebar label
+        // Above the menu footer (24 px) with room for the SPACE label.
+        let kb_y = cam_y + sh - (ROWS.len() as i32 * (KEY_H + KEY_GAP)) - KEY_H - 46;
 
-        // Text field at top
-        let field_y = kb_y - 28;
-        buf.fill_rect(kb_x, field_y - 4, total_w as u32, 20, Bgra::new(20, 20, 40));
+        // Text field: glass panel, text big
+        let field_y = kb_y - 52;
+        side_panel(buf, kb_x, field_y, total_w, 40);
         let display = format!("{}_", self.text);
-        draw_str(buf, &display, kb_x + 4, field_y, Bgra::new(255, 220, 0));
+        draw_str_shadow_scaled(buf, &display, kb_x + 12, field_y + 13, SIDE_GOLD, 2);
+        let caps = if self.caps { "CAPS ON" } else { "caps off" };
+        let caps_col = if self.caps { SIDE_GOLD } else { SIDE_DIM };
+        draw_str(buf, caps, kb_x + total_w - str_width(caps) - 10, field_y + 17, caps_col);
 
-        // Caps indicator
-        let caps_col = if self.caps { Bgra::new(80, 180, 255) } else { Bgra::new(80, 80, 100) };
-        draw_str(buf, "L=CAPS", kb_x + total_w - str_width("L=CAPS"), field_y, caps_col);
+        let key = |buf: &mut WorldBuffer, x: i32, y: i32, w: i32, selected: bool| {
+            if selected {
+                side_shade(buf, x, y, w, KEY_H, 60, (20, 30, 90));
+                buf.fill_rect(x, y, w as u32, 2, SIDE_ACCENT);
+                buf.fill_rect(x, y + KEY_H - 2, w as u32, 2, SIDE_ACCENT);
+                buf.fill_rect(x, y, 2, KEY_H as u32, SIDE_ACCENT);
+                buf.fill_rect(x + w - 2, y, 2, KEY_H as u32, SIDE_ACCENT);
+            } else {
+                side_shade(buf, x, y, w, KEY_H, 110, (8, 10, 30));
+            }
+        };
 
         // Character keys
         for (ri, row) in ROWS.iter().enumerate() {
@@ -82,39 +110,22 @@ impl Keyboard {
             let row_y = kb_y + ri as i32 * (KEY_H + KEY_GAP);
             for (ci, ch) in row.chars().enumerate() {
                 let x = row_x + ci as i32 * (KEY_W + KEY_GAP);
-                let y = row_y;
                 let selected = ri == self.cursor_row && ci == self.cursor_col;
-                let bg = if selected { Bgra::new(60, 60, 120) } else { Bgra::new(25, 25, 45) };
-                let fg = if selected { Bgra::new(255, 220, 0) } else { Bgra::new(200, 200, 200) };
-                buf.fill_rect(x, y, KEY_W as u32, KEY_H as u32, bg);
-                if selected {
-                    for bx in x..x+KEY_W { buf.set_pixel(bx, y, Bgra::new(100, 100, 200)); buf.set_pixel(bx, y+KEY_H-1, Bgra::new(100, 100, 200)); }
-                    for by in y..y+KEY_H { buf.set_pixel(x, by, Bgra::new(100, 100, 200)); buf.set_pixel(x+KEY_W-1, by, Bgra::new(100, 100, 200)); }
-                }
+                key(buf, x, row_y, KEY_W, selected);
                 let display = if self.caps { ch.to_ascii_uppercase() } else { ch.to_ascii_lowercase() };
                 let s = display.to_string();
-                let tx = x + KEY_W/2 - str_width(&s)/2;
-                let ty = y + KEY_H/2 - 4;
-                draw_str(buf, &s, tx, ty, fg);
+                let fg = if selected { SIDE_GOLD } else { Bgra::new(225, 228, 245) };
+                draw_str_shadow_scaled(buf, &s, x + KEY_W/2 - str_width_scaled(&s, 2)/2, row_y + KEY_H/2 - 8, fg, 2);
             }
         }
 
-        // Spacebar — wide key below the character rows
+        // Spacebar — wide key below the character rows, label inside
         let space_y = kb_y + ROWS.len() as i32 * (KEY_H + KEY_GAP);
-        let space_w = total_w;
         let space_selected = self.on_spacebar();
-        let space_bg = if space_selected { Bgra::new(60, 60, 120) } else { Bgra::new(25, 25, 45) };
-        let space_fg = if space_selected { Bgra::new(255, 220, 0) } else { Bgra::new(200, 200, 200) };
-        buf.fill_rect(kb_x, space_y, space_w as u32, KEY_H as u32, space_bg);
-        if space_selected {
-            for bx in kb_x..kb_x+space_w { buf.set_pixel(bx, space_y, Bgra::new(100, 100, 200)); buf.set_pixel(bx, space_y+KEY_H-1, Bgra::new(100, 100, 200)); }
-            for by in space_y..space_y+KEY_H { buf.set_pixel(kb_x, by, Bgra::new(100, 100, 200)); buf.set_pixel(kb_x+space_w-1, by, Bgra::new(100, 100, 200)); }
-        }
-        // "SPACE" label below the key
+        key(buf, kb_x, space_y, total_w, space_selected);
         let spc = "SPACE";
-        draw_str(buf, spc, kb_x + space_w/2 - str_width(spc)/2, space_y + KEY_H + 3, space_fg);
-
-        // Hints
-        draw_str(buf, "A=type  B=del  Start=confirm", cam_x + sw/2 - str_width("A=type  B=del  Start=confirm")/2, cam_y + sh - 6, Bgra::new(60, 60, 90));
+        let fg = if space_selected { SIDE_GOLD } else { Bgra::new(225, 228, 245) };
+        draw_str_shadow_scaled(buf, spc, kb_x + total_w/2 - str_width_scaled(spc, 2)/2, space_y + KEY_H/2 - 8, fg, 2);
+        let _ = draw_str_shadow;
     }
 }

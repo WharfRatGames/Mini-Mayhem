@@ -10,7 +10,7 @@ mod audio;
 mod https;
 mod ota;
 mod bug_report;
-const VERSION: &str = "0.5.4.439-exp46";
+const VERSION: &str = "0.5.4.439-exp47";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -226,15 +226,11 @@ fn main() {
     // poll for its result in a cancellable, animated loop — never block the main thread.
     // On timeout we proceed: the server handshake still hard-rejects stale versions.
     if is_mp_mode && !update_available {
-        use renderer::Bgra;
-        use renderer::font::{draw_str_scaled, str_width_scaled};
-        use world::{SCREEN_W, SCREEN_H};
         let rx = mp_check_rx.take().unwrap_or_else(|| {
             let (tx, rx) = std::sync::mpsc::channel::<bool>();
             std::thread::spawn(move || { let _ = tx.send(updater::check_for_update(VERSION).0); });
             rx
         });
-        let sw = SCREEN_W as i32; let sh = SCREEN_H as i32;
         let deadline = Instant::now() + std::time::Duration::from_secs(7);
         let mut tick = 0u32;
         loop {
@@ -250,10 +246,7 @@ fn main() {
             if Instant::now() >= deadline { break; }
             let dots = ".".repeat(((tick / 15) % 4) as usize);
             let t = format!("CHECKING FOR UPDATES{}", dots);
-            buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-            draw_str_scaled(&mut buf, &t, sw/2 - str_width_scaled("CHECKING FOR UPDATES...", 2)/2, sh/2 - 8, Bgra::new(140, 140, 180), 2);
-            let hint = "B = CANCEL";
-            draw_str_scaled(&mut buf, hint, sw/2 - str_width_scaled(hint, 1)/2, sh/2 + 20, Bgra::new(100, 100, 130), 1);
+            renderer::hud::side_message(&mut buf, "MULTIPLAYER", &t, renderer::hud::SIDE_GOLD, &[("B", "CANCEL")]);
             buf.blit_to_fb(&mut fb, 0, 0);
             tick += 1;
             std::thread::sleep(TICK_DURATION);
@@ -1430,20 +1423,17 @@ fn draw_casual_lobby(
     ready:      bool,
 ) {
     use renderer::Bgra;
-    use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+    use renderer::font::{draw_str, draw_str_scaled, str_width_scaled};
     use renderer::avatar::draw_avatar;
     use renderer::draw_sprites::TEAM_COLOURS;
-    use world::{SCREEN_W, SCREEN_H};
+    use world::SCREEN_W;
 
     let sw = SCREEN_W as i32;
-    let sh = SCREEN_H as i32;
 
-    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-    // Header
-    buf.fill_rect(0, 0, SCREEN_W, 40, Bgra::new(18, 22, 48));
-    let title = "CASUAL LOBBY";
-    let tw = str_width_scaled(title, 2);
-    draw_str_scaled(buf, title, sw / 2 - tw / 2, 12, Bgra::new(255, 210, 50), 2);
+    use renderer::hud::{side_frame, side_row_bg, side_panel, SIDE_TOP, SIDE_BOTTOM};
+    let ready_n = players.iter().filter(|p| p.ready).count();
+    let hints: &[(&str, &str)] = if ready { &[("A", "UNREADY"), ("B", "LEAVE")] } else { &[("L/R", "COLOUR"), ("A", "READY"), ("B", "LEAVE")] };
+    side_frame(buf, "CASUAL LOBBY", &format!("{}/{} READY", ready_n, players.len()), hints);
 
     let colour_name = |c: Option<u8>| -> &'static str {
         match c { Some(0) => "RED", Some(1) => "BLUE", Some(2) => "GREEN", Some(3) => "YELLOW", _ => "PICK COLOUR" }
@@ -1451,17 +1441,12 @@ fn draw_casual_lobby(
 
     // Player rows
     const AV: u32 = 52;
-    let row_h = 64i32;
-    let top = 56i32;
+    let row_h = (SIDE_BOTTOM - 40 - SIDE_TOP) / 4;
+    let top = SIDE_TOP;
     for slot in 0..4usize {
         let ry = top + slot as i32 * row_h;
         let occupied = slot < players.len();
-        // Row panel
-        let panel = if occupied { Bgra::new(20, 24, 44) } else { Bgra::new(14, 16, 30) };
-        buf.fill_rect(20, ry, (sw - 40) as u32, (row_h - 8) as u32, panel);
-        if slot == your_index && occupied {
-            buf.fill_rect(20, ry, 4, (row_h - 8) as u32, Bgra::new(255, 210, 50));
-        }
+        side_row_bg(buf, 14, ry, sw - 28, row_h - 6, slot == your_index && occupied);
 
         if !occupied {
             let waiting = "WAITING FOR PLAYER...";
@@ -1503,12 +1488,9 @@ fn draw_casual_lobby(
     } else {
         format!("{}/{} READY", ready_players, players.len())
     };
-    let stw = str_width(&status);
-    draw_str(buf, &status, sw / 2 - stw / 2, sh - 40, Bgra::new(200, 210, 240));
-
-    let hint = if ready { "A: UNREADY   B: LEAVE" } else { "L/R: COLOUR   A: READY   B: LEAVE" };
-    let hw = str_width(hint);
-    draw_str(buf, hint, sw / 2 - hw / 2, sh - 24, Bgra::new(110, 115, 145));
+    let stw = str_width_scaled(&status, 2);
+    side_panel(buf, sw / 2 - stw / 2 - 20, SIDE_BOTTOM - 34, stw + 40, 30);
+    draw_str_scaled(buf, &status, sw / 2 - stw / 2, SIDE_BOTTOM - 25, Bgra::new(200, 210, 240), 2);
 }
 
 fn build_default_game_opts(seed: u64, with_mines: bool, with_barrels: bool) -> GameState {
@@ -1560,10 +1542,9 @@ fn show_roster_picker(
     } else {
         rosters.to_vec()
     };
-    // list_only: skip auto-opening editor so first A press selects immediately
-    let mut picker = RosterPicker::new_list_only(token.to_string(), rs);
+    // MY TEAMS > ROSTERS: manage mode (A edits, B back); edits are saved by the picker itself.
+    let mut picker = RosterPicker::new_manage(token.to_string(), rs);
     run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
-        buf.fill_rect(0, 0, crate::world::SCREEN_W, crate::world::SCREEN_H as u32, renderer::Bgra::new(8, 8, 20));
         match picker.update(input, buf, 0) {
             Some(RosterAction::Selected(r)) => Some(Some(r)),
             Some(RosterAction::Skip)        => Some(Some(game::account::Roster::default_named(0))),
@@ -1573,9 +1554,6 @@ fn show_roster_picker(
     })
 }
 
-/// MULTIPLAYER → ACCOUNT entry point.
-/// Not logged in: shows login/register screen.
-/// Logged in: shows a small screen with username + logout option.
 /// MY TEAMS → LOG IN: the login / register flow. Returns true if the
 /// player ended up logged in.
 fn do_login(
@@ -1655,7 +1633,12 @@ fn show_my_teams_menu(
 
         if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
             match cursor {
-                0 => { show_roster_picker(fb, input, buf, &rosters, &token); }
+                0 => {
+                    show_roster_picker(fb, input, buf, &rosters, &token);
+                    // Teams may have been edited / added / deleted there (saved to the cache by the picker).
+                    let fresh = game::account::load_cached_rosters();
+                    if !fresh.is_empty() { rosters = fresh; }
+                }
                 1 => { show_store_screen(fb, input, buf, &token); }
                 2 => { show_equip_screen(fb, input, buf, &rosters, &token); }
                 3 => { show_profile_screen(fb, input, buf, &token, &username); }
@@ -1834,13 +1817,7 @@ fn show_missions_screen(
 }
 
 fn draw_status(buf: &mut renderer::WorldBuffer, fb: &mut renderer::Framebuffer, msg: &str) {
-    use renderer::Bgra;
-    use renderer::font::{draw_str_scaled, str_width_scaled};
-    use world::{SCREEN_W, SCREEN_H};
-    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-    let x = SCREEN_W as i32 / 2 - str_width_scaled(msg, 2) / 2;
-    let y = SCREEN_H as i32 / 2 - 8;
-    draw_str_scaled(buf, msg, x, y, Bgra::new(255, 210, 50), 2);
+    renderer::hud::side_message(buf, "", msg, renderer::hud::SIDE_GOLD, &[]);
     buf.blit_to_fb(fb, 0, 0);
 }
 
@@ -1852,30 +1829,23 @@ fn show_login_bonus(
     weekly:  u32,
 ) {
     use renderer::Bgra;
-    use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+    use renderer::font::{draw_str_scaled, str_width_scaled};
     use world::{SCREEN_W, SCREEN_H};
     let sw = SCREEN_W as i32;
     let sh = SCREEN_H as i32;
     let cx = sw / 2;
 
-    let bg       = COLOR_DARK_BG;
     let gold     = Bgra::new(255, 210, 50);
     let gold_dim = Bgra::new(180, 140, 20);
     let teal     = Bgra::new(80, 220, 200);
-    let white    = Bgra::new(220, 220, 220);
-    let panel_bg = Bgra::new(18, 22, 48);
     let bar_col  = if weekly > 0 { Bgra::new(200, 100, 255) } else { teal };
 
-    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, bg);
-
-    // Top accent bar
-    buf.fill_rect(0, 0, SCREEN_W, 6, bar_col);
-
+    renderer::hud::side_frame(buf, if weekly > 0 { "WEEKLY STREAK!" } else { "DAILY LOGIN" }, "", &[("A", "CONTINUE")]);
     // Card panel
-    let pw = 280i32; let ph = 180i32;
+    let pw = 320i32; let ph = 190i32;
     let px = cx - pw / 2; let py = sh / 2 - ph / 2 - 10;
-    buf.fill_rect(px - 2, py - 2, (pw + 4) as u32, (ph + 4) as u32, bar_col);
-    buf.fill_rect(px, py, pw as u32, ph as u32, panel_bg);
+    renderer::hud::side_panel(buf, px, py, pw, ph);
+    let panel_bg = Bgra::new(14, 18, 44); // gear hole colour
 
     // Title
     let title = if weekly > 0 { "WEEKLY STREAK!" } else { "DAILY LOGIN" };
@@ -1908,13 +1878,6 @@ fn show_login_bonus(
     let scrap_lbl = "SCRAP";
     draw_str_scaled(buf, scrap_lbl, ax, gy + 10, gold_dim, 2);
 
-    // Bottom hint
-    let hint = "PRESS A TO CONTINUE";
-    let hx = cx - str_width(hint) / 2;
-    draw_str(buf, hint, hx, py + ph - 20, white);
-
-    // Bottom accent bar
-    buf.fill_rect(0, sh - 6, SCREEN_W, 6, bar_col);
 
     buf.blit_to_fb(fb, 0, 0);
 
@@ -1954,13 +1917,9 @@ fn show_match_intro(
         input.poll();
         if skippable && (input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start)) { break; }
 
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-
-        // Header bar
-        buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-        let title = "MATCH";
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, mid - tw/2, 12, Bgra::new(255, 210, 50), 2);
+        renderer::hud::side_frame(buf, "MATCH", "", if skippable { &[("A", "START")] } else { &[] });
+        renderer::hud::side_panel(buf, 20, renderer::hud::SIDE_TOP + 4, mid - 50, 300);
+        renderer::hud::side_panel(buf, mid + 30, renderer::hud::SIDE_TOP + 4, mid - 50, 300);
 
         for ti in 0..game.teams.len().min(2) {
             let t   = &game.teams[ti];
@@ -2008,10 +1967,10 @@ fn show_match_intro(
         let vw = str_width_scaled(vs, 3);
         draw_str_scaled(buf, vs, mid - vw/2, sh / 2 - 14, Bgra::new(255, 215, 50), 3);
 
-        // Countdown bar
+        // Countdown bar (just above the footer)
         let filled = (sw * (INTRO_TICKS as i32 - 1 - tick as i32) / (INTRO_TICKS as i32 - 1)).max(0) as u32;
-        buf.fill_rect(0, sh - 5, SCREEN_W, 5, Bgra::new(25, 25, 40));
-        buf.fill_rect(0, sh - 5, filled, 5, Bgra::new(70, 70, 140));
+        buf.fill_rect(0, sh - 29, SCREEN_W, 4, Bgra::new(25, 25, 40));
+        buf.fill_rect(0, sh - 29, filled, 4, renderer::hud::SIDE_ACCENT);
 
         buf.blit_to_fb(fb, 0, 0);
         std::thread::sleep(TICK_DURATION);
@@ -2064,11 +2023,9 @@ fn show_update_screen(
         }
         if input.just_pressed(input::Button::A) {
             let binary = updater::stream_binary(|done, total| {
-                buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-                buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-                let t = "DOWNLOADING UPDATE";
-                draw_str_scaled(buf, t, sw/2 - str_width_scaled(t,2)/2, 10, Bgra::new(255,210,50), 2);
-                buf.fill_rect(bar_x-2, bar_y-2, (bar_w+4) as u32, (bar_h+4) as u32, Bgra::new(60,60,100));
+                renderer::hud::side_frame(buf, "DOWNLOADING UPDATE", VERSION, &[]);
+                renderer::hud::side_panel(buf, bar_x - 20, bar_y - 40, bar_w + 40, bar_h + 90);
+                buf.fill_rect(bar_x-2, bar_y-2, (bar_w+4) as u32, (bar_h+4) as u32, renderer::hud::SIDE_ACCENT);
                 buf.fill_rect(bar_x, bar_y, bar_w as u32, bar_h as u32, Bgra::new(20,20,40));
                 let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
                 let filled = (bar_w as f32 * frac) as u32;
@@ -2093,20 +2050,21 @@ fn show_update_screen(
         if allow_skip && (input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start)) {
             return Some(!forced);
         }
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-        buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-        let t_col = if forced || !allow_skip { Bgra::new(255, 80, 80) } else { Bgra::new(255, 210, 50) };
-        draw_str_scaled(buf, title, sw/2 - str_width_scaled(title,2)/2, 10, t_col, 2);
-        let v = format!("VERSION {}", VERSION);
-        draw_str_scaled(buf, &v, sw/2 - str_width_scaled(&v, 1)/2, 34, Bgra::new(100, 100, 140), 1);
+        let hints: &[(&str, &str)] = if !allow_skip { &[("A", "INSTALL NOW")] }
+            else if forced { &[("A", "INSTALL NOW"), ("B", "BACK")] } else { &[("A", "INSTALL NOW"), ("B", "SKIP")] };
+        let v = format!("YOU HAVE {}", VERSION);
+        renderer::hud::side_frame(buf, title, &v, hints);
+        renderer::hud::side_panel(buf, 10, renderer::hud::SIDE_TOP, sw - 20, renderer::hud::SIDE_BOTTOM - renderer::hud::SIDE_TOP - 50);
+        draw_str(buf, "WHAT'S NEW", 22, renderer::hud::SIDE_TOP + 10, renderer::hud::SIDE_GOLD);
         for (i, line) in changelog.iter().enumerate() {
-            draw_str_scaled(buf, line, 18, 54 + i as i32 * LOG_LINE_H, Bgra::new(190, 205, 230), LOG_SCALE);
+            let y = renderer::hud::SIDE_TOP + 28 + i as i32 * LOG_LINE_H;
+            if y + LOG_LINE_H > renderer::hud::SIDE_BOTTOM - 54 { break; }
+            draw_str_scaled(buf, line, 22, y, Bgra::new(205, 210, 235), LOG_SCALE);
         }
-        draw_str_scaled(buf, "A = INSTALL NOW", sw/2 - str_width_scaled("A = INSTALL NOW",2)/2, sh - 70, Bgra::new(80, 220, 120), 2);
-        if allow_skip {
-            let b_label = if forced { "B = BACK" } else { "B = SKIP" };
-            draw_str_scaled(buf, b_label, sw/2 - str_width_scaled(b_label,2)/2, sh - 38, Bgra::new(140, 140, 160), 2);
-        }
+        let inst = "PRESS A TO INSTALL";
+        let ic = if forced || !allow_skip { Bgra::new(255, 120, 90) } else { renderer::hud::SIDE_GREEN };
+        renderer::hud::side_panel(buf, sw/2 - 170, sh - 74, 340, 40);
+        draw_str_scaled(buf, inst, sw/2 - str_width_scaled(inst,2)/2, sh - 62, ic, 2);
         None
     })
 }
@@ -2137,68 +2095,22 @@ fn run_screen_loop<R>(
     }
 }
 
-/// Full-screen status message, styled like the other menu screens (account,
-/// missions, lobby): dark background with a yellow title in a header bar.
+/// Full-screen status message in the menu style (frame + one centred panel).
 fn draw_msg(buf: &mut WorldBuffer, fb: &mut Framebuffer, msg: &str) {
-    use renderer::Bgra;
-    use renderer::font::{draw_str_scaled, str_width_scaled};
-    use world::{SCREEN_W, SCREEN_H};
-    let sw = SCREEN_W as i32;
-    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-    buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-    let x = sw / 2 - str_width_scaled(msg, 2) / 2;
-    draw_str_scaled(buf, msg, x, 10, Bgra::new(255, 210, 50), 2);
+    renderer::hud::side_message(buf, "", msg, renderer::hud::SIDE_GOLD, &[]);
     buf.blit_to_fb(fb, 0, 0);
 }
 
 /// Styled reconnect-or-abandon dialog shown on the title screen after an
 /// involuntary disconnect. `cursor`=0→RECONNECT selected, 1→ABANDON selected.
 fn draw_reconnect_popup(buf: &mut WorldBuffer, fb: &mut Framebuffer, cursor: usize, secs_left: u64) {
-    use renderer::Bgra;
-    use renderer::font::{draw_str_scaled, str_width_scaled};
-    use world::{SCREEN_W, SCREEN_H};
-    let sw = SCREEN_W as i32;
-    let sh = SCREEN_H as i32;
-    // Dim full screen.
-    buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-    // Dialog box.
-    let dw: i32 = 440;
-    let dh: i32 = 220;
-    let dx = (sw - dw) / 2;
-    let dy = (sh - dh) / 2;
-    // Border + background.
-    buf.fill_rect(dx - 2, dy - 2, (dw + 4) as u32, (dh + 4) as u32, Bgra::new(60, 70, 120));
-    buf.fill_rect(dx, dy, dw as u32, dh as u32, Bgra::new(12, 14, 30));
-    // Header bar.
-    buf.fill_rect(dx, dy, dw as u32, 40, Bgra::new(24, 28, 70));
-    let title = "CONNECTION LOST";
-    let tx = dx + (dw - str_width_scaled(title, 2)) / 2;
-    draw_str_scaled(buf, title, tx, dy + 8, Bgra::new(255, 90, 90), 2);
-    // Body text.
-    let mins = secs_left / 60;
-    let secs = secs_left % 60;
-    let countdown = format!("Reconnect window: {}:{:02}", mins, secs);
-    let cx = dx + (dw - str_width_scaled(&countdown, 1)) / 2;
-    draw_str_scaled(buf, &countdown, cx, dy + 52, Bgra::new(160, 170, 200), 1);
-    // Menu options.
-    let options = ["RECONNECT", "ABANDON"];
-    let option_colors = [Bgra::new(80, 220, 120), Bgra::new(200, 100, 100)];
-    for (i, (opt, col)) in options.iter().zip(option_colors.iter()).enumerate() {
-        let oy = dy + 100 + (i as i32) * 46;
-        let highlight = cursor == i;
-        if highlight {
-            buf.fill_rect(dx + 20, oy - 4, (dw - 40) as u32, 36, Bgra::new(20, 24, 55));
-            buf.fill_rect(dx + 20, oy - 4, (dw - 40) as u32, 36, Bgra::new(30, 35, 80));
-            let arrow_x = dx + 30;
-            draw_str_scaled(buf, ">", arrow_x, oy, Bgra::new(255, 210, 50), 2);
-        }
-        let ox = dx + (dw - str_width_scaled(opt, 2)) / 2;
-        draw_str_scaled(buf, opt, ox, oy, if highlight { *col } else { Bgra::new(100, 110, 140) }, 2);
-    }
-    // Controls hint.
-    let hint = "UP/DOWN  A=SELECT  B=ABANDON";
-    let hx = dx + (dw - str_width_scaled(hint, 1)) / 2;
-    draw_str_scaled(buf, hint, hx, dy + dh - 22, Bgra::new(80, 90, 120), 1);
+    use renderer::hud::{draw_side_menu, SideItem, SideCard};
+    let countdown = format!("RECONNECT WINDOW {}:{:02}", secs_left / 60, secs_left % 60);
+    let rows = [SideItem::new("RECONNECT"), SideItem { danger: true, ..SideItem::new("ABANDON") }];
+    let body = if cursor == 0 { "Rejoin the match you were in. The game is paused until you are back or the window runs out." }
+               else { "Leave the match. It counts as a loss." };
+    let card = SideCard { title: rows[cursor.min(1)].label, body, stats: &[] };
+    draw_side_menu(buf, "CONNECTION LOST", &countdown, &rows, cursor, &card, &[("A", "SELECT"), ("B", "ABANDON")]);
     buf.blit_to_fb(fb, 0, 0);
 }
 
@@ -2851,11 +2763,10 @@ fn show_leaderboard_tab(
 ) -> Option<bool> {
     use renderer::Bgra;
     use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
-    use world::{SCREEN_W, SCREEN_H};
+    use world::SCREEN_W;
     use game::account::{http_get, json_field, load_saved_creds};
 
     let sw = SCREEN_W as i32;
-    let sh = SCREEN_H as i32;
     let (my_username, token) = load_saved_creds().unwrap_or_default();
 
     draw_msg(buf, fb, "LOADING...");
@@ -2957,8 +2868,8 @@ fn show_leaderboard_tab(
     let kills_section_h = H_HEAD + if kill_list.is_empty() { H_ROW } else { kill_list.len() as i32 * H_ROW }
                         + if !me_in_kills && me_k_pos > 0  { H_ROW } else { 0 };
     let total_h  = wins_section_h + H_DIV + kills_section_h;
-    let body_top = 38i32;
-    let body_bot = sh - 26i32;
+    let body_top = renderer::hud::SIDE_TOP + 34; // below the CASUAL / RANKED tabs
+    let body_bot = renderer::hud::SIDE_BOTTOM;
     let viewport = body_bot - body_top;
     let max_scroll = (total_h - viewport).max(0);
     let mut scroll: i32 = 0;
@@ -2995,21 +2906,23 @@ fn show_leaderboard_tab(
             if input.held(input::Button::Up)   { scroll = (scroll - H_ROW).max(0); }
         }
 
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, Bgra::new(6, 8, 20));
-        buf.fill_rect(0, 0, SCREEN_W, 38, Bgra::new(18, 22, 50));
-        buf.fill_rect(0, 38, SCREEN_W, 1, dim_line);
-        // Tabs: "CASUAL   RANKED", active one bright with < > around it
-        let tab_gap = 40;
-        let cw = str_width_scaled("CASUAL", 2);
-        let rw = str_width_scaled("RANKED", 2);
-        let tx = sw/2 - (cw + tab_gap + rw)/2;
-        let col_tab_off = Bgra::new(90, 90, 130);
-        let (cc, rc) = if ranked { (col_tab_off, col_head) } else { (col_head, col_tab_off) };
-        draw_str_scaled(buf, "CASUAL", tx, 9, cc, 2);
-        draw_str_scaled(buf, "RANKED", tx + cw + tab_gap, 9, rc, 2);
-        let (ax, aw) = if ranked { (tx + cw + tab_gap, rw) } else { (tx, cw) };
-        draw_str(buf, "<", ax - 14, 13, col_head);
-        draw_str(buf, ">", ax + aw + 6, 13, col_head);
+        let hints: &[(&str, &str)] = if max_scroll > 0 {
+            &[("L1/R1", "CASUAL/RANKED"), ("UP/DOWN", "SCROLL"), ("B", "BACK")]
+        } else {
+            &[("L1/R1", "CASUAL/RANKED"), ("B", "BACK")]
+        };
+        renderer::hud::side_frame(buf, "LEADERBOARDS", if ranked { "RANKED" } else { "CASUAL" }, hints);
+        // Tabs: "CASUAL   RANKED", active one gold on lighter glass with a gold underline
+        let tab_y = renderer::hud::SIDE_TOP;
+        let mut tx = 14;
+        for (label, on) in [("CASUAL", !ranked), ("RANKED", ranked)] {
+            let tw = str_width_scaled(label, 2) + 28;
+            renderer::hud::side_shade(buf, tx, tab_y, tw, 28, if on { 60 } else { 140 }, if on { (20, 30, 90) } else { (8, 10, 30) });
+            draw_str_scaled(buf, label, tx + 14, tab_y + 6, if on { col_head } else { Bgra::new(120, 125, 165) }, 2);
+            if on { buf.fill_rect(tx, tab_y + 26, tw as u32, 2, renderer::hud::SIDE_ACCENT); }
+            tx += tw + 4;
+        }
+        renderer::hud::side_panel(buf, 10, body_top - 2, sw - 20, body_bot - body_top + 2);
 
         // Clip drawing to body region
         // iy = absolute content y; ry = screen y = iy - scroll + body_top
@@ -3123,13 +3036,6 @@ fn show_leaderboard_tab(
             }
         }
 
-        // ── Footer ────────────────────────────────────────────────────────────
-        buf.fill_rect(0, body_bot, SCREEN_W, 1, dim_line);
-        if max_scroll > 0 {
-            crate::renderer::hud::draw_button_hints(buf, &[("L1/R1", "CASUAL/RANKED"), ("UP/DOWN", "SCROLL"), ("B", "BACK")], 0, 0);
-        } else {
-            crate::renderer::hud::draw_button_hints(buf, &[("L1/R1", "CASUAL/RANKED"), ("B", "BACK")], 0, 0);
-        }
         None
     })
 }
@@ -3142,7 +3048,7 @@ fn show_profile_screen(
     username: &str,
 ) {
     use renderer::Bgra;
-    use renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
+    use renderer::font::{draw_str, str_width};
     use world::{SCREEN_W, SCREEN_H};
     use game::account::{http_get, json_field};
 
@@ -3168,7 +3074,6 @@ fn show_profile_screen(
 
     let sw = SCREEN_W as i32;
     let sh = SCREEN_H as i32;
-    let head_col  = Bgra::new(255, 220, 50);
     let label_col = Bgra::new(130, 130, 160);
     let val_col   = Bgra::new(240, 240, 255);
     let dim_line  = Bgra::new(50, 50, 80);
@@ -3176,26 +3081,16 @@ fn show_profile_screen(
     run_screen_loop(fb, input, buf, true, |input, buf, _fb| {
         if input.just_pressed(input::Button::B) || input.just_pressed(input::Button::Start) { return Some(()); }
 
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H, COLOR_DARK_BG);
-        // Header
-        buf.fill_rect(0, 0, SCREEN_W, 36, Bgra::new(18, 22, 50));
-        buf.fill_rect(0, 36, SCREEN_W, 1, dim_line);
-        let tw = str_width_scaled("PROFILE", 2);
-        draw_str_scaled(buf, "PROFILE", sw/2 - tw/2, 9, head_col, 2);
-
-        let mut y = 50i32;
+        renderer::hud::side_frame(buf, "PROFILE", &username.to_uppercase(), &[("B", "BACK")]);
+        renderer::hud::side_panel(buf, 10, renderer::hud::SIDE_TOP, sw - 20, renderer::hud::SIDE_BOTTOM - renderer::hud::SIDE_TOP - 2);
+        let mut y = renderer::hud::SIDE_TOP + 10;
         let line = |buf: &mut WorldBuffer, label: &str, val: &str, y: i32| {
             draw_str(buf, label, 24, y, label_col);
             let vw = str_width(val);
             draw_str(buf, val, sw - 24 - vw, y, val_col);
         };
 
-        // Username + ELO
-        if !username.is_empty() {
-            let uw = str_width_scaled(username, 2);
-            draw_str_scaled(buf, username, sw/2 - uw/2, y, Bgra::new(200, 200, 255), 2);
-            y += 20;
-        }
+        // ELO (the username is in the header)
         if !elo.is_empty() {
             let elo_str = format!("ELO  {}", elo);
             let ew = str_width(&elo_str);
@@ -3291,7 +3186,6 @@ fn show_profile_screen(
             }
         }
 
-        crate::renderer::hud::draw_button_hints(buf, &[("B", "BACK")], 0, 0);
         None
     })
 }

@@ -16,7 +16,21 @@ pub enum LobbyAction {
 enum LoadResult {
     Matches(Vec<PendingMatch>),
     MatchState(Option<LobbyAction>),
+    /// The game loaded fine but the opponent moves first (who pairs into a waiting player, or joins by code, is p1).
+    NotYourTurn { opponent: String, ranked: bool, opp_elo: i32 },
     Err(String),
+}
+
+/// A new game was just paired / joined: shown big until the player moves on (MATCH FOUND screen).
+struct Found {
+    ranked:    bool,
+    since:     std::time::Instant,
+    opponent:  String,
+    opp_elo:   i32,
+    /// None while the game is still loading; Some(true) = A plays it now; Some(false) = their move first.
+    your_turn: Option<bool>,
+    action:    Option<LobbyAction>,
+    team:      String,
 }
 
 #[derive(Clone)]
@@ -42,6 +56,8 @@ struct PendingMatch {
 
 enum Screen {
     Menu,
+    /// MATCH FOUND (see `Found`).
+    Found,
     /// Choosing the team for a new game; `action` = the MENU_ITEMS index to run once a team is picked.
     PickTeam { picker: crate::game::account::RosterPicker, action: usize },
     Join(Keyboard),
@@ -67,6 +83,7 @@ pub struct LobbyScreen {
     /// The player's teams (for PICK TEAM) and the team picked for the game being started.
     rosters:   Vec<crate::game::account::Roster>,
     team:      Option<crate::game::account::Roster>,
+    found:     Option<Found>,
     /// Last known match list (background check / MY MATCHES), for the info card.
     known:     Vec<PendingMatch>,
     my_elo:    i32,
@@ -104,6 +121,7 @@ impl LobbyScreen {
             has_ready: false,
             rosters: Vec::new(),
             team: None,
+            found: None,
             known: Vec::new(),
             my_elo: 0,
             elo_rx,
@@ -122,9 +140,23 @@ impl LobbyScreen {
     /// create/join request could not carry it). Only for games started from this lobby, never MY MATCHES.
     fn claim_team(&mut self, mid: i64) {
         let Some(r) = self.team.take() else { return };
+        if let Some(f) = self.found.as_mut() { f.team = r.name.to_uppercase(); }
         crate::game::account::save_match_roster(mid, &r);
         let body = format!(r#"{{"token":"{}","roster":{}}}"#, self.token, crate::game::account::roster_json(&r));
         std::thread::spawn(move || { let _ = http_post(&format!("/api/match/{}/roster", mid), &body); });
+    }
+
+    /// A new game was paired / joined: load it behind a big MATCH FOUND screen (with a beep), never straight
+    /// into the game or an error. `mid` must already be claimed (claim_team).
+    fn match_found(&mut self, mid: i64, ranked: bool) -> Option<LobbyAction> {
+        let team = self.team.as_ref().map(|r| r.name.to_uppercase()).unwrap_or_default();
+        self.found = Some(Found { ranked, since: std::time::Instant::now(), opponent: String::new(), opp_elo: 0,
+                                  your_turn: None, action: None, team });
+        self.claim_team(mid);
+        crate::audio::play(crate::audio::Sfx::MineArm);
+        let r = self.load_match_state_async(mid);
+        self.screen = Screen::Found;
+        r
     }
 
     /// Run a new-game menu action (1 MATCHMAKE, 2 RANKED MATCH, 3 GET CODE, 4 JOIN MATCH) with `self.team` set.
@@ -149,8 +181,18 @@ impl LobbyScreen {
             screen: if menu { Screen::Menu } else { Screen::Pending(list.clone(), 1, 0) },
             token: String::new(), username: username.to_string(), cursor: 0, error: String::new(),
             version: "", load_rx: None, check_rx: None, has_ready: true, known: list, my_elo: 1042, elo_rx: None,
-            rosters: Vec::new(), team: None,
+            rosters: Vec::new(), team: None, found: None,
         }
+    }
+
+    /// Preview only: the MATCH FOUND screen.
+    #[doc(hidden)]
+    pub fn preview_found(ranked: bool, your_turn: bool) -> Self {
+        let mut l = Self::preview_matches("DUSTY", &[], true);
+        l.found = Some(Found { ranked, since: std::time::Instant::now(), opponent: "ROBOTNIK".into(), opp_elo: 1100,
+                               your_turn: Some(your_turn), action: None, team: "FRAGS".into() });
+        l.screen = Screen::Found;
+        l
     }
 
     /// Draw without input (previews).
@@ -193,6 +235,30 @@ impl LobbyScreen {
                     self.known = m.clone();
                     self.screen = Screen::Pending(m, 0, 0);
                 }
+                Ok(LoadResult::MatchState(Some(action))) if self.found.is_some() => {
+                    self.load_rx = None;
+                    let f = self.found.as_mut().unwrap();
+                    if let LobbyAction::StartMatch { ref opp_name, opp_elo, .. } = action {
+                        f.opponent = opp_name.to_uppercase();
+                        f.opp_elo = opp_elo;
+                    }
+                    f.your_turn = Some(true);
+                    f.action = Some(action);
+                    self.screen = Screen::Found;
+                }
+                Ok(LoadResult::NotYourTurn { opponent, ranked, opp_elo }) => {
+                    self.load_rx = None;
+                    if let Some(f) = self.found.as_mut() {
+                        f.opponent = opponent.to_uppercase();
+                        f.ranked = ranked;
+                        f.opp_elo = opp_elo;
+                        f.your_turn = Some(false);
+                        self.screen = Screen::Found;
+                    } else {
+                        self.error = "NOT YOUR TURN YET".to_string();
+                        self.screen = Screen::Menu;
+                    }
+                }
                 Ok(LoadResult::MatchState(action)) => {
                     self.load_rx = None;
                     if let Some(action) = action {
@@ -205,11 +271,13 @@ impl LobbyScreen {
                 }
                 Ok(LoadResult::Err(e)) => {
                     self.load_rx = None;
+                    self.found = None;
                     self.error = e;
                     self.screen = Screen::Menu;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     // Still loading — just draw and wait
+                    if self.found.is_some() { self.screen = Screen::Found; }
                     self.draw(buf, cam_x);
                     return None;
                 }
@@ -245,6 +313,22 @@ impl LobbyScreen {
                     }
                 }
             }
+            Screen::Found => {
+                let f = self.found.as_mut().unwrap();
+                let settled = f.since.elapsed() >= std::time::Duration::from_millis(1200); // don't skip it by accident
+                if settled && (input.just_pressed(Button::A) || input.just_pressed(Button::Start)) {
+                    match f.your_turn {
+                        Some(true) => { let a = f.action.take(); self.found = None; self.screen = Screen::Menu; return a; }
+                        Some(false) => { self.found = None; self.screen = Screen::Menu; self.check_rx = Some(Self::start_turn_check(&self.token)); }
+                        None => {}
+                    }
+                } else if settled && input.just_pressed(Button::B) && f.your_turn.is_some() {
+                    // Leave it for later: it is in MY MATCHES.
+                    self.found = None;
+                    self.screen = Screen::Menu;
+                    self.check_rx = Some(Self::start_turn_check(&self.token));
+                }
+            }
             Screen::PickTeam { picker, action } => {
                 let action = *action;
                 match picker.update(input, buf, cam_x) {
@@ -267,8 +351,7 @@ impl LobbyScreen {
                         Ok(resp) => {
                             if let Some(mid_str) = json_field(&resp, "match_id") {
                                 let mid: i64 = mid_str.parse().unwrap_or(0);
-                                self.claim_team(mid);
-                                return self.load_match_state_async(mid);
+                                return self.match_found(mid, false);
                             } else {
                                 self.error = json_field(&resp, "error").unwrap_or("FAILED".to_string());
                                 self.screen = Screen::Menu;
@@ -329,9 +412,9 @@ impl LobbyScreen {
                 // Poll for match
                 match rx.try_recv() {
                     Ok(Some(match_id)) => {
-                        // Found — load match state
-                        self.claim_team(match_id);
-                        return self.load_match_state_async(match_id);
+                        // Found — MATCH FOUND screen while the game loads
+                        let ranked = *ranked;
+                        return self.match_found(match_id, ranked);
                     }
                     Ok(None) => {
                         // Timed out
@@ -396,8 +479,7 @@ impl LobbyScreen {
                 // Paired immediately (match_id returned) or casual code-share
                 if let Some(mid_str) = json_field(&resp, "match_id") {
                     if let Ok(mid) = mid_str.parse::<i64>() {
-                        self.claim_team(mid);
-                        if let Some(action) = self.load_match_state_async(mid) {
+                        if let Some(action) = self.match_found(mid, ranked) {
                             // store for return — can't return here directly, store in screen
                             let _ = action; // handled by load_match_state_async setting load_rx
                         }
@@ -432,7 +514,11 @@ impl LobbyScreen {
                     let my_slot: usize = json_field(&resp, "my_slot").and_then(|s| s.parse().ok()).unwrap_or(0);
                     let turn: usize = json_field(&resp, "turn").and_then(|s| s.parse().ok()).unwrap_or(0);
                     if turn != my_slot {
-                        LoadResult::MatchState(None)
+                        LoadResult::NotYourTurn {
+                            opponent: json_field(&resp, "opponent").unwrap_or_default(),
+                            ranked: json_field(&resp, "ranked").map(|s| s == "true" || s == "1").unwrap_or(false),
+                            opp_elo: json_field(&resp, "opponent_elo").and_then(|s| s.parse().ok()).unwrap_or(0),
+                        }
                     } else {
                         let moves = parse_moves(&resp);
                         let is_ranked: bool = json_field(&resp, "ranked").map(|s| s == "true" || s == "1").unwrap_or(false);
@@ -518,7 +604,45 @@ impl LobbyScreen {
                 draw_side_menu(buf, "TAKE A TURN", &who, &rows, self.cursor, &card, &[("A", "SELECT"), ("B", "BACK")]);
             }
             Screen::PickTeam { .. } => {} // RosterPicker::update draws it
-            Screen::Join(kb) => { kb.draw(buf, cam_x, 0); }
+            Screen::Found => {
+                let Some(f) = &self.found else { return };
+                let hints: &[(&str, &str)] = match f.your_turn {
+                    Some(true)  => &[("A", "PLAY NOW"), ("B", "LATER")],
+                    Some(false) => &[("A", "OK"), ("B", "BACK")],
+                    None        => &[],
+                };
+                side_frame(buf, if f.ranked { "RANKED MATCH" } else { "MATCHMAKE" }, &who, hints);
+                let (x, w) = (40, sw - 80);
+                side_panel(buf, x, SIDE_TOP + 10, w, SIDE_BOTTOM - SIDE_TOP - 20);
+                // Big blinking headline
+                let blink = (f.since.elapsed().as_millis() / 400) % 2 == 0;
+                let head = "MATCH FOUND!";
+                let hc = if blink { SIDE_GREEN } else { Bgra::new(160, 255, 180) };
+                draw_str_shadow_scaled(buf, head, sw/2 - str_width_scaled(head, 4)/2, SIDE_TOP + 34, hc, 4);
+                // Opponent
+                let vs = if f.opponent.is_empty() { "LOADING...".to_string() } else { format!("VS {}", f.opponent) };
+                let vsc = if str_width_scaled(&vs, 3) <= w - 30 { 3 } else { 2 };
+                draw_str_shadow_scaled(buf, &vs, sw/2 - str_width_scaled(&vs, vsc)/2, SIDE_TOP + 110, SIDE_WHITE, vsc);
+                // Ranked: tag + both ELOs on their own line; casual: tag
+                let tag = if f.ranked { "RANKED" } else { "CASUAL - NO ELO" };
+                draw_str_shadow_scaled(buf, tag, sw/2 - str_width_scaled(tag, 2)/2, SIDE_TOP + 158, SIDE_GOLD, 2);
+                if f.ranked && f.opp_elo > 0 && self.my_elo > 0 {
+                    let elo = format!("ELO {}  VS  {}", self.my_elo, f.opp_elo);
+                    draw_str_shadow_scaled(buf, &elo, sw/2 - str_width_scaled(&elo, 2)/2, SIDE_TOP + 184, SIDE_GOLD, 2);
+                }
+                if !f.team.is_empty() {
+                    let t = format!("YOUR TEAM: {}", f.team);
+                    draw_str_shadow_scaled(buf, &t, sw/2 - str_width_scaled(&t, 2)/2, SIDE_TOP + 216, SIDE_DIM, 2);
+                }
+                let (line, sub, lc) = match f.your_turn {
+                    Some(true)  => ("YOUR MOVE FIRST", "PRESS A TO PLAY NOW  -  B FOR LATER", SIDE_GREEN),
+                    Some(false) => ("THEY MOVE FIRST", "YOUR TURN WILL SHOW IN MY MATCHES", SIDE_WHITE),
+                    None        => ("LOADING THE GAME...", "", SIDE_DIM),
+                };
+                draw_str_shadow_scaled(buf, line, sw/2 - str_width_scaled(line, 3)/2, SIDE_TOP + 262, lc, 3);
+                if !sub.is_empty() { draw_str(buf, sub, sw/2 - str_width(sub)/2, SIDE_TOP + 300, SIDE_DIM); }
+            }
+            Screen::Join(kb) => { kb.draw_screen(buf, "JOIN MATCH", "TYPE YOUR FRIEND'S 6-LETTER CODE"); }
             Screen::Pending(matches, cursor, scroll_offset) => {
                 let ready_n = matches.iter().filter(|m| m.your_turn).count();
                 let crumb = "MY MATCHES";

@@ -58,4 +58,32 @@ fn main() {
         &[("ROBOTNIK", false, true, 3), ("KEV", true, true, 9), ("MOOSE", false, false, 12), ("PIP", true, false, 6), ("GRUNKUS", false, false, 1)], false);
     lob.preview_draw(&mut buf);
     save(&buf, &format!("{dir}/tat_matches.png"));
+
+    // Everything else that was restyled.
+    let mut set = arty::game::settings::SettingsScreen::new();
+    set.update(&input, &mut buf);
+    save(&buf, &format!("{dir}/settings.png"));
+    arty::game::title::draw_help_page(&mut buf, arty::game::title::CONTROLS_PAGES, 1, "CONTROLS");
+    save(&buf, &format!("{dir}/controls.png"));
+    let mut acct = arty::game::account::AccountScreen::new();
+    acct.update(&input, &mut buf, 0);
+    save(&buf, &format!("{dir}/account.png"));
+    let mut kb = arty::renderer::keyboard::Keyboard::new(6);
+    kb.text = "AB12".into();
+    kb.draw_screen(&mut buf, "JOIN MATCH", "TYPE YOUR FRIEND'S 6-LETTER CODE");
+    save(&buf, &format!("{dir}/keyboard.png"));
+    let mut store = arty::game::store::StoreScreen::new(String::new(), 1015, &[1, 2, 3], &[1], &[], &[], 40);
+    store.update(&input, &mut buf);
+    save(&buf, &format!("{dir}/store.png"));
+    let mut ms = arty::game::missions::MissionsScreen::preview(&[
+        ("Win 2 matches", 2, 2, 60, false, false), ("Kill 5 soldiers", 3, 5, 40, false, false), ("Use the bazooka 10 times", 10, 10, 25, false, true),
+        ("Win 10 matches", 4, 10, 250, true, false), ("Drown 6 soldiers", 1, 6, 180, true, false)], 1015);
+    ms.update(&input, &mut buf);
+    save(&buf, &format!("{dir}/missions.png"));
+    arty::game::lobby::LobbyScreen::preview_found(true, false).preview_draw(&mut buf);
+    save(&buf, &format!("{dir}/found_ranked.png"));
+    arty::game::lobby::LobbyScreen::preview_found(false, true).preview_draw(&mut buf);
+    save(&buf, &format!("{dir}/found_casual.png"));
+    hud::side_message(&mut buf, "", "LOGGED OUT", hud::SIDE_GOLD, &[]);
+    save(&buf, &format!("{dir}/message.png"));
 }

@@ -191,84 +191,33 @@ impl AccountScreen {
         None
     }
 
-    fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
+    fn draw(&self, buf: &mut WorldBuffer, _cam_x: i32) {
+        use crate::renderer::hud::{draw_side_menu, side_panel, SideItem, SideCard, SIDE_RED};
         let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        let dim_line = Bgra::new(40, 44, 70);
-
-        // Background + header bar
-        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-        buf.fill_rect(cam_x, 0, SCREEN_W, 36, Bgra::new(18, 22, 48));
-        buf.fill_rect(cam_x, 36, SCREEN_W, 1, dim_line);
-
-        // Title
         let title = match self.screen {
-            LoginScreen::Choice               => "ACCOUNT",
-            LoginScreen::Username             => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
-            LoginScreen::Password             => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
-            LoginScreen::ConfirmPassword      => "NEW ACCOUNT",
+            LoginScreen::Choice                => "ACCOUNT",
+            LoginScreen::Username | LoginScreen::Password => if self.is_register { "NEW ACCOUNT" } else { "LOG IN" },
+            LoginScreen::ConfirmPassword       => "NEW ACCOUNT",
             LoginScreen::ChangePassword { .. } => "CHOOSE PASSWORD",
         };
-        let tw = str_width_scaled(title, 2);
-        draw_str_shadow_scaled(buf, title, cam_x + sw/2 - tw/2, 9, Bgra::new(255, 210, 50), 2);
-
-        // Subtitle (username/password step indicator)
-        if !matches!(self.screen, LoginScreen::Choice) {
-            let sub = match self.screen {
-                LoginScreen::Username            => "ENTER USERNAME",
-                LoginScreen::Password            => "ENTER PASSWORD",
-                LoginScreen::ConfirmPassword     => "CONFIRM PASSWORD",
-                LoginScreen::ChangePassword { .. } => "ADMIN HAS RESET YOUR PASSWORD",
-                LoginScreen::Choice              => "",
-            };
-            let subw = str_width(sub);
-            draw_str(buf, sub, cam_x + sw/2 - subw/2, 42, Bgra::new(120, 120, 160));
-        }
-
-        // Error banner
-        if !self.error.is_empty() {
-            let ew = str_width_scaled(&self.error, 2);
-            let ex = cam_x + sw/2 - ew/2;
-            buf.fill_rect(ex - 8, sh/4 - 4, (ew + 16) as u32, 24, Bgra::new(60, 10, 10));
-            draw_str_scaled(buf, &self.error, ex, sh/4, Bgra::new(255, 80, 80), 2);
-        }
-
         match self.screen {
             LoginScreen::Choice => {
-                let item_h  = 36i32;
-                let start_y = sh/2 - item_h;
-                let items: &[(&str, Bgra)] = &[
-                    ("LOG IN",      Bgra::new(80, 200, 80)),
-                    ("NEW ACCOUNT", Bgra::new(100, 160, 255)),
-                ];
-                for (i, (label, col)) in items.iter().enumerate() {
-                    let iy = start_y + i as i32 * item_h;
-                    let iw = str_width_scaled(label, 2);
-                    let ix = cam_x + sw/2 - iw/2;
-                    if i == self.cursor {
-                        draw_menu_selection(buf, cam_x + sw/2 - 140, iy - 4, 280, 28);
-                    }
-                    let text_col = if i == self.cursor { *col } else { Bgra::new(100, 100, 120) };
-                    draw_str_shadow_scaled(buf, label, ix, iy, text_col, 2);
-                }
-                draw_button_hints(buf, &[("A", "SELECT"), ("B", "BACK")], cam_x, 0);
+                let rows = [SideItem::new("LOG IN"), SideItem::new("NEW ACCOUNT")];
+                let body = if !self.error.is_empty() { self.error.as_str() }
+                    else if self.cursor == 0 { "Log in with your username and password. Your teams, scrap and stats come with you." }
+                    else { "Make an account to play online, earn scrap and keep your stats." };
+                let card = SideCard { title: rows[self.cursor.min(1)].label, body, stats: &[] };
+                draw_side_menu(buf, title, "", &rows, self.cursor, &card, &[("A", "SELECT"), ("B", "BACK")]);
             }
-            LoginScreen::Username => {
-                self.username.draw(buf, cam_x, 0);
-                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
-            }
-            LoginScreen::Password => {
-                self.password.draw(buf, cam_x, 0);
-                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
-            }
-            LoginScreen::ConfirmPassword => {
-                self.confirm_password.draw(buf, cam_x, 0);
-                draw_button_hints(buf, &[("START", "CONFIRM"), ("B", "BACK")], cam_x, 0);
-            }
-            LoginScreen::ChangePassword { .. } => {
-                self.password.draw(buf, cam_x, 0);
-                draw_button_hints(buf, &[("START", "CONFIRM")], cam_x, 0);
-            }
+            LoginScreen::Username => self.username.draw_screen(buf, title, "ENTER USERNAME"),
+            LoginScreen::Password => self.password.draw_screen(buf, title, "ENTER PASSWORD"),
+            LoginScreen::ConfirmPassword => self.confirm_password.draw_screen(buf, title, "TYPE THE PASSWORD AGAIN"),
+            LoginScreen::ChangePassword { .. } => self.password.draw_screen(buf, title, "ADMIN RESET YOUR PASSWORD - PICK A NEW ONE"),
+        }
+        if !self.error.is_empty() && !matches!(self.screen, LoginScreen::Choice) {
+            let ew = str_width_scaled(&self.error, 2);
+            side_panel(buf, sw/2 - ew/2 - 16, 96, ew + 32, 34);
+            draw_str_shadow_scaled(buf, &self.error, sw/2 - ew/2, 106, SIDE_RED, 2);
         }
     }
 }
@@ -295,6 +244,8 @@ pub struct RosterPicker {
     error:       String,
     /// Picking the team for a new TAT game: B goes back (no "skip"), header says PICK TEAM.
     for_game:    bool,
+    /// MY TEAMS > ROSTERS: managing teams, not picking one. A edits, B goes back.
+    manage:      bool,
 }
 
 impl RosterPicker {
@@ -308,13 +259,18 @@ impl RosterPicker {
         } else {
             RosterPickerScreen::List
         };
-        Self { rosters, cursor: 0, token, screen, error: String::new(), for_game: false }
+        Self { rosters, cursor: 0, token, screen, error: String::new(), for_game: false, manage: false }
     }
 
     /// Like `new` but always shows the list — no auto-open of the editor.
     /// Used for in-game team selection where the player just needs to pick and go.
     pub fn new_list_only(token: String, rosters: Vec<Roster>) -> Self {
-        Self { rosters, cursor: 0, token, screen: RosterPickerScreen::List, error: String::new(), for_game: false }
+        Self { rosters, cursor: 0, token, screen: RosterPickerScreen::List, error: String::new(), for_game: false, manage: false }
+    }
+
+    /// MY TEAMS > ROSTERS: edit, add and delete teams. A opens the editor; B (or START) leaves.
+    pub fn new_manage(token: String, rosters: Vec<Roster>) -> Self {
+        Self { manage: true, ..Self::new_list_only(token, rosters) }
     }
 
     /// The team for a new TAT game, chosen before matchmaking / code / join: B = back (never skip).
@@ -364,10 +320,16 @@ impl RosterPicker {
         if input.just_pressed(Button::Up)   { self.cursor = if self.cursor == 0 { n.saturating_sub(1) } else { self.cursor - 1 }; }
         if input.just_pressed(Button::Down) { self.cursor = if n > 0 { (self.cursor + 1) % n } else { 0 }; }
 
+        if input.just_pressed(Button::A) && !self.rosters.is_empty() && self.manage {
+            let r = self.rosters[self.cursor].clone();
+            self.screen = RosterPickerScreen::EditingRoster { editor: RosterEditor::new(r), is_new: false };
+            self.error.clear();
+            return None;
+        }
         if input.just_pressed(Button::A) && !self.rosters.is_empty() {
             return Some(RosterAction::Selected(self.rosters[self.cursor].clone()));
         }
-        if input.just_pressed(Button::B)     { return Some(if self.for_game { RosterAction::Back } else { RosterAction::Skip }); }
+        if input.just_pressed(Button::B)     { return Some(if self.for_game || self.manage { RosterAction::Back } else { RosterAction::Skip }); }
         if input.just_pressed(Button::Start) { return Some(RosterAction::Back); }
 
         // L1/R1 = quick-cycle avatar on selected roster without opening editor
@@ -430,13 +392,14 @@ impl RosterPicker {
         // Same full-screen side layout as the menus: team names left, the team's card right.
         use crate::renderer::hud::{side_frame, side_rows, side_card, side_card_rect, SideItem, SideCard,
                                    SIDE_GOLD, SIDE_WHITE, SIDE_RED};
-        let b = if self.for_game { "BACK" } else { "SKIP" };
-        let hints: &[(&str, &str)] = if self.rosters.len() > 1 {
-            &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("SEL", "DEL"), ("B", b)]
-        } else {
-            &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("B", b)]
+        let b = if self.for_game || self.manage { "BACK" } else { "SKIP" };
+        let hints: &[(&str, &str)] = match (self.manage, self.rosters.len() > 1) {
+            (true, true)   => &[("A", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("SEL", "DELETE"), ("B", "BACK")],
+            (true, false)  => &[("A", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("B", "BACK")],
+            (false, true)  => &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("SEL", "DEL"), ("B", b)],
+            (false, false) => &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("B", b)],
         };
-        let crumb = if self.for_game { "TEAM FOR THIS GAME" } else { "SELECT TEAM" };
+        let crumb = if self.manage { "ROSTERS" } else if self.for_game { "TEAM FOR THIS GAME" } else { "SELECT TEAM" };
         side_frame(buf, crumb, &format!("{} TEAMS", self.rosters.len()), hints);
         let names: Vec<String> = self.rosters.iter().map(|r| r.name.to_uppercase()).collect();
         let rows: Vec<SideItem> = names.iter().map(|n| SideItem::new(n.as_str())).collect();
@@ -510,7 +473,8 @@ impl RosterEditor {
                 self.field = (self.field + 1).min(5);
             }
             if let Some(kb) = &self.keyboard {
-                kb.draw(buf, cam_x, 0);
+                let prompt = match self.field { 0 => "TEAM NAME", 1..=4 => "SOLDIER NAME", _ => "" };
+                kb.draw_screen(buf, if self.is_new { "NEW TEAM" } else { "EDIT TEAM" }, prompt);
             }
             return None;
         }

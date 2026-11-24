@@ -1233,13 +1233,12 @@ def _handle(db, sock, peer_ip="?"):
                 db.commit()
                 send_json(sock, 200, {"match_id": mid, "searching": False})
             else:
-                # No one waiting — create a match with a shareable code
-                code = gen_code()
-                db.execute("INSERT INTO matches(code,p0,seed,ranked,has_mines,has_barrels,mode,turn_started_at,turn_timeout) VALUES(?,?,?,0,1,1,'tat',?,?)", (code, uid2, seed, seed, 14*24*3600))
-                mid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
-                set_match_roster(db, mid, 0, my_roster)
+                # No one waiting — wait in the casual pool like ranked (the next MATCHMAKE pairs with us; clients poll
+                # /casual/tat/status). It used to make a share-code game instead, which only GET CODE should do: two
+                # players pressing MATCHMAKE then never met.
+                db.execute("INSERT INTO casual_pool(user_id,joined_at,roster) VALUES(?,?,?)", (uid2, now, my_roster))
                 db.commit()
-                send_json(sock, 200, {"code": code})  # no match_id: clients treat one as "paired, load it now"
+                send_json(sock, 200, {"searching": True})
 
     elif method == "GET" and path == "/ranked/tat/status":
         uid2 = uid(token)
