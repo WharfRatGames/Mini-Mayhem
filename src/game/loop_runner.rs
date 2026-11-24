@@ -6973,7 +6973,7 @@ fn record_deaths(game: &mut GameState) {
 
     use super::state::PendingDeathExplosion;
     let mut new_pending: Vec<PendingDeathExplosion> = Vec::new();
-    let mut soldier_deaths: Vec<crate::audio::Sfx> = Vec::new();
+    let mut soldier_deaths: Vec<(crate::audio::Sfx, u8)> = Vec::new();
 
     for (ti, team) in game.teams.iter_mut().enumerate() {
         for soldier in &mut team.soldiers {
@@ -6988,11 +6988,12 @@ fn record_deaths(game: &mut GameState) {
                 } else {
                     crate::audio::Sfx::Death
                 };
-                soldier_deaths.push(death_sfx);
                 // Death message
                 let seed = tick.wrapping_mul(1664525)
                     .wrapping_add(ti as u32 * 7)
                     .wrapping_add(soldier.index as u32 * 13);
+                // Which line / splash clip: chosen here (deterministic) so every device plays the same one.
+                soldier_deaths.push((death_sfx, ((seed >> 11) & 0x3f) as u8));
                 let phrase = death_phrase(soldier.death_cause, seed);
                 let text = format!("{} {}", soldier.name, phrase);
                 new_msgs.push(GameMessage { text, team: Some(ti), ticks: 120 });
@@ -7016,7 +7017,7 @@ fn record_deaths(game: &mut GameState) {
     }
     game.pending_deaths.extend(new_pending);
     game.messages.extend(new_msgs);
-    for sfx in soldier_deaths { game.emit_sound(sfx); }
+    for (sfx, k) in soldier_deaths { game.emit_sound_variant(sfx, k); }
     let _ = TEAM_COLOURS; // imported for future use
 }
 

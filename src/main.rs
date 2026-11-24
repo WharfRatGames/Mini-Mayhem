@@ -10,7 +10,7 @@ mod audio;
 mod https;
 mod ota;
 mod bug_report;
-const VERSION: &str = "0.5.4.439-exp44";
+const VERSION: &str = "0.5.4.439-exp45";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -817,7 +817,7 @@ fn main() {
             }
             if final_result.is_none() {
                 for id in &pending_sounds {
-                    if let Some(s) = crate::audio::Sfx::from_u8(*id) { crate::audio::play(s); }
+                    crate::audio::play_id(*id); // variant-aware: same death line on every device
                 }
                 for ev in &pending_fx {
                     crate::renderer::fx::apply_event(&mut game.fx, &mut game.fx_text, ev);
@@ -1683,7 +1683,7 @@ fn show_my_teams_menu(
         let _ = scroll;
         let who = if username.is_empty() { "NOT LOGGED IN".to_string() } else { username.to_uppercase() };
         let rows: Vec<SideItem> = items.iter()
-            .map(|&(label, danger)| SideItem { label, badge: "", danger }).collect();
+            .map(|&(label, danger)| SideItem { danger, ..SideItem::new(label) }).collect();
         const INFO: [&str; 5] = [
             "Name your teams and soldiers, pick avatars and headstones.",
             "Spend scrap on hats, uniforms, boots and guns.",

@@ -63,9 +63,9 @@ pub fn play_shotgun_fire()      { _play("shotgun.wav"); }
 pub fn play_bat()               { _play("bat.wav"); }
 pub fn play_splash()            {}
 pub fn play_crate_drop()        {}
-pub fn play_death()             { _play_death(); }
+pub fn play_death()             { _play_death(0); }
 pub fn play_wet_death()         { _play("wet.wav"); }
-pub fn play_death_water()       { _play_death_water(); }
+pub fn play_death_water()       { _play_death_water(0); }
 pub fn play_holy_hand_grenade() { _play_once("hallelujah.wav"); }
 pub fn play_minigun()           { _play_once("minigun.wav"); } // deploy/assets/sfx/hallelujah.wav required
 pub fn play_uzi()               { _play("mac10.wav"); }
@@ -140,6 +140,39 @@ impl Sfx {
             Sfx::DeathWater | Sfx::HolyHandGrenade | Sfx::Minigun | Sfx::Uzi |
             Sfx::Pistol | Sfx::Jumpbot | Sfx::Jackhammer => {}
         }
+    }
+}
+
+/// Sound ids with the top bit set carry a variant chosen by the simulation, so every device plays the SAME
+/// clip: 0x80|k = Death line k, 0xC0|k = DeathWater clip k (k 0..63). Plain ids (< 0x80) are unchanged.
+pub fn encode_variant(s: Sfx, k: u8) -> u8 {
+    match s {
+        Sfx::Death      => 0x80 | (k & 0x3f),
+        Sfx::DeathWater => 0xC0 | (k & 0x3f),
+        other           => other as u8,
+    }
+}
+
+/// Inverse of `encode_variant`: (sound, variant). Unknown ids → None.
+pub fn decode_id(id: u8) -> Option<(Sfx, u8)> {
+    if id & 0x80 != 0 {
+        let s = if id & 0x40 != 0 { Sfx::DeathWater } else { Sfx::Death };
+        return Some((s, id & 0x3f));
+    }
+    Sfx::from_u8(id).map(|s| (s, 0))
+}
+
+/// Play a sound id as recorded in `GameState::sounds` / StateMsg.sounds (variant-aware).
+pub fn play_id(id: u8) {
+    if let Some((s, k)) = decode_id(id) { play_variant(s, k); }
+}
+
+/// `play`, with the variant that picks which death line / splash clip.
+pub fn play_variant(s: Sfx, k: u8) {
+    match s {
+        Sfx::Death      => _play_death(k),
+        Sfx::DeathWater => _play_death_water(k),
+        other           => play(other),
     }
 }
 
@@ -380,12 +413,15 @@ mod imp {
         // shot when the next tries to open it, popping every other shot.
         try_load_capped(&PISTOL, &dir, "pistol.wav", 380);
         if DEATHS.get().is_none() {
-            let deaths: Vec<Vec<i16>> = std::fs::read_dir(dir.join("death"))
+            // Sorted by name: read_dir order on a FAT SD card depends on copy order, so it differs between devices.
+            let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir.join("death"))
                 .into_iter().flatten().flatten()
                 .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
                 .filter(|e| e.file_name() != *"garcia.wav")
-                .filter_map(|e| load_wav(&e.path()))
+                .map(|e| e.path())
                 .collect();
+            paths.sort();
+            let deaths: Vec<Vec<i16>> = paths.iter().filter_map(|p| load_wav(p)).collect();
             if !deaths.is_empty() { let _ = DEATHS.set(deaths); }
         }
         // Mark fully loaded only when every required file is present.
@@ -825,23 +861,18 @@ mod imp {
         if let Some(s) = REVOLVER.get().cloned() { play_samples(s); }
     }
 
-    pub fn play_death() {
+    /// `k` = variant chosen by the simulation (same on every device); clips are sorted by file name.
+    pub fn play_death(k: u8) {
         ensure_loaded();
         let Some(deaths) = DEATHS.get() else { return };
         if deaths.is_empty() { return; }
-        let idx = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default().subsec_nanos() as usize) % deaths.len();
-        play_samples(deaths[idx].clone());
+        play_samples(deaths[k as usize % deaths.len()].clone());
     }
 
-    pub fn play_death_water() {
+    pub fn play_death_water(k: u8) {
         ensure_loaded();
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default().subsec_nanos() as usize;
-        // 50/50: water.wav or wet.wav
-        if nanos % 2 == 0 {
+        // 50/50: water.wav or wet.wav, picked by the simulation's variant
+        if k % 2 == 0 {
             if let Some(s) = WATER.get().cloned() { play_samples(s); }
         } else {
             if let Some(s) = WET.get().cloned() { play_samples(s); }
@@ -885,25 +916,24 @@ mod imp_desktop {
         }
     }
 
-    pub fn play_death() {
+    pub fn play_death(k: u8) {
         let Some(dir) = sfx_dir() else { return };
         let death_dir = dir.join("death");
         let Ok(entries) = std::fs::read_dir(&death_dir) else {
             play("death1.wav");
             return;
         };
-        let files: Vec<_> = entries
+        let mut files: Vec<std::path::PathBuf> = entries
             .flatten()
             .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
             .filter(|e| e.file_name() != *"garcia.wav")
+            .map(|e| e.path())
             .collect();
         if files.is_empty() { return; }
-        let idx = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos() as usize)
-            .unwrap_or(0) % files.len();
+        files.sort();
+        let idx = k as usize % files.len();
         let Some(handle) = HANDLE.get() else { return };
-        let Ok(file) = std::fs::File::open(files[idx].path()) else { return };
+        let Ok(file) = std::fs::File::open(&files[idx]) else { return };
         let Ok(decoder) = Decoder::new(BufReader::new(file)) else { return };
         match Sink::try_new(handle) {
             Ok(sink) => { sink.append(decoder); sink.detach(); }
@@ -911,12 +941,8 @@ mod imp_desktop {
         }
     }
 
-    pub fn play_death_water() {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos() as usize)
-            .unwrap_or(0);
-        if nanos % 2 == 0 { play("water.wav"); } else { play("wet.wav"); }
+    pub fn play_death_water(k: u8) {
+        if k % 2 == 0 { play("water.wav"); } else { play("wet.wav"); }
     }
 
     pub fn preload() {
@@ -949,9 +975,9 @@ fn _play_once(n: &str) { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { 
 #[cfg(all(target_arch = "arm", not(feature = "desktop")))]
 fn _play_revolver()    { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_revolver_shot(); } }
 #[cfg(all(target_arch = "arm", not(feature = "desktop")))]
-fn _play_death()       { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_death(); } }
+fn _play_death(k: u8)       { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_death(k); } }
 #[cfg(all(target_arch = "arm", not(feature = "desktop")))]
-fn _play_death_water() { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_death_water(); } }
+fn _play_death_water(k: u8) { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp::play_death_water(k); } }
 
 // Desktop rodio dispatch
 #[cfg(feature = "desktop")]
@@ -961,9 +987,9 @@ fn _play_once(n: &str) { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { 
 #[cfg(feature = "desktop")]
 fn _play_revolver()    { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play("revolver_shot.wav"); } }
 #[cfg(feature = "desktop")]
-fn _play_death()       { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play_death(); } }
+fn _play_death(k: u8)       { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play_death(k); } }
 #[cfg(feature = "desktop")]
-fn _play_death_water() { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play_death_water(); } }
+fn _play_death_water(k: u8) { if !MUTED.load(std::sync::atomic::Ordering::Relaxed) { imp_desktop::play_death_water(k); } }
 
 // Non-arm, non-desktop: silence
 #[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
@@ -973,6 +999,20 @@ fn _play_once(_: &str)   {}
 #[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
 fn _play_revolver()      {}
 #[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
-fn _play_death()         {}
+fn _play_death(_: u8)         {}
 #[cfg(all(not(target_arch = "arm"), not(feature = "desktop")))]
-fn _play_death_water()   {}
+fn _play_death_water(_: u8)   {}
+
+#[cfg(test)]
+mod variant_tests {
+    use super::*;
+    #[test]
+    fn death_variants_round_trip_and_plain_ids_unchanged() {
+        for k in 0..64u8 {
+            assert_eq!(decode_id(encode_variant(Sfx::Death, k)), Some((Sfx::Death, k)));
+            assert_eq!(decode_id(encode_variant(Sfx::DeathWater, k)), Some((Sfx::DeathWater, k)));
+        }
+        for id in 0..=22u8 { assert_eq!(decode_id(id).map(|(s, _)| s as u8), Some(id)); }
+        assert_eq!(encode_variant(Sfx::Explosion, 9), 0);
+    }
+}

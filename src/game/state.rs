@@ -652,6 +652,15 @@ impl GameState {
         crate::audio::play(s);
     }
 
+    /// `emit_sound` for sounds with clip variants (death lines): the simulation picks `k`, it travels in the id
+    /// (audio::encode_variant), so every device that plays it plays the same clip.
+    pub fn emit_sound_variant(&mut self, s: crate::audio::Sfx, k: u8) {
+        let id = crate::audio::encode_variant(s, k);
+        self.sounds.push(id);
+        crate::dlog!("sfx", "emit {:?} variant={} tick={}", s as u8, k, self.tick);
+        crate::audio::play_variant(s, k);
+    }
+
     /// Spawn a cosmetic particle burst AND record it for the network, mirroring
     /// `emit_sound`. Local modes see the spawn immediately; the server records it
     /// into `self.fx_events` (build_state ships it) so the live client — which
@@ -1134,11 +1143,7 @@ impl GameState {
                 }
                 StepResult::Drowned => {
                     crate::dlog!("shot", "tick={} {:?} drowned at ({:.1},{:.1}) age={}", self.tick, kind, proj.pos.x, proj.pos.y, proj.age_ticks);
-                    // Fused weapons (grenades) explode even in water — fuse was burning
-                    // The Sacred Ordnance just sinks (user, 2026-11-20): no blast at the waterline.
-                    if kind.has_fuse() && kind != WeaponKind::HolyHandGrenade {
-                        explosions.push((proj.pos, kind));
-                    }
+                    // Sank to the bottom (step_sinking): WA never blasts in water, the fuse stops on entry.
                     resolved = true;
                     false
                 }

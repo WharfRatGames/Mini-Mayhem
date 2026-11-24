@@ -101,6 +101,24 @@ impl LobbyScreen {
         }
     }
 
+    /// Preview only (examples/menulook): a lobby showing MY MATCHES with made-up games, no network.
+    /// Each game: (opponent, ranked, your_turn, days_left).
+    #[doc(hidden)]
+    pub fn preview_matches(username: &str, games: &[(&str, bool, bool, i32)], menu: bool) -> Self {
+        let list: Vec<PendingMatch> = games.iter().enumerate().map(|(i, &(o, r, t, d))| PendingMatch {
+            match_id: i as i64 + 1, code: format!("AB{:04}", i * 37), opponent: o.to_string(),
+            your_turn: t, ranked: r, opp_elo: if r { 1100 } else { 0 }, days_remaining: d }).collect();
+        Self {
+            screen: if menu { Screen::Menu } else { Screen::Pending(list.clone(), 1, 0) },
+            token: String::new(), username: username.to_string(), cursor: 0, error: String::new(),
+            version: "", load_rx: None, check_rx: None, has_ready: true, known: list, my_elo: 1042, elo_rx: None,
+        }
+    }
+
+    /// Draw without input (previews).
+    #[doc(hidden)]
+    pub fn preview_draw(&self, buf: &mut WorldBuffer) { self.draw(buf, 0); }
+
     fn start_turn_check(token: &str) -> std::sync::mpsc::Receiver<Vec<PendingMatch>> {
         let token = token.to_string();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -347,6 +365,15 @@ impl LobbyScreen {
         std::thread::spawn(move || {
             let path = format!("/api/match/{}/state?token={}", mid, token);
             let result = match http_get(&path) {
+                // An error reply ({"error": ...}) or a garbled one has no seed: never start a game from it. Before this,
+                // the defaults (seed 0, turn 0 == slot 0) started a fresh game on seed 0, where all 8 soldiers spawn
+                // in one row (user report, -exp44 log "generate map seed=0000000000000000").
+                Ok(resp) if json_field(&resp, "seed").and_then(|s| s.parse::<u64>().ok()).filter(|&v| v != 0).is_none()
+                         || json_field(&resp, "my_slot").is_none() || json_field(&resp, "turn").is_none() => {
+                    let e = json_field(&resp, "error").unwrap_or_else(|| "BAD MATCH DATA".to_string());
+                    crate::dlog!("tat", "match {} state rejected: {}", mid, resp.chars().take(120).collect::<String>());
+                    LoadResult::Err(e.to_uppercase())
+                }
                 Ok(resp) => {
                     let seed: u64 = json_field(&resp, "seed").and_then(|s| s.parse().ok()).unwrap_or(0);
                     let my_slot: usize = json_field(&resp, "my_slot").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -381,26 +408,18 @@ impl LobbyScreen {
     }
 
     fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
+        use crate::renderer::hud::{side_frame, side_panel, side_row_bg, SIDE_GOLD, SIDE_GREEN, SIDE_WHITE, SIDE_DIM, SIDE_RED, SIDE_TOP, SIDE_BOTTOM};
         let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        // Background
-        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-        // Header bar
-        buf.fill_rect(cam_x, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-        let title = "TAKE A TURN";
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, cam_x + sw/2 - tw/2, 10, Bgra::new(255, 210, 50), 2);
-        draw_str(buf, &self.username, cam_x + sw - str_width(&self.username) as i32 - 8, 34, Bgra::new(140, 140, 180));
-        if self.my_elo > 0 {
-            let elo_str = format!("ELO {}", self.my_elo);
-            draw_str(buf, &elo_str, cam_x + sw - str_width(&elo_str) as i32 - 8, 46, Bgra::new(255, 210, 50));
-        }
-        draw_str(buf, self.version, cam_x + 8, 34, Bgra::new(55, 55, 80));
-        if !self.error.is_empty() {
-            let ew = str_width_scaled(&self.error, 2);
-            draw_str_scaled(buf, &self.error, cam_x + sw/2 - ew/2, 52, Bgra::new(220, 60, 60), 2);
-        }
-        let hint_y = sh - 18;
+        let who = if self.my_elo > 0 {
+            format!("{}  ELO {}", self.username.to_uppercase(), self.my_elo)
+        } else { self.username.to_uppercase() };
+        // A centred message panel (loading / searching / errors).
+        let msg_panel = |buf: &mut WorldBuffer, msg: &str, col: Bgra| {
+            let mw = str_width_scaled(msg, 2);
+            let pw = (mw + 60).max(360);
+            side_panel(buf, sw/2 - pw/2, 190, pw, 80);
+            draw_str_shadow_scaled(buf, msg, sw/2 - mw/2, 222, col, 2);
+        };
         match &self.screen {
             Screen::Menu => {
                 // Same full-screen side layout as the title submenus.
@@ -408,7 +427,7 @@ impl LobbyScreen {
                 let ready_n = self.known.iter().filter(|m| m.your_turn).count();
                 let badge = if ready_n > 0 { ready_n.to_string() } else { String::new() };
                 let rows: Vec<SideItem> = MENU_ITEMS.iter().enumerate()
-                    .map(|(i, &label)| SideItem { label, badge: if i == 0 { &badge } else { "" }, danger: false })
+                    .map(|(i, &label)| SideItem { badge: if i == 0 { &badge } else { "" }, ..SideItem::new(label) })
                     .collect();
                 const INFO: [&str; 5] = [
                     "Games in progress. R = ranked. A on one where it is your turn to play it.",
@@ -445,79 +464,64 @@ impl LobbyScreen {
             }
             Screen::Join(kb) => { kb.draw(buf, cam_x, 0); }
             Screen::Pending(matches, cursor, scroll_offset) => {
-                let list_top = 52;
+                let ready_n = matches.iter().filter(|m| m.your_turn).count();
+                let crumb = "MY MATCHES";
                 if matches.is_empty() {
-                    let msg = "NO PENDING MATCHES";
-                    let mw = str_width_scaled(msg, 2);
-                    draw_str_scaled(buf, msg, cam_x + sw/2 - mw/2, sh/2 - 8, Bgra::new(120, 120, 150), 2);
-                    draw_str(buf, "B=BACK  SELECT=REFRESH", cam_x + sw/2 - str_width("B=BACK  SELECT=REFRESH")/2, hint_y, Bgra::new(70, 70, 100));
-                } else {
-                    // Scrollbar (right edge) when list overflows
-                    const VISIBLE: usize = 8;
-                    if matches.len() > VISIBLE {
-                        let track_h = (hint_y - list_top).max(1);
-                        let pct = *scroll_offset as f32 / (matches.len() - VISIBLE) as f32;
-                        let thumb_y = list_top + (track_h as f32 * pct) as i32;
-                        buf.fill_rect(cam_x + sw - 5, list_top, 4, track_h as u32, Bgra::new(25, 25, 40));
-                        buf.fill_rect(cam_x + sw - 5, thumb_y, 4, 20, Bgra::new(80, 80, 150));
-                    }
-                    for (i, m) in matches.iter().enumerate().skip(*scroll_offset) {
-                        let display_row = (i - *scroll_offset) as i32;
-                        let y = list_top + display_row * 46;
-                        if y + 46 > hint_y { break; }
-                        let selected = i == *cursor;  // i is absolute index
-                        if selected {
-                            buf.fill_rect(cam_x + 8, y - 4, (sw - 16) as u32, 38, Bgra::new(28, 32, 65));
-                        }
-                        let name_col = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(200, 200, 220) };
-                        let rank_tag = if m.ranked { "[R] " } else { "" };
-                        let opp = format!("{}VS {}", rank_tag, m.opponent.to_uppercase());
-                        draw_str_scaled(buf, &opp, cam_x + 20, y, name_col, 2);
-                        if m.ranked && m.opp_elo > 0 {
-                            let elo_str = format!("ELO {}", m.opp_elo);
-                            draw_str(buf, &elo_str, cam_x + 20, y + 16, Bgra::new(180, 180, 100));
-                        }
-                        let code_str = format!("#{}", m.code);
-                        draw_str(buf, &code_str, cam_x + sw - str_width(&code_str) - 16, y + 4, Bgra::new(100, 100, 140));
-                        let (status, scol) = if m.your_turn {
-                            ("* YOUR TURN *", Bgra::new(80, 220, 120))
-                        } else {
-                            ("  waiting...", Bgra::new(100, 100, 130))
-                        };
-                        draw_str(buf, status, cam_x + 20, y + 22, scol);
-                        // Days remaining until forfeit (right side, warning colour when low)
-                        if m.days_remaining >= 0 {
-                            let days_str = if m.days_remaining <= 1 {
-                                format!("{}d LEFT!", m.days_remaining)
-                            } else {
-                                format!("{}d", m.days_remaining)
-                            };
-                            let days_col = if m.days_remaining <= 3 {
-                                Bgra::new(220, 80, 60)   // red — urgent
-                            } else if m.days_remaining <= 7 {
-                                Bgra::new(220, 180, 60)  // amber — warning
-                            } else {
-                                Bgra::new(100, 100, 140) // dim — plenty of time
-                            };
-                            draw_str(buf, &days_str, cam_x + sw - str_width(&days_str) - 16, y + 22, days_col);
-                        }
-                    }
-                    let hint = "A=PLAY  B=BACK  SEL=REFRESH";
-                    draw_str(buf, hint, cam_x + sw/2 - str_width(hint)/2, hint_y, Bgra::new(70, 70, 100));
+                    side_frame(buf, crumb, &who, &[("SELECT", "REFRESH"), ("B", "BACK")]);
+                    msg_panel(buf, "NO MATCHES YET", SIDE_DIM);
+                    return;
                 }
+                side_frame(buf, crumb, &who, &[("A", "PLAY"), ("SELECT", "REFRESH"), ("B", "BACK")]);
+                // One full-width row per game: opponent big, status + days left on the right.
+                const VISIBLE: usize = 8;
+                let row_h = (SIDE_BOTTOM - SIDE_TOP) / VISIBLE as i32;
+                let (x, w) = (14, sw - 28);
+                for (i, m) in matches.iter().enumerate().skip(*scroll_offset).take(VISIBLE) {
+                    let y = SIDE_TOP + (i - *scroll_offset) as i32 * row_h;
+                    let sel = i == *cursor;
+                    side_row_bg(buf, x, y, w, row_h - 4, sel);
+                    let mid = y + (row_h - 4) / 2;
+                    let opp = format!("VS {}", m.opponent.to_uppercase());
+                    draw_str_shadow_scaled(buf, &opp, x + 16, mid - 8, if sel { SIDE_GOLD } else { SIDE_WHITE }, 2);
+                    let mut tx = x + 16 + str_width_scaled(&opp, 2) + 14;
+                    if m.ranked {
+                        let tag = if m.opp_elo > 0 { format!("RANKED {}", m.opp_elo) } else { "RANKED".to_string() };
+                        let tw = str_width(&tag) + 10;
+                        buf.fill_rect(tx, mid - 7, tw as u32, 14, Bgra::new(120, 80, 20));
+                        draw_str(buf, &tag, tx + 5, mid - 4, SIDE_GOLD);
+                        tx += tw + 10;
+                    }
+                    let code_str = format!("#{}", m.code);
+                    draw_str(buf, &code_str, tx, mid - 4, Bgra::new(110, 115, 160));
+                    // Right side: status and days left
+                    let (status, scol) = if m.your_turn { ("YOUR TURN", SIDE_GREEN) } else { ("WAITING", SIDE_DIM) };
+                    let days = if m.days_remaining >= 0 { format!("{}D", m.days_remaining) } else { String::new() };
+                    let dcol = if m.days_remaining >= 0 && m.days_remaining <= 3 { SIDE_RED }
+                               else if m.days_remaining >= 0 && m.days_remaining <= 7 { Bgra::new(230, 180, 60) }
+                               else { SIDE_DIM };
+                    let dw = str_width_scaled(&days, 2);
+                    draw_str_shadow_scaled(buf, &days, x + w - 14 - dw, mid - 8, dcol, 2);
+                    let sw2 = str_width_scaled(status, 2);
+                    draw_str_shadow_scaled(buf, status, x + w - 14 - dw - 20 - sw2, mid - 8, scol, 2);
+                }
+                if matches.len() > VISIBLE {
+                    // Scroll thumb on the right edge
+                    let track = SIDE_BOTTOM - SIDE_TOP;
+                    let pct = *scroll_offset as f32 / (matches.len() - VISIBLE) as f32;
+                    buf.fill_rect(sw - 8, SIDE_TOP, 4, track as u32, Bgra::new(25, 25, 40));
+                    buf.fill_rect(sw - 8, SIDE_TOP + ((track - 24) as f32 * pct) as i32, 4, 24, SIDE_GOLD);
+                }
+                if !self.error.is_empty() { msg_panel(buf, &self.error, SIDE_RED); }
+                let _ = ready_n;
             }
             Screen::Loading(msg) => {
-                let mw = str_width_scaled(msg, 2);
-                draw_str_scaled(buf, msg, cam_x + sw/2 - mw/2, sh/2 - 8, Bgra::new(255, 210, 50), 2);
-                let hint = "A=REFRESH  B=BACK";
-                draw_str(buf, hint, cam_x + sw/2 - str_width(hint)/2, hint_y, Bgra::new(70, 70, 100));
+                side_frame(buf, "TAKE A TURN", &who, &[("A", "REFRESH"), ("B", "BACK")]);
+                msg_panel(buf, msg, SIDE_GOLD);
             }
             Screen::Searching { ranked, .. } => {
+                side_frame(buf, if *ranked { "RANKED MATCH" } else { "MATCHMAKE" }, &who, &[("B", "CANCEL")]);
                 let msg = if *ranked { "FINDING RANKED MATCH..." } else { "FINDING OPPONENT..." };
-                let mw = str_width_scaled(msg, 2);
-                draw_str_scaled(buf, msg, cam_x + sw/2 - mw/2, sh/2 - 8, Bgra::new(80, 220, 120), 2);
-                let hint = "B=CANCEL";
-                draw_str(buf, hint, cam_x + sw/2 - str_width(hint)/2, hint_y, Bgra::new(70, 70, 100));
+                msg_panel(buf, msg, SIDE_GREEN);
             }
         }
     }

@@ -15,7 +15,7 @@ pub enum StepResult {
     Explode(WorldPos),
     /// Projectile fuse expired mid-air. Explode at this position.
     FuseExplode(WorldPos),
-    /// Projectile entered water. Despawn silently, no explosion.
+    /// Projectile sank to the bottom of the water. Despawn silently, no explosion.
     Drowned,
     /// Projectile exceeded maximum age. Despawn silently.
     Expired,
@@ -39,6 +39,57 @@ impl StepResult {
             _ => None,
         }
     }
+}
+
+// ── Water: WA sinking (FUN_004fde20, base ctor 0x4fed50, weapon frame 0x50b400) ──────────────────────────────────────────
+// Below the water line WA does, every 50 Hz frame: v *= obj+0x54 (0xcccc = 0.8, set by the base ctor) and vy += 0x4ccc
+// (0.3 px/frame^2), and sets the in-water flag obj+0x2c. The weapon's fuse only counts down while that flag is 0, so
+// a grenade (or anything else) that falls in the water never explodes: it sinks (terminal 1.5 px/frame) until it is
+// removed. Skimming: on the frame it reaches the water, a flat fast hit (|vx| > 3|vy|, |vy| < 8, |vx| > 6 px/frame)
+// bounces instead: vy = -vy, vx *= 0.8, y = water line.
+const WA_WATER_DRAG: f32 = 52428.0 / 65536.0;   // 0xcccc
+const WA_SINK_ACCEL: f32 = 19660.0 / 65536.0;   // 0x4ccc px/frame^2
+/// Arty px/tick = WA px/frame * 5/3.
+const FRAME_PER_TICK: f32 = 5.0 / 3.0;
+/// Arty's world ends 120 px below the water line; a sinking projectile is removed just above that.
+pub const SINK_REMOVE_Y: f32 = crate::world::WORLD_H as f32 - 4.0;
+
+/// Weapons that sink in water like WA. Molotov flames go out in water instead (fire code).
+pub fn sinks_in_water(kind: WeaponKind) -> bool {
+    kind != WeaponKind::MolotovCocktail
+}
+
+/// One tick of sinking for a projectile already below the water line: WA's per-frame drag + sink accel,
+/// fuse frozen, no collisions. `Drowned` once it reaches the bottom.
+fn step_sinking(proj: &mut Projectile) -> StepResult {
+    // 5 WA frames per 3 ticks (1 or 2 per tick), same cadence as the other 50 Hz ports.
+    let frames = ((proj.age_ticks + 1) * 5 / 3) - (proj.age_ticks * 5 / 3);
+    let (mut vx, mut vy) = (proj.vel.x / FRAME_PER_TICK, proj.vel.y / FRAME_PER_TICK);
+    for _ in 0..frames {
+        vx *= WA_WATER_DRAG;
+        vy = vy * WA_WATER_DRAG + WA_SINK_ACCEL;
+        proj.pos.x += vx;
+        proj.pos.y += vy;
+    }
+    proj.vel = crate::world::Vec2::new(vx * FRAME_PER_TICK, vy * FRAME_PER_TICK);
+    proj.age_ticks += 1;
+    // The fixed-point engines' state is stale once the float side moved: rebuilt from pos/vel if ever needed.
+    proj.wa = None;
+    proj.thrown = None;
+    if proj.pos.y >= SINK_REMOVE_Y { StepResult::Drowned } else { StepResult::Flying }
+}
+
+/// WA skim test on the frame a projectile reaches the water (velocities in px/frame). Returns true and bounces it.
+fn try_skim(proj: &mut Projectile, terrain: &Terrain) -> bool {
+    let (vx, vy) = (proj.vel.x / FRAME_PER_TICK, proj.vel.y / FRAME_PER_TICK);
+    let water = crate::world::WATER_Y as f32;
+    if !(vy.abs() * 3.0 < vx.abs() && vy.abs() < 8.0 && vx.abs() > 6.0) { return false; }
+    if terrain.is_solid(proj.pos.x as i32, water as i32 - 1) { return false; }
+    proj.vel = crate::world::Vec2::new(vx * WA_WATER_DRAG * FRAME_PER_TICK, -vy * FRAME_PER_TICK);
+    proj.pos.y = water - 1.0;
+    proj.wa = None;
+    proj.thrown = None;
+    true
 }
 
 /// Advance one projectile by one physics tick.
@@ -65,6 +116,11 @@ pub fn step_projectile_with(
     // Already expired before we even start this tick
     if proj.is_expired() {
         return StepResult::Expired;
+    }
+
+    // Already in the water: sink (WA), no fuse, no blast.
+    if sinks_in_water(proj.kind) && proj.pos.y >= crate::world::WATER_Y as f32 {
+        return step_sinking(proj);
     }
 
     let pos_before  = proj.pos;
@@ -131,10 +187,22 @@ pub fn step_projectile_with(
     let step = match resolve(proj, &collision, terrain) {
         Outcome::Continue  => StepResult::Flying,
         Outcome::Bounced   => StepResult::Bounced,
+        // Reached the water: WA skims a flat fast hit, otherwise it starts sinking next tick (pos is on the water line).
+        Outcome::Drowned if sinks_in_water(proj.kind) => {
+            if try_skim(proj, terrain) {
+                StepResult::Bounced
+            } else {
+                proj.pos.y = proj.pos.y.max(crate::world::WATER_Y as f32);
+                proj.wa = None;
+                proj.thrown = None;
+                StepResult::Flying
+            }
+        }
         Outcome::Drowned   => StepResult::Drowned,
         Outcome::Explode(p)      => StepResult::Explode(p),
         Outcome::FuseExplode(p) => StepResult::FuseExplode(p),
     };
+    if matches!(collision, CollisionResult::Water(_)) && sinks_in_water(proj.kind) { return step; }
 
     if crate::physics::tick::uses_wa_thrown(proj.kind) {
         // Edge bounce in `resolve` changed pos/vel on the float side: carry it into the fixed-point body.
@@ -242,14 +310,46 @@ mod tests {
     // ── Water ─────────────────────────────────────────────────────────────────
 
     #[test]
-    fn projectile_falling_into_water_returns_drowned() {
+    fn projectile_falling_into_water_sinks_then_drowns() {
         let mut p = bazooka(100.0, WATER_Y as f32 - 3.0, 0.0, 5.0);
         let mut result = StepResult::Flying;
-        for _ in 0..30 {
+        let mut ticks = 0;
+        for _ in 0..200 {
             result = step_projectile(&mut p, &empty(), 0.0);
+            ticks += 1;
             if result != StepResult::Flying { break; }
         }
         assert_eq!(result, StepResult::Drowned);
+        assert!(ticks > 20, "should sink visibly for a while first, drowned after {ticks} ticks");
+    }
+
+    /// WA: the fuse stops in water, so a grenade never explodes there; it sinks at <= 1.5 px/frame (2.5 px/tick).
+    #[test]
+    fn grenade_in_water_never_explodes_and_sinks_slowly() {
+        let mut p = grenade(100.0, WATER_Y as f32 - 2.0, 0.0, 6.0);
+        p.fuse = FuseState::Burning(5);
+        let mut last_y = p.pos.y;
+        for i in 0..400 {
+            let r = step_projectile(&mut p, &empty(), 0.0);
+            assert!(!matches!(r, StepResult::Explode(_) | StepResult::FuseExplode(_)), "exploded in water at tick {i}");
+            if r == StepResult::Drowned { return; }
+            if i > 30 { assert!(p.pos.y - last_y <= 3.01, "sinking too fast: {} px in one tick (max 2 frames x 1.5)", p.pos.y - last_y); }
+            last_y = p.pos.y;
+        }
+        panic!("never reached the bottom");
+    }
+
+    /// WA skim: flat and fast (|vx| > 3|vy|, |vy| < 8, |vx| > 6 px/frame) bounces off the water.
+    #[test]
+    fn flat_fast_grenade_skims() {
+        let mut p = grenade(100.0, WATER_Y as f32 - 4.0, 15.0, 3.0); // 9 px/frame across, 1.8 down
+        let mut bounced = false;
+        for _ in 0..4 {
+            let r = step_projectile(&mut p, &empty(), 0.0);
+            if r == StepResult::Bounced && p.vel.y < 0.0 { bounced = true; break; }
+        }
+        assert!(bounced, "should skim, vel now {:?} pos {:?}", p.vel, p.pos);
+        assert!(p.pos.y < WATER_Y as f32);
     }
 
     #[test]
@@ -281,10 +381,12 @@ mod tests {
     #[test]
     fn grenade_counts_down_fuse_over_ticks() {
         let mut p = grenade(100.0, 100.0, 1.0, 0.0);
-        // Should fly for many ticks before fuse expires
+        // A floor to land on: in the water the fuse stops (WA), so it must burn down on land.
+        let mut t = empty();
+        for x in 0..400i32 { for y in 200..210 { t.set_solid(x, y, true); } }
         let mut exploded = false;
         for _ in 0..100 {
-            let r = step_projectile(&mut p, &empty(), 0.0);
+            let r = step_projectile(&mut p, &t, 0.0);
             if matches!(r, StepResult::FuseExplode(_)) {
                 exploded = true;
                 break;

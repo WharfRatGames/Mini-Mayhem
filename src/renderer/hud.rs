@@ -259,6 +259,13 @@ pub struct SideItem<'a> {
     pub badge:  &'a str,
     /// Red text (e.g. LOG OUT).
     pub danger: bool,
+    /// Value shown right-aligned in the row (e.g. a soldier's name in the team editor); "" = none.
+    /// With a detail the label is drawn small and dim, the detail big.
+    pub detail: &'a str,
+}
+
+impl<'a> SideItem<'a> {
+    pub fn new(label: &'a str) -> Self { Self { label, badge: "", danger: false, detail: "" } }
 }
 
 /// Info card shown beside the list for the highlighted item.
@@ -269,13 +276,25 @@ pub struct SideCard<'a> {
     pub stats: &'a [(String, String, Bgra)],
 }
 
-pub const SIDE_GOLD:  Bgra = Bgra::new(255, 225, 55);
-pub const SIDE_GREEN: Bgra = Bgra::new(90, 230, 120);
-pub const SIDE_WHITE: Bgra = Bgra::new(240, 240, 255);
-pub const SIDE_SCRAP: Bgra = Bgra::new(230, 200, 80);
+pub const SIDE_GOLD:   Bgra = Bgra::new(255, 225, 55);
+pub const SIDE_GREEN:  Bgra = Bgra::new(90, 230, 120);
+pub const SIDE_WHITE:  Bgra = Bgra::new(240, 240, 255);
+pub const SIDE_SCRAP:  Bgra = Bgra::new(230, 200, 80);
+pub const SIDE_RED:    Bgra = Bgra::new(230, 70, 60);
+pub const SIDE_DIM:    Bgra = Bgra::new(150, 155, 195);
+pub const SIDE_TEXT:   Bgra = Bgra::new(205, 210, 235);
+pub const SIDE_ACCENT: Bgra = Bgra::new(255, 180, 0);
+
+/// Layout of the side screens (640x480): content between the header and the footer.
+pub const SIDE_TOP: i32 = 58;
+pub const SIDE_BOTTOM: i32 = SCREEN_H as i32 - 30;
+/// Item column (x, width) and the info card's x.
+pub const SIDE_COL_X: i32 = 14;
+pub const SIDE_COL_W: i32 = 372;
+pub const SIDE_CARD_X: i32 = SIDE_COL_X + SIDE_COL_W + 10;
 
 /// Darken + tint a rect in place (cheap "glass" panel over the title art).
-fn shade_rect(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32, keep: u32, tint: (u32, u32, u32)) {
+pub fn side_shade(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32, keep: u32, tint: (u32, u32, u32)) {
     let (sw, sh) = (SCREEN_W as i32, SCREEN_H as i32);
     for yy in y.max(0)..(y + h).min(sh) {
         for xx in x.max(0)..(x + w).min(sw) {
@@ -286,10 +305,112 @@ fn shade_rect(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32, keep: u32, 
     }
 }
 
+/// A dark glass panel with the gold top edge (cards, popups).
+pub fn side_panel(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32) {
+    side_shade(buf, x, y, w, h, 45, (10, 14, 40));
+    buf.fill_rect(x, y, w.max(0) as u32, 2, SIDE_ACCENT);
+}
+
+/// A row-style highlight: lighter glass + gold bar on the left when `selected`, faint glass otherwise.
+pub fn side_row_bg(buf: &mut WorldBuffer, x: i32, y: i32, w: i32, h: i32, selected: bool) {
+    if selected {
+        side_shade(buf, x, y, w, h, 60, (20, 30, 90));
+        buf.fill_rect(x, y, 4, h.max(0) as u32, SIDE_ACCENT);
+    } else {
+        side_shade(buf, x, y, w, h, 150, (8, 10, 30));
+    }
+}
+
+/// Background + header + footer of every side screen: dimmed title art, the screen name big on the left,
+/// `who` (username, ELO, scrap...) on the right, and button hints at the bottom.
+pub fn side_frame(buf: &mut WorldBuffer, crumb: &str, who: &str, hints: &[(&str, &str)]) {
+    let (sw, sh) = (SCREEN_W as i32, SCREEN_H as i32);
+    super::title_bg::draw_title_bg(buf, 0);
+    side_shade(buf, 0, 0, sw, sh, 55, (6, 8, 24));
+    side_shade(buf, 0, 0, sw, 44, 40, (10, 14, 40));
+    buf.fill_rect(0, 44, SCREEN_W, 2, SIDE_ACCENT);
+    let scale = if str_width_scaled(crumb, 3) + str_width(who) + 50 <= sw { 3 } else { 2 };
+    draw_str_shadow_scaled(buf, crumb, 18, if scale == 3 { 10 } else { 14 }, SIDE_GOLD, scale);
+    draw_str(buf, who, sw - str_width(who) - 14, 17, Bgra::new(200, 205, 235));
+    side_shade(buf, 0, sh - 24, sw, 24, 40, (10, 14, 40));
+    draw_button_hints(buf, hints, 0, 4);
+}
+
+/// The big item rows in the left column, sharing the full height (no scrolling, max 96 px each).
+pub fn side_rows(buf: &mut WorldBuffer, items: &[SideItem], cursor: usize) {
+    let (col_x, col_w, top) = (SIDE_COL_X, SIDE_COL_W, SIDE_TOP);
+    let n = items.len().max(1) as i32;
+    let row_h = ((SIDE_BOTTOM - top) / n).min(96);
+    let any_detail = items.iter().any(|it| !it.detail.is_empty());
+    // One label size per screen: biggest that fits every row (badge included).
+    let scale = if !any_detail && items.iter().all(|it| str_width_scaled(it.label, 3)
+        + if it.badge.is_empty() { 10 } else { 50 } <= col_w - 22) { 3 } else { 2 };
+    for (i, it) in items.iter().enumerate() {
+        let y = top + i as i32 * row_h;
+        let sel = i == cursor;
+        side_row_bg(buf, col_x, y, col_w, row_h - 6, sel);
+        let col = match (sel, it.danger) {
+            (true, true)   => Bgra::new(255, 100, 80),
+            (true, false)  => SIDE_GOLD,
+            (false, true)  => Bgra::new(200, 80, 70),
+            (false, false) => Bgra::new(225, 228, 245),
+        };
+        let mid = y + (row_h - 6) / 2;
+        if it.detail.is_empty() && any_detail {
+            // Action row (e.g. SAVE) among value rows: same size as the values, so the column stays even.
+            draw_str_shadow_scaled(buf, it.label, col_x + 18, mid - 8, col, 2);
+        } else if it.detail.is_empty() {
+            draw_str_shadow_scaled(buf, it.label, col_x + 18, mid - 4 * scale, col, scale);
+        } else {
+            // Label small on the left, value big on the right.
+            draw_str(buf, it.label, col_x + 18, mid - 4, if sel { SIDE_GOLD } else { SIDE_DIM });
+            let dw = str_width_scaled(it.detail, 2);
+            draw_str_shadow_scaled(buf, it.detail, col_x + col_w - 14 - dw, mid - 8, if sel { SIDE_GOLD } else { SIDE_WHITE }, 2);
+        }
+        if !it.badge.is_empty() {
+            let bw = str_width_scaled(it.badge, 2) + 12;
+            let bx = col_x + col_w - bw - 10;
+            let by = mid - 11;
+            buf.fill_rect(bx, by, bw as u32, 22, Bgra::new(210, 60, 50));
+            draw_str_shadow_scaled(buf, it.badge, bx + 6, by + 3, Bgra::new(255, 255, 255), 2);
+        }
+    }
+}
+
+/// The info card's rect (x, y, w, h).
+pub fn side_card_rect() -> (i32, i32, i32, i32) {
+    let cx = SIDE_CARD_X;
+    (cx, SIDE_TOP, SCREEN_W as i32 - cx - 10, SIDE_BOTTOM - SIDE_TOP - 6)
+}
+
+/// Draw the info card; returns the y below what it drew, for screens that add their own art.
+pub fn side_card(buf: &mut WorldBuffer, card: &SideCard) -> i32 {
+    use super::font::wrap_text;
+    let (cx, cy, cw, ch) = side_card_rect();
+    side_panel(buf, cx, cy, cw, ch);
+    let ts = if str_width_scaled(card.title, 2) <= cw - 24 { 2 } else { 1 };
+    draw_str_shadow_scaled(buf, card.title, cx + 12, cy + 14, SIDE_GOLD, ts);
+    let mut y = cy + 44;
+    for line in wrap_text(card.body, 1, cw - 24) {
+        draw_str(buf, &line, cx + 12, y, SIDE_TEXT);
+        y += 15;
+    }
+    if !card.stats.is_empty() { y += 14; }
+    for (k, v, c) in card.stats {
+        if y + 40 > cy + ch { break; }
+        buf.fill_rect(cx + 12, y - 6, (cw - 24) as u32, 1, Bgra::new(60, 64, 110));
+        draw_str(buf, k, cx + 12, y, SIDE_DIM);
+        y += 14;
+        let vs = if str_width_scaled(v, 2) <= cw - 24 { 2 } else { 1 };
+        let vw = str_width_scaled(v, vs);
+        draw_str_shadow_scaled(buf, v, cx + cw - 12 - vw, y, *c, vs);
+        y += 26;
+    }
+    y
+}
+
 /// Full-screen submenu layout used by every menu below the title screen:
-/// dimmed title art, header bar (screen name left, `who` right), big rows
-/// filling the left column (no scrolling), an info card for the highlighted
-/// row on the right, and button hints in the footer.
+/// `side_frame` + `side_rows` + `side_card`.
 pub fn draw_side_menu(
     buf:    &mut WorldBuffer,
     crumb:  &str,
@@ -299,74 +420,9 @@ pub fn draw_side_menu(
     card:   &SideCard,
     hints:  &[(&str, &str)],
 ) {
-    use super::font::wrap_text;
-    let (sw, sh) = (SCREEN_W as i32, SCREEN_H as i32);
-    let accent = Bgra::new(255, 180, 0);
-    super::title_bg::draw_title_bg(buf, 0);
-    shade_rect(buf, 0, 0, sw, sh, 55, (6, 8, 24));
-
-    // Header
-    shade_rect(buf, 0, 0, sw, 44, 40, (10, 14, 40));
-    buf.fill_rect(0, 44, SCREEN_W, 2, accent);
-    draw_str_shadow_scaled(buf, crumb, 18, 10, SIDE_GOLD, 3);
-    draw_str(buf, who, sw - str_width(who) - 14, 17, Bgra::new(200, 205, 235));
-
-    // Item column — rows share the full height; one label size per screen.
-    let (col_x, col_w, top) = (14, 372, 58);
-    let n = items.len().max(1) as i32;
-    let row_h = ((sh - 30 - top) / n).min(96);
-    let scale = if items.iter().all(|it| str_width_scaled(it.label, 3)
-        + if it.badge.is_empty() { 10 } else { 50 } <= col_w - 22) { 3 } else { 2 };
-    for (i, it) in items.iter().enumerate() {
-        let y = top + i as i32 * row_h;
-        let sel = i == cursor;
-        if sel {
-            shade_rect(buf, col_x, y, col_w, row_h - 6, 60, (20, 30, 90));
-            buf.fill_rect(col_x, y, 4, (row_h - 6) as u32, accent);
-        } else {
-            shade_rect(buf, col_x, y, col_w, row_h - 6, 150, (8, 10, 30));
-        }
-        let col = match (sel, it.danger) {
-            (true, true)   => Bgra::new(255, 100, 80),
-            (true, false)  => SIDE_GOLD,
-            (false, true)  => Bgra::new(200, 80, 70),
-            (false, false) => Bgra::new(225, 228, 245),
-        };
-        draw_str_shadow_scaled(buf, it.label, col_x + 18, y + (row_h - 6 - 8 * scale) / 2, col, scale);
-        if !it.badge.is_empty() {
-            let bw = str_width_scaled(it.badge, 2) + 12;
-            let bx = col_x + col_w - bw - 10;
-            let by = y + (row_h - 6 - 22) / 2;
-            buf.fill_rect(bx, by, bw as u32, 22, Bgra::new(210, 60, 50));
-            draw_str_shadow_scaled(buf, it.badge, bx + 6, by + 3, Bgra::new(255, 255, 255), 2);
-        }
-    }
-
-    // Info card
-    let cx = col_x + col_w + 10;
-    let (cy, cw, ch) = (58, sw - cx - 10, sh - 30 - 58 - 6);
-    shade_rect(buf, cx, cy, cw, ch, 45, (10, 14, 40));
-    buf.fill_rect(cx, cy, cw as u32, 2, accent);
-    draw_str_shadow_scaled(buf, card.title, cx + 12, cy + 14, SIDE_GOLD, 2);
-    let mut y = cy + 44;
-    for line in wrap_text(card.body, 1, cw - 24) {
-        draw_str(buf, &line, cx + 12, y, Bgra::new(205, 210, 235));
-        y += 15;
-    }
-    y += 14;
-    for (k, v, c) in card.stats {
-        if y + 40 > cy + ch { break; }
-        buf.fill_rect(cx + 12, y - 6, (cw - 24) as u32, 1, Bgra::new(60, 64, 110));
-        draw_str(buf, k, cx + 12, y, Bgra::new(150, 155, 195));
-        y += 14;
-        let vw = str_width_scaled(v, 2);
-        draw_str_shadow_scaled(buf, v, cx + cw - 12 - vw, y, *c, 2);
-        y += 26;
-    }
-
-    // Footer
-    shade_rect(buf, 0, sh - 24, sw, 24, 40, (10, 14, 40));
-    draw_button_hints(buf, hints, 0, 4);
+    side_frame(buf, crumb, who, hints);
+    side_rows(buf, items, cursor);
+    side_card(buf, card);
 }
 
 /// Standard full-width screen header bar with a centered 2x title.

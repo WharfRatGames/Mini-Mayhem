@@ -419,47 +419,42 @@ impl RosterPicker {
     }
 
 
-    fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-        buf.fill_rect(cam_x, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-        let title = "SELECT TEAM";
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, cam_x + sw/2 - tw/2, 10, Bgra::new(255, 210, 50), 2);
-
-        if !self.error.is_empty() {
-            draw_str(buf, &self.error, cam_x + 10, 50, Bgra::new(220, 60, 60));
-        }
-
-        const AV_PICK: u32 = 64;
-        let row_h    = AV_PICK as i32 + 12;
-        let list_top = 56i32;
-        for (i, roster) in self.rosters.iter().enumerate() {
-            let y = list_top + i as i32 * row_h;
-            if y + row_h > sh - 30 { break; }
-            let selected = i == self.cursor;
-            if selected {
-                buf.fill_rect(cam_x + 4, y - 2, (sw - 8) as u32, (row_h - 2) as u32, Bgra::new(28, 35, 70));
-            }
-            // Avatar on left
-            use crate::renderer::avatar::draw_avatar;
-            draw_avatar(buf, cam_x + 12, y + 4, AV_PICK, roster.avatar_id);
-            // Team name + soldier names to the right
-            let tx = cam_x + 12 + AV_PICK as i32 + 12;
-            let nc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(200, 200, 230) };
-            draw_str_scaled(buf, &roster.name, tx, y + 6, nc, 2);
-            let preview = roster.worm_names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("  ");
-            draw_str(buf, &preview, tx, y + 32, Bgra::new(120, 120, 160));
-        }
-
-        let hint_y = sh - 22;
-        let hint = if self.rosters.len() > 1 {
-            "A=USE  L1/R1=AVATAR  X=NEW  Y=EDIT  SEL=DEL  B=SKIP"
+    fn draw(&self, buf: &mut WorldBuffer, _cam_x: i32) {
+        // Same full-screen side layout as the menus: team names left, the team's card right.
+        use crate::renderer::hud::{side_frame, side_rows, side_card, side_card_rect, SideItem, SideCard,
+                                   SIDE_GOLD, SIDE_WHITE, SIDE_RED};
+        let hints: &[(&str, &str)] = if self.rosters.len() > 1 {
+            &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("SEL", "DEL"), ("B", "SKIP")]
         } else {
-            "A=USE  L1/R1=AVATAR  X=NEW TEAM  Y=EDIT  B=SKIP"
+            &[("A", "USE"), ("Y", "EDIT"), ("X", "NEW"), ("L1/R1", "AVATAR"), ("B", "SKIP")]
         };
-        draw_str(buf, hint, cam_x + sw/2 - str_width(hint)/2, hint_y, Bgra::new(60, 60, 90));
+        side_frame(buf, "SELECT TEAM", &format!("{} TEAMS", self.rosters.len()), hints);
+        let names: Vec<String> = self.rosters.iter().map(|r| r.name.to_uppercase()).collect();
+        let rows: Vec<SideItem> = names.iter().map(|n| SideItem::new(n.as_str())).collect();
+        side_rows(buf, &rows, self.cursor);
+
+        let Some(r) = self.rosters.get(self.cursor) else {
+            side_card(buf, &SideCard { title: "NO TEAMS", body: "Press X to make a team.", stats: &[] });
+            return;
+        };
+        let body = if self.error.is_empty() { "" } else { self.error.as_str() };
+        let title = names[self.cursor].as_str();
+        let y = side_card(buf, &SideCard { title, body, stats: &[] });
+        let (cx, _cy, cw, _ch) = side_card_rect();
+        // Avatar, then the four soldiers
+        use crate::renderer::avatar::draw_avatar;
+        const AV: u32 = 72;
+        draw_avatar(buf, cx + cw / 2 - AV as i32 / 2, y + 4, AV, r.avatar_id);
+        let mut ly = y + AV as i32 + 20;
+        for (i, w) in r.worm_names.iter().enumerate() {
+            buf.fill_rect(cx + 12, ly - 6, (cw - 24) as u32, 1, Bgra::new(60, 64, 110));
+            draw_str(buf, &format!("{}", i + 1), cx + 12, ly + 4, Bgra::new(150, 155, 195));
+            let ww = str_width_scaled(w, 2);
+            draw_str_shadow_scaled(buf, w, cx + cw - 12 - ww, ly, SIDE_WHITE, 2);
+            ly += 30;
+        }
+        if !self.error.is_empty() { draw_str(buf, &self.error, cx + 12, ly + 4, SIDE_RED); }
+        let _ = SIDE_GOLD;
     }
 }
 
@@ -557,73 +552,69 @@ impl RosterEditor {
         None
     }
 
-    fn draw(&self, buf: &mut WorldBuffer, cam_x: i32) {
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        buf.fill_rect(cam_x, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-        buf.fill_rect(cam_x, 0, SCREEN_W, 44, Bgra::new(18, 22, 48));
-        let title = "EDIT TEAM";
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, cam_x + sw/2 - tw/2, 10, Bgra::new(255, 210, 50), 2);
-
+    fn draw(&self, buf: &mut WorldBuffer, _cam_x: i32) {
+        // Same full-screen side layout as the menus: fields left (label + value), help / preview card right.
+        use crate::renderer::hud::{side_frame, side_rows, side_card, side_card_rect, SideItem, SideCard, SIDE_GOLD};
+        let hints: &[(&str, &str)] = match self.field {
+            5 | 6 => &[("LEFT/RIGHT", "CHANGE"), ("START", "SAVE"), ("B", "CANCEL")],
+            7     => &[("A", "SAVE TEAM"), ("B", "CANCEL")],
+            _     => &[("A", "TYPE NAME"), ("START", "SAVE"), ("B", "CANCEL")],
+        };
+        side_frame(buf, if self.is_new { "NEW TEAM" } else { "EDIT TEAM" }, &self.roster.name.to_uppercase(), hints);
         let labels = ["TEAM NAME", "SOLDIER 1", "SOLDIER 2", "SOLDIER 3", "SOLDIER 4", "AVATAR", "HEADSTONE", "SAVE"];
-        let values: [&str; 6] = [
+        let av = format!("< {} >", self.roster.avatar_id as u32 + 1);
+        let hs = format!("< {} >", self.roster.headstone_id as u32 + 1);
+        let values = [
             self.roster.name.as_str(),
             self.roster.worm_names[0].as_str(),
             self.roster.worm_names[1].as_str(),
             self.roster.worm_names[2].as_str(),
             self.roster.worm_names[3].as_str(),
-            "",
+            av.as_str(), hs.as_str(), "",
         ];
+        let rows: Vec<SideItem> = labels.iter().zip(values.iter())
+            .map(|(&l, &v)| SideItem { detail: v, ..SideItem::new(l) }).collect();
+        side_rows(buf, &rows, self.field);
 
-        let top   = 50i32;
-        // Avatar row (5) and Headstone row (6) are taller for previews
-        let row_h_for = |i: usize| if i == 5 || i == 6 { 56i32 } else { 44i32 };
-        let mut y_cursor = top;
-        for i in 0..8usize {
-            let row_h = row_h_for(i);
-            let y = y_cursor;
-            if y > sh - 20 { break; }
-            let selected = i == self.field;
-            if selected {
-                buf.fill_rect(cam_x + 8, y - 2, (sw - 16) as u32, (row_h - 4) as u32, Bgra::new(28, 35, 70));
-            }
-            let lc = if selected { Bgra::new(180, 180, 200) } else { Bgra::new(80, 80, 110) };
-            draw_str(buf, labels[i], cam_x + 20, y + 4, lc);
-            if i < 5 {
-                let vc = if selected { Bgra::new(255, 220, 50) } else { Bgra::new(200, 200, 230) };
-                let vw = str_width_scaled(values[i], 2);
-                draw_str_scaled(buf, values[i], cam_x + sw - vw - 20, y - 2, vc, 2);
-            } else if i == 5 {
-                // Avatar: preview + cycle hint
+        let body = match self.field {
+            0     => "The name shown for your team in matches. A opens the keyboard.",
+            1..=4 => "This soldier's name, shown above them in matches. A opens the keyboard.",
+            5     => "Your team's picture in the lobby and on the scoreboard. LEFT/RIGHT to change.",
+            6     => "The grave your soldiers leave behind. LEFT/RIGHT to change.",
+            _     => "Save the team. START saves from any field.",
+        };
+        let y = side_card(buf, &SideCard { title: labels[self.field], body, stats: &[] });
+        let (cx, _cy, cw, _ch) = side_card_rect();
+        let mid = cx + cw / 2;
+        match self.field {
+            5 => {
                 use crate::renderer::avatar::draw_avatar;
-                let av_size = 48u32;
-                let px = cam_x + sw / 2 - av_size as i32 / 2;
-                draw_avatar(buf, px, y, av_size, self.roster.avatar_id);
-                if selected {
-                    let arrow = "< L/R >";
-                    draw_str(buf, arrow, cam_x + sw/2 - str_width(arrow)/2, y + av_size as i32 + 2, Bgra::new(120, 120, 180));
-                }
-            } else if i == 6 {
-                // Headstone: small preview centred in row
+                const AV: u32 = 96;
+                draw_avatar(buf, mid - AV as i32 / 2, y + 10, AV, self.roster.avatar_id);
+                draw_str_shadow_scaled(buf, "<", cx + 14, y + 10 + AV as i32 / 2 - 8, SIDE_GOLD, 2);
+                draw_str_shadow_scaled(buf, ">", cx + cw - 30, y + 10 + AV as i32 / 2 - 8, SIDE_GOLD, 2);
+            }
+            6 => {
                 use crate::renderer::draw_sprites::draw_headstone;
                 use crate::world::WorldPos;
-                let hx = cam_x + sw / 2;
-                let hy = y + row_h - 8;
-                draw_headstone(buf, WorldPos::new(hx as f32, hy as f32), 0, self.roster.headstone_id);
-                if selected {
-                    let arrow = "< L/R >";
-                    draw_str(buf, arrow, hx + 20, y + 10, Bgra::new(120, 120, 180));
-                }
-            } else {
-                let sc = if selected { Bgra::new(80, 220, 120) } else { Bgra::new(50, 120, 70) };
-                let sw2 = str_width_scaled("[ SAVE ]", 2);
-                draw_str_scaled(buf, "[ SAVE ]", cam_x + sw/2 - sw2/2, y + 4, sc, 2);
+                draw_headstone(buf, WorldPos::new(mid as f32, (y + 70) as f32), 0, self.roster.headstone_id);
+                draw_str_shadow_scaled(buf, "<", cx + 14, y + 40, SIDE_GOLD, 2);
+                draw_str_shadow_scaled(buf, ">", cx + cw - 30, y + 40, SIDE_GOLD, 2);
             }
-            y_cursor += row_h;
+            0..=4 => {
+                let v = values[self.field];
+                let vs = if str_width_scaled(v, 3) <= cw - 24 { 3 } else { 2 };
+                draw_str_shadow_scaled(buf, v, mid - str_width_scaled(v, vs) / 2, y + 20, SIDE_GOLD, vs);
+            }
+            _ => {
+                // Summary of what will be saved
+                let mut ly = y + 10;
+                for w in &self.roster.worm_names {
+                    draw_str_shadow_scaled(buf, w, mid - str_width_scaled(w, 2) / 2, ly, Bgra::new(240, 240, 255), 2);
+                    ly += 26;
+                }
+            }
         }
-        let hint = if self.field == 7 { "A or START = SAVE TEAM    B=CANCEL" } else if self.field == 6 { "LEFT/RIGHT = CHANGE HEADSTONE   START=SAVE" } else if self.field == 5 { "LEFT/RIGHT = CHANGE AVATAR   START=SAVE" } else { "A=NAME FIELD  START=SAVE  B=CANCEL" };
-        draw_str(buf, hint, cam_x + sw/2 - str_width(hint)/2, sh - 18, Bgra::new(60, 60, 90));
     }
 }
 
@@ -1186,15 +1177,8 @@ impl CosmeticsScreen {
                 // Confirm: if current item is unowned, trigger buy prompt; else just confirm equip
                 let col = self.col;
                 let si = self.soldier;
-                let cur = self.current_id(col, si);
-                let owned = self.owned_for_col(col);
-                if cur > 0 && !owned.contains(&cur) {
-                    let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
-                    if let Some(&(ct, cid, name, cost)) = crate::game::store::CATALOG.iter()
-                        .find(|&&(ct, cid, _, _)| ct == col_type && cid == cur)
-                    {
-                        self.buy_prompt = Some(BuyPrompt { cosm_type: ct, cosm_id: cid, name, cost });
-                    }
+                if let Some((ct, cid, name, cost)) = self.unowned_for_sale(col, si) {
+                    self.buy_prompt = Some(BuyPrompt { cosm_type: ct, cosm_id: cid, name, cost });
                 } else {
                     self.cycling = false;
                 }
@@ -1224,6 +1208,19 @@ impl CosmeticsScreen {
 
         self.draw(buf);
         None
+    }
+
+    /// The catalog entry for the item soldier `si` has selected in column `col`,
+    /// if it is for sale and not owned (→ A offers to buy it). LOOK (col 4) is
+    /// free and never sold: before this guard, look N fell through to gun style N
+    /// and an owner of every item was asked to buy a gun.
+    fn unowned_for_sale(&self, col: usize, si: usize) -> Option<(&'static str, u8, &'static str, u32)> {
+        let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", 3 => "gun_style", _ => return None };
+        let cur = self.current_id(col, si);
+        if cur == 0 || self.owned_for_col(col).contains(&cur) { return None; }
+        crate::game::store::CATALOG.iter()
+            .find(|&&(ct, cid, _, _)| ct == col_type && cid == cur)
+            .copied()
     }
 
     fn owned_for_col(&self, col: usize) -> &[u8] {
@@ -1286,11 +1283,8 @@ impl CosmeticsScreen {
     fn draw_preview(&self, buf: &mut WorldBuffer) {
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, Bgra::new(6, 8, 20));
-
-        let title = "SQUAD PREVIEW";
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, sw/2 - tw/2, 8, Bgra::new(255, 210, 50), 2);
+        crate::renderer::hud::side_frame(buf, "SQUAD PREVIEW", &self.roster.name.to_uppercase(), &[("Y", "BACK TO EQUIP")]);
+        crate::renderer::hud::side_panel(buf, 14, crate::renderer::hud::SIDE_TOP, sw - 28, crate::renderer::hud::SIDE_BOTTOM - crate::renderer::hud::SIDE_TOP - 4);
 
         // 4 soldiers evenly spaced across the screen
         let slot_w = sw / 4;
@@ -1332,63 +1326,67 @@ impl CosmeticsScreen {
             }
         }
 
-        let hint = "Y=BACK TO EQUIP";
-        let hw = str_width(hint) as i32;
-        buf.fill_rect(0, sh - 22, SCREEN_W, 22, Bgra::new(12, 14, 35));
-        draw_str(buf, hint, sw/2 - hw/2, sh - 16, Bgra::new(60, 70, 110));
     }
 
     fn draw(&self, buf: &mut WorldBuffer) {
+        use crate::renderer::hud::{side_frame, side_row_bg, side_panel, side_shade, SIDE_GOLD, SIDE_DIM, SIDE_ACCENT, SIDE_TOP, SIDE_BOTTOM};
         let sw = SCREEN_W as i32;
         let sh = SCREEN_H as i32;
-        buf.fill_rect(0, 0, SCREEN_W, SCREEN_H as u32, COLOR_DARK_BG);
-        buf.fill_rect(0, 0, SCREEN_W, 28, Bgra::new(18, 22, 48));
 
-        let title = "EQUIP COSMETICS";
-        let tw = str_width_scaled(title, 2);
-        draw_str_scaled(buf, title, sw/2 - tw/2, 6, Bgra::new(255, 210, 50), 2);
+        // Same frame as the menus: dimmed title art, header (team + scrap), hints in the footer.
+        let price_hint;
+        let hints: Vec<(&str, &str)> = if self.buy_prompt.is_some() {
+            vec![("A", "BUY"), ("B", "CANCEL")]
+        } else if self.cycling {
+            if let Some((_, _, _, cost)) = self.unowned_for_sale(self.col, self.soldier) {
+                price_hint = format!("BUY ({} SCRAP)", cost);
+                vec![("A", price_hint.as_str()), ("B", "CANCEL")]
+            } else {
+                vec![("LEFT/RIGHT", "CYCLE"), ("A", "CONFIRM"), ("B", "CANCEL")]
+            }
+        } else {
+            vec![("DPAD", "MOVE"), ("A", "CHANGE"), ("Y", "PREVIEW"), ("START", "SAVE"), ("B", "BACK")]
+        };
+        let who = format!("{}   SCRAP {}", self.roster.name.to_uppercase(), self.scrap);
+        side_frame(buf, "EQUIP", &who, &hints);
 
         let col_labels = ["HAT", "UNIFORM", "BOOTS", "GUN", "LOOK"];
-        let col_w = sw / 5;
+        let (gx, gw) = (14i32, sw - 28);
+        let col_w = gw / 5;
 
         // Column headers
+        side_shade(buf, gx, SIDE_TOP, gw, 20, 60, (10, 14, 40));
         for (c, lbl) in col_labels.iter().enumerate() {
-            let cx = c as i32 * col_w + col_w / 2;
+            let cx = gx + c as i32 * col_w + col_w / 2;
             let lw = str_width(lbl) as i32;
-            let hdr_col = if c == self.col { Bgra::new(255, 220, 50) } else { Bgra::new(100, 110, 160) };
-            draw_str(buf, lbl, cx - lw/2, 32, hdr_col);
+            let hdr_col = if c == self.col { SIDE_GOLD } else { SIDE_DIM };
+            draw_str(buf, lbl, cx - lw/2, SIDE_TOP + 6, hdr_col);
         }
 
         // Soldier rows
-        let row_h = (sh - 80) / 4;
-        let top = 48i32;
+        let top = SIDE_TOP + 24;
+        let row_h = (SIDE_BOTTOM - top) / 4;
 
         for si in 0..4usize {
             let ry = top + si as i32 * row_h;
             let selected = si == self.soldier;
-
-            // Row bg
-            let row_bg = if selected { Bgra::new(24, 34, 72) } else { Bgra::new(12, 14, 32) };
-            buf.fill_rect(0, ry, SCREEN_W, row_h as u32, row_bg);
-            if selected {
-                buf.fill_rect(0, ry, SCREEN_W, 1, Bgra::new(60, 90, 200));
-                buf.fill_rect(0, ry + row_h - 1, SCREEN_W, 1, Bgra::new(60, 90, 200));
-            }
+            side_row_bg(buf, gx, ry, gw, row_h - 4, selected);
 
             // Soldier name
             let name = &self.roster.worm_names[si];
-            draw_str(buf, name, 6, ry + 4, if selected { Bgra::new(255, 220, 60) } else { Bgra::new(160, 160, 200) });
+            draw_str(buf, name, gx + 10, ry + 4, if selected { SIDE_GOLD } else { Bgra::new(200, 205, 235) });
 
             // Cosmetic cells
             for c in 0..5usize {
-                let cx = c as i32 * col_w;
+                let cx = gx + c as i32 * col_w;
                 let cell_selected = selected && c == self.col;
                 if cell_selected {
-                    buf.fill_rect(cx + 1, ry + 1, (col_w - 2) as u32, (row_h - 2) as u32, Bgra::new(30, 50, 110));
-                    buf.fill_rect(cx + 1, ry + 1, (col_w - 2) as u32, 1, Bgra::new(80, 140, 255));
-                    buf.fill_rect(cx + 1, ry + 1, 1, (row_h - 2) as u32, Bgra::new(80, 140, 255));
-                    buf.fill_rect(cx + 1, ry + row_h - 2, (col_w - 2) as u32, 1, Bgra::new(80, 140, 255));
-                    buf.fill_rect(cx + col_w - 2, ry + 1, 1, (row_h - 2) as u32, Bgra::new(80, 140, 255));
+                    // Gold frame around the chosen cell
+                    let (x0, y0, w0, h0) = (cx + 2, ry + 1, col_w - 4, row_h - 6);
+                    buf.fill_rect(x0, y0, w0 as u32, 2, SIDE_ACCENT);
+                    buf.fill_rect(x0, y0 + h0 - 2, w0 as u32, 2, SIDE_ACCENT);
+                    buf.fill_rect(x0, y0, 2, h0 as u32, SIDE_ACCENT);
+                    buf.fill_rect(x0 + w0 - 2, y0, 2, h0 as u32, SIDE_ACCENT);
                 }
 
                 let id = self.current_id(c, si);
@@ -1413,7 +1411,7 @@ impl CosmeticsScreen {
                     }
                 }
 
-                let text_y = ry + row_h - 12;
+                let text_y = ry + row_h - 16;
 
                 // Cosmetic name label under the icon
                 {
@@ -1426,9 +1424,12 @@ impl CosmeticsScreen {
                         crate::game::store::catalog_name(cosm_type, id).unwrap_or("")
                     };
                     if !label.is_empty() {
-                        let lw = str_width(label) as i32;
+                        // Cut to the cell so long names don't run into the next column.
+                        let mut shown = label.to_string();
+                        while str_width(&shown) > col_w - 8 && shown.len() > 1 { shown.pop(); }
+                        let lw = str_width(&shown) as i32;
                         let label_y = text_y - 2;
-                        draw_str(buf, label, center_x - lw / 2, label_y, Bgra::new(160, 170, 200));
+                        draw_str(buf, &shown, center_x - lw / 2, label_y, Bgra::new(190, 195, 225));
                     }
                 }
 
@@ -1443,53 +1444,21 @@ impl CosmeticsScreen {
 
         }
 
-        // Status message (purchase feedback)
+        // Status message (purchase feedback), on a small panel above the footer
         if let Some((msg, _)) = &self.status_msg {
-            let mw = str_width(msg) as i32;
-            draw_str(buf, msg, sw/2 - mw/2, sh - 38, Bgra::new(80, 220, 120));
+            let mw = str_width_scaled(msg, 2) as i32;
+            side_panel(buf, sw/2 - mw/2 - 14, sh - 70, mw + 28, 34);
+            draw_str_shadow_scaled(buf, msg, sw/2 - mw/2, sh - 60, Bgra::new(90, 230, 120), 2);
         }
-
-        // Scrap balance (always visible)
-        let scrap_str = format!("SCRAP: {}", self.scrap);
-        draw_str(buf, &scrap_str, sw - str_width(&scrap_str) as i32 - 6, 10, Bgra::new(220, 200, 80));
-
-        // Hint bar
-        buf.fill_rect(0, sh - 22, SCREEN_W, 22, Bgra::new(12, 14, 35));
-        let hint = if self.buy_prompt.is_some() {
-            "A=BUY  B=CANCEL"
-        } else if self.cycling {
-            let col = self.col;
-            let si = self.soldier;
-            let cur = self.current_id(col, si);
-            let owned = self.owned_for_col(col);
-            if cur > 0 && !owned.contains(&cur) {
-                let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
-                if let Some(&(_, _, _, cost)) = crate::game::store::CATALOG.iter()
-                    .find(|&&(ct, cid, _, _)| ct == col_type && cid == cur)
-                {
-                    // Show price inline — draw it separately so we can format with cost
-                    let price_str = format!("A=BUY ({} scrap)  B=CANCEL", cost);
-                    draw_str(buf, &price_str, sw/2 - str_width(&price_str)/2, sh - 16, Bgra::new(220, 200, 80));
-                    return; // skip the generic hint below
-                }
-            }
-            "DPAD=CYCLE  A=CONFIRM  B=CANCEL"
-        } else {
-            "ARROWS=NAVIGATE  A=SELECT  Y=PREVIEW  START=SAVE  B=BACK"
-        };
-        draw_str(buf, hint, sw/2 - str_width(hint)/2, sh - 16, Bgra::new(60, 70, 110));
 
         // Buy prompt overlay
         if let Some(ref p) = self.buy_prompt {
-            let bw = 360i32; let bh = 80i32;
+            let bw = 400i32; let bh = 96i32;
             let bx = sw/2 - bw/2; let by = sh/2 - bh/2;
-            buf.fill_rect(bx, by, bw as u32, bh as u32, Bgra::new(10, 12, 30));
-            buf.fill_rect(bx, by, bw as u32, 1, Bgra::new(80, 140, 255));
-            buf.fill_rect(bx, by+bh-1, bw as u32, 1, Bgra::new(80, 140, 255));
-            buf.fill_rect(bx, by, 1, bh as u32, Bgra::new(80, 140, 255));
-            buf.fill_rect(bx+bw-1, by, 1, bh as u32, Bgra::new(80, 140, 255));
+            side_panel(buf, bx, by, bw, bh);
+            side_shade(buf, bx, by + 2, bw, bh - 2, 120, (6, 8, 24));
             let title = format!("BUY {}?", p.name.to_uppercase());
-            draw_str_scaled(buf, &title, sw/2 - str_width_scaled(&title, 2)/2, by + 10, Bgra::new(255, 220, 50), 2);
+            draw_str_shadow_scaled(buf, &title, sw/2 - str_width_scaled(&title, 2)/2, by + 14, SIDE_GOLD, 2);
             let cost_str = format!("Cost: {} scrap  (have: {})", p.cost, self.scrap);
             let can_afford = self.scrap >= p.cost;
             let cost_col = if can_afford { Bgra::new(200, 200, 220) } else { Bgra::new(220, 80, 80) };

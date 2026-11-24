@@ -470,7 +470,7 @@ impl TitleScreen {
         if let Some((crumb, items, info)) = sub_menu {
             use crate::renderer::hud::{draw_side_menu, SideItem, SideCard, SIDE_SCRAP};
             let rows: Vec<SideItem> = items.iter()
-                .map(|&label| SideItem { label, badge: "", danger: false }).collect();
+                .map(|&label| SideItem::new(label)).collect();
             let c = self.sub_cursor.min(items.len() - 1);
             let mut stats = Vec::new();
             if self.sub == Sub::MP && c == 2 {

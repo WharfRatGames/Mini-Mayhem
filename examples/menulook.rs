@@ -13,7 +13,7 @@ fn save(buf: &WorldBuffer, path: &str) {
     e.set_color(png::ColorType::Rgb); e.set_depth(png::BitDepth::Eight);
     e.write_header().unwrap().write_image_data(&img).unwrap();
 }
-fn it(label: &str) -> SideItem<'_> { SideItem { label, badge: "", danger: false } }
+fn it(label: &str) -> SideItem<'_> { SideItem::new(label) }
 fn st(k: &str, v: &str, c: arty::renderer::Bgra) -> (String, String, arty::renderer::Bgra) { (k.into(), v.into(), c) }
 
 fn main() {
@@ -25,12 +25,37 @@ fn main() {
         &SideCard { title: "TAKE A TURN", body: "Async games: play your turn whenever you like. Up to 15 at once, 14 days per turn.", stats: &[] }, &ab);
     save(&buf, &format!("{dir}/mp.png"));
     hud::draw_side_menu(&mut buf, "TAKE A TURN", "DUSTY  ELO 1042",
-        &[SideItem { label: "MY MATCHES", badge: "2", danger: false }, it("MATCHMAKE"), it("RANKED MATCH"), it("GET CODE"), it("JOIN MATCH")], 0,
+        &[SideItem { badge: "2", ..SideItem::new("MY MATCHES") }, it("MATCHMAKE"), it("RANKED MATCH"), it("GET CODE"), it("JOIN MATCH")], 0,
         &SideCard { title: "MY MATCHES", body: "Games in progress. R = ranked. A on one where it is your turn to play it.",
             stats: &[st("VS ROBOTNIK", "GO 3D", SIDE_GREEN), st("VS KEV  R", "GO 9D", SIDE_GREEN), st("VS MOOSE", "WAIT 12D", SIDE_WHITE)] }, &ab);
     save(&buf, &format!("{dir}/tat.png"));
     hud::draw_side_menu(&mut buf, "MY TEAMS", "DUSTY",
-        &[it("ROSTERS"), it("STORE"), it("EQUIP"), it("PROFILE"), SideItem { label: "LOG OUT", badge: "", danger: true }], 1,
+        &[it("ROSTERS"), it("STORE"), it("EQUIP"), it("PROFILE"), SideItem { danger: true, ..SideItem::new("LOG OUT") }], 1,
         &SideCard { title: "STORE", body: "Spend scrap on hats, uniforms, boots and guns.", stats: &[st("SCRAP", "1240", SIDE_SCRAP)] }, &ab);
     save(&buf, &format!("{dir}/teams.png"));
+
+    // Restyled roster / equip / TAT screens, drawn by the real code.
+    use arty::game::account::{Roster, RosterPicker, RosterEditor, CosmeticsScreen};
+    let input = arty::input::InputState::new();
+    let mut fr = Roster::default_named(0);
+    fr.name = "FRAGS".into();
+    fr.worm_names = ["GREB".into(), "THLONK".into(), "GIBS".into(), "SMEG".into()];
+    fr.hat_ids = [36, 22, 34, 33]; fr.uniform_color_ids = [4, 2, 1, 3]; fr.boot_color_ids = [3, 4, 2, 3]; fr.gun_style_ids = [17, 18, 21, 14];
+    let mut bb = Roster::default_named(1);
+    bb.name = "BUNGBOIS".into();
+    bb.worm_names = ["BEN".into(), "GUY".into(), "MIKEY".into(), "RIAN".into()];
+    let mut picker = RosterPicker::new_list_only(String::new(), vec![fr.clone(), bb]);
+    picker.update(&input, &mut buf, 0);
+    save(&buf, &format!("{dir}/teams_pick.png"));
+    let mut ed = RosterEditor::new(fr.clone());
+    ed.update(&input, &mut buf, 0);
+    save(&buf, &format!("{dir}/team_edit.png"));
+    let all: Vec<u8> = (1..=43).collect();
+    let mut eq = CosmeticsScreen::new(fr.clone(), all.clone(), all.clone(), all.clone(), all.clone(), String::new(), 1015);
+    eq.update(&input, &mut buf);
+    save(&buf, &format!("{dir}/equip.png"));
+    let lob = arty::game::lobby::LobbyScreen::preview_matches("DUSTY",
+        &[("ROBOTNIK", false, true, 3), ("KEV", true, true, 9), ("MOOSE", false, false, 12), ("PIP", true, false, 6), ("GRUNKUS", false, false, 1)], false);
+    lob.preview_draw(&mut buf);
+    save(&buf, &format!("{dir}/tat_matches.png"));
 }
