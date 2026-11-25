@@ -1121,7 +1121,7 @@ fn try_change_password(token: &str, new_password: &str) -> Result<(), String> {
 
 pub enum CosmeticsAction { Saved(Roster), Back }
 
-/// EQUIP: L1/R1 picks the soldier, UP/DOWN the slot, LEFT/RIGHT puts the next owned item on right away.
+/// EQUIP: L1/R1 picks the soldier, LEFT/RIGHT the slot, UP/DOWN puts the next owned item on right away.
 /// Only owned items are offered (buying is the STORE's job). START or B saves.
 pub struct CosmeticsScreen {
     roster:         Roster,
@@ -1168,11 +1168,11 @@ impl CosmeticsScreen {
         let mut moved = false;
         if input.just_pressed(Button::L1) { self.soldier = (self.soldier + 3) % 4; moved = true; }
         if input.just_pressed(Button::R1) { self.soldier = (self.soldier + 1) % 4; moved = true; }
-        if input.just_pressed(Button::Up)   { self.col = (self.col + 4) % 5; moved = true; }
-        if input.just_pressed(Button::Down) { self.col = (self.col + 1) % 5; moved = true; }
+        if input.just_pressed(Button::Left)  { self.col = (self.col + 4) % 5; moved = true; }
+        if input.just_pressed(Button::Right) { self.col = (self.col + 1) % 5; moved = true; }
         if moved { self.first = 0; }
-        if input.just_pressed(Button::Left)  { self.step(-1); }
-        if input.just_pressed(Button::Right) { self.step(1); }
+        if input.just_pressed(Button::Up)   { self.step(-1); }
+        if input.just_pressed(Button::Down) { self.step(1); }
         self.follow_worn();
         self.draw(buf);
         None
@@ -1272,7 +1272,7 @@ impl CosmeticsScreen {
         let tabs: Vec<&str> = EQUIP_SLOTS.iter().map(|e| e.0).collect();
         ui::draw(buf, &ShopView {
             title: "EQUIP", info: &info,
-            hints: &[("L1/R1", "SOLDIER"), ("UP/DOWN", "SLOT"), ("LEFT/RIGHT", "CHANGE"), ("START", "SAVE"), ("B", "BACK")],
+            hints: &[("L1/R1", "SOLDIER"), ("LEFT/RIGHT", "SLOT"), ("UP/DOWN", "CHANGE"), ("START", "SAVE"), ("B", "BACK")],
             soldiers: &soldiers, cur: si, tabs: &tabs, tab: col, tiles: &tiles,
             first: self.first, sel: opts.iter().position(|&x| x == worn), what: if col == 4 { "LOOKS" } else { "OWNED" },
             status: None,
@@ -1325,13 +1325,19 @@ pub fn worn_icon_bounds(look: usize, hat: u8, gun: u8) -> (i32, i32, i32, i32) {
     if r < 0 { (0, 0, L::W as i32 - 1, L::H as i32 - 1) } else { (l, t, r, b) }
 }
 
+/// Union of worn_icon_bounds over all looks, hats and guns (checked by a test).
+pub const WORN_UNION: (i32, i32, i32, i32) = (1, 0, 23, 31);
+
 /// Draw a worn icon as big as possible (up to `max_z`) INSIDE the box (x, y, w, h): never cut off, hat
 /// included. Feet rest on the box's bottom edge, the painted part is centred horizontally. Returns the zoom.
 pub fn draw_worn_icon_fit(buf: &mut WorldBuffer, look: usize, body: Bgra, hat: u8, boot: u8, gun: u8,
                           x: i32, y: i32, w: i32, h: i32, max_z: i32) -> i32 {
     use crate::renderer::soldier_looks as L;
-    let (l, t, r, b) = worn_icon_bounds(look, hat, gun);
-    let (pw, ph) = (r - l + 1, b - t + 1);
+    // Size and place by the bounds of EVERY hat/gun/look combined (not this item's), so every soldier
+    // in the same box is drawn at the same zoom and stands in the same spot whatever he wears.
+    let _ = (hat, gun);
+    let (l, b) = (WORN_UNION.0, WORN_UNION.3);
+    let (pw, ph) = (WORN_UNION.2 - WORN_UNION.0 + 1, WORN_UNION.3 - WORN_UNION.1 + 1);
     let mut z = max_z.max(1);
     while z > 1 && (pw * z > w || ph * z > h) { z -= 1; }
     // draw_worn_icon_z paints sprite pixel (sx, sy) as the z*z block starting at
@@ -1349,6 +1355,17 @@ pub fn draw_worn_icon_fit(buf: &mut WorldBuffer, look: usize, body: Bgra, hat: u
 mod worn_fit_tests {
     use super::*;
     /// Every hat, every look: the fitted icon never paints outside its box.
+    #[test]
+    fn worn_union_covers_every_combination() {
+        use crate::renderer::soldier_looks as L;
+        let (mut l, mut t, mut r, mut b) = (99, 99, -1, -1);
+        for look in 0..L::N_LOOKS { for h in 0..L::N_HATS as u8 { for g in 0..L::N_GUNS as u8 {
+            let (a, c, d, e) = worn_icon_bounds(look, h, g);
+            l = l.min(a); t = t.min(c); r = r.max(d); b = b.max(e);
+        }}}
+        assert_eq!((l, t, r, b), WORN_UNION);
+    }
+
     #[test]
     fn fitted_icon_stays_inside_its_box() {
         use crate::renderer::soldier_looks as L;

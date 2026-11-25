@@ -178,12 +178,12 @@ impl StoreScreen {
         if input.just_pressed(Button::B) { return Some(StoreAction::Back); }
         if input.just_pressed(Button::L1) { self.soldier = (self.soldier + 3) % 4; }
         if input.just_pressed(Button::R1) { self.soldier = (self.soldier + 1) % 4; }
-        if input.just_pressed(Button::Up)   { self.tab = (self.tab + TABS.len() - 1) % TABS.len(); }
-        if input.just_pressed(Button::Down) { self.tab = (self.tab + 1) % TABS.len(); }
+        if input.just_pressed(Button::Left)  { self.tab = (self.tab + TABS.len() - 1) % TABS.len(); }
+        if input.just_pressed(Button::Right) { self.tab = (self.tab + 1) % TABS.len(); }
         let items = Self::items(self.tab);
         let t = self.tab;
-        if input.just_pressed(Button::Left)  && self.cursor[t] > 0 { self.cursor[t] -= 1; }
-        if input.just_pressed(Button::Right) && self.cursor[t] + 1 < items.len() { self.cursor[t] += 1; }
+        if input.just_pressed(Button::Up)   && self.cursor[t] > 0 { self.cursor[t] -= 1; }
+        if input.just_pressed(Button::Down) && self.cursor[t] + 1 < items.len() { self.cursor[t] += 1; }
         self.cursor[t] = self.cursor[t].min(items.len().saturating_sub(1));
         self.first[t] = crate::game::shop_ui::scroll_to(self.first[t], self.cursor[t], items.len());
 
@@ -234,7 +234,7 @@ impl StoreScreen {
         });
         ui::draw(buf, &ShopView {
             title: "STORE", info: &info,
-            hints: &[("L1/R1", "TRY ON"), ("UP/DOWN", "CATEGORY"), ("LEFT/RIGHT", "BROWSE"), ("A", "BUY"), ("B", "BACK")],
+            hints: &[("L1/R1", "SOLDIER"), ("LEFT/RIGHT", "CATEGORY"), ("UP/DOWN", "BROWSE"), ("A", "BUY"), ("B", "BACK")],
             soldiers: &self.soldiers, cur: self.soldier, tabs: &tabs, tab: t, tiles: &tiles,
             first: self.first[t], sel: Some(self.cursor[t]), what: "FOR SALE", status,
         });
@@ -251,4 +251,32 @@ impl StoreScreen {
 
     pub fn tab_len(tab: usize) -> usize { Self::items(tab).len() }
     pub const TABS: usize = TABS.len();
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::*;
+    use crate::input::{InputState, Button};
+    use crate::game::account::{CosmeticsScreen, Roster};
+
+    fn press(b: Button) -> InputState { let mut i = InputState::new(); i.inject_press(b); i }
+
+    #[test]
+    fn down_moves_the_store_cursor_and_equip_item() {
+        let mut buf = WorldBuffer::new();
+        let r = Roster::default_named(0);
+        let mut st = StoreScreen::new(String::new(), 1015, &[], &[], &[], &[], 0, &r);
+        st.update(&press(Button::Down), &mut buf);
+        assert_eq!(st.cursor[0], 1, "store DOWN");
+        st.update(&press(Button::Right), &mut buf);
+        assert_eq!(st.tab, 1, "store RIGHT");
+        let mut eq = CosmeticsScreen::new(r.clone(), vec![1, 2, 3], vec![], vec![], vec![], String::new(), 0);
+        let before = r.hat_ids[0];
+        let out = eq.update(&press(Button::Down), &mut buf);
+        assert!(out.is_none());
+        match eq.update(&press(Button::Start), &mut buf) {
+            Some(crate::game::account::CosmeticsAction::Saved(r2)) => assert_ne!(r2.hat_ids[0], before, "equip DOWN"),
+            _ => panic!("no save"),
+        }
+    }
 }
