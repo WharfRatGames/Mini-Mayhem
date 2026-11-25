@@ -1121,6 +1121,8 @@ fn try_change_password(token: &str, new_password: &str) -> Result<(), String> {
 
 pub enum CosmeticsAction { Saved(Roster), Back }
 
+/// EQUIP: L1/R1 picks the soldier, UP/DOWN the slot, LEFT/RIGHT puts the next owned item on right away.
+/// Only owned items are offered (buying is the STORE's job). START or B saves.
 pub struct CosmeticsScreen {
     roster:         Roster,
     owned_hats:     Vec<u8>,
@@ -1128,22 +1130,12 @@ pub struct CosmeticsScreen {
     owned_boots:    Vec<u8>,
     owned_guns:     Vec<u8>,
     soldier:        usize, // 0-3
-    col:            usize, // 0=hat 1=uniform 2=boots 3=gun
-    cycling:        bool,  // true = A was pressed, dpad cycles; A confirms, B cancels
-    cycle_backup:   u8,    // value before entering cycling mode (for B-cancel)
-    token:          String,
+    col:            usize, // 0=hat 1=uniform 2=boots 3=gun 4=look
+    first:          usize, // first visible tile of the row
     scrap:          u32,
-    buy_prompt:     Option<BuyPrompt>, // set when A pressed on an unowned item
-    status_msg:     Option<(String, u32)>, // (message, ttl ticks)
-    preview_mode:   bool,  // Y toggles full-screen soldier preview
 }
 
-struct BuyPrompt {
-    cosm_type: &'static str,
-    cosm_id:   u8,
-    name:      &'static str,
-    cost:      u32,
-}
+const EQUIP_SLOTS: [(&str, &str); 5] = [("HAT", "hat"), ("UNIFORM", "uniform"), ("BOOTS", "boots"), ("GUN", "gun_style"), ("LOOK", "look")];
 
 impl CosmeticsScreen {
     pub fn new(
@@ -1152,12 +1144,12 @@ impl CosmeticsScreen {
         owned_guns:     Vec<u8>,
         owned_uniforms: Vec<u8>,
         owned_boots:    Vec<u8>,
-        token:          String,
+        _token:         String,
         scrap:          u32,
     ) -> Self {
-        Self { roster, owned_hats, owned_uniforms, owned_boots, owned_guns,
-               soldier: 0, col: 0, cycling: false, cycle_backup: 0,
-               token, scrap, buy_prompt: None, status_msg: None, preview_mode: false }
+        let mut s = Self { roster, owned_hats, owned_uniforms, owned_boots, owned_guns, soldier: 0, col: 0, first: 0, scrap };
+        s.follow_worn();
+        s
     }
 
     pub fn set_profile(&mut self, scrap: u32, hats: Vec<u8>, guns: Vec<u8>, uniforms: Vec<u8>, boots: Vec<u8>) {
@@ -1166,95 +1158,61 @@ impl CosmeticsScreen {
         self.owned_guns = guns;
         self.owned_uniforms = uniforms;
         self.owned_boots = boots;
+        self.follow_worn();
     }
 
     pub fn update(&mut self, input: &InputState, buf: &mut WorldBuffer) -> Option<CosmeticsAction> {
-        if input.just_pressed(Button::Y) {
-            self.preview_mode = !self.preview_mode;
+        if input.just_pressed(Button::B) || input.just_pressed(Button::Start) {
+            return Some(CosmeticsAction::Saved(self.roster.clone()));
         }
-        if self.preview_mode {
-            self.draw_preview(buf);
-            return None;
-        }
-
-        if let Some(status) = &mut self.status_msg {
-            status.1 = status.1.saturating_sub(1);
-            if status.1 == 0 { self.status_msg = None; }
-        }
-
-        if self.buy_prompt.is_some() {
-            if input.just_pressed(Button::A) {
-                let p = self.buy_prompt.take().unwrap();
-                if self.scrap < p.cost {
-                    self.status_msg = Some(("NOT ENOUGH SCRAP".to_string(), 90));
-                } else {
-                    match crate::game::account::shop_buy(&self.token, p.cosm_type, p.cosm_id) {
-                        Ok(()) => {
-                            self.scrap = self.scrap.saturating_sub(p.cost);
-                            match p.cosm_type {
-                                "hat"       => self.owned_hats.push(p.cosm_id),
-                                "gun_style" => self.owned_guns.push(p.cosm_id),
-                                "uniform"   => self.owned_uniforms.push(p.cosm_id),
-                                "boots"     => self.owned_boots.push(p.cosm_id),
-                                _ => {}
-                            }
-                            self.status_msg = Some((format!("BOUGHT {}!", p.name), 90));
-                        }
-                        Err(e) => { self.status_msg = Some((e.to_uppercase(), 90)); }
-                    }
-                }
-            } else if input.just_pressed(Button::B) {
-                self.buy_prompt = None;
-            }
-        } else if self.cycling {
-            if input.just_pressed(Button::A) {
-                // Confirm: if current item is unowned, trigger buy prompt; else just confirm equip
-                let col = self.col;
-                let si = self.soldier;
-                if let Some((ct, cid, name, cost)) = self.unowned_for_sale(col, si) {
-                    self.buy_prompt = Some(BuyPrompt { cosm_type: ct, cosm_id: cid, name, cost });
-                } else {
-                    self.cycling = false;
-                }
-            } else if input.just_pressed(Button::B) {
-                let si = self.soldier;
-                let col = self.col;
-                self.set_id(col, si, self.cycle_backup);
-                self.cycling = false;
-            } else {
-                let si = self.soldier;
-                if input.just_pressed(Button::Left)  { self.cycle_all(-1, si); }
-                if input.just_pressed(Button::Right) { self.cycle_all( 1, si); }
-            }
-        } else {
-            if input.just_pressed(Button::B) { return Some(CosmeticsAction::Saved(self.roster.clone())); }
-            if input.just_pressed(Button::Up)    { self.soldier = self.soldier.saturating_sub(1); }
-            if input.just_pressed(Button::Down)  { if self.soldier < 3 { self.soldier += 1; } }
-            if input.just_pressed(Button::Left)  { self.col = self.col.saturating_sub(1); }
-            if input.just_pressed(Button::Right) { if self.col < 4 { self.col += 1; } }
-            if input.just_pressed(Button::A) {
-                let col = self.col;
-                self.cycle_backup = self.current_id(col, self.soldier);
-                self.cycling = true;
-            }
-            if input.just_pressed(Button::Start) { return Some(CosmeticsAction::Saved(self.roster.clone())); }
-        }
-
+        let mut moved = false;
+        if input.just_pressed(Button::L1) { self.soldier = (self.soldier + 3) % 4; moved = true; }
+        if input.just_pressed(Button::R1) { self.soldier = (self.soldier + 1) % 4; moved = true; }
+        if input.just_pressed(Button::Up)   { self.col = (self.col + 4) % 5; moved = true; }
+        if input.just_pressed(Button::Down) { self.col = (self.col + 1) % 5; moved = true; }
+        if moved { self.first = 0; }
+        if input.just_pressed(Button::Left)  { self.step(-1); }
+        if input.just_pressed(Button::Right) { self.step(1); }
+        self.follow_worn();
         self.draw(buf);
         None
     }
 
-    /// The catalog entry for the item soldier `si` has selected in column `col`,
-    /// if it is for sale and not owned (→ A offers to buy it). LOOK (col 4) is
-    /// free and never sold: before this guard, look N fell through to gun style N
-    /// and an owner of every item was asked to buy a gun.
-    fn unowned_for_sale(&self, col: usize, si: usize) -> Option<(&'static str, u8, &'static str, u32)> {
-        let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", 3 => "gun_style", _ => return None };
-        let cur = self.current_id(col, si);
-        if cur == 0 || self.owned_for_col(col).contains(&cur) { return None; }
-        crate::game::store::CATALOG.iter()
-            .find(|&&(ct, cid, _, _)| ct == col_type && cid == cur)
-            .copied()
+    /// Choices for a slot: none/standard first, then everything owned (catalog order, then extras like
+    /// warbond hats and exclusives). LOOK is free: all looks.
+    fn options(&self, col: usize) -> Vec<u8> {
+        if col == 4 { return (0..crate::renderer::soldier_looks::N_LOOKS as u8).collect(); }
+        let cat = EQUIP_SLOTS[col].1;
+        let owned = self.owned_for_col(col);
+        let mut opts = vec![0u8];
+        for &(ct, cid, _, _) in crate::game::store::CATALOG {
+            if ct == cat && owned.contains(&cid) { opts.push(cid); }
+        }
+        // Only ids that have art: an owned list can carry ids of other kinds or from newer servers.
+        let max = match col { 0 => crate::renderer::soldier_looks::N_HATS, 1 => 8, 2 => 6, _ => crate::renderer::soldier_looks::N_GUNS } as u8;
+        let mut extra: Vec<u8> = owned.iter().copied().filter(|id| *id != 0 && *id < max && !opts.contains(id)).collect();
+        extra.sort_unstable();
+        extra.dedup();
+        opts.extend(extra);
+        // Something worn but not (or no longer) owned still shows, so the cursor has a place.
+        let cur = self.current_id(col, self.soldier);
+        if !opts.contains(&cur) { opts.push(cur); }
+        opts
+    }
+
+    fn step(&mut self, dir: i32) {
+        let (col, si) = (self.col, self.soldier);
+        let opts = self.options(col);
+        let pos = opts.iter().position(|&x| x == self.current_id(col, si)).unwrap_or(0) as i32;
+        let next = (pos + dir).clamp(0, opts.len() as i32 - 1) as usize;
+        self.set_id(col, si, opts[next]);
+    }
+
+    /// Keep the worn item on screen.
+    fn follow_worn(&mut self) {
+        let opts = self.options(self.col);
+        let pos = opts.iter().position(|&x| x == self.current_id(self.col, self.soldier)).unwrap_or(0);
+        self.first = crate::game::shop_ui::scroll_to(self.first, pos, opts.len());
     }
 
     fn owned_for_col(&self, col: usize) -> &[u8] {
@@ -1289,236 +1247,37 @@ impl CosmeticsScreen {
         }
     }
 
-    fn cycle_all(&mut self, dir: i32, si: usize) {
-        let col = self.col;
-        if col == 4 {
-            let n = crate::renderer::soldier_looks::N_LOOKS as i32;
-            let cur = self.current_id(4, si) as i32;
-            self.set_id(4, si, (cur + dir).rem_euclid(n) as u8);
-            return;
-        }
-        let col_type = match col { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
-        // Options: 0 (none) + all catalog ids for this category
-        let mut opts = vec![0u8];
-        for &(ct, cid, _, _) in crate::game::store::CATALOG {
-            if ct == col_type { opts.push(cid); }
-        }
-        // Owned items outside the scrap catalog (Ben's Birthday Hat, warbond hats, ...) must be equippable too.
-        let mut extra: Vec<u8> = self.owned_for_col(col).iter().copied().filter(|id| *id != 0 && !opts.contains(id)).collect();
-        extra.sort_unstable();
-        extra.dedup();
-        opts.extend(extra);
-        let cur = self.current_id(col, si);
-        let pos = opts.iter().position(|&x| x == cur).unwrap_or(0);
-        let next = ((pos as i32 + dir).rem_euclid(opts.len() as i32)) as usize;
-        self.set_id(col, si, opts[next]);
+    /// Preview / test hook: jump to a soldier and slot, scrolled so tile `first` is the first shown.
+    pub fn set_view(&mut self, soldier: usize, col: usize, first: usize) {
+        self.soldier = soldier % 4;
+        self.col = col % 5;
+        self.first = first.min(self.options(self.col).len().saturating_sub(crate::game::shop_ui::VISIBLE));
     }
 
-    fn draw_preview(&self, buf: &mut WorldBuffer) {
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-        crate::renderer::hud::side_frame(buf, "SQUAD PREVIEW", &self.roster.name.to_uppercase(), &[("Y", "BACK TO EQUIP")]);
-        crate::renderer::hud::side_panel(buf, 14, crate::renderer::hud::SIDE_TOP, sw - 28, crate::renderer::hud::SIDE_BOTTOM - crate::renderer::hud::SIDE_TOP - 4);
+    /// Number of tiles in a slot's row for the current soldier.
+    pub fn slot_len(&self, col: usize) -> usize { self.options(col).len() }
 
-        // 4 soldiers evenly spaced across the screen
-        let slot_w = sw / 4;
-        for si in 0..4usize {
-            let cx = si as i32 * slot_w + slot_w / 2;
-            let foot_y = sh - 70;
-            let pos = WorldPos::new(cx as f32, foot_y as f32);
-            draw_soldier_skeletal(
-                buf, pos, si, 1, 100, &SoldierAnim::Idle,
-                None, false,
-                self.roster.hat_ids[si],
-                self.roster.uniform_color_ids[si],
-                self.roster.boot_color_ids[si],
-                self.roster.gun_style_ids[si],
-                None, 0.0, 0, 0,
-            );
-
-            // Soldier name above — pushed up to clear the bigger V2 head
-            let name = &self.roster.worm_names[si];
-            let nw = str_width(name) as i32;
-            draw_str(buf, name, cx - nw/2, foot_y - 66, Bgra::new(255, 220, 80));
-
-            // Cosmetic labels below
-            let cosm_type_names = ["hat", "uniform", "boots", "gun_style"];
-            let ids = [
-                self.roster.hat_ids[si],
-                self.roster.uniform_color_ids[si],
-                self.roster.boot_color_ids[si],
-                self.roster.gun_style_ids[si],
-            ];
-            let mut ly = foot_y + 6;
-            for (ctype, cid) in cosm_type_names.iter().zip(ids.iter()) {
-                if *cid == 0 { ly += 12; continue; }
-                let lbl = crate::game::store::catalog_name(ctype, *cid).unwrap_or("");
-                if lbl.is_empty() { ly += 12; continue; }
-                let lw = str_width(lbl) as i32;
-                draw_str(buf, lbl, cx - lw/2, ly, Bgra::new(160, 170, 210));
-                ly += 12;
-            }
-        }
-
+    pub fn draw(&self, buf: &mut WorldBuffer) {
+        use crate::game::shop_ui::{self as ui, Tile, ShopView};
+        let (col, si) = (self.col, self.soldier);
+        let cat = EQUIP_SLOTS[col].1;
+        let worn = self.current_id(col, si);
+        let opts = self.options(col);
+        let tiles: Vec<Tile> = opts.iter().map(|&id| Tile {
+            cat, id, name: crate::game::store::cosmetic_name(cat, id),
+            tag: if id == worn { "WEARING".into() } else { String::new() }, tag_col: ui::GREEN,
+        }).collect();
+        let soldiers = ui::soldiers_of(&self.roster);
+        let info = format!("{}   SCRAP {}", self.roster.name.to_uppercase(), self.scrap);
+        let tabs: Vec<&str> = EQUIP_SLOTS.iter().map(|e| e.0).collect();
+        ui::draw(buf, &ShopView {
+            title: "EQUIP", info: &info,
+            hints: &[("L1/R1", "SOLDIER"), ("UP/DOWN", "SLOT"), ("LEFT/RIGHT", "CHANGE"), ("START", "SAVE"), ("B", "BACK")],
+            soldiers: &soldiers, cur: si, tabs: &tabs, tab: col, tiles: &tiles,
+            first: self.first, sel: opts.iter().position(|&x| x == worn), what: if col == 4 { "LOOKS" } else { "OWNED" },
+            status: None,
+        });
     }
-
-    fn draw(&self, buf: &mut WorldBuffer) {
-        use crate::renderer::hud::{side_frame, side_row_bg, side_panel, side_shade, SIDE_GOLD, SIDE_DIM, SIDE_ACCENT, SIDE_TOP, SIDE_BOTTOM};
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-
-        // Same frame as the menus: dimmed title art, header (team + scrap), hints in the footer.
-        let price_hint;
-        let hints: Vec<(&str, &str)> = if self.buy_prompt.is_some() {
-            vec![("A", "BUY"), ("B", "CANCEL")]
-        } else if self.cycling {
-            if let Some((_, _, _, cost)) = self.unowned_for_sale(self.col, self.soldier) {
-                price_hint = format!("BUY ({} SCRAP)", cost);
-                vec![("A", price_hint.as_str()), ("B", "CANCEL")]
-            } else {
-                vec![("LEFT/RIGHT", "CYCLE"), ("A", "CONFIRM"), ("B", "CANCEL")]
-            }
-        } else {
-            vec![("DPAD", "MOVE"), ("A", "CHANGE"), ("Y", "PREVIEW"), ("START", "SAVE"), ("B", "BACK")]
-        };
-        let who = format!("{}   SCRAP {}", self.roster.name.to_uppercase(), self.scrap);
-        side_frame(buf, "EQUIP", &who, &hints);
-
-        let col_labels = ["HAT", "UNIFORM", "BOOTS", "GUN", "LOOK"];
-        let (gx, gw) = (14i32, sw - 28);
-        let col_w = gw / 5;
-
-        // Column headers
-        side_shade(buf, gx, SIDE_TOP, gw, 20, 60, (10, 14, 40));
-        for (c, lbl) in col_labels.iter().enumerate() {
-            let cx = gx + c as i32 * col_w + col_w / 2;
-            let lw = str_width(lbl) as i32;
-            let hdr_col = if c == self.col { SIDE_GOLD } else { SIDE_DIM };
-            draw_str(buf, lbl, cx - lw/2, SIDE_TOP + 6, hdr_col);
-        }
-
-        // Soldier rows
-        let top = SIDE_TOP + 24;
-        let row_h = (SIDE_BOTTOM - top) / 4;
-
-        for si in 0..4usize {
-            let ry = top + si as i32 * row_h;
-            let selected = si == self.soldier;
-            side_row_bg(buf, gx, ry, gw, row_h - 4, selected);
-
-            // Soldier name
-            let name = &self.roster.worm_names[si];
-            draw_str(buf, name, gx + 10, ry + 4, if selected { SIDE_GOLD } else { Bgra::new(200, 205, 235) });
-
-            // Cosmetic cells
-            for c in 0..5usize {
-                let cx = gx + c as i32 * col_w;
-                let cell_selected = selected && c == self.col;
-                if cell_selected {
-                    // Gold frame around the chosen cell
-                    let (x0, y0, w0, h0) = (cx + 2, ry + 1, col_w - 4, row_h - 6);
-                    buf.fill_rect(x0, y0, w0 as u32, 2, SIDE_ACCENT);
-                    buf.fill_rect(x0, y0 + h0 - 2, w0 as u32, 2, SIDE_ACCENT);
-                    buf.fill_rect(x0, y0, 2, h0 as u32, SIDE_ACCENT);
-                    buf.fill_rect(x0 + w0 - 2, y0, 2, h0 as u32, SIDE_ACCENT);
-                }
-
-                let id = self.current_id(c, si);
-                let owned = self.owned_for_col(c);
-                let center_x = cx + col_w / 2;
-                let icon_cy = ry + row_h / 2;
-                let icon_w = col_w - 12;
-                let icon_h = row_h - 10;
-
-                // Cosmetic icon: this soldier's look wearing the item (so the icon matches what shows in game).
-                {
-                    let team_col = crate::renderer::draw_sprites::TEAM_COLOURS[si.min(3)];
-                    let look = (self.roster.uniform_color_ids[si] >> 5) as usize;
-                    let uni = if c == 1 { id } else { 0 };
-                    let body = if uni == 0 { team_col } else { uniform_swatch_color(uni) };
-                    let (hat, boot, gun) = (if c == 0 { id } else { 0 }, if c == 2 { id } else { 0 }, if c == 3 { id } else { 0 });
-                    draw_worn_icon(buf, if c == 4 { id as usize } else { look }, center_x, ry + row_h - 18, body, hat, boot, gun);
-                    if id == 0 && (c == 0 || c == 1) {
-                        let dash = "--";
-                        let dw = str_width(dash) as i32;
-                        draw_str(buf, dash, center_x + 26 - dw/2, icon_cy - 3, Bgra::new(60, 65, 90));
-                    }
-                }
-
-                let text_y = ry + row_h - 16;
-
-                // Cosmetic name label under the icon
-                {
-                    let cosm_type = match c { 0 => "hat", 1 => "uniform", 2 => "boots", _ => "gun_style" };
-                    let label = if c == 4 {
-                        crate::renderer::soldier_looks::NAMES[(id as usize).min(4)]
-                    } else if id == 0 {
-                        if c == 0 { "NONE" } else { "" }
-                    } else {
-                        crate::game::store::catalog_name(cosm_type, id).unwrap_or("")
-                    };
-                    if !label.is_empty() {
-                        // Cut to the cell so long names don't run into the next column.
-                        let mut shown = label.to_string();
-                        while str_width(&shown) > col_w - 8 && shown.len() > 1 { shown.pop(); }
-                        let lw = str_width(&shown) as i32;
-                        let label_y = text_y - 2;
-                        draw_str(buf, &shown, center_x - lw / 2, label_y, Bgra::new(190, 195, 225));
-                    }
-                }
-
-                // Cycle arrows on selected cell when in cycling mode
-                let cycling_this = cell_selected && self.cycling;
-                if cycling_this && (c == 4 || !owned.is_empty()) {
-                    let arrow_col = Bgra::new(255, 220, 50);
-                    draw_str(buf, "<", cx + 3, text_y, arrow_col);
-                    draw_str(buf, ">", cx + col_w - 10, text_y, arrow_col);
-                }
-            }
-
-        }
-
-        // Status message (purchase feedback), on a small panel above the footer
-        if let Some((msg, _)) = &self.status_msg {
-            let mw = str_width_scaled(msg, 2) as i32;
-            side_panel(buf, sw/2 - mw/2 - 14, sh - 70, mw + 28, 34);
-            draw_str_shadow_scaled(buf, msg, sw/2 - mw/2, sh - 60, Bgra::new(90, 230, 120), 2);
-        }
-
-        // Buy prompt overlay
-        if let Some(ref p) = self.buy_prompt {
-            let bw = 400i32; let bh = 96i32;
-            let bx = sw/2 - bw/2; let by = sh/2 - bh/2;
-            side_panel(buf, bx, by, bw, bh);
-            side_shade(buf, bx, by + 2, bw, bh - 2, 120, (6, 8, 24));
-            let title = format!("BUY {}?", p.name.to_uppercase());
-            draw_str_shadow_scaled(buf, &title, sw/2 - str_width_scaled(&title, 2)/2, by + 14, SIDE_GOLD, 2);
-            let cost_str = format!("Cost: {} scrap  (have: {})", p.cost, self.scrap);
-            let can_afford = self.scrap >= p.cost;
-            let cost_col = if can_afford { Bgra::new(200, 200, 220) } else { Bgra::new(220, 80, 80) };
-            draw_str(buf, &cost_str, sw/2 - str_width(&cost_str)/2, by + 38, cost_col);
-            let confirm = if can_afford { "A=CONFIRM  B=CANCEL" } else { "NEED MORE SCRAP  B=CANCEL" };
-            draw_str(buf, confirm, sw/2 - str_width(confirm)/2, by + 58, Bgra::new(60, 70, 110));
-        }
-    }
-}
-
-fn uniform_swatch_color(id: u8) -> Bgra {
-    match id {
-        1 => Bgra::new( 60, 100,  50), // Camo Green
-        2 => Bgra::new(190, 155,  90), // Desert Tan
-        3 => Bgra::new( 30,  30,  35), // Midnight Black
-        4 => Bgra::new(230, 230, 235), // Snow White
-        5 => Bgra::new( 30,  40, 120), // Navy
-        6 => Bgra::new(200, 120, 160), // Pink Camo
-        7 => Bgra::new(200, 165,  40), // Gold Plate
-        _ => Bgra::new(120, 120, 120),
-    }
-}
-
-/// Cosmetics-grid icon: the look drawn at 2x (feet at (cx, foot_y)) wearing the given hat / boots / gun style.
-pub fn draw_worn_icon(buf: &mut WorldBuffer, look: usize, cx: i32, foot_y: i32, body: Bgra, hat: u8, boot: u8, gun: u8) {
-    draw_worn_icon_z(buf, look, cx, foot_y, body, hat, boot, gun, 2);
 }
 
 /// Same at an integer zoom (1 = native 24x32).
@@ -1542,6 +1301,67 @@ pub fn draw_worn_icon_z(buf: &mut WorldBuffer, look: usize, cx: i32, foot_y: i32
                 for ox in 0..z {
                     buf.set_pixel(cx - z * L::W as i32 / 2 + z * x as i32 + ox, foot_y - z * (L::H as i32 - 1) + z * y as i32 + oy, col);
                 }
+            }
+        }
+    }
+}
+
+/// Painted bounds of a worn icon in sprite pixels: (left, top, right, bottom), inclusive. Hats and guns
+/// stick out past the body, so callers that must keep the whole soldier inside a box measure first.
+pub fn worn_icon_bounds(look: usize, hat: u8, gun: u8) -> (i32, i32, i32, i32) {
+    use crate::renderer::soldier_looks as L;
+    let hat = if (hat as usize) < L::N_HATS { hat as usize } else { 0 };
+    let gun = if (gun as usize) < L::N_GUNS { gun as usize } else { 0 };
+    let variant = (if hat != 0 { 2 } else { 0 }) + (if gun != 0 { 1 } else { 0 });
+    let sheet = &L::DATA[look.min(L::N_LOOKS - 1)][variant][0];
+    let (mut l, mut t, mut r, mut b) = (L::W as i32, L::H as i32, -1, -1);
+    for y in 0..L::H {
+        for x in 0..L::W {
+            let i = y * L::W + x;
+            let on = sheet[i] != 0 || (hat != 0 && L::HATS[hat][i] != 0) || (gun != 0 && L::GUNS[gun][i] != 0);
+            if on { l = l.min(x as i32); r = r.max(x as i32); t = t.min(y as i32); b = b.max(y as i32); }
+        }
+    }
+    if r < 0 { (0, 0, L::W as i32 - 1, L::H as i32 - 1) } else { (l, t, r, b) }
+}
+
+/// Draw a worn icon as big as possible (up to `max_z`) INSIDE the box (x, y, w, h): never cut off, hat
+/// included. Feet rest on the box's bottom edge, the painted part is centred horizontally. Returns the zoom.
+pub fn draw_worn_icon_fit(buf: &mut WorldBuffer, look: usize, body: Bgra, hat: u8, boot: u8, gun: u8,
+                          x: i32, y: i32, w: i32, h: i32, max_z: i32) -> i32 {
+    use crate::renderer::soldier_looks as L;
+    let (l, t, r, b) = worn_icon_bounds(look, hat, gun);
+    let (pw, ph) = (r - l + 1, b - t + 1);
+    let mut z = max_z.max(1);
+    while z > 1 && (pw * z > w || ph * z > h) { z -= 1; }
+    // draw_worn_icon_z paints sprite pixel (sx, sy) as the z*z block starting at
+    // (cx - z*W/2 + z*sx, foot_y - z*(H-1) + z*sy). Place the painted bounds exactly:
+    // left edge centred in the box, bottom edge on the box's last row.
+    let left = x + (w - pw * z) / 2;
+    let cx = left + z * L::W as i32 / 2 - z * l;
+    let foot_y = (y + h - z) + z * (L::H as i32 - 1 - b);
+    draw_worn_icon_z(buf, look, cx, foot_y, body, hat, boot, gun, z);
+    crate::renderer::font::layout_note_picture(left, y + h - ph * z, pw * z, ph * z);
+    z
+}
+
+#[cfg(test)]
+mod worn_fit_tests {
+    use super::*;
+    /// Every hat, every look: the fitted icon never paints outside its box.
+    #[test]
+    fn fitted_icon_stays_inside_its_box() {
+        use crate::renderer::soldier_looks as L;
+        let (bx, by, bw, bh) = (100, 100, 140, 96);
+        for look in 0..L::N_LOOKS {
+            for hat in 0..L::N_HATS as u8 {
+                let mut buf = WorldBuffer::new();
+                draw_worn_icon_fit(&mut buf, look, Bgra::new(200, 50, 50), hat, 0, 17, bx, by, bw, bh, 4);
+                for yy in 60..240 { for xx in 40..320 {
+                    let inside = xx >= bx && xx < bx + bw && yy >= by && yy < by + bh;
+                    let p = buf.get_pixel(xx, yy);
+                    if !inside { assert!(p.r == 0 && p.g == 0 && p.b == 0, "look {look} hat {hat} painted outside at ({xx},{yy})"); }
+                }}
             }
         }
     }

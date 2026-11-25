@@ -218,7 +218,7 @@ fn thick_line(buf: &mut WorldBuffer, ax: f32, ay: f32, bx: f32, by: f32, col: Bg
 
 // ── Cosmetic color lookups ────────────────────────────────────────────────────
 
-fn uniform_color(id: u8) -> Bgra {
+pub fn uniform_color(id: u8) -> Bgra {
     match id {
         1 => Bgra::new( 60, 100,  50), // Camo Green
         2 => Bgra::new(190, 155,  90), // Desert Tan

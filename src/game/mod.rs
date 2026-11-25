@@ -17,5 +17,6 @@ pub use state::GameState;
 pub mod cpu;
 pub mod cpu_driver;
 pub mod store;
+pub mod shop_ui;
 pub mod missions;
 pub mod settings;

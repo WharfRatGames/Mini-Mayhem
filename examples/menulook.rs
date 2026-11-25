@@ -4,6 +4,9 @@ use arty::renderer::{buffer::WorldBuffer, hud::{self, SideItem, SideCard, SIDE_G
 use arty::world::{SCREEN_H, SCREEN_W, WORLD_W};
 
 fn save(buf: &WorldBuffer, path: &str) {
+    // Overlap check of everything drawn since the previous save, then start recording the next screen.
+    for l in arty::renderer::font::layout_overlaps(&arty::renderer::font::layout_record_take()) { println!("OVERLAP {path}: {l}"); }
+    arty::renderer::font::layout_record_start();
     let (sw, sh) = (SCREEN_W as usize, SCREEN_H as usize);
     let mut img = vec![0u8; sw * sh * 3];
     let d = buf.raw_data();
@@ -18,6 +21,7 @@ fn st(k: &str, v: &str, c: arty::renderer::Bgra) -> (String, String, arty::rende
 
 fn main() {
     let dir = std::env::args().nth(1).unwrap_or("/tmp".into());
+    arty::renderer::font::layout_record_start();
     let ab = [("A", "SELECT"), ("B", "BACK")];
     let mut buf = WorldBuffer::new();
     hud::draw_side_menu(&mut buf, "MULTIPLAYER", "DUSTY",
@@ -54,6 +58,9 @@ fn main() {
     let mut eq = CosmeticsScreen::new(fr.clone(), all.clone(), all.clone(), all.clone(), all.clone(), String::new(), 1015);
     eq.update(&input, &mut buf);
     save(&buf, &format!("{dir}/equip.png"));
+    eq.set_view(2, 3, 15);
+    eq.draw(&mut buf);
+    save(&buf, &format!("{dir}/equip_gun.png"));
     let lob = arty::game::lobby::LobbyScreen::preview_matches("DUSTY",
         &[("ROBOTNIK", false, true, 3), ("KEV", true, true, 9), ("MOOSE", false, false, 12), ("PIP", true, false, 6), ("GRUNKUS", false, false, 1)], false);
     lob.preview_draw(&mut buf);
@@ -72,9 +79,13 @@ fn main() {
     kb.text = "AB12".into();
     kb.draw_screen(&mut buf, "JOIN MATCH", "TYPE YOUR FRIEND'S 6-LETTER CODE");
     save(&buf, &format!("{dir}/keyboard.png"));
-    let mut store = arty::game::store::StoreScreen::new(String::new(), 1015, &[1, 2, 3], &[1], &[], &[], 40);
-    store.update(&input, &mut buf);
+    let mut store = arty::game::store::StoreScreen::new(String::new(), 1015, &[1, 2, 3], &[1], &[], &[], 40, &fr);
+    store.set_view(1, 0, 3);
+    store.draw(&mut buf);
     save(&buf, &format!("{dir}/store.png"));
+    store.set_view(3, 4, 0);
+    store.draw(&mut buf);
+    save(&buf, &format!("{dir}/store_wb.png"));
     let mut ms = arty::game::missions::MissionsScreen::preview(&[
         ("Win 2 matches", 2, 2, 60, false, false), ("Kill 5 soldiers", 3, 5, 40, false, false), ("Use the bazooka 10 times", 10, 10, 25, false, true),
         ("Win 10 matches", 4, 10, 250, true, false), ("Drown 6 soldiers", 1, 6, 180, true, false)], 1015);

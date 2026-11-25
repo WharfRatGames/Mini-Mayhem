@@ -336,6 +336,24 @@ pub fn side_frame(buf: &mut WorldBuffer, crumb: &str, who: &str, hints: &[(&str,
     draw_button_hints(buf, hints, 0, 4);
 }
 
+/// `side_frame` on a plain background (no title art behind anything): for screens full of pictures
+/// (store, equip) where the art's logo text would sit behind the soldiers.
+pub fn side_frame_plain(buf: &mut WorldBuffer, crumb: &str, who: &str, hints: &[(&str, &str)]) {
+    let (sw, sh) = (SCREEN_W as i32, SCREEN_H as i32);
+    // Soft vertical gradient, darker at the bottom
+    for y in 0..sh {
+        let t = y as u32 * 10 / sh as u32;
+        buf.fill_rect(0, y, SCREEN_W, 1, Bgra::new(12 - t as u8 / 2, 16 - t as u8 / 2, 40 - t as u8));
+    }
+    buf.fill_rect(0, 0, SCREEN_W, 44, Bgra::new(16, 20, 50));
+    buf.fill_rect(0, 44, SCREEN_W, 2, SIDE_ACCENT);
+    let scale = if str_width_scaled(crumb, 3) + str_width(who) + 50 <= sw { 3 } else { 2 };
+    draw_str_shadow_scaled(buf, crumb, 18, if scale == 3 { 10 } else { 14 }, SIDE_GOLD, scale);
+    draw_str(buf, who, sw - str_width(who) - 14, 17, Bgra::new(200, 205, 235));
+    buf.fill_rect(0, sh - 24, SCREEN_W, 24, Bgra::new(16, 20, 50));
+    draw_button_hints(buf, hints, 0, 4);
+}
+
 /// The big item rows in the left column, sharing the full height (no scrolling, max 96 px each).
 pub fn side_rows(buf: &mut WorldBuffer, items: &[SideItem], cursor: usize) {
     let (col_x, col_w, top) = (SIDE_COL_X, SIDE_COL_W, SIDE_TOP);

@@ -10,7 +10,7 @@ mod audio;
 mod https;
 mod ota;
 mod bug_report;
-const VERSION: &str = "0.5.4.439-exp47";
+const VERSION: &str = "0.5.4.440-exp48";
 
 use std::time::{Duration, Instant};
 use world::{WorldPos, Heightmap, Terrain, WORLD_W};
@@ -1529,6 +1529,21 @@ fn current_time_seed() -> u64 {
 fn run_multiplayer(_fb: &mut renderer::Framebuffer, _input: &mut input::InputState, _buf: &mut renderer::WorldBuffer) {}
 
 /// Show the roster picker and return the chosen roster, or None if cancelled.
+/// MY TEAMS > ROSTERS: edit / add / delete teams (A edits, B back). Changes are saved by the picker itself.
+fn show_roster_manager(
+    fb:      &mut renderer::Framebuffer,
+    input:   &mut input::InputState,
+    buf:     &mut WorldBuffer,
+    rosters: &[game::account::Roster],
+    token:   &str,
+) {
+    let rs = if rosters.is_empty() { vec![game::account::Roster::default_named(0)] } else { rosters.to_vec() };
+    let mut picker = game::account::RosterPicker::new_manage(token.to_string(), rs);
+    run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
+        picker.update(input, buf, 0).map(|_| ())
+    })
+}
+
 fn show_roster_picker(
     fb:      &mut renderer::Framebuffer,
     input:   &mut input::InputState,
@@ -1542,8 +1557,8 @@ fn show_roster_picker(
     } else {
         rosters.to_vec()
     };
-    // MY TEAMS > ROSTERS: manage mode (A edits, B back); edits are saved by the picker itself.
-    let mut picker = RosterPicker::new_manage(token.to_string(), rs);
+    // Choose a team (live match, EQUIP): A = use it. list_only: no auto-opening of the editor.
+    let mut picker = RosterPicker::new_list_only(token.to_string(), rs);
     run_screen_loop(fb, input, buf, false, |input, buf, _fb| {
         match picker.update(input, buf, 0) {
             Some(RosterAction::Selected(r)) => Some(Some(r)),
@@ -1634,12 +1649,12 @@ fn show_my_teams_menu(
         if input.just_pressed(input::Button::A) || input.just_pressed(input::Button::Start) {
             match cursor {
                 0 => {
-                    show_roster_picker(fb, input, buf, &rosters, &token);
+                    show_roster_manager(fb, input, buf, &rosters, &token);
                     // Teams may have been edited / added / deleted there (saved to the cache by the picker).
                     let fresh = game::account::load_cached_rosters();
                     if !fresh.is_empty() { rosters = fresh; }
                 }
-                1 => { show_store_screen(fb, input, buf, &token); }
+                1 => { show_store_screen(fb, input, buf, &token, rosters.first()); }
                 2 => { show_equip_screen(fb, input, buf, &rosters, &token); }
                 3 => { show_profile_screen(fb, input, buf, &token, &username); }
                 4 if logged_in => {
@@ -1697,9 +1712,13 @@ fn show_store_screen(
     input: &mut input::InputState,
     buf:   &mut WorldBuffer,
     token: &str,
+    team:  Option<&game::account::Roster>,
 ) {
     use game::account::{fetch_profile, load_cached_profile};
     use game::store::{StoreScreen, StoreAction};
+    // Items are tried on by the soldiers of your first team (L1/R1).
+    let default_team = game::account::Roster::default_named(0);
+    let team = team.unwrap_or(&default_team);
 
     let cached = load_cached_profile().unwrap_or_default();
     let mut screen = StoreScreen::new(
@@ -1710,6 +1729,7 @@ fn show_store_screen(
         &cached.3,
         &cached.4,
         cached.5,
+        team,
     );
 
     // Refresh profile from network in background

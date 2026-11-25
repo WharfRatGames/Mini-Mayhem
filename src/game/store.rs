@@ -1,24 +1,7 @@
 use crate::input::{InputState, Button};
-use crate::renderer::{WorldBuffer, Bgra};
-use crate::renderer::font::{draw_str, draw_str_scaled, str_width, str_width_scaled};
-use crate::renderer::cosmetic_sprites;
-use crate::world::{SCREEN_W, SCREEN_H};
+use crate::renderer::WorldBuffer;
 
 pub enum StoreAction { Back }
-
-#[derive(Clone, PartialEq)]
-enum Currency { Scrap, Warbond }
-
-#[derive(Clone)]
-struct StoreItem {
-    cosm_type: &'static str,
-    cosm_id:   u8,
-    name:      &'static str,
-    cost:      u32,
-    currency:  Currency,
-    owned:     bool,
-    coming_soon: bool,
-}
 
 pub static CATALOG: &[(&str, u8, &str, u32)] = &[
     // Hats (scrap only)
@@ -112,31 +95,46 @@ static WARBOND_HATS: &[(u8, &str, u32)] = &[
     (43, "Worm Hat",         100),
 ];
 
-// Placeholder warbond packages — not purchasable yet
-static WB_PACKAGES: &[(&str, u32)] = &[
-    ("100 Warbonds",  100),
-    ("500 Warbonds",  500),
-    ("1200 Warbonds", 1200),
-    ("2500 Warbonds", 2500),
-];
+/// Display name of any cosmetic, including ones outside the scrap catalog (warbond hats, exclusives).
+pub fn cosmetic_name(cosm_type: &str, id: u8) -> String {
+    match (cosm_type, id) {
+        ("look", _) => return crate::renderer::soldier_looks::NAMES[(id as usize) % crate::renderer::soldier_looks::N_LOOKS].to_string(),
+        ("hat", 0) => return "NONE".into(),
+        ("uniform", 0) => return "TEAM COLOUR".into(),
+        ("boots", 0) | ("gun_style", 0) => return "STANDARD".into(),
+        ("hat", 37) => return "BEN'S BIRTHDAY HAT".into(),
+        ("uniform", 6) => return "PINK CAMO".into(),
+        ("uniform", 7) => return "GOLD PLATE".into(),
+        _ => {}
+    }
+    if let Some(n) = catalog_name(cosm_type, id) { return n.to_uppercase(); }
+    if cosm_type == "hat" {
+        if let Some(&(_, n, _)) = WARBOND_HATS.iter().find(|e| e.0 == id) { return n.to_uppercase(); }
+    }
+    format!("#{}", id)
+}
 
-#[derive(Clone, PartialEq)]
-enum Tab { Scrap, Warbonds }
+/// Store tabs: label and the catalog category ("wb" = warbond hats).
+const TABS: [(&str, &str); 5] = [("HAT", "hat"), ("UNIFORM", "uniform"), ("BOOTS", "boots"), ("GUN", "gun_style"), ("WARBOND", "wb")];
 
 pub struct StoreScreen {
     token:      String,
     balance:    u32,
     warbonds:   u32,
-    items:      Vec<StoreItem>,
-    wb_items:   Vec<StoreItem>,
-    tab:        Tab,
-    cursor:     usize,
-    scroll:     usize,
+    /// Owned ids per category: hat, uniform, boots, gun_style.
+    owned:      [Vec<u8>; 4],
+    soldiers:   [(String, crate::game::shop_ui::Fit); 4],
+    soldier:    usize,
+    tab:        usize,
+    /// Cursor and scroll per tab, so switching tabs keeps your place.
+    cursor:     [usize; 5],
+    first:      [usize; 5],
     status:     String,
     status_ttl: u32,
 }
 
 impl StoreScreen {
+    /// `team`: the soldiers that try items on (L1/R1); the first roster, or a default team.
     pub fn new(
         token:   String,
         balance: u32,
@@ -145,122 +143,68 @@ impl StoreScreen {
         owned_uniforms: &[u8],
         owned_boots:    &[u8],
         warbonds: u32,
+        team: &crate::game::account::Roster,
     ) -> Self {
-        let items = Self::build_scrap_items(owned_hats, owned_guns, owned_uniforms, owned_boots);
-        let wb_items = Self::build_wb_items(owned_hats, warbonds);
-        Self { token, balance, warbonds, items, wb_items, tab: Tab::Scrap,
-               cursor: 0, scroll: 0, status: String::new(), status_ttl: 0 }
-    }
-
-    fn build_scrap_items(oh: &[u8], og: &[u8], ou: &[u8], ob: &[u8]) -> Vec<StoreItem> {
-        CATALOG.iter().map(|&(ct, cid, name, cost)| {
-            let owned = match ct {
-                "hat"       => oh.contains(&cid),
-                "gun_style" => og.contains(&cid),
-                "uniform"   => ou.contains(&cid),
-                "boots"     => ob.contains(&cid),
-                _           => false,
-            };
-            StoreItem { cosm_type: ct, cosm_id: cid, name, cost, currency: Currency::Scrap,
-                        owned, coming_soon: false }
-        }).collect()
-    }
-
-    fn build_wb_items(owned_hats: &[u8], _warbonds: u32) -> Vec<StoreItem> {
-        let mut items: Vec<StoreItem> = WARBOND_HATS.iter().map(|&(id, name, cost)| {
-            StoreItem { cosm_type: "hat", cosm_id: id, name, cost,
-                        currency: Currency::Warbond,
-                        owned: owned_hats.contains(&id),
-                        coming_soon: false }
-        }).collect();
-        // Package placeholders
-        for &(name, cost) in WB_PACKAGES {
-            items.push(StoreItem { cosm_type: "package", cosm_id: 0, name, cost,
-                                   currency: Currency::Warbond, owned: false, coming_soon: true });
-        }
-        items
+        let mut s = Self { token, balance, warbonds, owned: Default::default(),
+                           soldiers: crate::game::shop_ui::soldiers_of(team),
+                           soldier: 0, tab: 0, cursor: [0; 5], first: [0; 5], status: String::new(), status_ttl: 0 };
+        s.set_profile(balance, owned_hats, owned_guns, owned_uniforms, owned_boots, warbonds);
+        s
     }
 
     pub fn set_profile(&mut self, scrap: u32, owned_hats: &[u8], owned_guns: &[u8],
                        owned_uniforms: &[u8], owned_boots: &[u8], warbonds: u32) {
         self.balance = scrap;
         self.warbonds = warbonds;
-        for item in &mut self.items {
-            item.owned = match item.cosm_type {
-                "hat"       => owned_hats.contains(&item.cosm_id),
-                "gun_style" => owned_guns.contains(&item.cosm_id),
-                "uniform"   => owned_uniforms.contains(&item.cosm_id),
-                "boots"     => owned_boots.contains(&item.cosm_id),
-                _           => false,
-            };
-        }
-        for item in &mut self.wb_items {
-            if item.cosm_type == "hat" {
-                item.owned = owned_hats.contains(&item.cosm_id);
-            }
+        self.owned = [owned_hats.to_vec(), owned_uniforms.to_vec(), owned_boots.to_vec(), owned_guns.to_vec()];
+    }
+
+    /// Items of a tab: (category worn as, id, cost, paid in warbonds).
+    fn items(tab: usize) -> Vec<(&'static str, u8, u32, bool)> {
+        match TABS[tab].1 {
+            "wb" => WARBOND_HATS.iter().map(|&(id, _, c)| ("hat", id, c, true)).collect(),
+            cat => CATALOG.iter().filter(|e| e.0 == cat).map(|&(ct, id, _, c)| (ct, id, c, false)).collect(),
         }
     }
 
+    fn owns(&self, cat: &str, id: u8) -> bool {
+        let i = match cat { "hat" => 0, "uniform" => 1, "boots" => 2, "gun_style" => 3, _ => return false };
+        self.owned[i].contains(&id)
+    }
+
+    fn say(&mut self, msg: &str, ttl: u32) { self.status = msg.to_string(); self.status_ttl = ttl; }
+
     pub fn update(&mut self, input: &InputState, buf: &mut WorldBuffer) -> Option<StoreAction> {
         if input.just_pressed(Button::B) { return Some(StoreAction::Back); }
-
-        // Tab switch with L/R
-        if input.just_pressed(Button::L1) && self.tab != Tab::Scrap {
-            self.tab = Tab::Scrap; self.cursor = 0; self.scroll = 0;
-        }
-        if input.just_pressed(Button::R1) && self.tab != Tab::Warbonds {
-            self.tab = Tab::Warbonds; self.cursor = 0; self.scroll = 0;
-        }
-
-        let active = if self.tab == Tab::Scrap { &mut self.items } else { &mut self.wb_items };
-        let n = active.len();
-        const COLS: usize = 2;
-        const ROWS: usize = 5;
-
-        if input.just_pressed(Button::Up)    { if self.cursor >= COLS { self.cursor -= COLS; } }
-        if input.just_pressed(Button::Down)  { if self.cursor + COLS < n { self.cursor += COLS; } }
-        if input.just_pressed(Button::Left)  { if self.cursor > 0     { self.cursor -= 1; } }
-        if input.just_pressed(Button::Right) { if self.cursor + 1 < n { self.cursor += 1; } }
-
-        let cur_row = self.cursor / COLS;
-        if cur_row < self.scroll { self.scroll = cur_row; }
-        if cur_row >= self.scroll + ROWS { self.scroll = cur_row + 1 - ROWS; }
+        if input.just_pressed(Button::L1) { self.soldier = (self.soldier + 3) % 4; }
+        if input.just_pressed(Button::R1) { self.soldier = (self.soldier + 1) % 4; }
+        if input.just_pressed(Button::Up)   { self.tab = (self.tab + TABS.len() - 1) % TABS.len(); }
+        if input.just_pressed(Button::Down) { self.tab = (self.tab + 1) % TABS.len(); }
+        let items = Self::items(self.tab);
+        let t = self.tab;
+        if input.just_pressed(Button::Left)  && self.cursor[t] > 0 { self.cursor[t] -= 1; }
+        if input.just_pressed(Button::Right) && self.cursor[t] + 1 < items.len() { self.cursor[t] += 1; }
+        self.cursor[t] = self.cursor[t].min(items.len().saturating_sub(1));
+        self.first[t] = crate::game::shop_ui::scroll_to(self.first[t], self.cursor[t], items.len());
 
         if input.just_pressed(Button::A) {
-            let item = &active[self.cursor];
-            if item.coming_soon {
-                self.status = "COMING SOON".to_string();
-                self.status_ttl = 90;
-            } else if item.owned {
-                self.status = "ALREADY OWNED".to_string();
-                self.status_ttl = 60;
-            } else {
-                let bal = if item.currency == Currency::Warbond { self.warbonds } else { self.balance };
-                if bal < item.cost {
-                    self.status = if item.currency == Currency::Warbond {
-                        "NOT ENOUGH WARBONDS".to_string()
-                    } else {
-                        "NOT ENOUGH SCRAP".to_string()
-                    };
-                    self.status_ttl = 60;
+            if let Some(&(ct, cid, cost, wb)) = items.get(self.cursor[t]) {
+                let bal = if wb { self.warbonds } else { self.balance };
+                if self.owns(ct, cid) {
+                    self.say("ALREADY OWNED", 60);
+                } else if bal < cost {
+                    self.say(if wb { "NOT ENOUGH WARBONDS" } else { "NOT ENOUGH SCRAP" }, 60);
                 } else {
-                    let ct = item.cosm_type;
-                    let cid = item.cosm_id;
-                    let cost = item.cost;
-                    let is_wb = item.currency == Currency::Warbond;
                     match crate::game::account::shop_buy(&self.token, ct, cid) {
                         Ok(()) => {
-                            if is_wb { self.warbonds = self.warbonds.saturating_sub(cost); }
-                            else     { self.balance  = self.balance.saturating_sub(cost); }
-                            let active2 = if self.tab == Tab::Scrap { &mut self.items } else { &mut self.wb_items };
-                            active2[self.cursor].owned = true;
-                            self.status = "PURCHASED!".to_string();
-                            self.status_ttl = 90;
+                            if wb { self.warbonds = self.warbonds.saturating_sub(cost); }
+                            else  { self.balance  = self.balance.saturating_sub(cost); }
+                            let i = match ct { "hat" => 0, "uniform" => 1, "boots" => 2, _ => 3 };
+                            self.owned[i].push(cid);
+                            let msg = format!("BOUGHT {}!", cosmetic_name(ct, cid));
+                            self.say(&msg, 90);
                         }
-                        Err(e) => {
-                            self.status = e.to_uppercase();
-                            self.status_ttl = 90;
-                        }
+                        Err(e) => { let m = e.to_uppercase(); self.say(&m, 90); }
                     }
                 }
             }
@@ -271,138 +215,40 @@ impl StoreScreen {
         None
     }
 
-    fn draw(&self, buf: &mut WorldBuffer) {
-        let sw = SCREEN_W as i32;
-        let sh = SCREEN_H as i32;
-
-        use crate::renderer::hud::{side_frame, side_shade, side_row_bg, side_panel, SIDE_GOLD, SIDE_DIM, SIDE_ACCENT, SIDE_TOP, SIDE_BOTTOM};
-        use crate::renderer::font::draw_str_shadow_scaled;
-        // Same frame as the menus; balances in the header.
-        let who = format!("SCRAP {}   WARBONDS {}", self.balance, self.warbonds);
-        side_frame(buf, "STORE", &who, &[("A", "BUY"), ("L1/R1", "TAB"), ("B", "BACK")]);
-
-        // Tabs
-        let tab_y = SIDE_TOP;
-        let tab_h = 26i32;
-        let tabs = [("SCRAP", Tab::Scrap), ("WARBONDS", Tab::Warbonds)];
-        let mut tx = 14i32;
-        for (label, t) in &tabs {
-            let tw = str_width_scaled(label, 2) + 24;
-            let active = self.tab == *t;
-            side_shade(buf, tx, tab_y, tw, tab_h, if active { 60 } else { 140 }, if active { (20, 30, 90) } else { (8, 10, 30) });
-            let tc = if active { SIDE_GOLD } else { SIDE_DIM };
-            draw_str_shadow_scaled(buf, label, tx + 12, tab_y + 5, tc, 2);
-            if active { buf.fill_rect(tx, tab_y + tab_h - 2, tw as u32, 2, SIDE_ACCENT); }
-            tx += tw + 4;
-        }
-
-        // Item grid
-        const COLS: usize = 2;
-        const ROWS: usize = 5;
-        let grid_y = tab_y + tab_h + 4;
-        let (gx, gw) = (14i32, sw - 28);
-        let cell_w = gw / COLS as i32;
-        let cell_h = (SIDE_BOTTOM - grid_y) / ROWS as i32;
-
-        let active = if self.tab == Tab::Scrap { &self.items } else { &self.wb_items };
-
-        for row in 0..ROWS {
-            let real_row = self.scroll + row;
-            for col in 0..COLS {
-                let idx = real_row * COLS + col;
-                if idx >= active.len() { continue; }
-                let item = &active[idx];
-                let cx = gx + col as i32 * cell_w;
-                let cy = grid_y + row as i32 * cell_h;
-                let selected = idx == self.cursor;
-                side_row_bg(buf, cx + 2, cy + 2, cell_w - 4, cell_h - 4, selected);
-                if item.owned && !selected { buf.fill_rect(cx + 2, cy + 2, 4, (cell_h - 4) as u32, Bgra::new(60, 200, 120)); }
-
-                // Icon
-                let icon_cx = cx + cell_w / 4;
-                let icon_cy = cy + cell_h / 2;
-                let icon_w  = cell_w / 2 - 8;
-                let icon_h  = cell_h - 10;
-                // Hats/guns/uniforms/boots are shown worn by a Rifleman, so the icon matches what appears in game.
-                let wz = if icon_h >= 68 { 2 } else { 1 };
-                let wfoot = icon_cy + 16 * wz;
-                let team_blue = Bgra::new(74, 122, 232);
-                match item.cosm_type {
-                    "hat" => crate::game::account::draw_worn_icon_z(buf, 0, icon_cx, wfoot, team_blue, item.cosm_id, 0, 0, wz),
-                    "gun_style" => crate::game::account::draw_worn_icon_z(buf, 0, icon_cx, wfoot, team_blue, 0, 0, item.cosm_id, wz),
-                    "uniform" => crate::game::account::draw_worn_icon_z(buf, 0, icon_cx, wfoot, uniform_swatch(item.cosm_id), 0, 0, 0, wz),
-                    "boots" => crate::game::account::draw_worn_icon_z(buf, 0, icon_cx, wfoot, team_blue, 0, item.cosm_id, 0, wz),
-                    "package" => {
-                        // WB coin icon placeholder
-                        let c = Bgra::new(255, 200, 40);
-                        buf.fill_circle(icon_cx, icon_cy, 10, c);
-                        buf.fill_circle(icon_cx, icon_cy,  8, Bgra::new(200, 150, 20));
-                        draw_str(buf, "WB", icon_cx - 5, icon_cy - 4, Bgra::new(255, 240, 180));
-                    }
-                    _ => {}
-                }
-
-                // Text
-                let ttx = cx + cell_w / 2 + 4;
-                let nc = if selected { Bgra::new(255, 240, 120) } else { Bgra::new(200, 200, 220) };
-                let tag = match item.cosm_type {
-                    "hat"       => "HAT",
-                    "gun_style" => "GUN",
-                    "uniform"   => "UNIFORM",
-                    "boots"     => "BOOTS",
-                    "package"   => "PACK",
-                    _           => "",
-                };
-                draw_str(buf, tag, ttx, cy + 6, Bgra::new(120, 140, 180));
-                draw_str(buf, item.name, ttx, cy + 18, nc);
-
-                if item.coming_soon {
-                    draw_str(buf, "COMING SOON", ttx, cy + cell_h - 16, Bgra::new(160, 120, 60));
-                } else if item.owned {
-                    draw_str(buf, "OWNED", ttx, cy + cell_h - 16, Bgra::new(60, 200, 120));
-                } else {
-                    let (cost_str, bal, cc_ok, cc_no) = if item.currency == Currency::Warbond {
-                        (format!("{} WB", item.cost), self.warbonds,
-                         Bgra::new(255, 200, 60), Bgra::new(180, 60, 60))
-                    } else {
-                        (format!("{} SC", item.cost), self.balance,
-                         Bgra::new(60, 220, 180), Bgra::new(180, 60, 60))
-                    };
-                    let cc = if bal >= item.cost { cc_ok } else { cc_no };
-                    draw_str(buf, &cost_str, ttx, cy + cell_h - 16, cc);
-                }
-            }
-        }
-
-        // Scroll indicators
-        if self.scroll > 0 {
-            draw_str(buf, "^", sw - 12, grid_y, Bgra::new(180, 180, 220));
-        }
-        let total_rows = (active.len() + COLS - 1) / COLS;
-        if self.scroll + ROWS < total_rows {
-            draw_str(buf, "v", sw - 12, grid_y + ROWS as i32 * cell_h - 10, Bgra::new(180, 180, 220));
-        }
-
-        // Purchase feedback on a small panel above the footer
-        if self.status_ttl > 0 {
-            let sc = if self.status.contains("PURCHASED") { Bgra::new(60, 220, 120) }
-                     else if self.status.contains("SOON")  { Bgra::new(255, 200, 60) }
-                     else if self.status.contains("OWNED") || self.status.contains("SCRAP") || self.status.contains("WARBOND") { Bgra::new(220, 100, 60) }
-                     else { Bgra::new(220, 60, 60) };
-            let mw = str_width_scaled(&self.status, 2);
-            side_panel(buf, sw / 2 - mw / 2 - 14, sh - 70, mw + 28, 34);
-            draw_str_shadow_scaled(buf, &self.status, sw / 2 - mw / 2, sh - 60, sc, 2);
-        }
+    pub fn draw(&self, buf: &mut WorldBuffer) {
+        use crate::game::shop_ui::{self as ui, Tile, ShopView};
+        let t = self.tab;
+        let tiles: Vec<Tile> = Self::items(t).into_iter().map(|(ct, id, cost, wb)| {
+            let (tag, tag_col) = if self.owns(ct, id) { ("OWNED".to_string(), ui::GREEN) } else {
+                let bal = if wb { self.warbonds } else { self.balance };
+                (format!("{} {}", cost, if wb { "WARBONDS" } else { "SCRAP" }),
+                 if bal >= cost { crate::renderer::hud::SIDE_SCRAP } else { ui::RED })
+            };
+            Tile { cat: ct, id, name: cosmetic_name(ct, id), tag, tag_col }
+        }).collect();
+        let info = format!("SCRAP {}   WARBONDS {}", self.balance, self.warbonds);
+        let tabs: Vec<&str> = TABS.iter().map(|e| e.0).collect();
+        let status = (self.status_ttl > 0).then(|| {
+            let col = if self.status.starts_with("BOUGHT") { ui::GREEN } else { ui::RED };
+            (self.status.as_str(), col)
+        });
+        ui::draw(buf, &ShopView {
+            title: "STORE", info: &info,
+            hints: &[("L1/R1", "TRY ON"), ("UP/DOWN", "CATEGORY"), ("LEFT/RIGHT", "BROWSE"), ("A", "BUY"), ("B", "BACK")],
+            soldiers: &self.soldiers, cur: self.soldier, tabs: &tabs, tab: t, tiles: &tiles,
+            first: self.first[t], sel: Some(self.cursor[t]), what: "FOR SALE", status,
+        });
     }
-}
 
-fn uniform_swatch(id: u8) -> Bgra {
-    match id {
-        1 => Bgra::new(60,  100, 50),
-        2 => Bgra::new(160, 130, 80),
-        3 => Bgra::new(20,  20,  20),
-        4 => Bgra::new(230, 230, 230),
-        5 => Bgra::new(30,  50,  120),
-        _ => Bgra::new(80,  80,  80),
+    /// Preview / test hook: jump to a soldier, tab and item.
+    pub fn set_view(&mut self, soldier: usize, tab: usize, cursor: usize) {
+        self.soldier = soldier % 4;
+        self.tab = tab % TABS.len();
+        let n = Self::items(self.tab).len();
+        self.cursor[self.tab] = cursor.min(n.saturating_sub(1));
+        self.first[self.tab] = crate::game::shop_ui::scroll_to(0, self.cursor[self.tab], n);
     }
+
+    pub fn tab_len(tab: usize) -> usize { Self::items(tab).len() }
+    pub const TABS: usize = TABS.len();
 }

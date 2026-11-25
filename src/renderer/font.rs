@@ -19,9 +19,52 @@ pub fn draw_char(buf: &mut WorldBuffer, ch: char, x: i32, y: i32, colour: Bgra) 
     x + 8
 }
 
+// ── Layout recorder (previews / tests only): every string drawn, plus boxes callers register ──
+thread_local! {
+    static LAYOUT: std::cell::RefCell<Option<Vec<LayoutBox>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// One drawn thing: a string (`text` Some) or a picture (`text` None), as a pixel rect.
+#[derive(Clone, Debug)]
+pub struct LayoutBox { pub x: i32, pub y: i32, pub w: i32, pub h: i32, pub text: Option<String> }
+
+/// Start recording what gets drawn (clears the previous recording).
+pub fn layout_record_start() { LAYOUT.with(|l| *l.borrow_mut() = Some(Vec::new())); }
+/// Stop recording and return what was drawn.
+pub fn layout_record_take() -> Vec<LayoutBox> { LAYOUT.with(|l| l.borrow_mut().take().unwrap_or_default()) }
+/// Register a picture's rect (e.g. a soldier icon) so overlap checks see it.
+pub fn layout_note_picture(x: i32, y: i32, w: i32, h: i32) {
+    LAYOUT.with(|l| if let Some(v) = l.borrow_mut().as_mut() { v.push(LayoutBox { x, y, w, h, text: None }); });
+}
+fn layout_note_text(s: &str, x: i32, y: i32, scale: i32) {
+    if s.trim().is_empty() { return; }
+    LAYOUT.with(|l| if let Some(v) = l.borrow_mut().as_mut() {
+        v.push(LayoutBox { x, y, w: str_width_scaled(s, scale), h: 8 * scale, text: Some(s.to_string()) });
+    });
+}
+
+/// Every pair of recorded boxes that overlap where at least one is text (a drop shadow, i.e. the same
+/// string 1 px down-right, is not an overlap). Empty = clean layout.
+pub fn layout_overlaps(boxes: &[LayoutBox]) -> Vec<String> {
+    let mut out = Vec::new();
+    for i in 0..boxes.len() {
+        for j in i + 1..boxes.len() {
+            let (a, b) = (&boxes[i], &boxes[j]);
+            if a.text.is_none() && b.text.is_none() { continue; }
+            if a.text.is_some() && a.text == b.text && (a.x - b.x).abs() <= 1 && (a.y - b.y).abs() <= 1 { continue; }
+            if a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h {
+                let d = |k: &LayoutBox| format!("{} @({},{} {}x{})", k.text.as_deref().map(|t| format!("\"{t}\"")).unwrap_or("[picture]".into()), k.x, k.y, k.w, k.h);
+                out.push(format!("{}  overlaps  {}", d(a), d(b)));
+            }
+        }
+    }
+    out
+}
+
 /// Draw a string starting at (x, y). Characters are 8px wide with 1px spacing.
 /// Returns the x position after the last character.
 pub fn draw_str(buf: &mut WorldBuffer, s: &str, x: i32, y: i32, colour: Bgra) -> i32 {
+    layout_note_text(s, x, y, 1);
     let mut cx = x;
     let chars: Vec<char> = s.chars().collect();
     for (i, &ch) in chars.iter().enumerate() {
@@ -70,6 +113,7 @@ pub fn draw_char_scaled(buf: &mut WorldBuffer, ch: char, x: i32, y: i32, colour:
 
 /// Draw a scaled string. Returns x after the last character.
 pub fn draw_str_scaled(buf: &mut WorldBuffer, s: &str, x: i32, y: i32, colour: Bgra, scale: i32) -> i32 {
+    layout_note_text(s, x, y, scale);
     let mut cx = x;
     let chars: Vec<char> = s.chars().collect();
     for (i, &ch) in chars.iter().enumerate() {
@@ -360,5 +404,25 @@ mod tests {
     fn draw_str_at_bottom_edge_does_not_panic() {
         let mut b = buf();
         draw_str(&mut b, "HELLO", 100, crate::world::WORLD_H as i32 - 4, Bgra::white());
+    }
+}
+
+#[cfg(test)]
+mod layout_check_tests {
+    use super::*;
+    #[test]
+    fn overlap_checker_catches_overlaps_and_ignores_shadows() {
+        let mut b = WorldBuffer::new();
+        layout_record_start();
+        draw_str_shadow_scaled(&mut b, "SHADOWED", 10, 10, Bgra::white(), 2); // shadow pair: not an overlap
+        draw_str(&mut b, "HELLO", 100, 100, Bgra::white());
+        draw_str(&mut b, "WORLD", 120, 104, Bgra::white());                // runs into HELLO
+        layout_note_picture(300, 300, 40, 40);
+        draw_str(&mut b, "ON PIC", 310, 330, Bgra::white());               // text on a picture
+        draw_str(&mut b, "CLEAR", 400, 400, Bgra::white());
+        let o = layout_overlaps(&layout_record_take());
+        assert_eq!(o.len(), 2, "{o:#?}");
+        assert!(o.iter().any(|l| l.contains("HELLO") && l.contains("WORLD")));
+        assert!(o.iter().any(|l| l.contains("ON PIC") && l.contains("[picture]")));
     }
 }
